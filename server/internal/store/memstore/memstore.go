@@ -26,18 +26,18 @@ var (
 type Store struct {
 	mu sync.RWMutex
 
-	users         map[string]*domain.User            // keyed by user_id
-	usersByAuth   map[[32]byte]string                 // auth_subject_hash -> user_id
-	installations map[string]*domain.Installation     // keyed by installation_id
-	instByPubKey  map[string]string                   // hex(pub_key) -> installation_id
-	nonces        map[string]time.Time                // "install_id:hex(nonce_hash)" -> expires_at
-	batches       map[string]*domain.IngestBatch      // keyed by batch_id
-	events        []*domain.UsageEvent                // append-only, ordered by event_pk
-	eventDedup    map[string]bool                     // "install_id:hex(event_id)" -> true
+	users         map[string]*domain.User         // keyed by user_id
+	usersByAuth   map[[32]byte]string             // auth_subject_hash -> user_id
+	installations map[string]*domain.Installation // keyed by installation_id
+	instByPubKey  map[string]string               // hex(pub_key) -> installation_id
+	nonces        map[string]time.Time            // "install_id:hex(nonce_hash)" -> expires_at
+	batches       map[string]*domain.IngestBatch  // keyed by batch_id
+	events        []*domain.UsageEvent            // append-only, ordered by event_pk
+	eventDedup    map[string]bool                 // "install_id:hex(event_id)" -> true
 	nextEventPK   uint64
-	metrics       map[string]*domain.DailyUserAgentMetric   // "date:user:agent" -> metric
-	snapshots     map[string]*domain.LeaderboardSnapshot    // keyed by snapshot_id
-	entries       map[string][]*domain.LeaderboardEntry     // keyed by snapshot_id
+	metrics       map[string]*domain.DailyUserAgentMetric // "date:user:agent" -> metric
+	snapshots     map[string]*domain.LeaderboardSnapshot  // keyed by snapshot_id
+	entries       map[string][]*domain.LeaderboardEntry   // keyed by snapshot_id
 }
 
 func New() *Store {
@@ -415,8 +415,12 @@ func (s *Store) PublishSnapshot(_ context.Context, snapshotID string, publishedA
 	if !ok {
 		return fmt.Errorf("snapshot %s not found", snapshotID)
 	}
+	if snap.SnapshotStatus != "building" {
+		return fmt.Errorf("snapshot %s is immutable in status %s", snapshotID, snap.SnapshotStatus)
+	}
 	snap.SnapshotStatus = "published"
 	snap.PublishedAt = &publishedAt
+	snap.ParticipantCount = uint32(len(s.entries[snapshotID]))
 	return nil
 }
 
@@ -426,6 +430,9 @@ func (s *Store) SupersedeSnapshot(_ context.Context, snapshotID string) error {
 	snap, ok := s.snapshots[snapshotID]
 	if !ok {
 		return fmt.Errorf("snapshot %s not found", snapshotID)
+	}
+	if snap.SnapshotStatus != "published" {
+		return fmt.Errorf("snapshot %s is not published", snapshotID)
 	}
 	snap.SnapshotStatus = "superseded"
 	return nil
@@ -456,6 +463,15 @@ func (s *Store) LatestPublishedSnapshot(_ context.Context, boardKey, scopeType, 
 func (s *Store) CreateEntry(_ context.Context, e *domain.LeaderboardEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	snap, ok := s.snapshots[e.SnapshotID]
+	if !ok || snap.SnapshotStatus != "building" {
+		return fmt.Errorf("snapshot %s does not accept entries", e.SnapshotID)
+	}
+	for _, existing := range s.entries[e.SnapshotID] {
+		if existing.RankNo == e.RankNo || existing.UserID == e.UserID {
+			return fmt.Errorf("duplicate leaderboard entry")
+		}
+	}
 	cp := *e
 	s.entries[cp.SnapshotID] = append(s.entries[cp.SnapshotID], &cp)
 	return nil

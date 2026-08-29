@@ -1,12 +1,13 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
-	"math"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -16,17 +17,31 @@ import (
 
 type contextKey string
 
-const InstallationIDKey contextKey = "installation_id"
+const (
+	InstallationIDKey contextKey = "installation_id"
+	BodyHashKey       contextKey = "body_sha256"
+)
+
+func InstallationIDFromContext(ctx context.Context) string {
+	id, _ := ctx.Value(InstallationIDKey).(string)
+	return id
+}
+
+func BodyHashFromContext(ctx context.Context) ([32]byte, bool) {
+	hash, ok := ctx.Value(BodyHashKey).([32]byte)
+	return hash, ok
+}
 
 const (
-	maxTimestampSkew = 5 * time.Minute
-	nonceExpiry      = 10 * time.Minute
+	maxTimestampSkew      = 5 * time.Minute
+	nonceExpiry           = 10 * time.Minute
+	maxCompressedBodySize = 512 << 10
 )
 
 // DeviceAuth provides Ed25519 signature verification for device requests.
-// Authorization header format: Device <installation_id>:<base64(signature)>
-// Required headers: X-Timestamp (RFC3339), X-Nonce (base64, 16+ bytes)
-// Signature input: METHOD\nPATH\nTIMESTAMP\nNONCE\nBODY_SHA256
+// Authorization header format: Device <installation_id>:<base64url(signature)>.
+// Required headers: X-Timestamp (RFC3339), X-Nonce (base64url, 16+ bytes).
+// Signature input: METHOD\nPATH\nTIMESTAMP\nNONCE\nBODY_SHA256.
 type DeviceAuth struct {
 	Installations store.InstallationStore
 	Nonces        store.NonceStore
@@ -48,7 +63,7 @@ func (d *DeviceAuth) VerifyRequest(ctx context.Context, method, path string, bod
 		return "", fmt.Errorf("malformed Authorization header")
 	}
 	installationID := parts[0]
-	sigBytes, err := base64.StdEncoding.DecodeString(parts[1])
+	sigBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
 		return "", fmt.Errorf("invalid signature encoding: %w", err)
 	}
@@ -76,7 +91,7 @@ func (d *DeviceAuth) VerifyRequest(ctx context.Context, method, path string, bod
 	if nonceB64 == "" {
 		return "", fmt.Errorf("missing X-Nonce header")
 	}
-	nonceBytes, err := base64.StdEncoding.DecodeString(nonceB64)
+	nonceBytes, err := base64.RawURLEncoding.DecodeString(nonceB64)
 	if err != nil {
 		return "", fmt.Errorf("invalid nonce encoding: %w", err)
 	}
@@ -92,10 +107,7 @@ func (d *DeviceAuth) VerifyRequest(ctx context.Context, method, path string, bod
 		return "", fmt.Errorf("installation %s is %s", installationID, inst.InstallationStatus)
 	}
 
-	// build signature message
-	bodyHashB64 := base64.StdEncoding.EncodeToString(bodyHash[:])
-	msg := strings.Join([]string{method, path, tsStr, nonceB64, bodyHashB64}, "\n")
-
+	msg := CanonicalRequest(method, path, tsStr, nonceB64, bodyHash)
 	if !ed25519.Verify(inst.DevicePublicKey, []byte(msg), sigBytes) {
 		return "", fmt.Errorf("signature verification failed")
 	}
@@ -116,38 +128,47 @@ func (d *DeviceAuth) VerifyRequest(ctx context.Context, method, path string, bod
 // Middleware returns an http.Handler that enforces device authentication.
 func (d *DeviceAuth) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// For simplicity in this slice, body hash is computed from Content-Length.
-		// Full implementation reads and hashes the body.
-		bodyHash := sha256.Sum256(nil) // placeholder for empty/streamed
-		installationID, err := d.VerifyRequest(r.Context(), r.Method, r.URL.Path, bodyHash, r.Header)
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxCompressedBodySize))
+		if err != nil {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		r.Body.Close()
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		bodyHash := sha256.Sum256(body)
+		installationID, err := d.VerifyRequest(r.Context(), r.Method, r.URL.EscapedPath(), bodyHash, r.Header)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusUnauthorized)
 			return
 		}
 		ctx := context.WithValue(r.Context(), InstallationIDKey, installationID)
+		ctx = context.WithValue(ctx, BodyHashKey, bodyHash)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-// SignRequest creates the Authorization, X-Timestamp, and X-Nonce headers for
-// a client request. Used in tests and the collector client.
+func CanonicalRequest(method, path, timestamp, nonce string, bodyHash [32]byte) string {
+	return strings.Join([]string{
+		strings.ToUpper(method),
+		path,
+		timestamp,
+		nonce,
+		base64.RawURLEncoding.EncodeToString(bodyHash[:]),
+	}, "\n")
+}
+
+// SignRequest creates the Authorization, X-Timestamp, and X-Nonce headers.
 func SignRequest(installationID string, privKey ed25519.PrivateKey, method, path string, bodyHash [32]byte, nonce []byte) (http.Header, error) {
 	if len(nonce) < 16 {
 		return nil, fmt.Errorf("nonce must be at least 16 bytes")
 	}
-	ts := time.Now().UTC().Truncate(time.Second)
-	if ts.Unix() > math.MaxInt64-1 {
-		return nil, fmt.Errorf("timestamp overflow")
-	}
-	tsStr := ts.Format(time.RFC3339)
-	nonceB64 := base64.StdEncoding.EncodeToString(nonce)
-	bodyHashB64 := base64.StdEncoding.EncodeToString(bodyHash[:])
-
-	msg := strings.Join([]string{method, path, tsStr, nonceB64, bodyHashB64}, "\n")
+	tsStr := time.Now().UTC().Truncate(time.Second).Format(time.RFC3339)
+	nonceB64 := base64.RawURLEncoding.EncodeToString(nonce)
+	msg := CanonicalRequest(method, path, tsStr, nonceB64, bodyHash)
 	sig := ed25519.Sign(privKey, []byte(msg))
 
 	hdr := make(http.Header)
-	hdr.Set("Authorization", "Device "+installationID+":"+base64.StdEncoding.EncodeToString(sig))
+	hdr.Set("Authorization", "Device "+installationID+":"+base64.RawURLEncoding.EncodeToString(sig))
 	hdr.Set("X-Timestamp", tsStr)
 	hdr.Set("X-Nonce", nonceB64)
 	return hdr, nil

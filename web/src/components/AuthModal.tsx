@@ -19,15 +19,19 @@ export const AuthModal: React.FC = () => {
       return;
     }
     setErrorMsg("");
-    if (tab === "login") {
-      await login(email, password);
-    } else {
-      await register(email, code, password);
+    try {
+      if (tab === "login") {
+        await login(email, password);
+      } else {
+        await register(email, code, password);
+      }
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : String(err));
     }
   };
 
   return (
-    <div className="modal-overlay" role="dialog" aria-modal="true">
+    <div className="modal-overlay" role="dialog" aria-modal="true" aria-label={activeLanguage === "zh" ? "账户接入 Account Access" : "Account Access"}>
       <div className="modal-card">
         <div className="modal-head">
           <div>

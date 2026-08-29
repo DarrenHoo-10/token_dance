@@ -8,13 +8,23 @@ authors = ["TokenDance Team"]
 description = "TokenDance Desktop Collector Settings Shell"
 
 [dependencies]
+acquisition = { path = "../../../crates/acquisition" }
+adapter-sdk = { path = "../../../crates/adapter-sdk" }
+collector-core = { path = "../../../crates/collector-core" }
+collector-service = { path = "../../service" }
+config-executor = { path = "../../../crates/config-executor" }
+wal-spool = { path = "../../../crates/wal-spool" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
 tokio = { version = "1", features = ["full", "sync", "time"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
+ulid = "1"
 tauri = { version = "2", features = ["tray-icon"] }
+
+[dev-dependencies]
+tempfile = "3"
 
 [build-dependencies]
 tauri-build = "2"

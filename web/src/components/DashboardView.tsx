@@ -68,7 +68,7 @@ export const DashboardView: React.FC = () => {
           <button
             type="button"
             className="btn btn-sm btn-dark"
-            onClick={toggleGlobalPause}
+            onClick={() => void toggleGlobalPause().catch(() => undefined)}
           >
             {activeLanguage === "zh" ? "一键恢复采集" : "Resume All"}
           </button>
@@ -308,7 +308,7 @@ export const DashboardView: React.FC = () => {
                 <button
                   type="button"
                   className={`switch-toggle ${agent.enabled ? "on" : ""}`}
-                  onClick={() => toggleAgent(agent.id)}
+                  onClick={() => void toggleAgent(agent.id).catch(() => undefined)}
                   aria-label={`Toggle ${agent.name}`}
                 >
                   <div className="switch-handle" />

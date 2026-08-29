@@ -3,7 +3,7 @@ import type { CollectorDevice } from "../tauri-bridge.ts";
 
 interface DevicesRevokeCardProps {
   devices: CollectorDevice[];
-  onRevokeDevice: (deviceId: string) => void;
+  onRevokeDevice: (deviceId: string) => Promise<void>;
   lang: "zh" | "en";
 }
 
@@ -15,8 +15,8 @@ export const DevicesRevokeCard: React.FC<DevicesRevokeCardProps> = ({
   const isZh = lang === "zh";
   const [confirmDeviceId, setConfirmDeviceId] = useState<string | null>(null);
 
-  const handleRevoke = (id: string) => {
-    onRevokeDevice(id);
+  const handleRevoke = async (id: string) => {
+    await onRevokeDevice(id);
     setConfirmDeviceId(null);
   };
 
@@ -94,7 +94,11 @@ export const DevicesRevokeCard: React.FC<DevicesRevokeCardProps> = ({
                   </button>
                 )
               ) : (
-                <span className="revoked-badge">{isZh ? "密钥已注销" : "Revoked"}</span>
+                <span className="revoked-badge">
+                  {dev.status === "REVOCATION_PENDING"
+                    ? (isZh ? "等待服务端确认" : "Pending confirmation")
+                    : (isZh ? "密钥已注销" : "Revoked")}
+                </span>
               )}
             </div>
           </div>

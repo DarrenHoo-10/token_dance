@@ -864,13 +864,162 @@ button {
 .heatmap-cell.level-3 { background: #78c900; }
 .heatmap-cell.level-4 { background: #4e8c00; }
 
+.page-actions,
+.preview-toolbar,
+.filter-tags {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.preview-toolbar {
+  justify-content: space-between;
+  margin: 16px 0 12px;
+}
+
+.filter-tags {
+  margin-top: 14px;
+  font-size: 12px;
+}
+
+.two-column-grid,
+.audit-grid,
+.choice-grid,
+.responsive-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.two-column-grid {
+  margin-bottom: 24px;
+}
+
+.audit-grid {
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.capability-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr));
+  gap: 16px;
+}
+
+.scroll-list,
+.manifest-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.list-card,
+.manifest-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--soft);
+  font-size: 12px;
+}
+
+.list-card-head,
+.manifest-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.manifest-head small,
+.manifest-card li,
+.choice-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+.manifest-card ul {
+  padding-left: 18px;
+  margin: 10px 0;
+}
+
+.choice-card {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+  text-align: left;
+}
+
+.choice-card.selected {
+  border: 2px solid var(--ink);
+  background: var(--lime-soft);
+}
+
+.onboarding-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.onboarding-step {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.onboarding-step.active { border: 2px solid var(--ink); background: var(--lime-soft); }
+.onboarding-step.complete { background: #f0f4ef; }
+.onboarding-step small,
+.onboarding-step strong { display: block; overflow-wrap: anywhere; }
+.onboarding-step small { color: var(--muted); }
+.onboarding-step strong { margin-top: 2px; }
+
+.section-title { font-size: 15px; margin: 20px 0 12px; }
+.form-textarea { height: 72px; padding-top: 10px; }
+.compact-input { height: 32px; font-size: 12px; width: auto; max-width: 100%; }
+.mono { font-family: var(--font-mono); overflow-wrap: anywhere; }
+.empty-state { color: var(--muted); font-size: 13px; text-align: center; padding: 24px 0; }
+
+.feedback-success,
+.feedback-error,
+.deletion-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 18px;
+  border-radius: 12px;
+  margin-bottom: 20px;
+  font-size: 13px;
+  font-weight: 650;
+}
+.feedback-success { background: var(--lime-soft); color: var(--lime-dark); border: 1px solid #c9f564; }
+.feedback-error { background: #fde8e5; color: var(--danger); border: 1px solid #fbc9c2; }
+.deletion-status { background: #fff4d9; color: #925f00; border: 1px solid #fbd38d; }
+
 /* Responsive adjustments */
 @media (max-width: 640px) {
   .navbar {
+    top: 8px;
+    width: calc(100% - 16px);
+    margin-top: 8px;
     height: auto;
-    padding: 12px 16px;
+    padding: 12px;
     flex-wrap: wrap;
+    gap: 10px;
   }
+  .brand { font-size: 18px; }
+  .nav-actions { margin-left: 0; flex: 1; justify-content: flex-end; min-width: 0; }
+  .avatar-name { display: none; }
+  .lang-switch { flex-shrink: 0; }
   .nav-tabs {
     order: 3;
     width: 100%;
@@ -896,9 +1045,23 @@ button {
   .metric-grid {
     grid-template-columns: 1fr;
   }
-  .agent-cards-grid {
+  .agent-cards-grid,
+  .two-column-grid,
+  .audit-grid,
+  .choice-grid,
+  .responsive-form-grid,
+  .onboarding-steps {
     grid-template-columns: minmax(0, 1fr);
   }
+  .panel { padding: 18px; }
+  .modal-overlay { padding: 8px; align-items: start; }
+  .modal-head, .modal-body, .modal-foot { padding-left: 18px; padding-right: 18px; }
+  .modal-foot { flex-wrap: wrap; }
+  .modal-foot .btn { flex: 1 1 140px; }
+  .agent-meta-row { grid-template-columns: minmax(0, 1fr); }
+  .setting-item-row { align-items: flex-start; flex-direction: column; }
+  .page-actions, .preview-toolbar { width: 100%; align-items: stretch; }
+  .page-actions .btn, .page-actions .form-input { flex: 1 1 140px; }
   .panel-head {
     align-items: flex-start;
     flex-direction: column;

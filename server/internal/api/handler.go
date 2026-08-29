@@ -1,17 +1,24 @@
 package api
 
 import (
+	"bytes"
+	"compress/gzip"
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
+	"github.com/tokendance/token-collector/server/internal/auth"
 	"github.com/tokendance/token-collector/server/internal/domain"
 	"github.com/tokendance/token-collector/server/internal/ingest"
 	"github.com/tokendance/token-collector/server/internal/protocol"
 	"github.com/tokendance/token-collector/server/internal/store"
+	"github.com/tokendance/token-collector/server/internal/store/mysqlstore"
 )
 
 // Handler holds all HTTP handlers for the API server.
@@ -22,6 +29,8 @@ type Handler struct {
 	Events        store.EventStore
 	Leaderboards  store.LeaderboardStore
 	Ingest        *ingest.Service
+	DeviceAuth    *auth.DeviceAuth
+	UserSessions  auth.UserSessionResolver
 	IDGenerator   func() string
 }
 
@@ -46,22 +55,18 @@ type UploadPolicy struct {
 }
 
 // HandleRegisterInstallation handles POST /v1/installations/register.
-// Requires a valid user session (simplified: X-User-ID header for this slice).
 func (h *Handler) HandleRegisterInstallation(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	userID := r.Header.Get("X-User-ID")
-	if userID == "" {
-		http.Error(w, "missing X-User-ID", http.StatusUnauthorized)
+	if h.UserSessions == nil {
+		http.Error(w, "user session authentication unavailable", http.StatusUnauthorized)
 		return
 	}
-
-	// Verify user exists
-	if _, err := h.Users.GetUser(r.Context(), userID); err != nil {
-		http.Error(w, "user not found", http.StatusNotFound)
+	userID, err := h.UserSessions.ResolveUserSession(r.Context(), r.Header.Get("Authorization"))
+	if err != nil {
+		http.Error(w, "invalid user session", http.StatusUnauthorized)
 		return
 	}
 
@@ -71,9 +76,25 @@ func (h *Handler) HandleRegisterInstallation(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	pubKeyBytes, err := base64.StdEncoding.DecodeString(req.DevicePublicKey)
+	pubKeyBytes, err := base64.RawURLEncoding.DecodeString(req.DevicePublicKey)
 	if err != nil || len(pubKeyBytes) != ed25519.PublicKeySize {
 		http.Error(w, "invalid device public key", http.StatusBadRequest)
+		return
+	}
+	if req.OSType != "windows" && req.OSType != "macos" {
+		http.Error(w, "unsupported osType", http.StatusBadRequest)
+		return
+	}
+	if req.Architecture == "" || req.CollectorVersion == "" {
+		http.Error(w, "architecture and collectorVersion are required", http.StatusBadRequest)
+		return
+	}
+	if existing, lookupErr := h.Installations.GetInstallationByPublicKey(r.Context(), pubKeyBytes); lookupErr == nil {
+		if existing.UserID != userID {
+			http.Error(w, "device public key already registered", http.StatusConflict)
+			return
+		}
+		h.writeRegistration(w, http.StatusOK, existing.InstallationID)
 		return
 	}
 
@@ -93,12 +114,25 @@ func (h *Handler) HandleRegisterInstallation(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := h.Installations.CreateInstallation(r.Context(), inst); err != nil {
+		winner, lookupErr := h.Installations.GetInstallationByPublicKey(r.Context(), pubKeyBytes)
+		if lookupErr == nil {
+			if winner.UserID != userID {
+				http.Error(w, "device public key already registered", http.StatusConflict)
+				return
+			}
+			h.writeRegistration(w, http.StatusOK, winner.InstallationID)
+			return
+		}
 		http.Error(w, fmt.Sprintf("registration failed: %v", err), http.StatusConflict)
 		return
 	}
 
+	h.writeRegistration(w, http.StatusCreated, instID)
+}
+
+func (h *Handler) writeRegistration(w http.ResponseWriter, status int, installationID string) {
 	resp := RegisterInstallationResponse{
-		InstallationID: instID,
+		InstallationID: installationID,
 		Policy: UploadPolicy{
 			MaxBatchEvents:       500,
 			MaxBatchBytes:        524288,
@@ -106,9 +140,11 @@ func (h *Handler) HandleRegisterInstallation(w http.ResponseWriter, r *http.Requ
 		},
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(resp)
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(resp)
 }
+
+const maxDecompressedIngestBodySize = 4 << 20
 
 // HandleIngestBatch handles POST /v1/telemetry/batches.
 // The installation_id comes from device auth context.
@@ -118,24 +154,53 @@ func (h *Handler) HandleIngestBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	installationID, _ := r.Context().Value("installation_id").(string)
-	if installationID == "" {
-		// Fallback for simplified testing: read from header
-		installationID = r.Header.Get("X-Installation-ID")
-	}
+	installationID := auth.InstallationIDFromContext(r.Context())
 	if installationID == "" {
 		http.Error(w, "missing installation identity", http.StatusUnauthorized)
 		return
 	}
 
+	if r.Header.Get("Content-Encoding") != "gzip" {
+		http.Error(w, "content encoding must be gzip", http.StatusUnsupportedMediaType)
+		return
+	}
+	compressed, err := gzip.NewReader(r.Body)
+	if err != nil {
+		http.Error(w, "invalid gzip body", http.StatusBadRequest)
+		return
+	}
+	decompressed, err := io.ReadAll(io.LimitReader(compressed, maxDecompressedIngestBodySize+1))
+	closeErr := compressed.Close()
+	if err != nil || closeErr != nil {
+		http.Error(w, "invalid gzip body", http.StatusBadRequest)
+		return
+	}
+	if len(decompressed) > maxDecompressedIngestBodySize {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
 	var batch protocol.UploadBatch
-	if err := json.NewDecoder(r.Body).Decode(&batch); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(decompressed))
+	if err := decoder.Decode(&batch); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		http.Error(w, "invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	result, err := h.Ingest.ProcessBatch(r.Context(), installationID, batch)
+	bodyHash, ok := auth.BodyHashFromContext(r.Context())
+	if !ok {
+		http.Error(w, "missing authenticated body hash", http.StatusUnauthorized)
+		return
+	}
+	result, err := h.Ingest.ProcessBatchWithHash(r.Context(), installationID, batch, bodyHash)
 	if err != nil {
+		if errors.Is(err, store.ErrBatchHashConflict) {
+			http.Error(w, "BATCH_HASH_CONFLICT", http.StatusConflict)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -147,13 +212,9 @@ func (h *Handler) HandleIngestBatch(w http.ResponseWriter, r *http.Request) {
 		ServerTime: result.ServerTime.Format(time.RFC3339Nano),
 	}
 	for _, rej := range result.Rejected {
-		errorCode := protocol.RejectedEventErrorCodeSchemaInvalid
-		if rej.Retryable {
-			errorCode = protocol.RejectedEventErrorCodeInternalRetryable
-		}
 		ack.Rejected = append(ack.Rejected, protocol.RejectedEvent{
 			EventID:   protocol.Base64Url32(rej.EventID),
-			ErrorCode: errorCode,
+			ErrorCode: protocol.RejectedEventErrorCode(rej.ErrorCode),
 			Retryable: rej.Retryable,
 		})
 	}
@@ -167,11 +228,14 @@ type LeaderboardSnapshotResponse struct {
 	SnapshotID       string                     `json:"snapshotId"`
 	BoardKey         string                     `json:"boardKey"`
 	ScopeType        string                     `json:"scopeType"`
+	ScopeKey         string                     `json:"scopeKey"`
 	MetricKey        string                     `json:"metricKey"`
 	WindowStart      string                     `json:"windowStart"`
 	WindowEnd        string                     `json:"windowEnd"`
 	ParticipantCount uint32                     `json:"participantCount"`
 	GeneratedAt      string                     `json:"generatedAt"`
+	DataWatermarkAt  string                     `json:"dataWatermarkAt"`
+	LagSeconds       int64                      `json:"lagSeconds"`
 	Entries          []LeaderboardEntryResponse `json:"entries"`
 }
 
@@ -202,8 +266,28 @@ func (h *Handler) HandleGetLeaderboard(w http.ResponseWriter, r *http.Request) {
 	if metricKey == "" {
 		metricKey = "total_tokens"
 	}
+	scopeKey := r.URL.Query().Get("scopeKey")
+	if scopeType == "global" {
+		scopeKey = "all"
+	}
+	if scopeKey == "" {
+		http.Error(w, "missing scopeKey", http.StatusBadRequest)
+		return
+	}
+	if !h.authorizeScope(r, scopeType, scopeKey) {
+		http.Error(w, "forbidden leaderboard scope", http.StatusForbidden)
+		return
+	}
 
-	snap, err := h.Leaderboards.LatestPublishedSnapshot(r.Context(), boardKey, scopeType, metricKey)
+	var snap *domain.LeaderboardSnapshot
+	var err error
+	if scoped, ok := h.Leaderboards.(interface {
+		LatestPublishedSnapshotScoped(context.Context, string, string, string, string) (*domain.LeaderboardSnapshot, error)
+	}); ok {
+		snap, err = scoped.LatestPublishedSnapshotScoped(r.Context(), boardKey, scopeType, scopeKey, metricKey)
+	} else {
+		snap, err = h.Leaderboards.LatestPublishedSnapshot(r.Context(), boardKey, scopeType, metricKey)
+	}
 	if err != nil {
 		http.Error(w, "no leaderboard available", http.StatusNotFound)
 		return
@@ -219,11 +303,14 @@ func (h *Handler) HandleGetLeaderboard(w http.ResponseWriter, r *http.Request) {
 		SnapshotID:       snap.SnapshotID,
 		BoardKey:         snap.BoardKey,
 		ScopeType:        snap.ScopeType,
+		ScopeKey:         snap.ScopeKey,
 		MetricKey:        snap.MetricKey,
 		WindowStart:      snap.WindowStart.Format(time.RFC3339),
 		WindowEnd:        snap.WindowEnd.Format(time.RFC3339),
 		ParticipantCount: snap.ParticipantCount,
 		GeneratedAt:      snap.GeneratedAt.Format(time.RFC3339),
+		DataWatermarkAt:  snap.DataWatermarkAt.Format(time.RFC3339),
+		LagSeconds:       watermarkLagSeconds(snap.DataWatermarkAt),
 	}
 	for _, e := range entries {
 		entry := LeaderboardEntryResponse{
@@ -265,6 +352,10 @@ func (h *Handler) HandleGetSnapshot(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "snapshot not published", http.StatusNotFound)
 		return
 	}
+	if !h.authorizeScope(r, snap.ScopeType, snap.ScopeKey) {
+		http.Error(w, "forbidden leaderboard scope", http.StatusForbidden)
+		return
+	}
 
 	entries, err := h.Leaderboards.ListEntries(r.Context(), snapshotID)
 	if err != nil {
@@ -276,11 +367,14 @@ func (h *Handler) HandleGetSnapshot(w http.ResponseWriter, r *http.Request) {
 		SnapshotID:       snap.SnapshotID,
 		BoardKey:         snap.BoardKey,
 		ScopeType:        snap.ScopeType,
+		ScopeKey:         snap.ScopeKey,
 		MetricKey:        snap.MetricKey,
 		WindowStart:      snap.WindowStart.Format(time.RFC3339),
 		WindowEnd:        snap.WindowEnd.Format(time.RFC3339),
 		ParticipantCount: snap.ParticipantCount,
 		GeneratedAt:      snap.GeneratedAt.Format(time.RFC3339),
+		DataWatermarkAt:  snap.DataWatermarkAt.Format(time.RFC3339),
+		LagSeconds:       watermarkLagSeconds(snap.DataWatermarkAt),
 	}
 	for _, e := range entries {
 		resp.Entries = append(resp.Entries, LeaderboardEntryResponse{
@@ -295,14 +389,139 @@ func (h *Handler) HandleGetSnapshot(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+func watermarkLagSeconds(watermark time.Time) int64 {
+	lag := time.Since(watermark).Seconds()
+	if lag < 0 {
+		return 0
+	}
+	return int64(lag)
+}
+
+func (h *Handler) authorizeScope(r *http.Request, scopeType, scopeKey string) bool {
+	authorizer, ok := h.Leaderboards.(interface {
+		AuthorizeLeaderboardScope(context.Context, string, string, string) (bool, error)
+	})
+	if !ok {
+		return scopeType == "global" && scopeKey == "all"
+	}
+	userID := ""
+	if scopeType != "global" {
+		if h.UserSessions == nil {
+			return false
+		}
+		var err error
+		userID, err = h.UserSessions.ResolveUserSession(r.Context(), r.Header.Get("Authorization"))
+		if err != nil {
+			return false
+		}
+	}
+	allowed, err := authorizer.AuthorizeLeaderboardScope(r.Context(), userID, scopeType, scopeKey)
+	return err == nil && allowed
+}
+
+type deletionRequestBody struct {
+	Scope          string `json:"scope"`
+	InstallationID string `json:"installationId,omitempty"`
+	RangeStart     string `json:"rangeStart,omitempty"`
+	RangeEnd       string `json:"rangeEnd,omitempty"`
+}
+
+type deletionResponse struct {
+	RequestID string `json:"requestId"`
+	Status    string `json:"status"`
+	ErrorCode string `json:"errorCode,omitempty"`
+}
+
+func (h *Handler) HandleDeletionRequests(w http.ResponseWriter, r *http.Request) {
+	if h.UserSessions == nil {
+		http.Error(w, "user session authentication unavailable", http.StatusUnauthorized)
+		return
+	}
+	userID, err := h.UserSessions.ResolveUserSession(r.Context(), r.Header.Get("Authorization"))
+	if err != nil {
+		http.Error(w, "invalid user session", http.StatusUnauthorized)
+		return
+	}
+	deletions, ok := h.Events.(interface {
+		CreateDeletionRequest(context.Context, mysqlstore.DeletionRequest) error
+		GetDeletionRequest(context.Context, string, string) (mysqlstore.DeletionRequest, error)
+	})
+	if !ok {
+		http.Error(w, "deletion workflow unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if r.Method == http.MethodGet {
+		requestID := r.URL.Query().Get("id")
+		request, err := deletions.GetDeletionRequest(r.Context(), requestID, userID)
+		if err != nil {
+			http.Error(w, "deletion request not found", http.StatusNotFound)
+			return
+		}
+		writeJSON(w, http.StatusOK, deletionResponse{RequestID: request.RequestID, Status: request.Status, ErrorCode: request.ErrorCode})
+		return
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body deletionRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	request := mysqlstore.DeletionRequest{RequestID: h.IDGenerator(), UserID: userID, InstallationID: body.InstallationID, Scope: body.Scope, Status: "pending", RequestedAt: time.Now().UTC()}
+	if body.RangeStart != "" {
+		value, err := time.Parse(time.RFC3339, body.RangeStart)
+		if err != nil {
+			http.Error(w, "invalid rangeStart", http.StatusBadRequest)
+			return
+		}
+		request.RangeStart = &value
+	}
+	if body.RangeEnd != "" {
+		value, err := time.Parse(time.RFC3339, body.RangeEnd)
+		if err != nil {
+			http.Error(w, "invalid rangeEnd", http.StatusBadRequest)
+			return
+		}
+		request.RangeEnd = &value
+	}
+	if err := deletions.CreateDeletionRequest(r.Context(), request); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, deletionResponse{RequestID: request.RequestID, Status: "pending"})
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+const ingestHTTPDeadline = 5 * time.Second
+
+func withIngestDeadline(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), ingestHTTPDeadline)
+		defer cancel()
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
 // NewMux creates the HTTP router with all routes.
 func NewMux(h *Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", h.HandleHealthz)
 	mux.HandleFunc("/v1/installations/register", h.HandleRegisterInstallation)
-	mux.HandleFunc("/v1/telemetry/batches", h.HandleIngestBatch)
+	ingestHandler := http.Handler(http.HandlerFunc(h.HandleIngestBatch))
+	if h.DeviceAuth != nil {
+		ingestHandler = h.DeviceAuth.Middleware(ingestHandler)
+	}
+	mux.Handle("/v1/telemetry/batches", withIngestDeadline(ingestHandler))
 	mux.HandleFunc("/v1/leaderboard", h.HandleGetLeaderboard)
 	mux.HandleFunc("/v1/leaderboard/snapshots", h.HandleGetSnapshot)
+	mux.HandleFunc("/v1/data-deletion-requests", h.HandleDeletionRequests)
 	return mux
 }
 

@@ -5,6 +5,8 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -42,6 +44,15 @@ type RejectedEvent struct {
 // idempotency. If the batch has already been processed, it returns the
 // previous result.
 func (s *Service) ProcessBatch(ctx context.Context, installationID string, batch protocol.UploadBatch) (*Result, error) {
+	body, err := json.Marshal(batch)
+	if err != nil {
+		return nil, fmt.Errorf("marshal batch: %w", err)
+	}
+	return s.ProcessBatchWithHash(ctx, installationID, batch, sha256.Sum256(body))
+}
+
+// ProcessBatchWithHash ingests a batch using the hash of the authenticated body.
+func (s *Service) ProcessBatchWithHash(ctx context.Context, installationID string, batch protocol.UploadBatch, bodyHash [32]byte) (*Result, error) {
 	// Verify installation ownership
 	inst, err := s.Installs.GetInstallation(ctx, installationID)
 	if err != nil {
@@ -54,14 +65,18 @@ func (s *Service) ProcessBatch(ctx context.Context, installationID string, batch
 		return nil, fmt.Errorf("batch installation_id mismatch")
 	}
 
-	// Batch idempotency: check if batch already exists
+	// Batch idempotency: the same ID may only be replayed with the same body.
 	existing, err := s.Batches.GetBatch(ctx, batch.BatchID)
 	if err == nil && existing != nil {
-		return s.buildResultFromExisting(ctx, existing)
+		if existing.InstallationID != installationID || existing.RequestSHA256 != bodyHash {
+			return nil, store.ErrBatchHashConflict
+		}
+		if existing.CommittedAt != nil {
+			return s.buildResultFromExisting(ctx, existing)
+		}
 	}
 
 	now := time.Now().UTC()
-	bodyHash := sha256.Sum256([]byte(batch.BatchID))
 
 	ib := &domain.IngestBatch{
 		BatchID:        batch.BatchID,
@@ -71,97 +86,121 @@ func (s *Service) ProcessBatch(ctx context.Context, installationID string, batch
 		BatchStatus:    "received",
 		ReceivedAt:     now,
 	}
+	var validEvents []*store.IngestEvent
+	var rejected []RejectedEvent
+	var durableRejected []store.BatchRejection
+	for ordinal, env := range batch.Events {
+		if rej := validateEnvelope(env); rej != nil {
+			rejected = append(rejected, *rej)
+			durableRejected = append(durableRejected, toBatchRejection(uint32(ordinal), *rej))
+			continue
+		}
+		evt, err := envelopeToEvent(env, batch.BatchID, installationID, inst.UserID, now)
+		if err != nil {
+			rej := RejectedEvent{EventID: string(env.EventID), ErrorCode: string(protocol.RejectedEventErrorCodeSchemaInvalid), Retryable: false}
+			rejected = append(rejected, rej)
+			durableRejected = append(durableRejected, toBatchRejection(uint32(ordinal), rej))
+			continue
+		}
+		validEvents = append(validEvents, evt)
+	}
+	ib.RejectedCount = uint32(len(rejected))
+
+	if atomic, ok := s.Batches.(store.AtomicIngestStore); ok {
+		committed, err := atomic.CommitBatch(ctx, ib, validEvents, durableRejected)
+		if err != nil {
+			if errors.Is(err, store.ErrBatchHashConflict) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("commit batch: %w", err)
+		}
+		return resultFromCommit(committed), nil
+	}
+
 	if err := s.Batches.CreateBatch(ctx, ib); err != nil {
-		// Race: another goroutine created it
 		existing, err2 := s.Batches.GetBatch(ctx, batch.BatchID)
 		if err2 == nil && existing != nil {
+			if existing.InstallationID != installationID || existing.RequestSHA256 != bodyHash {
+				return nil, store.ErrBatchHashConflict
+			}
 			return s.buildResultFromExisting(ctx, existing)
 		}
 		return nil, fmt.Errorf("create batch: %w", err)
 	}
-
-	var accepted, duplicates uint32
-	var rejected []RejectedEvent
-
-	for _, env := range batch.Events {
-		rej := validateEnvelope(env)
-		if rej != nil {
-			rejected = append(rejected, *rej)
-			continue
-		}
-
-		evt, err := envelopeToEvent(env, batch.BatchID, installationID, inst.UserID, now)
-		if err != nil {
-			rejected = append(rejected, RejectedEvent{
-				EventID:   string(env.EventID),
-				ErrorCode: "CONVERSION_ERROR",
-				Retryable: false,
-			})
-			continue
-		}
-
+	for _, ingestEvent := range validEvents {
+		evt := ingestEvent.Event
 		inserted, err := s.Events.InsertEvent(ctx, evt)
 		if err != nil {
-			rejected = append(rejected, RejectedEvent{
-				EventID:   string(env.EventID),
-				ErrorCode: "STORE_ERROR",
-				Retryable: true,
-			})
+			rejected = append(rejected, RejectedEvent{EventID: base64.RawURLEncoding.EncodeToString(evt.EventID[:]), ErrorCode: string(protocol.RejectedEventErrorCodeInternalRetryable), Retryable: true})
 			continue
 		}
 		if inserted {
-			accepted++
+			ib.AcceptedCount++
 		} else {
-			duplicates++
+			ib.DuplicateCount++
 		}
 	}
-
-	ib.AcceptedCount = accepted
-	ib.DuplicateCount = duplicates
 	ib.RejectedCount = uint32(len(rejected))
-	if len(rejected) == 0 {
+	if ib.RejectedCount == 0 {
 		ib.BatchStatus = "committed"
-	} else if accepted > 0 {
+	} else if ib.AcceptedCount > 0 {
 		ib.BatchStatus = "partial"
 	} else {
 		ib.BatchStatus = "rejected"
 	}
 	committedAt := time.Now().UTC()
 	ib.CommittedAt = &committedAt
-	_ = s.Batches.UpdateBatch(ctx, ib)
-
-	// Touch last_seen
-	_ = s.Installs.UpdateLastSeen(ctx, installationID, now)
-
-	return &Result{
-		BatchID:    batch.BatchID,
-		Accepted:   accepted,
-		Duplicates: duplicates,
-		Rejected:   rejected,
-		ServerTime: time.Now().UTC(),
-	}, nil
+	if err := s.Batches.UpdateBatch(ctx, ib); err != nil {
+		return nil, fmt.Errorf("update batch: %w", err)
+	}
+	if err := s.Installs.UpdateLastSeen(ctx, installationID, now); err != nil {
+		return nil, fmt.Errorf("update last seen: %w", err)
+	}
+	return &Result{BatchID: batch.BatchID, Accepted: ib.AcceptedCount, Duplicates: ib.DuplicateCount, Rejected: rejected, ServerTime: time.Now().UTC()}, nil
 }
 
 func (s *Service) buildResultFromExisting(ctx context.Context, b *domain.IngestBatch) (*Result, error) {
-	return &Result{
+	result := &Result{
 		BatchID:    b.BatchID,
 		Accepted:   b.AcceptedCount,
 		Duplicates: b.DuplicateCount,
 		ServerTime: time.Now().UTC(),
-	}, nil
+	}
+	if rejectionStore, ok := s.Batches.(store.BatchRejectionStore); ok {
+		rejected, err := rejectionStore.GetBatchRejections(ctx, b.BatchID)
+		if err != nil {
+			return nil, fmt.Errorf("load batch rejections: %w", err)
+		}
+		for _, rejection := range rejected {
+			result.Rejected = append(result.Rejected, RejectedEvent{EventID: rejection.EventID, ErrorCode: rejection.ErrorCode, Retryable: rejection.Retryable})
+		}
+	}
+	return result, nil
+}
+
+func resultFromCommit(committed *store.IngestCommitResult) *Result {
+	result := &Result{BatchID: committed.Batch.BatchID, Accepted: committed.Batch.AcceptedCount, Duplicates: committed.Batch.DuplicateCount, ServerTime: time.Now().UTC()}
+	for _, rejection := range committed.Rejected {
+		result.Rejected = append(result.Rejected, RejectedEvent{EventID: rejection.EventID, ErrorCode: rejection.ErrorCode, Retryable: rejection.Retryable})
+	}
+	return result
+}
+
+func toBatchRejection(ordinal uint32, rejected RejectedEvent) store.BatchRejection {
+	return store.BatchRejection{Ordinal: ordinal, EventID: rejected.EventID, ErrorCode: rejected.ErrorCode, Retryable: rejected.Retryable}
 }
 
 func validateEnvelope(env protocol.EventEnvelope) *RejectedEvent {
 	if env.EventID == "" {
-		return &RejectedEvent{EventID: "", ErrorCode: "MISSING_EVENT_ID", Retryable: false}
+		return &RejectedEvent{EventID: "", ErrorCode: string(protocol.RejectedEventErrorCodeSchemaInvalid), Retryable: false}
 	}
 	if env.InstallationID == "" {
-		return &RejectedEvent{EventID: string(env.EventID), ErrorCode: "MISSING_INSTALLATION_ID", Retryable: false}
+		return &RejectedEvent{EventID: string(env.EventID), ErrorCode: string(protocol.RejectedEventErrorCodeSchemaInvalid), Retryable: false}
 	}
 	return nil
 }
 
-func envelopeToEvent(env protocol.EventEnvelope, batchID, installationID, userID string, receivedAt time.Time) (*domain.UsageEvent, error) {
+func envelopeToEvent(env protocol.EventEnvelope, batchID, installationID, userID string, receivedAt time.Time) (*store.IngestEvent, error) {
 	occurredAt, err := time.Parse(time.RFC3339Nano, env.OccurredAt)
 	if err != nil {
 		return nil, fmt.Errorf("invalid occurredAt: %w", err)
@@ -221,15 +260,27 @@ func envelopeToEvent(env protocol.EventEnvelope, batchID, installationID, userID
 		evt.ToolCallHash = &value
 	}
 
+	persisted := &store.IngestEvent{Event: evt}
 	switch payload := env.Payload.Value.(type) {
 	case protocol.SessionStartedPayload:
 		evt.EventType = string(protocol.EventTypeSessionStarted)
 		evt.ModelID = payload.ModelID
+		if payload.WorkspaceHash != nil {
+			value, decodeErr := decodeHMAC(string(*payload.WorkspaceHash))
+			err = decodeErr
+			evt.WorkspaceHash = &value
+		}
 	case protocol.SessionEndedPayload:
 		evt.EventType = string(protocol.EventTypeSessionEnded)
+		reason := domain.SessionEndReason(payload.Reason)
+		evt.SessionEndReason = &reason
 		evt.DurationMs, err = parseOptionalUInt64(payload.DurationMs)
 	case protocol.TurnStartedPayload:
 		evt.EventType = string(protocol.EventTypeTurnStarted)
+		if payload.Trigger != nil {
+			trigger := domain.TurnTrigger(*payload.Trigger)
+			evt.TurnTrigger = &trigger
+		}
 	case protocol.TurnCompletedPayload:
 		evt.EventType = string(protocol.EventTypeTurnCompleted)
 		evt.Success = &payload.Success
@@ -260,10 +311,23 @@ func envelopeToEvent(env protocol.EventEnvelope, batchID, installationID, userID
 		evt.EventType = string(protocol.EventTypeToolInvoked)
 		evt.Success = &payload.Success
 		evt.DurationMs, err = parseOptionalUInt64(payload.DurationMs)
+		persisted.ToolCategory = &payload.ToolCategory
 	case protocol.SkillInvokedPayload:
 		evt.EventType = string(protocol.EventTypeSkillInvoked)
 		evt.Success = &payload.Success
 		evt.DurationMs, err = parseOptionalUInt64(payload.DurationMs)
+		if err == nil {
+			value, decodeErr := decodeHMAC(string(payload.SkillKey))
+			err = decodeErr
+			persisted.SkillKey = &value
+		}
+		invokeType := string(payload.InvokeType)
+		persisted.SkillInvokeType = &invokeType
+		if payload.PluginKey != nil && err == nil {
+			value, decodeErr := decodeHMAC(string(*payload.PluginKey))
+			err = decodeErr
+			persisted.PluginKey = &value
+		}
 	case protocol.CodeChangedPayload:
 		evt.EventType = string(protocol.EventTypeCodeChanged)
 		if evt.CodeAddedLines, err = parseUInt64(payload.AddedLines); err == nil {
@@ -276,17 +340,28 @@ func envelopeToEvent(env protocol.EventEnvelope, batchID, installationID, userID
 			evt.CodeAcceptedLines, err = parseOptionalUInt64(payload.AcceptedLines)
 		}
 		evt.CodeFileCount = &payload.FileCount
+		persisted.CodeLanguage = payload.Language
 	case protocol.CostRecordedPayload:
 		evt.EventType = string(protocol.EventTypeCostRecorded)
+		amount, currency, source := string(payload.Amount), payload.Currency, string(payload.Source)
+		persisted.CostAmount, persisted.CostCurrency, persisted.CostSource = &amount, &currency, &source
+		if payload.DiscountAmount != nil {
+			discount := string(*payload.DiscountAmount)
+			persisted.CostDiscountAmount = &discount
+		}
 	case protocol.AgentSpawnedPayload:
 		evt.EventType = string(protocol.EventTypeAgentSpawned)
+		value, decodeErr := decodeHMAC(string(payload.ChildSessionHash))
+		err = decodeErr
+		persisted.ChildSessionHash = &value
+		persisted.SpawnedAgentType = &payload.SpawnedAgentType
 	default:
 		return nil, fmt.Errorf("unsupported payload %T", env.Payload.Value)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("invalid uint64 wire value: %w", err)
 	}
-	return evt, nil
+	return persisted, nil
 }
 
 func parseOptionalUInt64(value *protocol.UInt64String) (*uint64, error) {

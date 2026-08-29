@@ -5,7 +5,7 @@ export interface AgentConfig {
   name: string;
   adapterId: string;
   adapterVersion: string;
-  status: "ACTIVE" | "CONFIGURING" | "NEEDS_PERMISSION" | "DISABLED" | "DEGRADED" | "ERROR";
+  status: "UNDETECTED" | "DETECTED" | "ACTIVE" | "CONFIGURING" | "NEEDS_PERMISSION" | "DISABLED" | "DEGRADED" | "ERROR" | "PAUSED";
   setupPlanStatus: "APPLIED" | "PROPOSED" | "ROLLED_BACK";
   enabled: boolean;
   accuracy: "exact" | "derived" | "correlated" | "estimated";
@@ -25,7 +25,7 @@ export interface CollectorDevice {
   osVersion: string;
   collectorVersion: string;
   keyFingerprint: string;
-  status: "ACTIVE" | "REVOKED";
+  status: "ACTIVE" | "REVOCATION_PENDING" | "REVOKED";
   lastSyncAt: string;
   pendingEvents: number;
 }
@@ -105,7 +105,6 @@ export interface AutostartInfo {
 }
 
 export interface DataDeletionResponse {
-  success: boolean;
   requestedAt: string;
   purgedEvents: number;
   status: string;
@@ -118,6 +117,18 @@ export interface UploadAck {
   duplicates: number;
   rejected: string[];
   serverTime: string;
+}
+
+export interface OperationAck<T> {
+  operationId: string;
+  acceptedAt: string;
+  status: "ACKNOWLEDGED" | "PENDING";
+  state: T;
+}
+
+export interface SyncRequestState {
+  queuedEvents: number;
+  message: string;
 }
 
 // Check if running inside real Tauri environment
@@ -357,25 +368,19 @@ export async function getDaemonStatus(): Promise<DaemonStatus> {
 
 export async function toggleGlobalPause(): Promise<boolean> {
   if (isTauriEnvironment()) {
-    return await invoke<boolean>("toggle_global_pause");
+    const ack = await invoke<OperationAck<DaemonStatus>>("toggle_global_pause");
+    return ack.state.globalPaused;
   }
   mockState.globalPaused = !mockState.globalPaused;
-  mockState.agents = mockState.agents.map((a) => ({
-    ...a,
-    status: a.enabled ? (mockState.globalPaused ? "DEGRADED" : "ACTIVE") : a.status,
-  }));
   return mockState.globalPaused;
 }
 
 export async function setGlobalPause(paused: boolean): Promise<boolean> {
   if (isTauriEnvironment()) {
-    return await invoke<boolean>("set_global_pause", { paused });
+    const ack = await invoke<OperationAck<DaemonStatus>>("set_global_pause", { paused });
+    return ack.state.globalPaused;
   }
   mockState.globalPaused = paused;
-  mockState.agents = mockState.agents.map((a) => ({
-    ...a,
-    status: a.enabled ? (paused ? "DEGRADED" : "ACTIVE") : a.status,
-  }));
   return paused;
 }
 
@@ -402,31 +407,34 @@ export async function getAgentConfigs(): Promise<AgentConfig[]> {
 
 export async function toggleAgent(agentId: string): Promise<AgentConfig> {
   if (isTauriEnvironment()) {
-    return await invoke<AgentConfig>("toggle_agent", { agentId });
+    const ack = await invoke<OperationAck<AgentConfig>>("toggle_agent", { agentId });
+    return ack.state;
   }
   const ag = mockState.agents.find((a) => a.id === agentId);
   if (!ag) throw new Error(`Agent '${agentId}' not found`);
   ag.enabled = !ag.enabled;
-  ag.status = ag.enabled ? (mockState.globalPaused ? "DEGRADED" : "ACTIVE") : "DISABLED";
+  ag.status = ag.enabled ? (mockState.globalPaused ? "PAUSED" : "ACTIVE") : "DISABLED";
   ag.setupPlanStatus = ag.enabled ? "APPLIED" : "ROLLED_BACK";
   return { ...ag };
 }
 
 export async function setAgentStatus(agentId: string, enabled: boolean): Promise<AgentConfig> {
   if (isTauriEnvironment()) {
-    return await invoke<AgentConfig>("set_agent_status", { agentId, enabled });
+    const ack = await invoke<OperationAck<AgentConfig>>("set_agent_status", { agentId, enabled });
+    return ack.state;
   }
   const ag = mockState.agents.find((a) => a.id === agentId);
   if (!ag) throw new Error(`Agent '${agentId}' not found`);
   ag.enabled = enabled;
-  ag.status = enabled ? (mockState.globalPaused ? "DEGRADED" : "ACTIVE") : "DISABLED";
+  ag.status = enabled ? (mockState.globalPaused ? "PAUSED" : "ACTIVE") : "DISABLED";
   ag.setupPlanStatus = enabled ? "APPLIED" : "ROLLED_BACK";
   return { ...ag };
 }
 
 export async function previewUploadBatch(): Promise<UploadBatchPreview> {
   if (isTauriEnvironment()) {
-    return await invoke<UploadBatchPreview>("preview_upload_batch");
+    const ack = await invoke<OperationAck<UploadBatchPreview>>("preview_upload_batch");
+    return ack.state;
   }
   const instId = mockState.devices[0]?.installationId || "inst_win_studio_77af";
   return {
@@ -445,33 +453,25 @@ export async function previewUploadBatch(): Promise<UploadBatchPreview> {
       sessionHash: "sess_sha256_masked",
       turnHash: "turn_sha256_masked",
       accuracy: e.accuracy,
-      source: { kind: "otlp", cursor: "wal_pos_auto", rawFingerprint: "fp_redacted" },
+      source: { kind: "otlp", cursorHmac: "hmac-sha256:masked", rawFingerprintHmac: "hmac-sha256:masked" },
       payload: e.payload,
     })),
     redactionApplied: true,
   };
 }
 
-export async function triggerSyncNow(): Promise<UploadAck> {
+export async function triggerSyncNow(): Promise<SyncRequestState> {
   if (isTauriEnvironment()) {
-    return (await invoke<UploadAck>("trigger_sync_now")) as UploadAck;
+    const ack = await invoke<OperationAck<SyncRequestState>>("trigger_sync_now");
+    return ack.state;
   }
   if (mockState.globalPaused) {
     throw new Error("全局采集已暂停，无法上报");
   }
   const count = mockState.outbox.filter((e) => e.deliveryStatus !== "ACKED").length;
-  mockState.outbox = mockState.outbox.map((e) => ({ ...e, deliveryStatus: "ACKED" }));
-  mockState.eventsUploaded += count;
-  if (mockState.devices[0]) {
-    mockState.devices[0].lastSyncAt = "刚刚";
-    mockState.devices[0].pendingEvents = 0;
-  }
   return {
-    batchId: `batch_${Date.now()}_ack`,
-    accepted: count,
-    duplicates: 0,
-    rejected: [],
-    serverTime: new Date().toISOString(),
+    queuedEvents: count,
+    message: "Upload request accepted locally; server confirmation is pending.",
   };
 }
 
@@ -506,7 +506,8 @@ export async function createConfigBackup(description?: string): Promise<ConfigBa
 
 export async function restoreConfigBackup(backupId: string): Promise<boolean> {
   if (isTauriEnvironment()) {
-    return await invoke<boolean>("restore_config_backup", { backupId });
+    await invoke<OperationAck<ConfigSnapshot>>("restore_config_backup", { backupId });
+    return true;
   }
   const backup = mockState.configBackups.find((b) => b.id === backupId);
   if (!backup) throw new Error(`Backup snapshot '${backupId}' not found`);
@@ -541,35 +542,33 @@ export async function listDevices(): Promise<CollectorDevice[]> {
 
 export async function revokeDevice(deviceId: string): Promise<boolean> {
   if (isTauriEnvironment()) {
-    return await invoke<boolean>("revoke_device", { deviceId });
+    await invoke<OperationAck<CollectorDevice>>("revoke_device", { deviceId });
+    return true;
   }
   const dev = mockState.devices.find((d) => d.id === deviceId);
   if (!dev) throw new Error(`Device '${deviceId}' not found`);
-  dev.status = "REVOKED";
-  dev.lastSyncAt = "已撤销";
+  dev.status = "REVOCATION_PENDING";
+  dev.lastSyncAt = "等待服务端确认";
   return true;
 }
 
 export async function requestDataDeletion(): Promise<DataDeletionResponse> {
   if (isTauriEnvironment()) {
-    return await invoke<DataDeletionResponse>("request_data_deletion");
+    const ack = await invoke<OperationAck<DataDeletionResponse>>("request_data_deletion");
+    return ack.state;
   }
-  const count = mockState.outbox.length;
-  mockState.outbox = [];
-  mockState.eventsCollected = 0;
-  mockState.eventsUploaded = 0;
   return {
-    success: true,
     requestedAt: new Date().toISOString(),
-    purgedEvents: count,
+    purgedEvents: 0,
     status: "DELETION_PENDING",
-    message: "数据擦除指令已下发：本地队列已彻底清空，服务端数据删除流程已登记并在保护期后永久清除。",
+    message: "删除请求已提交；本地队列将保留到服务端确认完成。",
   };
 }
 
 export async function purgeLocalCache(): Promise<number> {
   if (isTauriEnvironment()) {
-    return await invoke<number>("purge_local_cache");
+    const ack = await invoke<OperationAck<number>>("purge_local_cache");
+    return ack.state;
   }
   const count = mockState.outbox.length;
   mockState.outbox = [];

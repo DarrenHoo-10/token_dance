@@ -118,12 +118,25 @@ CREATE TABLE ingest_batches (
   UNIQUE KEY uk_ingest_batches_installation_batch (installation_id, batch_id),
   KEY idx_ingest_batches_installation_received (installation_id, received_at),
   KEY idx_ingest_batches_status_received (batch_status, received_at),
+  KEY idx_ingest_batches_committed (committed_at, batch_id),
   CONSTRAINT fk_ingest_batches_installation
     FOREIGN KEY (installation_id) REFERENCES installations (installation_id),
   CONSTRAINT chk_ingest_batches_count
     CHECK (event_count <= 500 AND accepted_count + duplicate_count + rejected_count <= event_count),
   CONSTRAINT chk_ingest_batches_status
     CHECK (batch_status IN ('received', 'committed', 'partial', 'rejected'))
+) ENGINE = InnoDB;
+
+CREATE TABLE ingest_batch_rejections (
+  batch_id              CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  event_ordinal         INT UNSIGNED NOT NULL,
+  event_id              VARCHAR(43) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  error_code            VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  retryable             BOOLEAN NOT NULL,
+  created_at            DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (batch_id, event_ordinal),
+  CONSTRAINT fk_ingest_batch_rejections_batch
+    FOREIGN KEY (batch_id) REFERENCES ingest_batches (batch_id) ON DELETE CASCADE
 ) ENGINE = InnoDB;
 
 CREATE TABLE usage_events (
@@ -149,6 +162,11 @@ CREATE TABLE usage_events (
   received_at              DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   session_hash             BINARY(32) NULL,
   parent_session_hash      BINARY(32) NULL,
+  workspace_hash           BINARY(32) NULL,
+  session_end_reason       VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  turn_trigger             VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  child_session_hash       BINARY(32) NULL,
+  spawned_agent_type       VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
   turn_hash                BINARY(32) NULL,
   tool_call_hash           BINARY(32) NULL,
   token_input              BIGINT UNSIGNED NULL,
@@ -170,9 +188,11 @@ CREATE TABLE usage_events (
   code_added_lines         BIGINT UNSIGNED NULL,
   code_deleted_lines       BIGINT UNSIGNED NULL,
   code_file_count          INT UNSIGNED NULL,
+  code_language            VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NULL,
   cost_amount              DECIMAL(20, 8) NULL,
   cost_currency            CHAR(3) CHARACTER SET ascii COLLATE ascii_bin NULL,
   cost_source              VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NULL,
+  cost_discount_amount     DECIMAL(20, 8) NULL,
   privacy_policy_version   SMALLINT UNSIGNED NOT NULL,
   safe_extension_json      JSON NULL,
   created_at               DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -200,10 +220,22 @@ CREATE TABLE usage_events (
   CONSTRAINT chk_usage_events_source_kind
     CHECK (source_kind IN ('otlp', 'jsonl_tail', 'sqlite_snapshot', 'file_snapshot',
                            'runtime_stream', 'local_http_api', 'command_snapshot', 'remote_api')),
+  CONSTRAINT chk_usage_events_session_end_reason
+    CHECK (session_end_reason IS NULL OR session_end_reason IN ('completed', 'cancelled', 'error', 'timeout', 'unknown')),
+  CONSTRAINT chk_usage_events_turn_trigger
+    CHECK (turn_trigger IS NULL OR turn_trigger IN ('user', 'system', 'scheduled', 'subagent')),
   CONSTRAINT chk_usage_events_nonnegative_cost
     CHECK (cost_amount IS NULL OR cost_amount >= 0),
   CONSTRAINT chk_usage_events_cost_source
     CHECK (cost_source IS NULL OR cost_source IN ('provider_reported', 'estimated_price_table'))
+) ENGINE = InnoDB;
+
+CREATE TABLE aggregation_watermarks (
+  watermark_name          VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  source_max_event_pk     BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  committed_through_at    DATETIME(3) NOT NULL DEFAULT '1970-01-01 00:00:00.000',
+  updated_at              DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (watermark_name)
 ) ENGINE = InnoDB;
 
 CREATE TABLE daily_user_agent_metrics (
@@ -286,6 +318,23 @@ CREATE TABLE daily_skill_metrics (
            exact_use_count + derived_use_count + correlated_use_count + estimated_use_count <= use_count)
 ) ENGINE = InnoDB;
 
+CREATE TABLE daily_cost_metrics (
+  metric_date             DATE NOT NULL,
+  user_id                 CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  agent_id                VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  cost_currency           CHAR(3) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  cost_source             VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  cost_amount             DECIMAL(20, 8) NOT NULL DEFAULT 0,
+  discount_amount         DECIMAL(20, 8) NOT NULL DEFAULT 0,
+  source_max_event_pk     BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  aggregation_version     INT UNSIGNED NOT NULL,
+  computed_at             DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  updated_at              DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (metric_date, user_id, agent_id, cost_currency, cost_source),
+  KEY idx_daily_cost_user_date (user_id, metric_date),
+  CONSTRAINT fk_daily_cost_metrics_user FOREIGN KEY (user_id) REFERENCES users (user_id)
+) ENGINE = InnoDB;
+
 CREATE TABLE leaderboard_snapshots (
   snapshot_id             CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   board_key               VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -360,11 +409,32 @@ CREATE TABLE adapter_releases (
     CHECK (rollout_percent <= 100)
 ) ENGINE = InnoDB;
 
+CREATE TABLE teams (
+  team_id                 VARCHAR(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  team_name               VARCHAR(120) NOT NULL,
+  created_at              DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (team_id)
+) ENGINE = InnoDB;
+
+CREATE TABLE team_memberships (
+  team_id                 VARCHAR(80) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  user_id                 CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  membership_status       VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'active',
+  created_at              DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (team_id, user_id),
+  KEY idx_team_memberships_user (user_id, membership_status),
+  CONSTRAINT fk_team_memberships_team FOREIGN KEY (team_id) REFERENCES teams (team_id) ON DELETE CASCADE,
+  CONSTRAINT fk_team_memberships_user FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE,
+  CONSTRAINT chk_team_membership_status CHECK (membership_status IN ('active', 'removed'))
+) ENGINE = InnoDB;
+
 CREATE TABLE data_deletion_requests (
   request_id              CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   user_id                 CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NULL,
   installation_id         CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NULL,
   deletion_scope          VARCHAR(24) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  range_start             DATETIME(3) NULL,
+  range_end               DATETIME(3) NULL,
   request_status          VARCHAR(16) CHARACTER SET ascii COLLATE ascii_bin NOT NULL DEFAULT 'pending',
   requested_at            DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   started_at              DATETIME(3) NULL,

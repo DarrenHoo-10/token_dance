@@ -15,36 +15,34 @@ export const DevicesConfigView: React.FC = () => {
   const [feedback, setFeedback] = useState<string | null>(null);
   const [deviceToRevoke, setDeviceToRevoke] = useState<string | null>(null);
 
-  const handleCreateBackup = () => {
-    const backup = createConfigBackup(backupDescription || undefined);
-    setBackupDescription("");
-    setFeedback(
-      activeLanguage === "zh"
-        ? `✓ 已成功创建配置快照 ${backup.versionTag}`
-        : `✓ Config snapshot ${backup.versionTag} created`
-    );
-  };
-
-  const handleRestore = (id: string) => {
-    const success = restoreConfigBackup(id);
-    if (success) {
-      setFeedback(
-        activeLanguage === "zh"
-          ? "✓ 已成功恢复并回滚至选中的配置快照！"
-          : "✓ Configuration restored to selected backup successfully!"
-      );
+  const handleCreateBackup = async () => {
+    try {
+      await createConfigBackup(backupDescription || undefined);
+      setBackupDescription("");
+      setFeedback(activeLanguage === "zh" ? "✓ 服务端已 ACK 并返回最新配置快照。" : "✓ Server ACKed and returned the latest snapshot.");
+    } catch (err) {
+      setFeedback(`✗ ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
-  const handleConfirmRevoke = () => {
-    if (deviceToRevoke) {
-      revokeDevice(deviceToRevoke);
-      setDeviceToRevoke(null);
-      setFeedback(
-        activeLanguage === "zh"
-          ? "✓ 该设备已被成功撤销，服务端已拒绝接收其新上报批次。"
-          : "✓ Device revoked. Server will reject future batches from it."
-      );
+  const handleRestore = async (id: string) => {
+    try {
+      await restoreConfigBackup(id);
+      setFeedback(activeLanguage === "zh" ? "✓ 恢复命令已 ACK，界面已刷新为权威配置。" : "✓ Restore ACKed; authoritative configuration refreshed.");
+    } catch (err) {
+      setFeedback(`✗ ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const handleConfirmRevoke = async () => {
+    const deviceId = deviceToRevoke;
+    setDeviceToRevoke(null);
+    if (!deviceId) return;
+    try {
+      await revokeDevice(deviceId);
+      setFeedback(activeLanguage === "zh" ? "✓ 撤销命令已 ACK，且未保留已撤销设备选择。" : "✓ Revocation ACKed; revoked device is no longer selected.");
+    } catch (err) {
+      setFeedback(`✗ ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -66,9 +64,9 @@ export const DevicesConfigView: React.FC = () => {
         <div
           style={{
             padding: "12px 18px",
-            background: "var(--lime-soft)",
-            border: "1px solid #c9f564",
-            color: "var(--lime-dark)",
+            background: feedback.startsWith("✗") ? "#fde8e5" : "var(--lime-soft)",
+            border: feedback.startsWith("✗") ? "1px solid #fbc9c2" : "1px solid #c9f564",
+            color: feedback.startsWith("✗") ? "var(--danger)" : "var(--lime-dark)",
             borderRadius: "12px",
             marginBottom: "20px",
             fontSize: "13px",
@@ -188,7 +186,7 @@ export const DevicesConfigView: React.FC = () => {
           <button
             type="button"
             className="btn btn-dark"
-            onClick={handleCreateBackup}
+            onClick={() => void handleCreateBackup()}
           >
             {activeLanguage === "zh" ? "保存当前配置快照" : "Create Snapshot"}
           </button>
@@ -233,7 +231,7 @@ export const DevicesConfigView: React.FC = () => {
               <button
                 type="button"
                 className="btn btn-sm btn-primary"
-                onClick={() => handleRestore(b.id)}
+                onClick={() => void handleRestore(b.id)}
               >
                 {activeLanguage === "zh" ? "恢复此配置" : "Restore Config"}
               </button>
@@ -276,7 +274,7 @@ export const DevicesConfigView: React.FC = () => {
               <button
                 type="button"
                 className="btn btn-danger"
-                onClick={handleConfirmRevoke}
+                onClick={() => void handleConfirmRevoke()}
               >
                 {activeLanguage === "zh" ? "确认撤销" : "Confirm Revoke"}
               </button>

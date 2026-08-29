@@ -2,32 +2,76 @@ package aggregator
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sort"
 	"time"
 
 	"github.com/tokendance/token-collector/server/internal/domain"
 	"github.com/tokendance/token-collector/server/internal/store"
+	"github.com/tokendance/token-collector/server/internal/store/mysqlstore"
 )
 
 const (
-	AggregationVersion = 1
+	AggregationVersion = 2
 	batchSize          = 1000
+	watermarkName      = "daily_metrics_committed_v2"
+	defaultSafeLag     = 5 * time.Second
 )
 
 // Worker performs incremental aggregation of usage events into daily metrics.
 type Worker struct {
-	Events  store.EventStore
-	Metrics store.MetricStore
-	Users   store.UserStore
+	Events     store.EventStore
+	Metrics    store.MetricStore
+	Users      store.UserStore
+	Watermarks store.WatermarkStore
+	SafeLag    time.Duration
 
-	// LastProcessedPK tracks the high-water mark for incremental processing.
+	// LastProcessedPK exposes the committed aggregation source watermark.
 	LastProcessedPK uint64
 }
 
 // RunOnce processes a single batch of new events since LastProcessedPK.
 // Returns the number of events processed.
 func (w *Worker) RunOnce(ctx context.Context) (int, error) {
+	if committed, ok := w.Metrics.(interface {
+		AggregateCommittedMetrics(context.Context, string, time.Time, int) (mysqlstore.AggregationProgress, error)
+	}); ok {
+		lag := w.SafeLag
+		if lag == 0 {
+			lag = defaultSafeLag
+		} else if lag < 0 {
+			lag = 0
+		}
+		progress, err := committed.AggregateCommittedMetrics(ctx, watermarkName, time.Now().UTC().Add(-lag), batchSize)
+		if err != nil {
+			return 0, err
+		}
+		w.LastProcessedPK = progress.SourceMaxEventPK
+		return progress.EventCount, nil
+	}
+	if w.Watermarks != nil && w.LastProcessedPK == 0 {
+		persisted, err := w.Watermarks.GetWatermark(ctx, watermarkName)
+		if err != nil {
+			return 0, err
+		}
+		w.LastProcessedPK = persisted
+	}
+	if recomputer, ok := w.Metrics.(store.RecomputeMetricStore); ok {
+		maxPK, err := w.Events.MaxEventPK(ctx)
+		if err != nil {
+			return 0, err
+		}
+		if maxPK <= w.LastProcessedPK {
+			return 0, nil
+		}
+		if err := recomputer.RecomputeMetrics(ctx, watermarkName, maxPK); err != nil {
+			return 0, err
+		}
+		processed := int(maxPK - w.LastProcessedPK)
+		w.LastProcessedPK = maxPK
+		return processed, nil
+	}
 	events, err := w.Events.ListEventsAfterPK(ctx, w.LastProcessedPK, batchSize)
 	if err != nil {
 		return 0, err
@@ -82,6 +126,11 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	}
 
 	w.LastProcessedPK = events[len(events)-1].EventPK
+	if w.Watermarks != nil {
+		if err := w.Watermarks.SetWatermark(ctx, watermarkName, w.LastProcessedPK, now); err != nil {
+			return 0, err
+		}
+	}
 	return len(events), nil
 }
 
@@ -122,20 +171,100 @@ func mergeEvent(m *domain.DailyUserAgentMetric, e *domain.UsageEvent) {
 	}
 }
 
-// BuildLeaderboardSnapshot creates an immutable leaderboard snapshot from
-// current daily metrics. Only users with leaderboard_visibility matching
-// scopeType are included.
-func (w *Worker) BuildLeaderboardSnapshot(
+// BuildLeaderboardSnapshot creates a global snapshot for compatibility.
+func (w *Worker) BuildLeaderboardSnapshot(ctx context.Context, leaderboards store.LeaderboardStore, snapshotID, boardKey, scopeType, metricKey string, windowStart, windowEnd time.Time) error {
+	return w.BuildLeaderboardSnapshotScoped(ctx, leaderboards, snapshotID, boardKey, scopeType, defaultScopeKey(scopeType), metricKey, windowStart, windowEnd)
+}
+
+// BuildLeaderboardSnapshotScoped publishes entries and snapshot state atomically.
+func (w *Worker) BuildLeaderboardSnapshotScoped(ctx context.Context, leaderboards store.LeaderboardStore, snapshotID, boardKey, scopeType, scopeKey, metricKey string, windowStart, windowEnd time.Time) error {
+	publisher, ok := leaderboards.(interface {
+		PublishSnapshotAtomic(context.Context, string, mysqlstore.AggregationProgress, *domain.LeaderboardSnapshot, []*domain.LeaderboardEntry) error
+	})
+	progressStore, progressOK := w.Metrics.(interface {
+		GetAggregationProgress(context.Context, string) (mysqlstore.AggregationProgress, error)
+	})
+	scopeStore, scopeOK := w.Users.(interface {
+		UserAllowedInScope(context.Context, string, string, string) (bool, error)
+	})
+	if !ok || !progressOK || !scopeOK {
+		if scopeKey != defaultScopeKey(scopeType) {
+			return fmt.Errorf("scoped snapshot store is unavailable")
+		}
+		return w.buildLeaderboardSnapshotLegacy(ctx, leaderboards, snapshotID, boardKey, scopeType, metricKey, windowStart, windowEnd)
+	}
+	progress, err := progressStore.GetAggregationProgress(ctx, watermarkName)
+	if err != nil {
+		return err
+	}
+	metrics, err := w.Metrics.GetDailyMetricsAllUsers(ctx, windowStart, windowEnd)
+	if err != nil {
+		return err
+	}
+	type userAgg struct {
+		userID      string
+		metricValue float64
+		displayName string
+		avatarURL   string
+	}
+	users := make(map[string]*userAgg)
+	for _, metric := range metrics {
+		allowed, err := scopeStore.UserAllowedInScope(ctx, metric.UserID, scopeType, scopeKey)
+		if err != nil || !allowed {
+			continue
+		}
+		user, err := w.Users.GetUser(ctx, metric.UserID)
+		if err != nil {
+			continue
+		}
+		agg := users[metric.UserID]
+		if agg == nil {
+			agg = &userAgg{userID: metric.UserID, displayName: user.DisplayName, avatarURL: user.AvatarURL}
+			users[metric.UserID] = agg
+		}
+		switch metricKey {
+		case "sessions":
+			agg.metricValue += float64(metric.SessionCount)
+		case "turns":
+			agg.metricValue += float64(metric.InteractionTurnCount)
+		default:
+			agg.metricValue += float64(metric.ExactTokenTotal + metric.DerivedTokenTotal)
+		}
+	}
+	sorted := make([]*userAgg, 0, len(users))
+	for _, user := range users {
+		sorted = append(sorted, user)
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].metricValue == sorted[j].metricValue {
+			return sorted[i].userID < sorted[j].userID
+		}
+		return sorted[i].metricValue > sorted[j].metricValue
+	})
+	now := time.Now().UTC()
+	snapshot := &domain.LeaderboardSnapshot{SnapshotID: snapshotID, BoardKey: boardKey, ScopeType: scopeType, ScopeKey: scopeKey, MetricKey: metricKey, WindowStart: windowStart, WindowEnd: windowEnd, TimezoneName: "UTC", RankingRuleVersion: 2, ParticipantCount: uint32(len(sorted)), SourceMaxEventPK: progress.SourceMaxEventPK, DataWatermarkAt: progress.CommittedThrough, SnapshotStatus: "building", GeneratedAt: now}
+	entries := make([]*domain.LeaderboardEntry, 0, len(sorted))
+	for i, user := range sorted {
+		entries = append(entries, &domain.LeaderboardEntry{SnapshotID: snapshotID, RankNo: uint32(i + 1), UserID: user.userID, MetricValue: user.metricValue, DisplayNameSnapshot: user.displayName, AvatarURLSnapshot: user.avatarURL})
+	}
+	return publisher.PublishSnapshotAtomic(ctx, watermarkName, progress, snapshot, entries)
+}
+
+func defaultScopeKey(scopeType string) string {
+	if scopeType == "global" {
+		return "all"
+	}
+	return ""
+}
+
+// buildLeaderboardSnapshotLegacy supports non-transactional stores.
+func (w *Worker) buildLeaderboardSnapshotLegacy(
 	ctx context.Context,
 	leaderboards store.LeaderboardStore,
 	snapshotID, boardKey, scopeType, metricKey string,
 	windowStart, windowEnd time.Time,
 ) error {
-	// Supersede previous published snapshot for same board/scope/metric
-	prev, err := leaderboards.LatestPublishedSnapshot(ctx, boardKey, scopeType, metricKey)
-	if err == nil && prev != nil {
-		_ = leaderboards.SupersedeSnapshot(ctx, prev.SnapshotID)
-	}
+	prev, _ := leaderboards.LatestPublishedSnapshot(ctx, boardKey, scopeType, metricKey)
 
 	maxPK, _ := w.Events.MaxEventPK(ctx)
 	now := time.Now().UTC()
@@ -236,6 +365,9 @@ func (w *Worker) BuildLeaderboardSnapshot(
 	if err := leaderboards.PublishSnapshot(ctx, snapshotID, now); err != nil {
 		return err
 	}
+	if prev != nil && prev.SnapshotID != snapshotID {
+		_ = leaderboards.SupersedeSnapshot(ctx, prev.SnapshotID)
+	}
 
 	return nil
 }
@@ -255,8 +387,25 @@ func visibilityAllowed(userVis, scopeType string) bool {
 	}
 }
 
-// RecomputeAll clears all metrics and reprocesses every event from PK 0.
+// RecomputeAll catches the committed checkpoint up in bounded batches.
 func (w *Worker) RecomputeAll(ctx context.Context) (int, error) {
+	if committed, ok := w.Metrics.(interface {
+		AggregateCommittedMetrics(context.Context, string, time.Time, int) (mysqlstore.AggregationProgress, error)
+	}); ok {
+		total := 0
+		safeBefore := time.Now().UTC()
+		for {
+			progress, err := committed.AggregateCommittedMetrics(ctx, watermarkName, safeBefore, batchSize)
+			if err != nil {
+				return total, err
+			}
+			total += progress.EventCount
+			w.LastProcessedPK = progress.SourceMaxEventPK
+			if progress.EventCount < batchSize {
+				return total, nil
+			}
+		}
+	}
 	if err := w.Metrics.DeleteAllMetrics(ctx); err != nil {
 		return 0, err
 	}

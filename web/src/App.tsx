@@ -10,13 +10,15 @@ import { LeaderboardExploreView } from "./components/LeaderboardExploreView.tsx"
 import { AuthModal } from "./components/AuthModal.tsx";
 import { OnboardingWizard } from "./components/OnboardingWizard.tsx";
 import { UploadPreviewModal } from "./components/UploadPreviewModal.tsx";
+import type { ControlPlaneClient } from "./api/controlPlane.ts";
 import "./styles/app.css";
 
 const MainContent: React.FC = () => {
-  const { activeTab } = useTokenShow();
+  const { activeTab, error } = useTokenShow();
 
   return (
     <main className="main-content">
+      {error && <div className="feedback-error" role="alert">{error}</div>}
       {activeTab === "dashboard" && <DashboardView />}
       {activeTab === "agents" && <AgentsMatrixView />}
       {activeTab === "queue" && <OfflineQueueView />}
@@ -32,9 +34,9 @@ const MainContent: React.FC = () => {
   );
 };
 
-export const App: React.FC = () => {
+export const App: React.FC<{ client?: ControlPlaneClient }> = ({ client }) => {
   return (
-    <TokenShowProvider>
+    <TokenShowProvider client={client}>
       <div className="app-container">
         <Navbar />
         <MainContent />

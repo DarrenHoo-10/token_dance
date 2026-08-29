@@ -52,6 +52,10 @@ type IngestBatch struct {
 	CommittedAt    *time.Time
 }
 
+type SessionEndReason string
+
+type TurnTrigger string
+
 type UsageEvent struct {
 	EventPK            uint64
 	EventID            [32]byte
@@ -75,6 +79,9 @@ type UsageEvent struct {
 	ReceivedAt         time.Time
 	SessionHash        *[32]byte
 	ParentSessionHash  *[32]byte
+	WorkspaceHash      *[32]byte
+	SessionEndReason   *SessionEndReason
+	TurnTrigger        *TurnTrigger
 	TurnHash           *[32]byte
 	ToolCallHash       *[32]byte
 	TokenInput         *uint64

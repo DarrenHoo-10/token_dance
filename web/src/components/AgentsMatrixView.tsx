@@ -1,12 +1,11 @@
 import React from "react";
 import { useTokenShow } from "../context/TokenShowContext.tsx";
-import type { Capability, AdapterRuntimeStatus } from "../protocol/generated.ts";
+import type { Capability } from "../protocol/generated.ts";
 
 export const AgentsMatrixView: React.FC = () => {
   const {
     agents,
     toggleAgent,
-    setAgentRuntimeStatus,
     metricToggles,
     toggleMetric,
     globalPaused,
@@ -66,14 +65,6 @@ export const AgentsMatrixView: React.FC = () => {
     },
   };
 
-  const statusList: AdapterRuntimeStatus[] = [
-    "ACTIVE",
-    "CONFIGURING",
-    "NEEDS_PERMISSION",
-    "DEGRADED",
-    "DISABLED",
-    "ERROR",
-  ];
 
   return (
     <div className="agents-matrix-view">
@@ -114,7 +105,7 @@ export const AgentsMatrixView: React.FC = () => {
             <button
               type="button"
               className={`switch-toggle ${!globalPaused ? "on" : ""}`}
-              onClick={toggleGlobalPause}
+              onClick={() => void toggleGlobalPause().catch(() => undefined)}
               aria-label="Toggle Global Pause"
             >
               <div className="switch-handle" />
@@ -166,7 +157,7 @@ export const AgentsMatrixView: React.FC = () => {
                   <button
                     type="button"
                     className={`switch-toggle ${agent.enabled ? "on" : ""}`}
-                    onClick={() => toggleAgent(agent.id)}
+                    onClick={() => void toggleAgent(agent.id).catch(() => undefined)}
                     aria-label={`Toggle agent ${agent.name}`}
                   >
                     <div className="switch-handle" />
@@ -254,25 +245,6 @@ export const AgentsMatrixView: React.FC = () => {
                 </div>
               </div>
 
-              {/* Runtime status test selector */}
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: "8px", borderTop: "1px solid var(--line)", fontSize: "11px" }}>
-                <span style={{ color: "var(--muted)" }}>
-                  {activeLanguage === "zh" ? "驱动状态转换：" : "Change Status:"}
-                </span>
-                <select
-                  className="form-input"
-                  style={{ height: "26px", fontSize: "11px", padding: "0 6px" }}
-                  value={agent.status}
-                  onChange={(e) => setAgentRuntimeStatus(agent.id, e.target.value as AdapterRuntimeStatus)}
-                  aria-label={`Change runtime status for ${agent.name}`}
-                >
-                  {statusList.map((st) => (
-                    <option key={st} value={st}>
-                      {st}
-                    </option>
-                  ))}
-                </select>
-              </div>
             </div>
           ))}
         </div>
@@ -294,7 +266,7 @@ export const AgentsMatrixView: React.FC = () => {
           </span>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "16px" }}>
+        <div className="capability-grid">
           {(Object.keys(metricLabels) as Capability[]).map((cap) => {
             const meta = metricLabels[cap];
             const isEnabled = metricToggles[cap];
@@ -329,7 +301,7 @@ export const AgentsMatrixView: React.FC = () => {
                 <button
                   type="button"
                   className={`switch-toggle ${isEnabled ? "on" : ""}`}
-                  onClick={() => toggleMetric(cap)}
+                  onClick={() => void toggleMetric(cap).catch(() => undefined)}
                   aria-label={`Toggle metric ${cap}`}
                 >
                   <div className="switch-handle" />

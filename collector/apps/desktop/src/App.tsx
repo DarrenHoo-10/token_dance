@@ -131,11 +131,11 @@ export const App: React.FC = () => {
 
   const handleSyncNow = async () => {
     try {
-      const ack = await triggerSyncNow();
+      const request = await triggerSyncNow();
       showToast(
         lang === "zh"
-          ? `✓ 批次上报成功 (已接收 ${ack.accepted} 条事件)`
-          : `✓ Batch synced (${ack.accepted} events acked)`
+          ? `上报请求已排队 (${request.queuedEvents} 条)，等待服务端 ACK`
+          : `Upload queued (${request.queuedEvents} events); awaiting server ACK`
       );
       await refreshAllState();
     } catch (e: unknown) {
@@ -164,7 +164,7 @@ export const App: React.FC = () => {
   const handleRevokeDevice = async (deviceId: string) => {
     try {
       await revokeDevice(deviceId);
-      showToast(lang === "zh" ? "✓ 终端设备凭证已撤销作废" : "✓ Device revoked");
+      showToast(lang === "zh" ? "设备撤销请求已提交，等待服务端确认" : "Device revocation requested; awaiting server confirmation");
       await refreshAllState();
     } catch (e: unknown) {
       showToast(String(e));
@@ -200,8 +200,8 @@ export const App: React.FC = () => {
       const count = await purgeLocalCache();
       showToast(
         lang === "zh"
-          ? `✓ 本地缓存已清空 (${count} 条待发记录)`
-          : `✓ Local cache purged (${count} records)`
+          ? `✓ 本地待发队列已清空 (${count} 条记录)`
+          : `✓ Local pending queue purged (${count} records)`
       );
       await refreshAllState();
     } catch (e: unknown) {

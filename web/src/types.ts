@@ -42,6 +42,30 @@ export interface PrivacyScopeSettings {
   showAICodeLines: boolean;
 }
 
+export interface AdapterManifestPermission {
+  id: string;
+  label: string;
+  description: string;
+  required: boolean;
+}
+
+export interface AdapterManifest {
+  adapterId: string;
+  adapterName: string;
+  version: string;
+  permissions: AdapterManifestPermission[];
+  approved: boolean;
+}
+
+export type DeletionJobStatus = "REQUESTED" | "RUNNING" | "FAILED" | "PURGED";
+
+export interface DeletionJob {
+  id: string;
+  status: DeletionJobStatus;
+  requestedAt: string;
+  failureReason?: string;
+}
+
 export interface AgentInfo {
   id: string;
   name: string;

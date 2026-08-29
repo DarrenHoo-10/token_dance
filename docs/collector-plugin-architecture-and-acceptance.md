@@ -1170,14 +1170,19 @@ erDiagram
 | 表 | 作用 | 关键约束 |
 | --- | --- | --- |
 | `users` | 账号、公开资料和榜单可见范围 | `auth_subject_hash` 唯一；邮箱加密存储 |
+| `teams` | 团队榜作用域和团队资料 | `team_id` 唯一；团队榜使用明确 `scope_key` |
+| `team_memberships` | 团队成员关系和团队榜鉴权 | `(team_id, user_id)` 唯一 |
 | `installations` | Windows/macOS Collector 注册设备 | Ed25519 公钥唯一，可撤销 |
 | `installation_adapter_status` | 每设备 Adapter 版本、能力和健康状态 | `(installation_id, adapter_id)` 唯一 |
 | `ingest_nonces` | Redis 不可用时的 durable nonce 防重 | `(installation_id, nonce_hash)` 唯一并按过期时间清理 |
 | `ingest_batches` | 批次接收结果和请求摘要 | `(installation_id, batch_id)` 唯一 |
+| `ingest_batch_rejections` | 部分拒绝的逐事件稳定 ACK 详情 | `(batch_id, ordinal)` 唯一，重放返回相同错误码和顺序 |
 | `usage_events` | 标准化不可变事件事实表 | `(installation_id, event_id)` 唯一；正文/代码/真实路径禁止入库 |
+| `aggregation_watermarks` | 聚合 Worker 的持久事件水位 | `watermark_name` 唯一；通知丢失或进程重启后继续补偿扫描 |
 | `daily_user_agent_metrics` | 用户/日期/Agent 日聚合 | `(metric_date, user_id, agent_id)` 唯一 |
 | `daily_user_agent_model_metrics` | 用户/日期/Agent/provider/model 日聚合 | 日期、用户、Agent、provider、model 复合唯一 |
 | `daily_skill_metrics` | 匿名 Skill 日聚合 | `(metric_date, user_id, agent_id, skill_key)` 唯一 |
+| `daily_cost_metrics` | 用户/Agent/provider/model/currency/cost source 成本日聚合 | 不同币种和成本来源分列，禁止混算 |
 | `leaderboard_snapshots` | 特定规则和时间窗的不可变榜单版本 | board/scope/window/rule version 唯一 |
 | `leaderboard_entries` | 快照排名项 | `(snapshot_id, rank_no)` 和 `(snapshot_id, user_id)` 唯一 |
 | `adapter_releases` | 平台 Adapter 包、哈希、签名和灰度比例 | adapter/version/OS/arch 唯一 |
@@ -1187,7 +1192,7 @@ erDiagram
 
 `usage_events.safe_extension_json` 不是任意 payload 存储：只允许当前 schema 注册且通过隐私白名单的标量扩展字段，禁止 prompt、response、reasoning、代码正文、工具参数、环境变量、真实路径和原始 Agent 对象。核心排行字段必须落入强类型列，不能长期藏在 JSON 中。
 
-完整可执行 DDL 见 [`ddl/mysql/0001_tokenshow_server.sql`](ddl/mysql/0001_tokenshow_server.sql)。DDL 显式使用 InnoDB、`utf8mb4`、外键、唯一键、CHECK 和查询索引。首期不对 `usage_events` 做 MySQL 原生分区，因为分区表与外键的运维约束会增加复杂度；单表达到 5 亿行、在线索引窗口不可接受或 90 天明细超过约定存储预算时，再通过归档任务迁移冷数据至 ClickHouse/对象存储。
+完整可执行 DDL 由 [`ddl/mysql/0001_tokenshow_server.sql`](ddl/mysql/0001_tokenshow_server.sql)、[`0002_aggregation_safety.sql`](ddl/mysql/0002_aggregation_safety.sql)、[`0003_ingest_durability.sql`](ddl/mysql/0003_ingest_durability.sql) 和 [`0004_typed_event_fields.sql`](ddl/mysql/0004_typed_event_fields.sql) 顺序组成。DDL 显式使用 InnoDB、`utf8mb4`、外键、唯一键、CHECK 和查询索引。首期不对 `usage_events` 做 MySQL 原生分区，因为分区表与外键的运维约束会增加复杂度；单表达到 5 亿行、在线索引窗口不可接受或 90 天明细超过约定存储预算时，再通过归档任务迁移冷数据至 ClickHouse/对象存储。
 
 ### 10.4 Ingest 事务与幂等
 
@@ -1731,7 +1736,7 @@ TOKSHOW_TEST_API_KEY_SECRET
 
 | ID | 优先级 | 验收项 | 操作/输入 | 预期结果 |
 | --- | --- | --- | --- | --- |
-| SRV-001 | P0 | 干净建库 | 对 MySQL 8.0.34+ 空实例执行 `0001_tokenshow_server.sql` | DDL 全部成功，14 张表、外键、唯一键和 CHECK 生效，连接时区为 UTC |
+| SRV-001 | P0 | 干净建库 | 对 MySQL 8.0.34+ 空实例依次执行 `0001`～`0004` migrations | DDL 全部成功，19 张表、外键、唯一键和 CHECK 生效，连接时区为 UTC |
 | SRV-002 | P0 | Go 服务启动 | 仅配置 MySQL DSN 启动 `cmd/api` 和 `cmd/worker` | 健康检查成功；日志不包含 DSN、密码或用户邮箱 |
 | SRV-003 | P0 | 批次 hash 冲突 | 同 installation/batch id 上传不同 body | 第二次返回 `409 BATCH_HASH_CONFLICT`，原批次和事件不被覆盖 |
 | SRV-004 | P0 | 事件唯一约束 | 同 event id 跨批并发写入 20 次 | `(installation_id,event_id)` 只保留一条，duplicate 计数正确，无 500 |

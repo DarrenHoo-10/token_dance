@@ -1,8 +1,8 @@
 import React, { useState } from "react";
 
 interface DataDeletionCardProps {
-  onPurgeLocalCache: () => void;
-  onRequestDataDeletion: () => void;
+  onPurgeLocalCache: () => Promise<void>;
+  onRequestDataDeletion: () => Promise<void>;
   lang: "zh" | "en";
 }
 
@@ -16,25 +16,25 @@ export const DataDeletionCard: React.FC<DataDeletionCardProps> = ({
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [purgeFeedback, setPurgeFeedback] = useState<string | null>(null);
 
-  const handlePurgeLocal = () => {
-    onPurgeLocalCache();
+  const handlePurgeLocal = async () => {
+    await onPurgeLocalCache();
     setPurgeFeedback(
       isZh
-        ? "✓ 本地 WAL 离线队列与 SQLite 缓存已全部清空！"
-        : "✓ Local WAL outbox and SQLite cache successfully purged!"
+        ? "✓ 本地 WAL 待发队列已清空"
+        : "✓ Local WAL pending queue purged"
     );
     setTimeout(() => setPurgeFeedback(null), 4000);
   };
 
-  const handleExecuteDeletion = () => {
+  const handleExecuteDeletion = async () => {
     if (deleteConfirmText.toLowerCase() === "delete" || deleteConfirmText === "删除") {
-      onRequestDataDeletion();
+      await onRequestDataDeletion();
       setShowConfirmModal(false);
       setDeleteConfirmText("");
       setPurgeFeedback(
         isZh
-          ? "✓ 数据擦除指令已下达，服务端与本地数据均已标记永久清除"
-          : "✓ Data deletion requested. Server & local state purged"
+          ? "数据删除请求已提交，等待服务端确认；本地 WAL 仍保留"
+          : "Deletion requested; awaiting server confirmation while local WAL remains intact"
       );
     }
   };
@@ -81,8 +81,8 @@ export const DataDeletionCard: React.FC<DataDeletionCardProps> = ({
           </div>
           <p className="danger-desc">
             {isZh
-              ? "清空本地全部缓存并向下游集群广播数据擦除指令，从所有公共排行榜与聚合数据库中彻底抹除。"
-              : "Permanently wipe local data and trigger server-side deletion across all databases and leaderboards."}
+              ? "向服务端提交删除任务并等待可审计完成状态；确认前不会清空本地待发 WAL。"
+              : "Submit an auditable server deletion job; local pending WAL remains until completion is confirmed."}
           </p>
           <button
             type="button"
@@ -102,8 +102,8 @@ export const DataDeletionCard: React.FC<DataDeletionCardProps> = ({
             </h3>
             <p className="modal-desc">
               {isZh
-                ? "此操作将永久清空本地采集缓存，并在云端注销所有终端绑定记录与历史指标。请在下方输入 DELETE 确认："
-                : "This will permanently purge local collector outbox and trigger server-side wipe. Type DELETE below:"}
+                ? "此操作会提交服务端删除任务；完成前状态为待处理且本地 WAL 保留。请在下方输入 DELETE 确认："
+                : "This submits a server deletion job. It remains pending and keeps local WAL until confirmed. Type DELETE below:"}
             </p>
             <input
               type="text"

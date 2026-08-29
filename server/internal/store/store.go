@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/tokendance/token-collector/server/internal/domain"
@@ -39,6 +40,59 @@ type BatchStore interface {
 	CreateBatch(ctx context.Context, b *domain.IngestBatch) error
 	GetBatch(ctx context.Context, batchID string) (*domain.IngestBatch, error)
 	UpdateBatch(ctx context.Context, b *domain.IngestBatch) error
+}
+
+var ErrBatchHashConflict = errors.New("batch id reused with different request hash")
+
+// IngestEvent carries protocol fields that are not part of the aggregation model.
+type IngestEvent struct {
+	Event              *domain.UsageEvent
+	ToolCategory       *string
+	SkillKey           *[32]byte
+	SkillInvokeType    *string
+	PluginKey          *[32]byte
+	CostAmount         *string
+	CostCurrency       *string
+	CostSource         *string
+	CostDiscountAmount *string
+	ChildSessionHash   *[32]byte
+	SpawnedAgentType   *string
+	CodeLanguage       *string
+}
+
+// BatchRejection is the durable per-event ACK detail for a rejected event.
+type BatchRejection struct {
+	Ordinal   uint32
+	EventID   string
+	ErrorCode string
+	Retryable bool
+}
+
+// IngestCommitResult is returned only after the ingest transaction commits.
+type IngestCommitResult struct {
+	Batch    *domain.IngestBatch
+	Rejected []BatchRejection
+}
+
+// AtomicIngestStore commits a batch, valid events, and rejected ACK details in one transaction.
+type AtomicIngestStore interface {
+	CommitBatch(ctx context.Context, b *domain.IngestBatch, events []*IngestEvent, rejected []BatchRejection) (*IngestCommitResult, error)
+}
+
+// BatchRejectionStore loads durable per-event ACK details for idempotent replays.
+type BatchRejectionStore interface {
+	GetBatchRejections(ctx context.Context, batchID string) ([]BatchRejection, error)
+}
+
+// WatermarkStore persists aggregation progress across worker restarts.
+type WatermarkStore interface {
+	GetWatermark(ctx context.Context, name string) (uint64, error)
+	SetWatermark(ctx context.Context, name string, eventPK uint64, updatedAt time.Time) error
+}
+
+// RecomputeMetricStore atomically rebuilds metrics and advances the watermark.
+type RecomputeMetricStore interface {
+	RecomputeMetrics(ctx context.Context, watermarkName string, throughEventPK uint64) error
 }
 
 // EventStore manages usage events with idempotent insert.

@@ -17,32 +17,20 @@ impl CollectorDaemon {
     }
 
     pub fn start(&self) {
-        let is_running = self.is_running.clone();
+        let is_running = Arc::clone(&self.is_running);
         let state = self.state.clone();
-
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
-            while is_running.load(Ordering::SeqCst) {
+            while is_running.load(Ordering::Acquire) {
                 interval.tick().await;
-
-                let is_paused = {
-                    let st = state.inner.read().await;
-                    st.global_paused
-                };
-
-                if !is_paused {
-                    let mut st = state.inner.write().await;
-                    // Increment collected counter for active agents
-                    let active_count = st.agents.iter().filter(|a| a.enabled).count() as u64;
-                    if active_count > 0 {
-                        st.events_collected_counter += active_count;
-                    }
-                }
+                // Reading the real service-backed status keeps the daemon task attached to
+                // Collector lifetime without manufacturing counters or runtime health.
+                let _ = state.get_daemon_status().await;
             }
         });
     }
 
     pub fn stop(&self) {
-        self.is_running.store(false, Ordering::SeqCst);
+        self.is_running.store(false, Ordering::Release);
     }
 }

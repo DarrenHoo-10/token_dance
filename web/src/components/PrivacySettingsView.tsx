@@ -6,6 +6,7 @@ export const PrivacySettingsView: React.FC = () => {
     privacy,
     updatePrivacyScope,
     accountStatus,
+    deletionJob,
     requestDataDeletion,
     activeLanguage,
     setActiveTab,
@@ -14,6 +15,11 @@ export const PrivacySettingsView: React.FC = () => {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [showScopeConfirmation, setShowScopeConfirmation] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const applyPrivacyUpdate = (updates: Parameters<typeof updatePrivacyScope>[0]) => {
+    void updatePrivacyScope(updates).catch((err) => setActionError(err instanceof Error ? err.message : String(err)));
+  };
 
   const handleTogglePublicLeaderboard = () => {
     if (!privacy.isPublicLeaderboard) {
@@ -21,20 +27,28 @@ export const PrivacySettingsView: React.FC = () => {
       setShowScopeConfirmation(true);
     } else {
       // Switching back to private immediately removes from leaderboard
-      updatePrivacyScope({ isPublicLeaderboard: false });
+      applyPrivacyUpdate({ isPublicLeaderboard: false });
     }
   };
 
-  const handleConfirmMakePublic = () => {
-    updatePrivacyScope({ isPublicLeaderboard: true });
-    setShowScopeConfirmation(false);
+  const handleConfirmMakePublic = async () => {
+    try {
+      await updatePrivacyScope({ isPublicLeaderboard: true });
+      setShowScopeConfirmation(false);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
   };
 
-  const handleExecuteDataDeletion = () => {
-    if (deleteConfirmText.toLowerCase() === "delete" || deleteConfirmText === "删除") {
-      requestDataDeletion();
+  const handleExecuteDataDeletion = async () => {
+    if (deleteConfirmText.toLowerCase() !== "delete" && deleteConfirmText !== "删除") return;
+    try {
+      setActionError(null);
+      await requestDataDeletion();
       setIsDeleteDialogOpen(false);
       setDeleteConfirmText("");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
     }
   };
 
@@ -52,22 +66,15 @@ export const PrivacySettingsView: React.FC = () => {
         </div>
       </header>
 
-      {accountStatus === "deletion_pending" && (
-        <div
-          style={{
-            padding: "16px 20px",
-            background: "#fde8e5",
-            border: "1px solid #fbc9c2",
-            color: "var(--danger)",
-            borderRadius: "var(--radius)",
-            marginBottom: "20px",
-            fontSize: "13px",
-            fontWeight: 700,
-          }}
-        >
-          {activeLanguage === "zh"
-            ? "⚠️ 服务端数据删除已生效：你的账户已进入撤销窗口，所有公开排行榜和云端聚合指标已永久清除。"
-            : "⚠️ Server data purge pending: All public rankings and cloud aggregates have been wiped."}
+      {actionError && <div className="feedback-error" role="alert">{actionError}</div>}
+
+      {(deletionJob || accountStatus === "deletion_pending" || accountStatus === "purged") && (
+        <div className={deletionJob?.status === "FAILED" ? "feedback-error" : "deletion-status"}>
+          <strong>{activeLanguage === "zh" ? "删除任务状态" : "Deletion job"}: {deletionJob?.status ?? (accountStatus === "purged" ? "PURGED" : "REQUESTED")}</strong>
+          {deletionJob?.status === "REQUESTED" && <span>{activeLanguage === "zh" ? "命令已 ACK，等待 worker 执行。" : "Command ACKed; waiting for worker."}</span>}
+          {deletionJob?.status === "RUNNING" && <span>{activeLanguage === "zh" ? "正在清除服务端聚合、批次和设备绑定。" : "Purging server aggregates, batches, and devices."}</span>}
+          {deletionJob?.status === "FAILED" && <span>{deletionJob.failureReason ?? (activeLanguage === "zh" ? "删除失败，请重试。" : "Deletion failed; retry.")}</span>}
+          {deletionJob?.status === "PURGED" && <span>{activeLanguage === "zh" ? "服务端权威状态已确认清除完成。" : "Authoritative server state confirms purge completion."}</span>}
         </div>
       )}
 
@@ -139,12 +146,12 @@ export const PrivacySettingsView: React.FC = () => {
                 {activeLanguage === "zh" ? "细粒度公开字段选择（仅在开启排行榜时生效）" : "Granular Public Field Visibility"}
               </h3>
 
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+              <div className="responsive-form-grid">
                 <label style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "13px", cursor: "pointer" }}>
                   <input
                     type="checkbox"
                     checked={privacy.showTokenTotals}
-                    onChange={(e) => updatePrivacyScope({ showTokenTotals: e.target.checked })}
+                    onChange={(e) => applyPrivacyUpdate({ showTokenTotals: e.target.checked })}
                   />
                   <span>{activeLanguage === "zh" ? "公开 Token 总量与趋势" : "Show Token Totals & Trends"}</span>
                 </label>
@@ -153,7 +160,7 @@ export const PrivacySettingsView: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={privacy.showAgentBreakdown}
-                    onChange={(e) => updatePrivacyScope({ showAgentBreakdown: e.target.checked })}
+                    onChange={(e) => applyPrivacyUpdate({ showAgentBreakdown: e.target.checked })}
                   />
                   <span>{activeLanguage === "zh" ? "公开 Agent 占比构成" : "Show Agent Breakdown"}</span>
                 </label>
@@ -162,7 +169,7 @@ export const PrivacySettingsView: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={privacy.showActivityHeatmap}
-                    onChange={(e) => updatePrivacyScope({ showActivityHeatmap: e.target.checked })}
+                    onChange={(e) => applyPrivacyUpdate({ showActivityHeatmap: e.target.checked })}
                   />
                   <span>{activeLanguage === "zh" ? "公开活跃热力图" : "Show Activity Heatmap"}</span>
                 </label>
@@ -171,7 +178,7 @@ export const PrivacySettingsView: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={privacy.showTopSkills}
-                    onChange={(e) => updatePrivacyScope({ showTopSkills: e.target.checked })}
+                    onChange={(e) => applyPrivacyUpdate({ showTopSkills: e.target.checked })}
                   />
                   <span>{activeLanguage === "zh" ? "公开 Top Skill 排行" : "Show Top Skills"}</span>
                 </label>
@@ -180,7 +187,7 @@ export const PrivacySettingsView: React.FC = () => {
                   <input
                     type="checkbox"
                     checked={privacy.showAICodeLines}
-                    onChange={(e) => updatePrivacyScope({ showAICodeLines: e.target.checked })}
+                    onChange={(e) => applyPrivacyUpdate({ showAICodeLines: e.target.checked })}
                   />
                   <span>{activeLanguage === "zh" ? "公开 AI 生成代码行数" : "Show AI Code Lines"}</span>
                 </label>
@@ -264,7 +271,7 @@ export const PrivacySettingsView: React.FC = () => {
               <button
                 type="button"
                 className="btn btn-primary"
-                onClick={handleConfirmMakePublic}
+                onClick={() => void handleConfirmMakePublic()}
               >
                 {activeLanguage === "zh" ? "确认公开" : "Confirm Public"}
               </button>
@@ -319,7 +326,7 @@ export const PrivacySettingsView: React.FC = () => {
               <button
                 type="button"
                 className="btn btn-danger"
-                onClick={handleExecuteDataDeletion}
+                onClick={() => void handleExecuteDataDeletion()}
                 disabled={deleteConfirmText.toLowerCase() !== "delete" && deleteConfirmText !== "删除"}
               >
                 {activeLanguage === "zh" ? "确认永久删除" : "Permanently Delete"}
