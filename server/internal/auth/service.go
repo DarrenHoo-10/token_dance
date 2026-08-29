@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/hmac"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/mail"
@@ -26,7 +27,6 @@ type Service struct {
 	cipher    *crypto.AEADCipher
 	emailSink *emailpkg.DeliverySink
 
-	hmacKey        []byte
 	dummyArgonHash string
 }
 
@@ -35,7 +35,6 @@ func NewService(st store.Store, cfg *config.Config, clk clock.Clock) *Service {
 		clk = clock.RealClock{}
 	}
 
-	key := []byte(cfg.HMACSecret)
 	// Precalculate a valid dummy Argon2 hash for constant-time dummy verification on missing accounts
 	params := crypto.DefaultArgon2Params
 	if cfg.Argon2MemoryKiB <= 1024 {
@@ -43,10 +42,7 @@ func NewService(st store.Store, cfg *config.Config, clk clock.Clock) *Service {
 	}
 	dummyHash, _ := crypto.HashPassword("tokendance-dummy-timing-password-constant", params)
 
-	var cipher *crypto.AEADCipher
-	if keyBytes, err := config.ParseEncryptionKey(cfg.EncryptionKey); err == nil {
-		cipher, _ = crypto.NewAEADCipher(keyBytes[:], cfg.EncryptionKeyVersion)
-	}
+	cipher, _ := crypto.NewAEADCipherKeyring(cfg.AEADKeys.Keys, cfg.AEADKeys.CurrentVersion)
 
 	var sink *emailpkg.DeliverySink
 	if cfg.Environment != "production" {
@@ -60,7 +56,6 @@ func NewService(st store.Store, cfg *config.Config, clk clock.Clock) *Service {
 		clk:            clk,
 		cipher:         cipher,
 		emailSink:      sink,
-		hmacKey:        key,
 		dummyArgonHash: dummyHash,
 	}
 }
@@ -117,12 +112,54 @@ func NormalizeEmail(raw string) (string, error) {
 	return normalized, nil
 }
 
+func hashWithVersion(ring config.VersionedKeyring, version uint16, value string) [32]byte {
+	return crypto.HMACSHA256(ring.Keys[version], []byte(value))
+}
+
 func (s *Service) ComputeEmailLookupHash(normalizedEmail string) [32]byte {
-	return crypto.HMACSHA256(s.hmacKey, []byte(normalizedEmail))
+	return hashWithVersion(s.cfg.EmailLookupKeys, s.cfg.EmailLookupKeys.CurrentVersion, normalizedEmail)
 }
 
 func (s *Service) ComputeTokenHash(token string) [32]byte {
-	return crypto.HMACSHA256(s.hmacKey, []byte(token))
+	return hashWithVersion(s.cfg.VerificationCodeKeys, s.cfg.VerificationCodeKeys.CurrentVersion, token)
+}
+
+func (s *Service) ComputeCSRFHash(token string) [32]byte {
+	return hashWithVersion(s.cfg.CSRFKeys, s.cfg.CSRFKeys.CurrentVersion, token)
+}
+
+func (s *Service) ValidateCSRFToken(token string, expected [32]byte) bool {
+	for _, version := range s.cfg.CSRFKeys.Versions() {
+		actual := hashWithVersion(s.cfg.CSRFKeys, version, token)
+		if hmac.Equal(actual[:], expected[:]) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) deriveCSRFToken(sessionToken string, version uint16) string {
+	token := hashWithVersion(s.cfg.CSRFKeys, version, "csrf:"+sessionToken)
+	return base64.RawURLEncoding.EncodeToString(token[:])
+}
+
+func (s *Service) computeSessionHashes(token string) [][32]byte {
+	hashes := make([][32]byte, 0, len(s.cfg.SessionKeys.Keys))
+	for _, version := range s.cfg.SessionKeys.Versions() {
+		hashes = append(hashes, hashWithVersion(s.cfg.SessionKeys, version, token))
+	}
+	return hashes
+}
+
+func (s *Service) findUserByEmail(ctx context.Context, normalized string) (*domain.User, *domain.UserPasswordCredential, [32]byte, error) {
+	for _, version := range s.cfg.EmailLookupKeys.Versions() {
+		hash := hashWithVersion(s.cfg.EmailLookupKeys, version, normalized)
+		user, credential, err := s.store.FindUserByEmailHash(ctx, hash)
+		if err == nil {
+			return user, credential, hash, nil
+		}
+	}
+	return nil, nil, [32]byte{}, domain.ErrNotFound
 }
 
 func (s *Service) SanitizeReturnTo(returnTo string) string {
@@ -223,7 +260,7 @@ func (s *Service) RequestRegistrationCode(ctx context.Context, email, locale str
 	now := s.clk.Now()
 
 	// Check if user already exists
-	if _, _, err := s.store.FindUserByEmailHash(ctx, emailHash); err == nil {
+	if _, _, _, err := s.findUserByEmail(ctx, normalized); err == nil {
 		// Anti-enumeration: return success without creating register challenge
 		return nil
 	}
@@ -265,7 +302,7 @@ func (s *Service) RequestRegistrationCode(ctx context.Context, email, locale str
 		EmailKeyVersion: emailKeyVersion,
 		ChallengeType:   domain.ChallengeTypeRegister,
 		CodeHash:        codeHash,
-		CodeKeyVersion:  1,
+		CodeKeyVersion:  s.cfg.VerificationCodeKeys.CurrentVersion,
 		ChallengeStatus: domain.ChallengeStatusPending,
 		AttemptCount:    0,
 		MaxAttempts:     6,
@@ -275,7 +312,7 @@ func (s *Service) RequestRegistrationCode(ctx context.Context, email, locale str
 		UpdatedAt:       now,
 	}
 
-	idempotencyKey := crypto.HMACSHA256(s.hmacKey, []byte(challengeID+now.Format(time.RFC3339)))
+	idempotencyKey := hashWithVersion(s.cfg.IdempotencyKeys, s.cfg.IdempotencyKeys.CurrentVersion, challengeID+now.Format(time.RFC3339))
 
 	payloadJSON := fmt.Sprintf(`{"code":"%s"}`, code)
 	var recipientCiphertext, payloadCiphertext []byte
@@ -364,7 +401,7 @@ func (s *Service) CompleteRegistration(ctx context.Context, email, code, passwor
 		return nil, domain.NewAppError(400, "AUTH_INVALID_CREDENTIALS", "auth.codeExpired", "verification code expired", nil, nil)
 	}
 
-	expectedCodeHash := s.ComputeTokenHash(strings.TrimSpace(code))
+	expectedCodeHash := hashWithVersion(s.cfg.VerificationCodeKeys, challenge.CodeKeyVersion, strings.TrimSpace(code))
 	if !hmac.Equal(expectedCodeHash[:], challenge.CodeHash[:]) {
 		newAttempts := challenge.AttemptCount + 1
 		newStatus := domain.ChallengeStatusPending
@@ -395,12 +432,12 @@ func (s *Service) CompleteRegistration(ctx context.Context, email, code, passwor
 	sessionID := "ses_" + sessionIDToken
 
 	sessionToken, _ := crypto.GenerateOpaqueToken(32)
-	csrfToken, _ := crypto.GenerateOpaqueToken(32)
+	csrfToken := s.deriveCSRFToken(sessionToken, s.cfg.CSRFKeys.CurrentVersion)
 
-	sessionTokenHash := s.ComputeTokenHash(sessionToken)
-	csrfTokenHash := s.ComputeTokenHash(csrfToken)
+	sessionTokenHash := hashWithVersion(s.cfg.SessionKeys, s.cfg.SessionKeys.CurrentVersion, sessionToken)
+	csrfTokenHash := s.ComputeCSRFHash(csrfToken)
 
-	subjectHash := crypto.SHA256([]byte("email:" + normalized))
+	subjectHash := hashWithVersion(s.cfg.AuthSubjectKeys, s.cfg.AuthSubjectKeys.CurrentVersion, "email:"+normalized)
 
 	var userEmailCiphertext []byte
 	if s.cipher != nil {
@@ -522,10 +559,9 @@ func (s *Service) Login(ctx context.Context, email, password, returnTo, deviceLa
 		return nil, domain.NewAppError(401, "AUTH_INVALID_CREDENTIALS", "auth.invalidCredentials", "invalid email or password", nil, nil)
 	}
 
-	emailHash := s.ComputeEmailLookupHash(normalized)
 	now := s.clk.Now()
 
-	user, cred, err := s.store.FindUserByEmailHash(ctx, emailHash)
+	user, cred, _, err := s.findUserByEmail(ctx, normalized)
 	if err != nil {
 		// Anti-enumeration dummy hash check
 		_, _ = crypto.VerifyPassword(password, s.dummyArgonHash)
@@ -563,10 +599,10 @@ func (s *Service) Login(ctx context.Context, email, password, returnTo, deviceLa
 	sessionIDToken, _ := crypto.GenerateOpaqueToken(13)
 	sessionID := "ses_" + sessionIDToken
 	sessionToken, _ := crypto.GenerateOpaqueToken(32)
-	csrfToken, _ := crypto.GenerateOpaqueToken(32)
+	csrfToken := s.deriveCSRFToken(sessionToken, s.cfg.CSRFKeys.CurrentVersion)
 
-	sessionTokenHash := s.ComputeTokenHash(sessionToken)
-	csrfTokenHash := s.ComputeTokenHash(csrfToken)
+	sessionTokenHash := hashWithVersion(s.cfg.SessionKeys, s.cfg.SessionKeys.CurrentVersion, sessionToken)
+	csrfTokenHash := s.ComputeCSRFHash(csrfToken)
 
 	var label *string
 	if deviceLabel != "" {
@@ -618,15 +654,22 @@ func (s *Service) ResolveSession(ctx context.Context, sessionToken string) (*dom
 		return nil, nil, domain.ErrUnauthorized
 	}
 
-	tokenHash := s.ComputeTokenHash(sessionToken)
 	now := s.clk.Now()
-
-	sess, user, err := s.store.ResolveSession(ctx, tokenHash, now)
-	if err != nil {
-		return nil, nil, domain.ErrUnauthorized
+	for _, tokenHash := range s.computeSessionHashes(sessionToken) {
+		sess, user, err := s.store.ResolveSession(ctx, tokenHash, now)
+		if err == nil {
+			for _, version := range s.cfg.CSRFKeys.Versions() {
+				csrfToken := s.deriveCSRFToken(sessionToken, version)
+				csrfHash := hashWithVersion(s.cfg.CSRFKeys, version, csrfToken)
+				if hmac.Equal(csrfHash[:], sess.CSRFTokenHash[:]) {
+					sess.CSRFToken = csrfToken
+					break
+				}
+			}
+			return sess, user, nil
+		}
 	}
-
-	return sess, user, nil
+	return nil, nil, domain.ErrUnauthorized
 }
 
 func (s *Service) Logout(ctx context.Context, sessionID string) error {
@@ -687,10 +730,9 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) error 
 		return domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidEmail", "invalid email", nil, err)
 	}
 
-	emailHash := s.ComputeEmailLookupHash(normalized)
 	now := s.clk.Now()
 
-	user, _, err := s.store.FindUserByEmailHash(ctx, emailHash)
+	user, _, emailHash, err := s.findUserByEmail(ctx, normalized)
 	if err != nil {
 		// Anti-enumeration: return success
 		return nil
@@ -734,7 +776,7 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) error 
 		EmailKeyVersion: emailKeyVersion,
 		ChallengeType:   domain.ChallengeTypePasswordReset,
 		CodeHash:        codeHash,
-		CodeKeyVersion:  1,
+		CodeKeyVersion:  s.cfg.VerificationCodeKeys.CurrentVersion,
 		ChallengeStatus: domain.ChallengeStatusPending,
 		AttemptCount:    0,
 		MaxAttempts:     6,
@@ -744,7 +786,7 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) error 
 		UpdatedAt:       now,
 	}
 
-	idempotencyKey := crypto.HMACSHA256(s.hmacKey, []byte(challengeID+now.Format(time.RFC3339)))
+	idempotencyKey := hashWithVersion(s.cfg.IdempotencyKeys, s.cfg.IdempotencyKeys.CurrentVersion, challengeID+now.Format(time.RFC3339))
 
 	payloadJSON := fmt.Sprintf(`{"code":"%s"}`, code)
 	var recipientCiphertext, payloadCiphertext []byte
@@ -810,8 +852,15 @@ func (s *Service) ResetPassword(ctx context.Context, email, code, newPassword st
 		return domain.NewAppError(400, "API_INVALID_ARGUMENT", "auth.invalidPasswordLength", "password must be between 8 and 128 characters", nil, nil)
 	}
 
-	emailHash := s.ComputeEmailLookupHash(normalized)
-	codeHash := s.ComputeTokenHash(strings.TrimSpace(code))
+	_, _, emailHash, lookupErr := s.findUserByEmail(ctx, normalized)
+	if lookupErr != nil {
+		return domain.NewAppError(400, "AUTH_INVALID_CREDENTIALS", "auth.challengeNotFound", "invalid or expired verification code", nil, nil)
+	}
+	challenge, challengeErr := s.store.FindPendingEmailChallenge(ctx, domain.ChallengeTypePasswordReset, emailHash)
+	if challengeErr != nil {
+		return domain.NewAppError(400, "AUTH_INVALID_CREDENTIALS", "auth.challengeNotFound", "invalid or expired verification code", nil, nil)
+	}
+	codeHash := hashWithVersion(s.cfg.VerificationCodeKeys, challenge.CodeKeyVersion, strings.TrimSpace(code))
 	now := s.clk.Now()
 
 	params := crypto.DefaultArgon2Params

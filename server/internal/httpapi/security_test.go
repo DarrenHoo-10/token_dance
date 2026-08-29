@@ -3,11 +3,18 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"tokendance/internal/analytics"
 	"tokendance/internal/auth"
@@ -300,6 +307,83 @@ func TestHTTP_DisallowUnknownFields(t *testing.T) {
 }
 
 // TestHTTP_MaxBodySize verifies that oversized request bodies are rejected.
+func TestRateLimitClientIPTrustAndBoundedEviction(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.TrustedProxyCIDRs = []string{"10.0.0.0/8"}
+	cfg.RateLimitMaxEntries = 100
+	mw := NewMiddlewareWithConfig(nil, cfg)
+	untrusted := httptest.NewRequest(http.MethodGet, "/", nil)
+	untrusted.RemoteAddr = "203.0.113.5:1234"
+	untrusted.Header.Set("X-Forwarded-For", "198.51.100.9")
+	if got := mw.clientIP(untrusted); got != "203.0.113.5" {
+		t.Fatalf("trusted spoofed forwarded IP: %s", got)
+	}
+	trusted := httptest.NewRequest(http.MethodGet, "/", nil)
+	trusted.RemoteAddr = "10.1.2.3:1234"
+	trusted.Header.Set("X-Forwarded-For", "198.51.100.9, 10.2.3.4")
+	if got := mw.clientIP(trusted); got != "198.51.100.9" {
+		t.Fatalf("did not use trusted proxy chain: %s", got)
+	}
+	backend := newMemoryRateLimitBackend(100)
+	for i := 0; i < 250; i++ {
+		_, _ = backend.Allow(context.Background(), fmt.Sprintf("ip-%d", i), 10, time.Minute)
+	}
+	if len(backend.records) > 100 {
+		t.Fatalf("rate limiter grew beyond bound: %d", len(backend.records))
+	}
+}
+
+func TestHTTP_CSRFStableAcrossConcurrentTabs(t *testing.T) {
+	ctx := context.Background()
+	authSvc, _, profileSvc, st, router := setupSecurityTestApp(t, false)
+	_ = authSvc.RequestRegistrationCode(ctx, "tabs@tokendance.dev", "en-US")
+	challenge, _ := st.FindPendingEmailChallenge(ctx, domain.ChallengeTypeRegister, authSvc.ComputeEmailLookupHash("tabs@tokendance.dev"))
+	code := getChallengeCode(authSvc, challenge.CodeHash)
+	registration, err := authSvc.CompleteRegistration(ctx, "tabs@tokendance.dev", code, "Password123!", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = profileSvc.CompleteOnboarding(ctx, registration.User.UserID, profile.OnboardingInput{Handle: "twotabs", DisplayName: "Two Tabs", Timezone: "UTC", Locale: "en-US"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := &http.Cookie{Name: SessionCookieName, Value: registration.SessionToken}
+	fetch := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("session fetch failed: %d %s", rec.Code, rec.Body.String())
+		}
+		var body struct {
+			CSRFToken string `json:"csrfToken"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		return body.CSRFToken
+	}
+	tokenA, tokenB := fetch(), fetch()
+	if tokenA == "" || tokenA != tokenB {
+		t.Fatalf("expected stable CSRF token across tabs")
+	}
+	statuses := make(chan int, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/me/device-grants", nil)
+			req.AddCookie(cookie)
+			req.Header.Set("X-CSRF-Token", tokenA)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			statuses <- rec.Code
+		}()
+	}
+	for i := 0; i < 2; i++ {
+		if status := <-statuses; status != http.StatusCreated {
+			t.Fatalf("tab request failed: %d", status)
+		}
+	}
+}
+
 func TestHTTP_MaxBodySize(t *testing.T) {
 	_, _, _, _, router := setupSecurityTestApp(t, false)
 
@@ -337,8 +421,12 @@ func TestHTTP_TelemetryIngestRoute(t *testing.T) {
 	})
 
 	grant, _ := deviceSvc.CreateDeviceGrant(ctx, res.User.UserID, res.Session.SessionID)
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
 	inst, err := deviceSvc.RegisterInstallation(ctx, res.User.UserID, device.ClaimInput{
-		PublicKey:        "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20",
+		PublicKey:        hex.EncodeToString(publicKey),
 		OSType:           "windows",
 		Architecture:     "x86_64",
 		CollectorVersion: "1.0.0",
@@ -349,10 +437,21 @@ func TestHTTP_TelemetryIngestRoute(t *testing.T) {
 	_ = grant
 
 	// 1. Post telemetry batch to /v1/telemetry/batches
-	batchJSON := `{"batchId":"bat_test_01","events":[{"eventId":"evt_01","eventType":"model_turn","occurredAt":"2026-08-30T00:00:00Z","tokenTotal":100}]}`
+	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
+	eventID := sha256.Sum256([]byte("evt_01"))
+	batchJSON := fmt.Sprintf(`{"batchId":"bat_test_01","events":[{"eventId":"%s","schemaVersion":1,"adapterId":"test-adapter","adapterVersion":"1.0.0","agentId":"test-agent","eventType":"model_usage_recorded","accuracy":"exact","sourceKind":"runtime_stream","occurredAt":%q,"tokenTotal":100,"privacyPolicyVersion":1}]}`, hex.EncodeToString(eventID[:]), timestamp)
+	nonce := "nonce-telemetry-test-0001"
+	bodyHash := sha256.Sum256([]byte(batchJSON))
+	bodyHashHex := hex.EncodeToString(bodyHash[:])
+	canonical := telemetryCanonicalRequest(http.MethodPost, "/v1/telemetry/batches", timestamp, nonce, bodyHashHex)
+	signature := base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, []byte(canonical)))
 	req := httptest.NewRequest(http.MethodPost, "/v1/telemetry/batches", strings.NewReader(batchJSON))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Device "+inst.InstallationID+":signaturesample")
+	req.Header.Set("Authorization", "Device "+inst.InstallationID+":"+signature)
+	req.Header.Set("X-Timestamp", timestamp)
+	req.Header.Set("X-Nonce", nonce)
+	req.Header.Set("X-Body-SHA256", bodyHashHex)
+	req.Header.Set("Idempotency-Key", "bat_test_01")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 

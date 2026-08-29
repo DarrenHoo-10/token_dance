@@ -13,6 +13,7 @@ type Store interface {
 	Privacy() PrivacyStore
 	Analytics() AnalyticsStore
 	Device() DeviceStore
+	Ingest() IngestStore
 	Export() ExportStore
 	Search() SearchStore
 	Leaderboard() LeaderboardStore
@@ -71,6 +72,7 @@ type AnalyticsStore interface {
 	GetModelBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error)
 	GetSkillRanking(ctx context.Context, userID string, r domain.TimeRange) (*domain.SkillsResponse, error)
 	GetActivityCalendar(ctx context.Context, userID string, r domain.TimeRange) (*domain.CalendarResponse, error)
+	GetActivity(ctx context.Context, userID string, q domain.ActivityQuery) ([]domain.ActivityRow, error)
 	GetFilterOptions(ctx context.Context, userID string) (*domain.FilterOptions, error)
 }
 
@@ -86,6 +88,11 @@ type DeviceStore interface {
 	ResumeInstallation(ctx context.Context, installationID, userID string, now time.Time) (*domain.Installation, error)
 	RevokeInstallation(ctx context.Context, installationID, userID string, now time.Time) (*domain.Installation, error)
 	AuthorizeIngest(ctx context.Context, installationID string) (*domain.Installation, *domain.User, error)
+}
+
+type IngestStore interface {
+	GetIngestInstallation(ctx context.Context, installationID string) (*domain.Installation, error)
+	CommitIngest(ctx context.Context, batch domain.IngestBatch) (*domain.IngestResult, error)
 }
 
 type ExportStore interface {

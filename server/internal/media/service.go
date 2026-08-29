@@ -3,6 +3,7 @@ package media
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"image"
@@ -66,10 +67,13 @@ func (s *Service) CreateAvatarIntent(ctx context.Context, userID string, in Crea
 		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "media.fileTooLarge", "file size must be between 1 byte and 5 MiB", nil, domain.ErrInvalidArgument)
 	}
 
-	shaTrimmed := strings.TrimSpace(in.Sha256)
-	if len(shaTrimmed) != 64 {
+	shaTrimmed := strings.ToLower(strings.TrimSpace(in.Sha256))
+	declaredSHABytes, err := hex.DecodeString(shaTrimmed)
+	if err != nil || len(declaredSHABytes) != 32 {
 		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "media.invalidSha256", "sha256 must be a 64-character hex string", nil, domain.ErrInvalidArgument)
 	}
+	var declaredSHA [32]byte
+	copy(declaredSHA[:], declaredSHABytes)
 
 	now := s.clk.Now()
 	objIDToken, _ := crypto.GenerateOpaqueToken(13)
@@ -79,16 +83,17 @@ func (s *Service) CreateAvatarIntent(ctx context.Context, userID string, in Crea
 	expiresAt := now.Add(10 * time.Minute)
 
 	obj := domain.UserUploadObject{
-		ObjectID:     objectID,
-		UserID:       userID,
-		ObjectType:   "avatar",
-		ObjectKey:    objectKey,
-		ContentType:  &ct,
-		ByteSize:     &in.ByteSize,
-		UploadStatus: domain.UploadStatusPending,
-		ExpiresAt:    expiresAt,
-		CreatedAt:    now,
-		UpdatedAt:    now,
+		ObjectID:      objectID,
+		UserID:        userID,
+		ObjectType:    "avatar",
+		ObjectKey:     objectKey,
+		ContentType:   &ct,
+		ByteSize:      &in.ByteSize,
+		ContentSha256: &declaredSHA,
+		UploadStatus:  domain.UploadStatusPending,
+		ExpiresAt:     expiresAt,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 
 	created, err := s.store.CreateAvatarUploadIntent(ctx, obj)
@@ -167,10 +172,10 @@ func (s *Service) CompleteAvatarIntent(ctx context.Context, objectID, userID str
 		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "media.corruptImage", "failed to decode image header", nil, domain.ErrInvalidArgument)
 	}
 
-	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > 4096 || cfg.Height > 4096 {
+	if cfg.Width <= 0 || cfg.Height <= 0 || cfg.Width > 4096 || cfg.Height > 4096 || int64(cfg.Width) > s.cfg.MediaAvatarMaxPixels/int64(cfg.Height) {
 		errCode := "INVALID_DIMENSIONS"
 		_ = s.store.UpdateUploadObjectStatus(ctx, objectID, domain.UploadStatusRejected, &errCode, now)
-		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "media.invalidDimensions", "image dimensions invalid or exceed 4096x4096px limit", nil, domain.ErrInvalidArgument)
+		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "media.invalidDimensions", "image dimensions or pixel count exceed configured limits", nil, domain.ErrInvalidArgument)
 	}
 
 	// Verify full pixel decode
@@ -183,6 +188,11 @@ func (s *Service) CompleteAvatarIntent(ctx context.Context, objectID, userID str
 
 	// 5. Checksum & Metadata
 	contentSha := crypto.SHA256(data)
+	if obj.ContentSha256 == nil || !crypto.ConstantTimeCompare(contentSha[:], obj.ContentSha256[:]) {
+		errCode := "SHA256_MISMATCH"
+		_ = s.store.UpdateUploadObjectStatus(ctx, objectID, domain.UploadStatusRejected, &errCode, now)
+		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "media.sha256Mismatch", "uploaded payload does not match declared sha256", nil, domain.ErrInvalidArgument)
+	}
 	readyMeta := store.AvatarReadyMeta{
 		ByteSize:      uint64(len(data)),
 		ContentSha256: contentSha,

@@ -63,9 +63,18 @@ func TestConfigValidationErrors(t *testing.T) {
 func TestProductionValidationSafety(t *testing.T) {
 	cfg := DefaultConfig()
 	cfg.Environment = "production"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("production must fail without durable provider and secret configuration")
+	}
+
 	cfg.MySQLDSN = "root:pass@tcp(127.0.0.1:3306)/tokendance"
-	cfg.EncryptionKey = "prod-32-byte-encryption-key-0001"
-	cfg.HMACSecret = "prod-32-byte-hmac-secret-tokendance-01"
+	cfg.MySQLDSNFile = "mysql.secret"
+	for _, ring := range []*VersionedKeyring{
+		&cfg.EmailLookupKeys, &cfg.AuthSubjectKeys, &cfg.SessionKeys, &cfg.CSRFKeys,
+		&cfg.VerificationCodeKeys, &cfg.BindingCodeKeys, &cfg.GrantKeys, &cfg.IdempotencyKeys, &cfg.AEADKeys,
+	} {
+		ring.SecretFile = "keyring.secret"
+	}
 	cfg.EmailProvider = "smtp"
 	cfg.SMTPHost = "smtp.example.com"
 	cfg.SMTPPort = 587
@@ -79,9 +88,7 @@ func TestProductionValidationSafety(t *testing.T) {
 	cfg.ObjectBucket = "tokendance"
 	cfg.ObjectAccessKey = "access-key"
 	cfg.ObjectSecretKey = "secret-key"
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("valid production config should pass: %v", err)
-	}
+
 	for name, mutate := range map[string]func(*Config){
 		"object endpoint":    func(c *Config) { c.ObjectEndpoint = "" },
 		"object bucket":      func(c *Config) { c.ObjectBucket = "" },
@@ -98,6 +105,12 @@ func TestProductionValidationSafety(t *testing.T) {
 			}
 		})
 	}
+
+	cfg.TestAuthCode = "123456"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("production must fail when TestAuthCode is set")
+	}
+	cfg.TestAuthCode = ""
 	cfg.EmailProvider = "sink"
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("production must fail with sink email provider")
@@ -107,36 +120,73 @@ func TestProductionValidationSafety(t *testing.T) {
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("production must fail with memory object storage")
 	}
+	cfg.ObjectProvider = "s3"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid production config should pass: %v", err)
+	}
+}
+
+func TestVersionedKeyringsLoadFromSecretFiles(t *testing.T) {
+	dir := t.TempDir()
+	hmacFile := filepath.Join(dir, "hmac.json")
+	aeadFile := filepath.Join(dir, "aead.json")
+	if err := os.WriteFile(hmacFile, []byte(`{"currentVersion":2,"keys":{"1":"01234567890123456789012345678901","2":"11234567890123456789012345678901"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(aeadFile, []byte(`{"currentVersion":3,"keys":{"2":"21234567890123456789012345678901","3":"31234567890123456789012345678901"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TOKENDANCE_ENVIRONMENT", "test")
+	for _, name := range []string{"TOKENDANCE_EMAIL_LOOKUP_HMAC_KEYRING_FILE", "TOKENDANCE_AUTH_SUBJECT_HMAC_KEYRING_FILE", "TOKENDANCE_SESSION_HMAC_KEYRING_FILE", "TOKENDANCE_CSRF_HMAC_KEYRING_FILE", "TOKENDANCE_VERIFICATION_CODE_HMAC_KEYRING_FILE", "TOKENDANCE_BINDING_CODE_HMAC_KEYRING_FILE", "TOKENDANCE_GRANT_HMAC_KEYRING_FILE", "TOKENDANCE_IDEMPOTENCY_HMAC_KEYRING_FILE"} {
+		t.Setenv(name, hmacFile)
+	}
+	t.Setenv("TOKENDANCE_AEAD_KEYRING_FILE", aeadFile)
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SessionKeys.CurrentVersion != 2 || len(cfg.SessionKeys.Keys) != 2 || cfg.AEADKeys.CurrentVersion != 3 || len(cfg.AEADKeys.Keys) != 2 {
+		t.Fatalf("keyrings not loaded: %+v %+v", cfg.SessionKeys, cfg.AEADKeys)
+	}
 }
 
 func TestProviderSecretsLoadFromFiles(t *testing.T) {
 	dir := t.TempDir()
-	accessFile, secretFile, passwordFile := filepath.Join(dir, "access"), filepath.Join(dir, "secret"), filepath.Join(dir, "smtp-password")
-	for path, value := range map[string]string{accessFile: "file-access\n", secretFile: "file-secret\n", passwordFile: "file-password\n"} {
-		if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
-			t.Fatal(err)
-		}
+	accessFile := filepath.Join(dir, "access")
+	secretFile := filepath.Join(dir, "secret")
+	passwordFile := filepath.Join(dir, "smtp-password")
+	if err := os.WriteFile(accessFile, []byte("file-access\n"), 0o600); err != nil {
+		t.Fatal(err)
 	}
+	if err := os.WriteFile(secretFile, []byte("file-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(passwordFile, []byte("file-password\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
 	t.Setenv("TOKENDANCE_ENVIRONMENT", "test")
 	t.Setenv("TOKENDANCE_OBJECT_PROVIDER", "s3")
 	t.Setenv("TOKENDANCE_OBJECT_ENDPOINT", "http://127.0.0.1:9000")
 	t.Setenv("TOKENDANCE_OBJECT_REGION", "us-east-1")
-	t.Setenv("TOKENDANCE_OBJECT_BUCKET", "bucket")
+	t.Setenv("TOKENDANCE_OBJECT_BUCKET", "tokendance-test")
+	t.Setenv("TOKENDANCE_OBJECT_ACCESS_KEY", "ignored-access")
 	t.Setenv("TOKENDANCE_OBJECT_ACCESS_KEY_FILE", accessFile)
 	t.Setenv("TOKENDANCE_OBJECT_SECRET_KEY_FILE", secretFile)
 	t.Setenv("TOKENDANCE_EMAIL_PROVIDER", "smtp")
 	t.Setenv("TOKENDANCE_SMTP_HOST", "localhost")
 	t.Setenv("TOKENDANCE_SMTP_PORT", "2525")
-	t.Setenv("TOKENDANCE_SMTP_USERNAME", "user")
+	t.Setenv("TOKENDANCE_SMTP_USERNAME", "smtp-user")
 	t.Setenv("TOKENDANCE_SMTP_PASSWORD_FILE", passwordFile)
 	t.Setenv("TOKENDANCE_SMTP_FROM", "noreply@example.com")
 	t.Setenv("TOKENDANCE_SMTP_TLS_MODE", "none")
+
 	cfg, err := LoadFromEnv()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("load provider secrets: %v", err)
 	}
 	if cfg.ObjectAccessKey != "file-access" || cfg.ObjectSecretKey != "file-secret" || cfg.SMTPPassword != "file-password" {
-		t.Fatal("secret files were not loaded")
+		t.Fatal("provider secret files were not loaded or did not override direct values")
 	}
 }
 

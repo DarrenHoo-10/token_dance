@@ -9,6 +9,53 @@ import (
 	"tokendance/internal/store/memory"
 )
 
+func TestTimeRangesDSTAllAndCustom(t *testing.T) {
+	clk := clock.NewMockClock(time.Date(2026, 3, 8, 16, 0, 0, 0, time.UTC))
+	svc := NewService(memory.NewMemoryStore(), clk)
+	custom, err := svc.ResolveTimeRange("custom", "America/New_York", "2026-03-08", "2026-03-08")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if duration := custom.To.Sub(custom.From) + time.Nanosecond; duration != 23*time.Hour {
+		t.Fatalf("expected 23-hour DST day, got %v", duration)
+	}
+	all, err := svc.ResolveTimeRange("all", "Asia/Tokyo", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if all.From.In(time.FixedZone("JST", 9*3600)).Year() != 1970 {
+		t.Fatalf("all range did not start at epoch calendar boundary")
+	}
+	if _, err := svc.ResolveTimeRange("custom", "UTC", "2026-04-01", "2026-03-01"); err == nil {
+		t.Fatal("expected invalid reversed custom range")
+	}
+}
+
+func TestActivityFiltersAndPagination(t *testing.T) {
+	ctx := context.Background()
+	st := memory.NewMemoryStore()
+	clk := clock.NewMockClock(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
+	svc := NewService(st, clk)
+	_, _, _ = st.SeedUserForTest("usr_activity", "activity", "activity@example.com", clk.Now())
+	first, err := svc.GetActivity(ctx, "usr_activity", "7d", "", "", "claude-code", "", "", "", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Items) != 2 || first.NextCursor == nil {
+		t.Fatalf("expected first activity page with cursor: %+v", first)
+	}
+	second, err := svc.GetActivity(ctx, "usr_activity", "7d", "", "", "claude-code", "", "", *first.NextCursor, 2)
+	if err != nil || len(second.Items) == 0 || second.Items[0].Date == first.Items[0].Date {
+		t.Fatalf("expected distinct second page: %+v %v", second, err)
+	}
+	if _, err := svc.GetActivity(ctx, "usr_activity", "7d", "", "", "unknown-agent", "", "", "", 20); err == nil {
+		t.Fatal("expected unavailable filter rejection")
+	}
+	if _, err := svc.GetActivity(ctx, "usr_activity", "7d", "", "", "", "", "", "tampered", 20); err == nil {
+		t.Fatal("expected tampered cursor rejection")
+	}
+}
+
 func TestAnalyticsService(t *testing.T) {
 	ctx := context.Background()
 	st := memory.NewMemoryStore()

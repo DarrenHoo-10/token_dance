@@ -1,8 +1,18 @@
 package httpapi
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"crypto/ed25519"
+	stdsha256 "crypto/sha256"
+	"crypto/subtle"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -12,7 +22,6 @@ import (
 
 	"tokendance/internal/analytics"
 	"tokendance/internal/auth"
-	"tokendance/internal/crypto"
 	"tokendance/internal/device"
 	"tokendance/internal/domain"
 	"tokendance/internal/export"
@@ -98,10 +107,14 @@ func (h *Handlers) Healthz(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) Readyz(w http.ResponseWriter, r *http.Request) {
 	if h.readinessChecker != nil {
-		if err := h.readinessChecker(r.Context()); err != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		if err := h.readinessChecker(ctx); err != nil {
+			log.Printf("readiness check failed: %v", err)
 			WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
 				"status":    "not_ready",
-				"error":     err.Error(),
+				"errorCode": "DEPENDENCY_NOT_READY",
+				"error":     "dependency unavailable",
 				"timestamp": time.Now().UTC().Format(time.RFC3339),
 			})
 			return
@@ -228,9 +241,8 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	csrfToken, err := h.auth.RotateCSRFToken(r.Context(), sess.SessionID)
-	if err != nil {
-		WriteError(w, r, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to refresh session csrf", nil, err))
+	if sess.CSRFToken == "" {
+		WriteError(w, r, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "session CSRF token unavailable", nil, nil))
 		return
 	}
 
@@ -245,7 +257,7 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 			"onboardingRequired": user.OnboardingCompletedAt == nil,
 			"productState":       user.ProductState(),
 		},
-		"csrfToken":         csrfToken,
+		"csrfToken":         sess.CSRFToken,
 		"idleExpiresAt":     sess.IdleExpiresAt.Format(time.RFC3339),
 		"absoluteExpiresAt": sess.AbsoluteExpiresAt.Format(time.RFC3339),
 	})
@@ -561,7 +573,7 @@ func (h *Handlers) GetSummary(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	rangeKey := r.URL.Query().Get("range")
 
-	summary, err := h.analytics.GetPersonalSummary(r.Context(), user.UserID, rangeKey)
+	summary, err := h.analytics.GetPersonalSummaryRange(r.Context(), user.UserID, rangeKey, r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -585,7 +597,7 @@ func (h *Handlers) GetTokenTrends(w http.ResponseWriter, r *http.Request) {
 		modelID = &v
 	}
 
-	trend, err := h.analytics.GetTokenTrend(r.Context(), user.UserID, rangeKey, mode, agentID, providerID, modelID)
+	trend, err := h.analytics.GetTokenTrendRange(r.Context(), user.UserID, rangeKey, r.URL.Query().Get("from"), r.URL.Query().Get("to"), mode, agentID, providerID, modelID)
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -597,7 +609,7 @@ func (h *Handlers) GetAgentBreakdowns(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	rangeKey := r.URL.Query().Get("range")
 
-	resp, err := h.analytics.GetAgentBreakdown(r.Context(), user.UserID, rangeKey)
+	resp, err := h.analytics.GetAgentBreakdownRange(r.Context(), user.UserID, rangeKey, r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -609,7 +621,7 @@ func (h *Handlers) GetModelBreakdowns(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	rangeKey := r.URL.Query().Get("range")
 
-	resp, err := h.analytics.GetModelBreakdown(r.Context(), user.UserID, rangeKey)
+	resp, err := h.analytics.GetModelBreakdownRange(r.Context(), user.UserID, rangeKey, r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -621,7 +633,7 @@ func (h *Handlers) GetSkills(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	rangeKey := r.URL.Query().Get("range")
 
-	resp, err := h.analytics.GetSkillRanking(r.Context(), user.UserID, rangeKey)
+	resp, err := h.analytics.GetSkillRankingRange(r.Context(), user.UserID, rangeKey, r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -633,7 +645,7 @@ func (h *Handlers) GetCalendar(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	rangeKey := r.URL.Query().Get("range")
 
-	resp, err := h.analytics.GetActivityCalendar(r.Context(), user.UserID, rangeKey)
+	resp, err := h.analytics.GetActivityCalendarRange(r.Context(), user.UserID, rangeKey, r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -642,10 +654,25 @@ func (h *Handlers) GetCalendar(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) GetActivity(w http.ResponseWriter, r *http.Request) {
-	// P1 Safe activity details
-	WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"items": []interface{}{},
-	})
+	user := GetUserFromContext(r.Context())
+	limit := 50
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "analytics.invalidLimit", "limit must be an integer", nil, err))
+			return
+		}
+		limit = parsed
+	}
+	resp, err := h.analytics.GetActivity(r.Context(), user.UserID,
+		r.URL.Query().Get("range"), r.URL.Query().Get("from"), r.URL.Query().Get("to"),
+		r.URL.Query().Get("agent"), r.URL.Query().Get("provider"), r.URL.Query().Get("model"),
+		r.URL.Query().Get("cursor"), limit)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handlers) GetFilterOptions(w http.ResponseWriter, r *http.Request) {
@@ -866,63 +893,355 @@ func (h *Handlers) RegisterInstallation(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+const (
+	maxTelemetryBodyBytes = 512 * 1024
+	maxTelemetryEvents    = 1000
+	telemetryClockSkew    = 5 * time.Minute
+	telemetryNonceTTL     = 10 * time.Minute
+)
+
 type TelemetryBatchInput struct {
-	BatchID string `json:"batchId,omitempty"`
-	Events  []struct {
-		EventID    string                 `json:"eventId"`
-		EventType  string                 `json:"eventType"`
-		OccurredAt string                 `json:"occurredAt"`
-		TokenTotal *int64                 `json:"tokenTotal,omitempty"`
-		Metadata   map[string]interface{} `json:"metadata,omitempty"`
-	} `json:"events"`
+	BatchID string                `json:"batchId,omitempty"`
+	Events  []TelemetryEventInput `json:"events"`
+}
+
+type TelemetryEventInput struct {
+	EventID              string                 `json:"eventId"`
+	SchemaVersion        uint16                 `json:"schemaVersion"`
+	AdapterID            string                 `json:"adapterId"`
+	AdapterVersion       string                 `json:"adapterVersion"`
+	AgentID              string                 `json:"agentId"`
+	AgentVersion         *string                `json:"agentVersion,omitempty"`
+	ProviderID           *string                `json:"providerId,omitempty"`
+	ModelID              *string                `json:"modelId,omitempty"`
+	EventType            string                 `json:"eventType"`
+	Accuracy             string                 `json:"accuracy"`
+	SourceKind           string                 `json:"sourceKind"`
+	OccurredAt           string                 `json:"occurredAt"`
+	SessionHash          *string                `json:"sessionHash,omitempty"`
+	ParentSessionHash    *string                `json:"parentSessionHash,omitempty"`
+	TurnHash             *string                `json:"turnHash,omitempty"`
+	ToolCallHash         *string                `json:"toolCallHash,omitempty"`
+	TokenInput           *uint64                `json:"tokenInput,omitempty"`
+	TokenOutput          *uint64                `json:"tokenOutput,omitempty"`
+	TokenCacheRead       *uint64                `json:"tokenCacheRead,omitempty"`
+	TokenCacheWrite      *uint64                `json:"tokenCacheWrite,omitempty"`
+	TokenReasoning       *uint64                `json:"tokenReasoning,omitempty"`
+	TokenTotal           *uint64                `json:"tokenTotal,omitempty"`
+	DurationMS           *uint64                `json:"durationMs,omitempty"`
+	Success              *bool                  `json:"success,omitempty"`
+	ToolCategory         *string                `json:"toolCategory,omitempty"`
+	SkillKey             *string                `json:"skillKey,omitempty"`
+	SkillPublicName      *string                `json:"skillPublicName,omitempty"`
+	SkillInvokeType      *string                `json:"skillInvokeType,omitempty"`
+	PluginKey            *string                `json:"pluginKey,omitempty"`
+	CodeGeneratedLines   *uint64                `json:"codeGeneratedLines,omitempty"`
+	CodeAcceptedLines    *uint64                `json:"codeAcceptedLines,omitempty"`
+	CodeAddedLines       *uint64                `json:"codeAddedLines,omitempty"`
+	CodeDeletedLines     *uint64                `json:"codeDeletedLines,omitempty"`
+	CodeFileCount        *uint32                `json:"codeFileCount,omitempty"`
+	CostAmount           *string                `json:"costAmount,omitempty"`
+	CostCurrency         *string                `json:"costCurrency,omitempty"`
+	CostSource           *string                `json:"costSource,omitempty"`
+	PrivacyPolicyVersion uint16                 `json:"privacyPolicyVersion"`
+	Metadata             map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type telemetryRejection struct {
+	EventID string `json:"eventId,omitempty"`
+	Code    string `json:"code"`
 }
 
 func (h *Handlers) IngestTelemetry(w http.ResponseWriter, r *http.Request) {
-	authHeader := r.Header.Get("Authorization")
-	var instID string
-	if strings.HasPrefix(authHeader, "Device ") {
-		parts := strings.SplitN(strings.TrimPrefix(authHeader, "Device "), ":", 2)
-		instID = parts[0]
-	} else if instHeader := r.Header.Get("X-Installation-Id"); instHeader != "" {
-		instID = instHeader
-	}
-	if instID == "" {
-		WriteError(w, r, domain.NewAppError(401, "AUTH_REQUIRED", "auth.required", "device authentication required", nil, domain.ErrUnauthorized))
-		return
-	}
-
-	inst, _, err := h.device.AuthorizeIngest(r.Context(), instID)
+	installationID, signature, err := parseDeviceAuthorization(r.Header.Get("Authorization"))
 	if err != nil {
 		WriteError(w, r, err)
 		return
 	}
 
-	var in TelemetryBatchInput
-	if err := decodeJSON(w, r, 512*1024, &in); err != nil {
+	timestampValue := strings.TrimSpace(r.Header.Get("X-Timestamp"))
+	nonce := strings.TrimSpace(r.Header.Get("X-Nonce"))
+	bodyHashValue := strings.TrimSpace(r.Header.Get("X-Body-SHA256"))
+	requestTime, err := validateTelemetryHeaders(timestampValue, nonce, bodyHashValue, time.Now().UTC())
+	if err != nil {
 		WriteError(w, r, err)
 		return
 	}
 
-	if len(in.Events) > 500 {
-		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "ingest.batchTooLarge", "batch exceeds 500 events limit", nil, domain.ErrInvalidArgument))
+	rawBody, body, err := readTelemetryBody(w, r)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	requestHash := stdsha256.Sum256(rawBody)
+	headerHash, err := hex.DecodeString(bodyHashValue)
+	if err != nil || len(headerHash) != stdsha256.Size || subtle.ConstantTimeCompare(headerHash, requestHash[:]) != 1 {
+		WriteError(w, r, domain.NewAppError(400, "INGEST_BODY_HASH_MISMATCH", "ingest.bodyHashMismatch", "X-Body-SHA256 does not match the transmitted request body", nil, domain.ErrInvalidArgument))
 		return
 	}
 
-	batchID := in.BatchID
+	inst, err := h.device.GetIngestInstallation(r.Context(), installationID)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	canonical := telemetryCanonicalRequest(r.Method, r.URL.EscapedPath(), timestampValue, nonce, hex.EncodeToString(requestHash[:]))
+	if !ed25519.Verify(ed25519.PublicKey(inst.DevicePublicKey[:]), []byte(canonical), signature) {
+		WriteError(w, r, domain.NewAppError(401, "DEVICE_SIGNATURE_INVALID", "device.invalidSignature", "invalid device request signature", nil, domain.ErrUnauthorized))
+		return
+	}
+
+	var in TelemetryBatchInput
+	if err := decodeTelemetryJSON(body, &in); err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	if len(in.Events) == 0 || len(in.Events) > maxTelemetryEvents {
+		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "ingest.invalidBatchSize", "batch must contain between 1 and 1000 events", nil, domain.ErrInvalidArgument))
+		return
+	}
+
+	batchID := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if batchID == "" {
-		token, _ := crypto.GenerateOpaqueToken(13)
-		batchID = "bat_" + token
+		batchID = strings.TrimSpace(in.BatchID)
+	} else if in.BatchID != "" && batchID != in.BatchID {
+		WriteError(w, r, domain.NewAppError(400, "INGEST_BATCH_ID_MISMATCH", "ingest.batchIdMismatch", "Idempotency-Key and batchId must match", nil, domain.ErrInvalidArgument))
+		return
+	}
+	if !validTelemetryID(batchID, "bat_") {
+		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "ingest.invalidBatchId", "a valid batch id is required in Idempotency-Key or batchId", nil, domain.ErrInvalidArgument))
+		return
+	}
+
+	events := make([]domain.UsageEvent, 0, len(in.Events))
+	rejected := make([]telemetryRejection, 0)
+	for i := range in.Events {
+		event, code := normalizeTelemetryEvent(&in.Events[i])
+		if code != "" {
+			rejected = append(rejected, telemetryRejection{EventID: in.Events[i].EventID, Code: code})
+			continue
+		}
+		events = append(events, *event)
 	}
 
 	now := time.Now().UTC()
-	WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"batchId":        batchID,
-		"installationId": inst.InstallationID,
-		"accepted":       len(in.Events),
-		"duplicates":     0,
-		"rejected":       []string{},
-		"serverTime":     now.Format(time.RFC3339),
+	nonceHash := stdsha256.Sum256([]byte(nonce))
+	result, err := h.device.CommitIngest(r.Context(), domain.IngestBatch{
+		BatchID:        batchID,
+		InstallationID: installationID,
+		RequestSHA256:  requestHash,
+		NonceHash:      nonceHash,
+		NonceExpiresAt: requestTime.Add(telemetryNonceTTL),
+		EventCount:     uint32(len(in.Events)),
+		RejectedCount:  uint32(len(rejected)),
+		Events:         events,
+		ReceivedAt:     now,
 	})
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"batchId":        result.BatchID,
+		"installationId": installationID,
+		"accepted":       result.AcceptedCount,
+		"duplicates":     result.DuplicateCount,
+		"rejected":       rejected,
+		"serverTime":     now.Format(time.RFC3339Nano),
+	})
+}
+
+func parseDeviceAuthorization(value string) (string, []byte, error) {
+	if !strings.HasPrefix(value, "Device ") {
+		return "", nil, domain.NewAppError(401, "AUTH_REQUIRED", "auth.required", "Authorization: Device <installation-id>:<signature> is required", nil, domain.ErrUnauthorized)
+	}
+	parts := strings.Split(strings.TrimSpace(strings.TrimPrefix(value, "Device ")), ":")
+	if len(parts) != 2 || !validTelemetryID(parts[0], "ins_") {
+		return "", nil, domain.NewAppError(401, "DEVICE_AUTH_INVALID", "device.invalidSignature", "invalid device authorization format", nil, domain.ErrUnauthorized)
+	}
+	signature, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil || len(signature) != ed25519.SignatureSize {
+		return "", nil, domain.NewAppError(401, "DEVICE_AUTH_INVALID", "device.invalidSignature", "invalid device signature encoding", nil, domain.ErrUnauthorized)
+	}
+	return parts[0], signature, nil
+}
+
+func validateTelemetryHeaders(timestampValue, nonce, bodyHash string, now time.Time) (time.Time, error) {
+	requestTime, err := time.Parse(time.RFC3339Nano, timestampValue)
+	if err != nil {
+		return time.Time{}, domain.NewAppError(400, "INGEST_TIMESTAMP_INVALID", "ingest.invalidTimestamp", "X-Timestamp must be an RFC3339 timestamp", nil, domain.ErrInvalidArgument)
+	}
+	if requestTime.Before(now.Add(-telemetryClockSkew)) || requestTime.After(now.Add(telemetryClockSkew)) {
+		return time.Time{}, domain.NewAppError(401, "INGEST_TIMESTAMP_EXPIRED", "ingest.timestampExpired", "telemetry timestamp is outside the allowed clock skew", nil, domain.ErrUnauthorized)
+	}
+	if len(nonce) < 16 || len(nonce) > 128 || strings.ContainsAny(nonce, "\r\n") {
+		return time.Time{}, domain.NewAppError(400, "INGEST_NONCE_INVALID", "ingest.invalidNonce", "X-Nonce must contain 16 to 128 characters", nil, domain.ErrInvalidArgument)
+	}
+	if len(bodyHash) != stdsha256.Size*2 {
+		return time.Time{}, domain.NewAppError(400, "INGEST_BODY_HASH_INVALID", "ingest.invalidBodyHash", "X-Body-SHA256 must be a 64-character hexadecimal SHA-256", nil, domain.ErrInvalidArgument)
+	}
+	return requestTime.UTC(), nil
+}
+
+func telemetryCanonicalRequest(method, path, timestamp, nonce, bodyHash string) string {
+	if path == "" {
+		path = "/"
+	}
+	return strings.ToUpper(method) + "\n" + path + "\n" + timestamp + "\n" + nonce + "\n" + strings.ToLower(bodyHash)
+}
+
+func readTelemetryBody(w http.ResponseWriter, r *http.Request) ([]byte, []byte, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxTelemetryBodyBytes)
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxErr *http.MaxBytesError
+		if errors.As(err, &maxErr) {
+			return nil, nil, domain.NewAppError(413, "INGEST_BODY_TOO_LARGE", "ingest.bodyTooLarge", "telemetry request body exceeds 512 KiB", nil, domain.ErrInvalidArgument)
+		}
+		return nil, nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "failed to read telemetry request body", nil, err)
+	}
+	if r.Header.Get("Content-Encoding") == "" {
+		return raw, raw, nil
+	}
+	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Content-Encoding")), "gzip") {
+		return nil, nil, domain.NewAppError(415, "INGEST_CONTENT_ENCODING_UNSUPPORTED", "ingest.unsupportedEncoding", "only gzip content encoding is supported", nil, domain.ErrInvalidArgument)
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid gzip telemetry body", nil, err)
+	}
+	defer zr.Close()
+	decoded, err := io.ReadAll(io.LimitReader(zr, maxTelemetryBodyBytes+1))
+	if err != nil || len(decoded) > maxTelemetryBodyBytes {
+		return nil, nil, domain.NewAppError(413, "INGEST_BODY_TOO_LARGE", "ingest.bodyTooLarge", "decoded telemetry request body exceeds 512 KiB", nil, domain.ErrInvalidArgument)
+	}
+	return raw, decoded, nil
+}
+
+func decodeTelemetryJSON(body []byte, dst *TelemetryBatchInput) error {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid telemetry request body: "+err.Error(), nil, err)
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "telemetry request body must contain exactly one JSON value", nil, domain.ErrInvalidArgument)
+	}
+	return nil
+}
+
+func normalizeTelemetryEvent(in *TelemetryEventInput) (*domain.UsageEvent, string) {
+	eventID, ok := decodeTelemetryHash(in.EventID)
+	if !ok {
+		return nil, "INVALID_EVENT_ID"
+	}
+	occurredAt, err := time.Parse(time.RFC3339Nano, in.OccurredAt)
+	if err != nil {
+		return nil, "INVALID_OCCURRED_AT"
+	}
+	if in.SchemaVersion == 0 {
+		in.SchemaVersion = 1
+	}
+	if in.PrivacyPolicyVersion == 0 {
+		in.PrivacyPolicyVersion = 1
+	}
+	if in.AdapterID == "" || in.AdapterVersion == "" || in.AgentID == "" {
+		return nil, "MISSING_EVENT_SOURCE"
+	}
+	if !validTelemetryEventType(in.EventType) {
+		return nil, "INVALID_EVENT_TYPE"
+	}
+	if !validTelemetryAccuracy(in.Accuracy) || !validTelemetrySourceKind(in.SourceKind) {
+		return nil, "INVALID_EVENT_CLASSIFICATION"
+	}
+	for _, value := range []*string{in.SessionHash, in.ParentSessionHash, in.TurnHash, in.ToolCallHash, in.SkillKey, in.PluginKey} {
+		if value != nil {
+			if _, ok := decodeTelemetryHash(*value); !ok {
+				return nil, "INVALID_HASH_FIELD"
+			}
+		}
+	}
+	metadata, err := json.Marshal(in.Metadata)
+	if err != nil {
+		return nil, "INVALID_METADATA"
+	}
+	if len(in.Metadata) == 0 {
+		metadata = nil
+	}
+	return &domain.UsageEvent{
+		EventID: eventID, SchemaVersion: in.SchemaVersion, AdapterID: in.AdapterID, AdapterVersion: in.AdapterVersion,
+		AgentID: in.AgentID, AgentVersion: in.AgentVersion, ProviderID: in.ProviderID, ModelID: in.ModelID,
+		EventType: in.EventType, Accuracy: in.Accuracy, SourceKind: in.SourceKind, OccurredAt: occurredAt.UTC(),
+		SessionHash: decodeOptionalTelemetryHash(in.SessionHash), ParentSessionHash: decodeOptionalTelemetryHash(in.ParentSessionHash),
+		TurnHash: decodeOptionalTelemetryHash(in.TurnHash), ToolCallHash: decodeOptionalTelemetryHash(in.ToolCallHash),
+		TokenInput: in.TokenInput, TokenOutput: in.TokenOutput, TokenCacheRead: in.TokenCacheRead, TokenCacheWrite: in.TokenCacheWrite,
+		TokenReasoning: in.TokenReasoning, TokenTotal: in.TokenTotal, DurationMS: in.DurationMS, Success: in.Success,
+		ToolCategory: in.ToolCategory, SkillKey: decodeOptionalTelemetryHash(in.SkillKey), SkillPublicName: in.SkillPublicName,
+		SkillInvokeType: in.SkillInvokeType, PluginKey: decodeOptionalTelemetryHash(in.PluginKey), CodeGeneratedLines: in.CodeGeneratedLines,
+		CodeAcceptedLines: in.CodeAcceptedLines, CodeAddedLines: in.CodeAddedLines, CodeDeletedLines: in.CodeDeletedLines,
+		CodeFileCount: in.CodeFileCount, CostAmount: in.CostAmount, CostCurrency: in.CostCurrency, CostSource: in.CostSource,
+		PrivacyPolicyVersion: in.PrivacyPolicyVersion, SafeExtensionJSON: metadata,
+	}, ""
+}
+
+func decodeTelemetryHash(value string) ([32]byte, bool) {
+	var result [32]byte
+	value = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(value, "sha256:"), "hmac-sha256:"))
+	decoded, err := hex.DecodeString(value)
+	if err != nil || len(decoded) != len(result) {
+		decoded, err = base64.RawURLEncoding.DecodeString(value)
+	}
+	if err != nil || len(decoded) != len(result) {
+		return result, false
+	}
+	copy(result[:], decoded)
+	return result, true
+}
+
+func decodeOptionalTelemetryHash(value *string) *[32]byte {
+	if value == nil {
+		return nil
+	}
+	decoded, ok := decodeTelemetryHash(*value)
+	if !ok {
+		return nil
+	}
+	return &decoded
+}
+
+func validTelemetryID(value, prefix string) bool {
+	if !strings.HasPrefix(value, prefix) || len(value) > 30 || len(value) <= len(prefix) {
+		return false
+	}
+	for _, ch := range value {
+		if (ch < 'a' || ch > 'z') && (ch < 'A' || ch > 'Z') && (ch < '0' || ch > '9') && ch != '_' && ch != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func validTelemetryEventType(value string) bool {
+	switch value {
+	case "session_started", "session_ended", "turn_started", "turn_completed", "model_usage_recorded", "tool_invoked", "skill_invoked", "code_changed", "cost_recorded", "agent_spawned":
+		return true
+	default:
+		return false
+	}
+}
+
+func validTelemetryAccuracy(value string) bool {
+	return value == "exact" || value == "derived" || value == "estimated" || value == "correlated"
+}
+
+func validTelemetrySourceKind(value string) bool {
+	switch value {
+	case "otlp", "jsonl", "sqlite_snapshot", "file_snapshot", "runtime_stream", "local_http_api", "command_snapshot", "remote_api":
+		return true
+	default:
+		return false
+	}
 }
 
 // --- Export & Deletion Handlers ---

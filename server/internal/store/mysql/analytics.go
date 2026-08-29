@@ -16,6 +16,14 @@ type analyticsStore struct {
 	db *sql.DB
 }
 
+func rangeDateStrings(r domain.TimeRange) (string, string, *time.Location) {
+	loc, err := time.LoadLocation(r.Timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+	return r.From.In(loc).Format("2006-01-02"), r.To.In(loc).Format("2006-01-02"), loc
+}
+
 func agentDisplayName(id string) string {
 	switch id {
 	case "claude-code":
@@ -62,8 +70,7 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 		FROM daily_user_agent_metrics
 		WHERE user_id = ? AND metric_date >= ? AND metric_date <= ?`
 
-	fromStr := r.From.Format("2006-01-02")
-	toStr := r.To.Format("2006-01-02")
+	fromStr, toStr, _ := rangeDateStrings(r)
 
 	var rowCount int
 	var costAmount float64
@@ -248,8 +255,7 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 }
 
 func (s *analyticsStore) GetTokenTrend(ctx context.Context, userID string, r domain.TimeRange, mode string, agentID, providerID, modelID *string) (*domain.TrendResponse, error) {
-	fromStr := r.From.Format("2006-01-02")
-	toStr := r.To.Format("2006-01-02")
+	fromStr, toStr, _ := rangeDateStrings(r)
 
 	hasModelFilter := (providerID != nil && *providerID != "" && *providerID != "all") || (modelID != nil && *modelID != "" && *modelID != "all")
 
@@ -407,8 +413,7 @@ func (s *analyticsStore) GetTokenTrend(ctx context.Context, userID string, r dom
 }
 
 func (s *analyticsStore) GetAgentBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error) {
-	fromStr := r.From.Format("2006-01-02")
-	toStr := r.To.Format("2006-01-02")
+	fromStr, toStr, _ := rangeDateStrings(r)
 
 	query := `
 		SELECT
@@ -499,8 +504,7 @@ func (s *analyticsStore) GetAgentBreakdown(ctx context.Context, userID string, r
 }
 
 func (s *analyticsStore) GetModelBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error) {
-	fromStr := r.From.Format("2006-01-02")
-	toStr := r.To.Format("2006-01-02")
+	fromStr, toStr, _ := rangeDateStrings(r)
 
 	query := `
 		SELECT
@@ -591,8 +595,7 @@ func (s *analyticsStore) GetModelBreakdown(ctx context.Context, userID string, r
 }
 
 func (s *analyticsStore) GetSkillRanking(ctx context.Context, userID string, r domain.TimeRange) (*domain.SkillsResponse, error) {
-	fromStr := r.From.Format("2006-01-02")
-	toStr := r.To.Format("2006-01-02")
+	fromStr, toStr, _ := rangeDateStrings(r)
 
 	query := `
 		SELECT
@@ -692,8 +695,7 @@ func (s *analyticsStore) GetSkillRanking(ctx context.Context, userID string, r d
 }
 
 func (s *analyticsStore) GetActivityCalendar(ctx context.Context, userID string, r domain.TimeRange) (*domain.CalendarResponse, error) {
-	fromStr := r.From.Format("2006-01-02")
-	toStr := r.To.Format("2006-01-02")
+	fromStr, toStr, loc := rangeDateStrings(r)
 
 	query := `
 		SELECT
@@ -747,9 +749,9 @@ func (s *analyticsStore) GetActivityCalendar(ctx context.Context, userID string,
 	var days []domain.CalendarDay
 	totalActiveDays := 0
 
-	// Build full calendar day sequence from r.From to r.To (or at least each day)
-	startDay := time.Date(r.From.Year(), r.From.Month(), r.From.Day(), 0, 0, 0, 0, time.UTC)
-	endDay := time.Date(r.To.Year(), r.To.Month(), r.To.Day(), 0, 0, 0, 0, time.UTC)
+	localFrom, localTo := r.From.In(loc), r.To.In(loc)
+	startDay := time.Date(localFrom.Year(), localFrom.Month(), localFrom.Day(), 0, 0, 0, 0, loc)
+	endDay := time.Date(localTo.Year(), localTo.Month(), localTo.Day(), 0, 0, 0, 0, loc)
 
 	for curr := startDay; !curr.After(endDay); curr = curr.AddDate(0, 0, 1) {
 		dateStr := curr.Format("2006-01-02")
@@ -820,6 +822,88 @@ func (s *analyticsStore) GetActivityCalendar(ctx context.Context, userID string,
 		DataWatermarkAt:    dataWatermarkAt,
 		AggregationVersion: aggVer,
 	}, nil
+}
+
+func (s *analyticsStore) GetActivity(ctx context.Context, userID string, q domain.ActivityQuery) ([]domain.ActivityRow, error) {
+	fromStr, toStr, _ := rangeDateStrings(q.Range)
+	modelDetail := q.ProviderID != nil || q.ModelID != nil
+	var query string
+	args := []interface{}{userID, fromStr, toStr}
+	if modelDetail {
+		query = `SELECT metric_date, agent_id, provider_id, model_id,
+			COALESCE(exact_token_total + derived_token_total, 0), model_request_count
+			FROM daily_user_agent_model_metrics
+			WHERE user_id = ? AND metric_date >= ? AND metric_date <= ?`
+		if q.AgentID != nil {
+			query += " AND agent_id = ?"
+			args = append(args, *q.AgentID)
+		}
+		if q.ProviderID != nil {
+			query += " AND provider_id = ?"
+			args = append(args, *q.ProviderID)
+		}
+		if q.ModelID != nil {
+			query += " AND model_id = ?"
+			args = append(args, *q.ModelID)
+		}
+		query += " ORDER BY metric_date DESC, agent_id ASC, provider_id ASC, model_id ASC LIMIT ? OFFSET ?"
+	} else {
+		query = `SELECT metric_date, agent_id,
+			COALESCE(exact_token_total + derived_token_total, 0), message_count,
+			active_duration_ms, code_generated_lines
+			FROM daily_user_agent_metrics
+			WHERE user_id = ? AND metric_date >= ? AND metric_date <= ?`
+		if q.AgentID != nil {
+			query += " AND agent_id = ?"
+			args = append(args, *q.AgentID)
+		}
+		query += " ORDER BY metric_date DESC, agent_id ASC LIMIT ? OFFSET ?"
+	}
+	args = append(args, q.Limit, q.Offset)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query safe activity rows: %w", err)
+	}
+	defer rows.Close()
+	items := make([]domain.ActivityRow, 0)
+	for rows.Next() {
+		var date time.Time
+		var item domain.ActivityRow
+		var tokens uint64
+		if modelDetail {
+			var providerID, modelID string
+			var requestCount uint64
+			if err := rows.Scan(&date, &item.AgentID, &providerID, &modelID, &tokens, &requestCount); err != nil {
+				return nil, err
+			}
+			item.ProviderID, item.ModelID = &providerID, &modelID
+			messageCount := fmt.Sprintf("%d", requestCount)
+			item.MessageCount = &messageCount
+			item.GeneratedCodeLines = "0"
+		} else {
+			var messages, duration sql.NullInt64
+			var codeLines uint64
+			if err := rows.Scan(&date, &item.AgentID, &tokens, &messages, &duration, &codeLines); err != nil {
+				return nil, err
+			}
+			if messages.Valid {
+				value := fmt.Sprintf("%d", messages.Int64)
+				item.MessageCount = &value
+			}
+			if duration.Valid {
+				value := fmt.Sprintf("%d", duration.Int64)
+				item.ActiveDurationMs = &value
+			}
+			item.GeneratedCodeLines = fmt.Sprintf("%d", codeLines)
+		}
+		item.Date = date.Format("2006-01-02")
+		item.TokenTotal = fmt.Sprintf("%d", tokens)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 func (s *analyticsStore) GetFilterOptions(ctx context.Context, userID string) (*domain.FilterOptions, error) {

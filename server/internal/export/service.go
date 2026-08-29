@@ -3,12 +3,15 @@ package export
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"tokendance/internal/clock"
+	"tokendance/internal/config"
 	"tokendance/internal/crypto"
 	"tokendance/internal/domain"
 	"tokendance/internal/provider"
@@ -16,12 +19,17 @@ import (
 )
 
 type Service struct {
-	store   store.ExportStore
-	clk     clock.Clock
-	storage provider.ObjectStorage
+	store           store.ExportStore
+	clk             clock.Clock
+	storage         provider.ObjectStorage
+	idempotencyKeys config.VersionedKeyring
 }
 
 func NewService(st store.Store, clk clock.Clock, storage provider.ObjectStorage) *Service {
+	return NewServiceWithConfig(st, config.DefaultConfig(), clk, storage)
+}
+
+func NewServiceWithConfig(st store.Store, cfg *config.Config, clk clock.Clock, storage provider.ObjectStorage) *Service {
 	if clk == nil {
 		clk = clock.RealClock{}
 	}
@@ -29,9 +37,10 @@ func NewService(st store.Store, clk clock.Clock, storage provider.ObjectStorage)
 		storage = provider.NewMemoryObjectStorage("")
 	}
 	return &Service{
-		store:   st.Export(),
-		clk:     clk,
-		storage: storage,
+		store:           st.Export(),
+		clk:             clk,
+		storage:         storage,
+		idempotencyKeys: cfg.IdempotencyKeys,
 	}
 }
 
@@ -43,9 +52,16 @@ type CreateExportInput struct {
 }
 
 func (s *Service) CreateJob(ctx context.Context, userID string, in CreateExportInput) (*domain.DataExportJob, error) {
-	if in.IdempotencyKey == "" {
-		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "export.idempotencyRequired", "Idempotency-Key header is required", nil, domain.ErrInvalidArgument)
+	if len(in.IdempotencyKey) < 1 || len(in.IdempotencyKey) > 64 {
+		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "export.idempotencyRequired", "Idempotency-Key header must be 1-64 characters", nil, domain.ErrInvalidArgument)
 	}
+	for _, ch := range in.IdempotencyKey {
+		if !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || strings.ContainsRune("-_.:", ch)) {
+			return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "export.idempotencyInvalid", "Idempotency-Key contains invalid characters", nil, domain.ErrInvalidArgument)
+		}
+	}
+	idempotencyHash := crypto.HMACSHA256(s.idempotencyKeys.Current(), []byte(in.IdempotencyKey))
+	hashedIdempotencyKey := fmt.Sprintf("v%d:%s", s.idempotencyKeys.CurrentVersion, hex.EncodeToString(idempotencyHash[:]))
 
 	if in.Scope != "summary" && in.Scope != "activity" && in.Scope != "all_aggregates" {
 		in.Scope = "summary"
@@ -65,7 +81,7 @@ func (s *Service) CreateJob(ctx context.Context, userID string, in CreateExportI
 	job := domain.DataExportJob{
 		ExportID:       exportID,
 		UserID:         userID,
-		IdempotencyKey: in.IdempotencyKey,
+		IdempotencyKey: hashedIdempotencyKey,
 		RequestHash:    reqHash,
 		ExportScope:    in.Scope,
 		ExportFormat:   in.Format,

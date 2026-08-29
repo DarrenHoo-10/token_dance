@@ -74,6 +74,10 @@ type MemoryStore struct {
 	uploadObjects      map[string]*domain.UserUploadObject
 	bindingChallenges  map[string]*domain.DeviceBindingChallenge
 	installations      map[string]*domain.Installation
+	ingestNonces       map[string]time.Time
+	ingestBatches      map[string]*domain.IngestResult
+	ingestBatchHashes  map[string][32]byte
+	usageEvents        map[string]domain.UsageEvent
 	securityEvents     []domain.UserSecurityEvent
 	exportJobs         map[string]*domain.DataExportJob
 	deletionRequests   map[string]*domain.DataDeletionRequest
@@ -97,6 +101,10 @@ func NewMemoryStore() *MemoryStore {
 		uploadObjects:      make(map[string]*domain.UserUploadObject),
 		bindingChallenges:  make(map[string]*domain.DeviceBindingChallenge),
 		installations:      make(map[string]*domain.Installation),
+		ingestNonces:       make(map[string]time.Time),
+		ingestBatches:      make(map[string]*domain.IngestResult),
+		ingestBatchHashes:  make(map[string][32]byte),
+		usageEvents:        make(map[string]domain.UsageEvent),
 		securityEvents:     make([]domain.UserSecurityEvent, 0),
 		exportJobs:         make(map[string]*domain.DataExportJob),
 		deletionRequests:   make(map[string]*domain.DataDeletionRequest),
@@ -113,6 +121,7 @@ func (m *MemoryStore) Profile() store.ProfileStore         { return m }
 func (m *MemoryStore) Privacy() store.PrivacyStore         { return m }
 func (m *MemoryStore) Analytics() store.AnalyticsStore     { return m }
 func (m *MemoryStore) Device() store.DeviceStore           { return m }
+func (m *MemoryStore) Ingest() store.IngestStore           { return m }
 func (m *MemoryStore) Export() store.ExportStore           { return m }
 func (m *MemoryStore) Search() store.SearchStore           { return &memorySearchStore{m: m} }
 func (m *MemoryStore) Leaderboard() store.LeaderboardStore { return m }
@@ -1370,32 +1379,72 @@ func (m *MemoryStore) GetSkillRanking(ctx context.Context, userID string, r doma
 }
 
 func (m *MemoryStore) GetActivityCalendar(ctx context.Context, userID string, r domain.TimeRange) (*domain.CalendarResponse, error) {
-	now := time.Now().UTC()
-	var days []domain.CalendarDay
-	for i := 29; i >= 0; i-- {
-		d := now.AddDate(0, 0, -i).Format("2006-01-02")
-		active := (i%7 != 0)
-		lvl := 0
-		tokens := "0"
-		if active {
-			lvl = (i % 4) + 1
-			tokens = fmt.Sprintf("%d", lvl*2500000)
-		}
-		days = append(days, domain.CalendarDay{
-			Date:       d,
-			Active:     active,
-			Level:      lvl,
-			TokenTotal: tokens,
-		})
+	loc, err := time.LoadLocation(r.Timezone)
+	if err != nil {
+		loc = time.UTC
 	}
-	return &domain.CalendarResponse{
-		Days:               days,
-		CurrentStreak:      6,
-		LongestStreak:      14,
-		TotalActiveDays:    25,
-		DataWatermarkAt:    &now,
-		AggregationVersion: 2,
-	}, nil
+	from, to := r.From.In(loc), r.To.In(loc)
+	start := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, loc)
+	end := time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, loc)
+	var days []domain.CalendarDay
+	activeDays := 0
+	index := 0
+	for day := start; !day.After(end); day = day.AddDate(0, 0, 1) {
+		active := index%7 != 0
+		level, tokens := 0, "0"
+		if active {
+			level = (index % 4) + 1
+			tokens = fmt.Sprintf("%d", level*2500000)
+			activeDays++
+		}
+		days = append(days, domain.CalendarDay{Date: day.Format("2006-01-02"), Active: active, Level: level, TokenTotal: tokens})
+		index++
+	}
+	now := time.Now().UTC()
+	return &domain.CalendarResponse{Days: days, CurrentStreak: 6, LongestStreak: 14, TotalActiveDays: activeDays, DataWatermarkAt: &now, AggregationVersion: 2}, nil
+}
+
+func (m *MemoryStore) GetActivity(ctx context.Context, userID string, q domain.ActivityQuery) ([]domain.ActivityRow, error) {
+	loc, err := time.LoadLocation(q.Range.Timezone)
+	if err != nil {
+		loc = time.UTC
+	}
+	rows := make([]domain.ActivityRow, 0, q.Limit)
+	agents := []string{"claude-code", "cursor", "codex"}
+	start := q.Range.To.In(loc)
+	for dayIndex := 0; len(rows) < q.Offset+q.Limit && dayIndex < 400; dayIndex++ {
+		date := start.AddDate(0, 0, -dayIndex)
+		if date.Before(q.Range.From.In(loc)) {
+			break
+		}
+		for _, agent := range agents {
+			if q.AgentID != nil && *q.AgentID != agent {
+				continue
+			}
+			provider, model := "anthropic", "claude-3-7-sonnet"
+			if q.ProviderID != nil && *q.ProviderID != provider {
+				continue
+			}
+			if q.ModelID != nil && *q.ModelID != model {
+				continue
+			}
+			row := domain.ActivityRow{Date: date.Format("2006-01-02"), AgentID: agent, TokenTotal: "2500000", GeneratedCodeLines: "120"}
+			messages, duration := "24", "3600000"
+			row.MessageCount, row.ActiveDurationMs = &messages, &duration
+			if q.ProviderID != nil || q.ModelID != nil {
+				row.ProviderID, row.ModelID = &provider, &model
+			}
+			rows = append(rows, row)
+		}
+	}
+	if q.Offset >= len(rows) {
+		return []domain.ActivityRow{}, nil
+	}
+	end := q.Offset + q.Limit
+	if end > len(rows) {
+		end = len(rows)
+	}
+	return rows[q.Offset:end], nil
 }
 
 func (m *MemoryStore) GetFilterOptions(ctx context.Context, userID string) (*domain.FilterOptions, error) {
@@ -1664,6 +1713,76 @@ func (m *MemoryStore) AuthorizeIngest(ctx context.Context, installationID string
 	instCopy := *inst
 	uCopy := *u
 	return &instCopy, &uCopy, nil
+}
+
+func (m *MemoryStore) GetIngestInstallation(ctx context.Context, installationID string) (*domain.Installation, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	inst, ok := m.installations[installationID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	copy := *inst
+	return &copy, nil
+}
+
+func (m *MemoryStore) CommitIngest(ctx context.Context, batch domain.IngestBatch) (*domain.IngestResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	inst, ok := m.installations[batch.InstallationID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	if inst.InstallationStatus == domain.InstallationStatusRevoked {
+		return nil, domain.ErrDeviceRevoked
+	}
+	if inst.InstallationStatus == domain.InstallationStatusDisabled {
+		return nil, domain.ErrDeviceDisabled
+	}
+	user, ok := m.users[inst.UserID]
+	if !ok || user.AccountStatus != domain.AccountStatusActive {
+		return nil, domain.ErrAccountSuspended
+	}
+
+	nonceKey := batch.InstallationID + ":" + string(batch.NonceHash[:])
+	if _, exists := m.ingestNonces[nonceKey]; exists {
+		return nil, domain.ErrNonceReplay
+	}
+	m.ingestNonces[nonceKey] = batch.NonceExpiresAt
+
+	batchKey := batch.InstallationID + ":" + batch.BatchID
+	if existing, exists := m.ingestBatches[batchKey]; exists {
+		if m.ingestBatchHashes[batchKey] != batch.RequestSHA256 {
+			delete(m.ingestNonces, nonceKey)
+			return nil, domain.ErrBatchHashConflict
+		}
+		copy := *existing
+		return &copy, nil
+	}
+	var accepted, duplicates uint32
+	for _, event := range batch.Events {
+		eventKey := batch.InstallationID + ":" + string(event.EventID[:])
+		if _, exists := m.usageEvents[eventKey]; exists {
+			duplicates++
+			continue
+		}
+		m.usageEvents[eventKey] = event
+		accepted++
+	}
+
+	result := &domain.IngestResult{
+		BatchID:        batch.BatchID,
+		AcceptedCount:  accepted,
+		DuplicateCount: duplicates,
+		RejectedCount:  batch.RejectedCount,
+		CommittedAt:    batch.ReceivedAt,
+	}
+	m.ingestBatches[batchKey] = result
+	m.ingestBatchHashes[batchKey] = batch.RequestSHA256
+	inst.LastSeenAt = &batch.ReceivedAt
+	copy := *result
+	return &copy, nil
 }
 
 // --- ExportStore Implementation ---

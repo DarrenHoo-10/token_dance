@@ -27,11 +27,7 @@ func main() {
 		log.Fatalf("Fatal configuration error: %v", err)
 	}
 
-	keyBytes, err := config.ParseEncryptionKey(cfg.EncryptionKey)
-	if err != nil {
-		log.Fatalf("Fatal encryption key error: %v", err)
-	}
-	cipher, err := crypto.NewAEADCipher(keyBytes[:], cfg.EncryptionKeyVersion)
+	cipher, err := crypto.NewAEADCipherKeyring(cfg.AEADKeys.Keys, cfg.AEADKeys.CurrentVersion)
 	if err != nil {
 		log.Fatalf("Fatal cipher initialization error: %v", err)
 	}

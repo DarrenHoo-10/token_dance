@@ -83,9 +83,9 @@ func main() {
 	authService := auth.NewService(st, cfg, clk)
 	profileService := profile.NewService(st, clk)
 	privacyService := privacy.NewService(st, clk)
-	analyticsService := analytics.NewService(st, clk)
+	analyticsService := analytics.NewServiceWithConfig(st, cfg, clk)
 	deviceService := device.NewService(st, cfg, clk)
-	exportService := export.NewService(st, clk, storage)
+	exportService := export.NewServiceWithConfig(st, cfg, clk, storage)
 	mediaService := media.NewService(st, cfg, clk, storage)
 	searchService := search.NewService(st, clk)
 	leaderboardService := leaderboard.NewService(st)
@@ -104,11 +104,12 @@ func main() {
 	)
 
 	server := &http.Server{
-		Addr:         cfg.HTTPAddr,
-		Handler:      router,
-		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 10 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:              cfg.HTTPAddr,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	serverErrors := make(chan error, 1)

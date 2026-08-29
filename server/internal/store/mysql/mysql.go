@@ -26,6 +26,7 @@ func (s *Store) Profile() store.ProfileStore         { return &profileStore{db: 
 func (s *Store) Privacy() store.PrivacyStore         { return &privacyStore{db: s.db} }
 func (s *Store) Analytics() store.AnalyticsStore     { return &analyticsStore{db: s.db} }
 func (s *Store) Device() store.DeviceStore           { return &deviceStore{db: s.db} }
+func (s *Store) Ingest() store.IngestStore           { return &ingestStore{db: s.db} }
 func (s *Store) Export() store.ExportStore           { return &exportStore{db: s.db} }
 func (s *Store) Search() store.SearchStore           { return &searchStore{db: s.db} }
 func (s *Store) Leaderboard() store.LeaderboardStore { return &leaderboardStore{db: s.db} }

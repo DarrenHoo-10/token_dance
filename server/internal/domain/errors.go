@@ -28,6 +28,8 @@ var (
 	ErrChallengeLocked       = errors.New("challenge locked due to max attempts")
 	ErrChallengeInvalid      = errors.New("invalid verification code")
 	ErrIdempotencyReused     = errors.New("idempotency key reused with different payload")
+	ErrBatchHashConflict     = errors.New("batch id reused with different payload")
+	ErrNonceReplay           = errors.New("ingest nonce already used")
 	ErrQueryWatermarkChanged = errors.New("query watermark changed")
 	ErrCsrfFailed            = errors.New("csrf validation failed")
 	ErrDirtyBaseline         = errors.New("dirty baseline data detected in preflight guard")

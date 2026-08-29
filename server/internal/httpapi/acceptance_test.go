@@ -920,7 +920,7 @@ func TestUSR022_AvatarValidationAndPixelBombProtection(t *testing.T) {
 	validBody, _ := json.Marshal(map[string]interface{}{
 		"contentType": "image/png",
 		"byteSize":    1024 * 1024, // 1 MiB
-		"sha256":      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		"sha256":      "ebf4f635a17d10d6eb46ba680b70142419aa3220f228001a036d311a22ee9d2a",
 	})
 	reqValid := httptest.NewRequest(http.MethodPost, "/api/v1/me/avatar-upload-intents", bytes.NewReader(validBody))
 	reqValid.Header.Set("Content-Type", "application/json")

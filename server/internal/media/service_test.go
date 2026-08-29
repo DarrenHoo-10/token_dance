@@ -3,6 +3,8 @@ package media
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -92,11 +94,12 @@ func TestMediaService(t *testing.T) {
 
 	// 5. Upload valid PNG image
 	validPNG := createTestPNG(256, 256)
+	validPNGHash := sha256.Sum256(validPNG)
 	// Create fresh intent
 	res2, err := svc.CreateAvatarIntent(ctx, userID, CreateAvatarIntentInput{
 		ContentType: "image/png",
 		ByteSize:    uint64(len(validPNG)),
-		Sha256:      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		Sha256:      hex.EncodeToString(validPNGHash[:]),
 	})
 	if err != nil {
 		t.Fatalf("failed to create avatar intent 2: %v", err)
@@ -123,10 +126,11 @@ func TestMediaService(t *testing.T) {
 
 	// 6. Upload valid JPEG image
 	validJPEG := createTestJPEG(128, 128)
+	validJPEGHash := sha256.Sum256(validJPEG)
 	res3, err := svc.CreateAvatarIntent(ctx, userID, CreateAvatarIntentInput{
 		ContentType: "image/jpeg",
 		ByteSize:    uint64(len(validJPEG)),
-		Sha256:      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		Sha256:      hex.EncodeToString(validJPEGHash[:]),
 	})
 	if err != nil {
 		t.Fatalf("failed to create avatar intent 3: %v", err)
@@ -141,7 +145,21 @@ func TestMediaService(t *testing.T) {
 		t.Errorf("expected upload status ready, got %s", obj3.UploadStatus)
 	}
 
-	// 7. Clear avatar
+	// 7. Enforce declared hash and configured pixel budget.
+	pixelPNG := createTestPNG(100, 100)
+	pixelHash := sha256.Sum256(pixelPNG)
+	cfg.MediaAvatarMaxPixels = 5000
+	pixelIntent, err := svc.CreateAvatarIntent(ctx, userID, CreateAvatarIntentInput{ContentType: "image/png", ByteSize: uint64(len(pixelPNG)), Sha256: hex.EncodeToString(pixelHash[:])})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = storage.PutObject(ctx, "users/"+userID+"/avatars/"+pixelIntent.ObjectID, bytes.NewReader(pixelPNG), int64(len(pixelPNG)), "image/png")
+	if _, err := svc.CompleteAvatarIntent(ctx, pixelIntent.ObjectID, userID); err == nil {
+		t.Fatal("expected configured pixel budget rejection")
+	}
+	cfg.MediaAvatarMaxPixels = 16000000
+
+	// 8. Clear avatar
 	err = svc.ClearAvatar(ctx, userID)
 	if err != nil {
 		t.Fatalf("failed to clear avatar: %v", err)

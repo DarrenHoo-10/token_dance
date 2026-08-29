@@ -2,40 +2,40 @@ openapi: 3.0.3
 info:
   title: TokenDance User & Device API
   version: 1.0.0
-  description: Official OpenAPI contract for TokenDance User System, Personal Analytics, Public Profiles, and Collector Device Management.
+  description: Official OpenAPI contract for TokenDance User System, Personal Analytics, Public Profiles, and Collector Device
+    Management.
   license:
     name: Apache-2.0
     url: https://www.apache.org/licenses/LICENSE-2.0.html
 servers:
-  - url: https://api.tokendance.com
-    description: Production API server
-  - url: https://api.staging.tokendance.com
-    description: Staging API server
+- url: https://api.tokendance.com
+  description: Production API server
+- url: https://api.staging.tokendance.com
+  description: Staging API server
 tags:
-  - name: System
-    description: System liveness and readiness probes
-  - name: Auth
-    description: User authentication, registration, session management, and password recovery
-  - name: Profile
-    description: User profile and onboarding
-  - name: Privacy
-    description: User privacy settings and account deletion
-  - name: Analytics
-    description: Personal analytics, token trends, breakdowns, and skill metrics
-  - name: Devices
-    description: Collector device management and pairing
-  - name: Exports
-    description: Privacy-safe data exports
-  - name: Public
-    description: Public community profiles, leaderboard rankings, search, and comparison
-  - name: Collector
-    description: Collector agent pairing and ingestion endpoints
-
+- name: System
+  description: System liveness and readiness probes
+- name: Auth
+  description: User authentication, registration, session management, and password recovery
+- name: Profile
+  description: User profile and onboarding
+- name: Privacy
+  description: User privacy settings and account deletion
+- name: Analytics
+  description: Personal analytics, token trends, breakdowns, and skill metrics
+- name: Devices
+  description: Collector device management and pairing
+- name: Exports
+  description: Privacy-safe data exports
+- name: Public
+  description: Public community profiles, leaderboard rankings, search, and comparison
+- name: Collector
+  description: Collector agent pairing and ingestion endpoints
 paths:
   /healthz:
     get:
       tags:
-        - System
+      - System
       operationId: healthz
       summary: Liveness check
       security: []
@@ -57,11 +57,10 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '500':
           $ref: '#/components/responses/ErrorResponse'
-
   /readyz:
     get:
       tags:
-        - System
+      - System
       operationId: readyz
       summary: Readiness check
       security: []
@@ -83,11 +82,10 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '503':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/auth/register/code:
     post:
       tags:
-        - Auth
+      - Auth
       operationId: requestRegisterCode
       summary: Request registration verification code
       security: []
@@ -98,14 +96,16 @@ paths:
             schema:
               type: object
               required:
-                - email
+              - email
               properties:
                 email:
                   type: string
                   format: email
                 locale:
                   type: string
-                  enum: [zh-CN, en-US]
+                  enum:
+                  - zh-CN
+                  - en-US
                   default: en-US
       responses:
         '202':
@@ -123,11 +123,10 @@ paths:
                     example: 60
         '400':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/auth/register:
     post:
       tags:
-        - Auth
+      - Auth
       operationId: register
       summary: Complete email registration
       security: []
@@ -138,9 +137,9 @@ paths:
             schema:
               type: object
               required:
-                - email
-                - code
-                - password
+              - email
+              - code
+              - password
               properties:
                 email:
                   type: string
@@ -176,11 +175,10 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '409':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/auth/login:
     post:
       tags:
-        - Auth
+      - Auth
       operationId: login
       summary: Login with email and password
       security: []
@@ -191,8 +189,8 @@ paths:
             schema:
               type: object
               required:
-                - email
-                - password
+              - email
+              - password
               properties:
                 email:
                   type: string
@@ -225,15 +223,14 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/auth/session:
     get:
       tags:
-        - Auth
+      - Auth
       operationId: getSession
       summary: Get current authenticated session
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       responses:
         '200':
           description: Active session
@@ -258,29 +255,29 @@ paths:
           description: No active session
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/auth/logout:
     post:
       tags:
-        - Auth
+      - Auth
       operationId: logout
       summary: Logout current session
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       responses:
         '204':
           description: Logged out successfully
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
+      parameters:
+      - $ref: '#/components/parameters/CSRFToken'
   /api/v1/auth/sessions:
     get:
       tags:
-        - Auth
+      - Auth
       operationId: listSessions
       summary: List user active sessions
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       responses:
         '200':
           description: Session list
@@ -295,21 +292,21 @@ paths:
                       $ref: '#/components/schemas/SessionItem'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/auth/sessions/{id}:
     delete:
       tags:
-        - Auth
+      - Auth
       operationId: revokeSession
       summary: Revoke a specific session
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/CSRFToken'
       responses:
         '204':
           description: Session revoked
@@ -317,25 +314,25 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/auth/sessions/revoke-others:
     post:
       tags:
-        - Auth
+      - Auth
       operationId: revokeOtherSessions
       summary: Revoke all other active sessions
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       responses:
         '204':
           description: Other sessions revoked
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
+      parameters:
+      - $ref: '#/components/parameters/CSRFToken'
   /api/v1/auth/password/code:
     post:
       tags:
-        - Auth
+      - Auth
       operationId: requestPasswordResetCode
       summary: Request password reset code
       security: []
@@ -346,7 +343,7 @@ paths:
             schema:
               type: object
               required:
-                - email
+              - email
               properties:
                 email:
                   type: string
@@ -367,11 +364,10 @@ paths:
                     example: 60
         '400':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/auth/password/reset:
     post:
       tags:
-        - Auth
+      - Auth
       operationId: resetPassword
       summary: Reset password with code
       security: []
@@ -382,9 +378,9 @@ paths:
             schema:
               type: object
               required:
-                - email
-                - code
-                - newPassword
+              - email
+              - code
+              - newPassword
               properties:
                 email:
                   type: string
@@ -398,15 +394,14 @@ paths:
           description: Password reset successfully
         '400':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/onboarding:
     post:
       tags:
-        - Profile
+      - Profile
       operationId: completeOnboarding
       summary: Complete user onboarding
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       requestBody:
         required: true
         content:
@@ -414,8 +409,8 @@ paths:
             schema:
               type: object
               required:
-                - displayName
-                - handle
+              - displayName
+              - handle
               properties:
                 displayName:
                   type: string
@@ -426,7 +421,9 @@ paths:
                   default: UTC
                 locale:
                   type: string
-                  enum: [zh-CN, en-US]
+                  enum:
+                  - zh-CN
+                  - en-US
                 privacy:
                   $ref: '#/components/schemas/OnboardingPrivacyRequest'
                 returnTo:
@@ -451,15 +448,16 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '409':
           $ref: '#/components/responses/ErrorResponse'
-
+      parameters:
+      - $ref: '#/components/parameters/CSRFToken'
   /api/v1/me/profile:
     get:
       tags:
-        - Profile
+      - Profile
       operationId: getProfile
       summary: Get current user profile
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       responses:
         '200':
           description: User profile
@@ -471,16 +469,17 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
     patch:
       tags:
-        - Profile
+      - Profile
       operationId: updateProfile
       summary: Update user profile
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: If-Match
-          in: header
-          schema:
-            type: string
+      - name: If-Match
+        in: header
+        schema:
+          type: string
+      - $ref: '#/components/parameters/CSRFToken'
       requestBody:
         required: true
         content:
@@ -513,15 +512,14 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '412':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/privacy:
     get:
       tags:
-        - Privacy
+      - Privacy
       operationId: getPrivacy
       summary: Get user privacy settings
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       responses:
         '200':
           description: Privacy settings
@@ -533,16 +531,17 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
     patch:
       tags:
-        - Privacy
+      - Privacy
       operationId: updatePrivacy
       summary: Update user privacy settings
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: If-Match
-          in: header
-          schema:
-            type: string
+      - name: If-Match
+        in: header
+        schema:
+          type: string
+      - $ref: '#/components/parameters/CSRFToken'
       requestBody:
         required: true
         content:
@@ -562,15 +561,14 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '412':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/public-preview:
     get:
       tags:
-        - Privacy
+      - Privacy
       operationId: getPublicPreview
       summary: Preview own public profile
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       responses:
         '200':
           description: Public profile preview
@@ -580,15 +578,14 @@ paths:
                 $ref: '#/components/schemas/PublicUserProfile'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/avatar-upload-intents:
     post:
       tags:
-        - Profile
+      - Profile
       operationId: createAvatarUploadIntent
       summary: Create avatar upload intent
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       requestBody:
         required: true
         content:
@@ -596,13 +593,16 @@ paths:
             schema:
               type: object
               required:
-                - contentType
-                - byteSize
-                - sha256
+              - contentType
+              - byteSize
+              - sha256
               properties:
                 contentType:
                   type: string
-                  enum: [image/png, image/jpeg, image/webp]
+                  enum:
+                  - image/png
+                  - image/jpeg
+                  - image/webp
                 byteSize:
                   type: integer
                 sha256:
@@ -625,21 +625,23 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
+      parameters:
+      - $ref: '#/components/parameters/CSRFToken'
   /api/v1/me/avatar-upload-intents/{id}/complete:
     post:
       tags:
-        - Profile
+      - Profile
       operationId: completeAvatarUpload
       summary: Mark avatar upload intent complete
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/CSRFToken'
       responses:
         '200':
           description: Avatar upload processed
@@ -651,36 +653,53 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/avatar:
     delete:
       tags:
-        - Profile
+      - Profile
       operationId: deleteAvatar
       summary: Clear current avatar
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       responses:
         '204':
           description: Avatar cleared
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
+      parameters:
+      - $ref: '#/components/parameters/CSRFToken'
   /api/v1/me/summary:
     get:
       tags:
-        - Analytics
+      - Analytics
       operationId: getPersonalSummary
       summary: Get personal analytics summary (10 core metrics)
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: range
-          in: query
-          schema:
-            type: string
-            enum: [today, 7d, 30d, all, custom]
-            default: 30d
+      - name: range
+        in: query
+        schema:
+          type: string
+          enum:
+          - today
+          - 7d
+          - 30d
+          - all
+          - custom
+          default: 30d
+      - name: from
+        in: query
+        description: Used when range=custom; interpreted in the user timezone.
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        description: Used when range=custom; interpreted in the user timezone.
+        schema:
+          type: string
+          format: date
       responses:
         '200':
           description: Personal summary
@@ -690,37 +709,50 @@ paths:
                 $ref: '#/components/schemas/PersonalSummary'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/trends/tokens:
     get:
       tags:
-        - Analytics
+      - Analytics
       operationId: getTokenTrends
       summary: Get token trends over time
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: range
-          in: query
-          schema:
-            type: string
-        - name: mode
-          in: query
-          schema:
-            type: string
-            enum: [total, structure]
-        - name: agent
-          in: query
-          schema:
-            type: string
-        - name: provider
-          in: query
-          schema:
-            type: string
-        - name: model
-          in: query
-          schema:
-            type: string
+      - name: range
+        in: query
+        schema:
+          type: string
+      - name: mode
+        in: query
+        schema:
+          type: string
+          enum:
+          - total
+          - structure
+      - name: agent
+        in: query
+        schema:
+          type: string
+      - name: provider
+        in: query
+        schema:
+          type: string
+      - name: model
+        in: query
+        schema:
+          type: string
+      - name: from
+        in: query
+        description: Used when range=custom; interpreted in the user timezone.
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        description: Used when range=custom; interpreted in the user timezone.
+        schema:
+          type: string
+          format: date
       responses:
         '200':
           description: Token trends response
@@ -730,20 +762,31 @@ paths:
                 $ref: '#/components/schemas/TrendResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/breakdowns/agents:
     get:
       tags:
-        - Analytics
+      - Analytics
       operationId: getAgentBreakdown
       summary: Get agent usage breakdown
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: range
-          in: query
-          schema:
-            type: string
+      - name: range
+        in: query
+        schema:
+          type: string
+      - name: from
+        in: query
+        description: Used when range=custom; interpreted in the user timezone.
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        description: Used when range=custom; interpreted in the user timezone.
+        schema:
+          type: string
+          format: date
       responses:
         '200':
           description: Agent breakdown
@@ -753,20 +796,31 @@ paths:
                 $ref: '#/components/schemas/BreakdownResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/breakdowns/models:
     get:
       tags:
-        - Analytics
+      - Analytics
       operationId: getModelBreakdown
       summary: Get model usage breakdown
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: range
-          in: query
-          schema:
-            type: string
+      - name: range
+        in: query
+        schema:
+          type: string
+      - name: from
+        in: query
+        description: Used when range=custom; interpreted in the user timezone.
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        description: Used when range=custom; interpreted in the user timezone.
+        schema:
+          type: string
+          format: date
       responses:
         '200':
           description: Model breakdown
@@ -776,20 +830,31 @@ paths:
                 $ref: '#/components/schemas/BreakdownResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/skills:
     get:
       tags:
-        - Analytics
+      - Analytics
       operationId: getPersonalSkills
       summary: Get personal skill rankings
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: range
-          in: query
-          schema:
-            type: string
+      - name: range
+        in: query
+        schema:
+          type: string
+      - name: from
+        in: query
+        description: Used when range=custom; interpreted in the user timezone.
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        description: Used when range=custom; interpreted in the user timezone.
+        schema:
+          type: string
+          format: date
       responses:
         '200':
           description: Skill rankings
@@ -799,20 +864,31 @@ paths:
                 $ref: '#/components/schemas/SkillsResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/calendar:
     get:
       tags:
-        - Analytics
+      - Analytics
       operationId: getActivityCalendar
       summary: Get activity calendar
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: range
-          in: query
-          schema:
-            type: string
+      - name: range
+        in: query
+        schema:
+          type: string
+      - name: from
+        in: query
+        description: Used when range=custom; interpreted in the user timezone.
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        description: Used when range=custom; interpreted in the user timezone.
+        schema:
+          type: string
+          format: date
       responses:
         '200':
           description: Activity calendar
@@ -822,56 +898,78 @@ paths:
                 $ref: '#/components/schemas/CalendarResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/activity:
     get:
       tags:
-        - Analytics
+      - Analytics
       operationId: getActivity
       summary: Get safe activity log (P1)
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: range
-          in: query
-          schema:
-            type: string
-        - name: agent
-          in: query
-          schema:
-            type: string
-        - name: model
-          in: query
-          schema:
-            type: string
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
+      - name: range
+        in: query
+        schema:
+          type: string
+          enum:
+          - today
+          - 7d
+          - 30d
+          - all
+          - custom
+          default: 30d
+      - name: from
+        in: query
+        description: Required for custom range; interpreted in the user timezone.
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        description: Required for custom range; interpreted in the user timezone.
+        schema:
+          type: string
+          format: date
+      - name: agent
+        in: query
+        schema:
+          type: string
+      - name: provider
+        in: query
+        schema:
+          type: string
+      - name: model
+        in: query
+        schema:
+          type: string
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 50
       responses:
         '200':
           description: Activity items
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  items:
-                    type: array
-                    items:
-                      type: object
+                $ref: '#/components/schemas/ActivityResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/filter-options:
     get:
       tags:
-        - Analytics
+      - Analytics
       operationId: getFilterOptions
       summary: Get available filter options for user
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       responses:
         '200':
           description: Filter options
@@ -881,15 +979,14 @@ paths:
                 $ref: '#/components/schemas/FilterOptions'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/devices:
     get:
       tags:
-        - Devices
+      - Devices
       operationId: listDevices
       summary: List user registered devices
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       responses:
         '200':
           description: Device list
@@ -904,15 +1001,14 @@ paths:
                       $ref: '#/components/schemas/DeviceItem'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/device-bindings:
     post:
       tags:
-        - Devices
+      - Devices
       operationId: createDeviceBinding
       summary: Create 8-character Crockford Base32 device binding challenge
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       responses:
         '201':
           description: Binding code created
@@ -930,21 +1026,23 @@ paths:
                     type: string
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
+      parameters:
+      - $ref: '#/components/parameters/CSRFToken'
   /api/v1/me/device-bindings/{id}:
     delete:
       tags:
-        - Devices
+      - Devices
       operationId: cancelDeviceBinding
       summary: Cancel binding code
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/CSRFToken'
       responses:
         '204':
           description: Binding code cancelled
@@ -952,21 +1050,21 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/devices/{id}:
     patch:
       tags:
-        - Devices
+      - Devices
       operationId: updateDevice
       summary: Rename device
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/CSRFToken'
       requestBody:
         required: true
         content:
@@ -974,7 +1072,7 @@ paths:
             schema:
               type: object
               required:
-                - deviceName
+              - deviceName
               properties:
                 deviceName:
                   type: string
@@ -991,17 +1089,18 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
     delete:
       tags:
-        - Devices
+      - Devices
       operationId: revokeDevice
       summary: Revoke device
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/CSRFToken'
       responses:
         '200':
           description: Device revoked
@@ -1013,21 +1112,21 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/devices/{id}/pause:
     post:
       tags:
-        - Devices
+      - Devices
       operationId: pauseDevice
       summary: Pause device synchronization
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/CSRFToken'
       responses:
         '200':
           description: Device paused
@@ -1039,21 +1138,21 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/devices/{id}/resume:
     post:
       tags:
-        - Devices
+      - Devices
       operationId: resumeDevice
       summary: Resume paused device
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/CSRFToken'
       responses:
         '200':
           description: Device resumed
@@ -1065,21 +1164,24 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/exports:
     post:
       tags:
-        - Exports
+      - Exports
       operationId: createExport
       summary: Create data export job (P1)
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: Idempotency-Key
-          in: header
-          required: false
-          schema:
-            type: string
+      - name: Idempotency-Key
+        in: header
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^[A-Za-z0-9_.:-]+$
+      - $ref: '#/components/parameters/CSRFToken'
       requestBody:
         required: true
         content:
@@ -1089,10 +1191,15 @@ paths:
               properties:
                 scope:
                   type: string
-                  enum: [summary, activity, all_aggregates]
+                  enum:
+                  - summary
+                  - activity
+                  - all_aggregates
                 format:
                   type: string
-                  enum: [csv, json]
+                  enum:
+                  - csv
+                  - json
                 filter:
                   type: object
       responses:
@@ -1108,11 +1215,11 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
     get:
       tags:
-        - Exports
+      - Exports
       operationId: listExports
       summary: List export jobs
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       responses:
         '200':
           description: Export job list
@@ -1127,21 +1234,20 @@ paths:
                       $ref: '#/components/schemas/ExportJob'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/exports/{id}:
     get:
       tags:
-        - Exports
+      - Exports
       operationId: getExport
       summary: Get export job status
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
       responses:
         '200':
           description: Export job details
@@ -1155,21 +1261,20 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '404':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/exports/{id}/download:
     get:
       tags:
-        - Exports
+      - Exports
       operationId: downloadExport
       summary: Get short-lived download URL for export
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
       responses:
         '200':
           description: Signed download URL
@@ -1188,15 +1293,14 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '404':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/deletion-requests:
     post:
       tags:
-        - Privacy
+      - Privacy
       operationId: requestDeletion
       summary: Request data or account deletion
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       requestBody:
         required: true
         content:
@@ -1204,12 +1308,16 @@ paths:
             schema:
               type: object
               required:
-                - scope
-                - confirmation
+              - scope
+              - confirmation
               properties:
                 scope:
                   type: string
-                  enum: [account, installation, time_range, all_usage]
+                  enum:
+                  - account
+                  - installation
+                  - time_range
+                  - all_usage
                 confirmation:
                   type: boolean
                 installationId:
@@ -1234,21 +1342,22 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
-
+      parameters:
+      - $ref: '#/components/parameters/CSRFToken'
   /api/v1/me/deletion-requests/{id}:
     get:
       tags:
-        - Privacy
+      - Privacy
       operationId: getDeletionRequest
       summary: Get deletion request status
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
       responses:
         '200':
           description: Deletion request status
@@ -1262,21 +1371,21 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '404':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/me/deletion-requests/{id}/cancel:
     post:
       tags:
-        - Privacy
+      - Privacy
       operationId: cancelDeletionRequest
       summary: Cancel pending account deletion
       security:
-        - CookieAuth: []
+      - CookieAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - $ref: '#/components/parameters/CSRFToken'
       responses:
         '200':
           description: Deletion request cancelled
@@ -1294,20 +1403,19 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '404':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/public/users/{handle}:
     get:
       tags:
-        - Public
+      - Public
       operationId: getPublicProfile
       summary: Get public user profile
       security: []
       parameters:
-        - name: handle
-          in: path
-          required: true
-          schema:
-            type: string
+      - name: handle
+        in: path
+        required: true
+        schema:
+          type: string
       responses:
         '200':
           description: Public profile
@@ -1319,28 +1427,27 @@ paths:
           description: Permanent redirect to new handle
         '404':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/public/users/{handle}/trends:
     get:
       tags:
-        - Public
+      - Public
       operationId: getPublicTrends
       summary: Get public token trends
       security: []
       parameters:
-        - name: handle
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: range
-          in: query
-          schema:
-            type: string
-        - name: mode
-          in: query
-          schema:
-            type: string
+      - name: handle
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: range
+        in: query
+        schema:
+          type: string
+      - name: mode
+        in: query
+        schema:
+          type: string
       responses:
         '200':
           description: Trends if allowed
@@ -1350,24 +1457,23 @@ paths:
                 $ref: '#/components/schemas/TrendResponse'
         '404':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/public/users/{handle}/skills:
     get:
       tags:
-        - Public
+      - Public
       operationId: getPublicSkills
       summary: Get public skill rankings
       security: []
       parameters:
-        - name: handle
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: range
-          in: query
-          schema:
-            type: string
+      - name: handle
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: range
+        in: query
+        schema:
+          type: string
       responses:
         '200':
           description: Skills if allowed
@@ -1377,25 +1483,24 @@ paths:
                 $ref: '#/components/schemas/SkillsResponse'
         '404':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/public/search:
     get:
       tags:
-        - Public
+      - Public
       operationId: searchPublic
       summary: Search published public users and agents
       security: []
       parameters:
-        - name: q
-          in: query
-          required: true
-          schema:
-            type: string
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 20
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 20
       responses:
         '200':
           description: Search results
@@ -1418,41 +1523,51 @@ paths:
                       $ref: '#/components/schemas/SearchSkillResult'
         '400':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/public/leaderboards:
     get:
       tags:
-        - Public
+      - Public
       operationId: getLeaderboards
       summary: Get published leaderboard snapshot & entries
       security: []
       parameters:
-        - name: board
-          in: query
-          schema:
-            type: string
-            default: global
-        - name: window
-          in: query
-          schema:
-            type: string
-            enum: [today, 7d, 30d, all, custom]
-            default: 30d
-        - name: metric
-          in: query
-          schema:
-            type: string
-            enum: [tokens, sessions, turns, tools, skills, code_lines]
-            default: tokens
-        - name: cursor
-          in: query
-          schema:
-            type: string
-        - name: limit
-          in: query
-          schema:
-            type: integer
-            default: 50
+      - name: board
+        in: query
+        schema:
+          type: string
+          default: global
+      - name: window
+        in: query
+        schema:
+          type: string
+          enum:
+          - today
+          - 7d
+          - 30d
+          - all
+          - custom
+          default: 30d
+      - name: metric
+        in: query
+        schema:
+          type: string
+          enum:
+          - tokens
+          - sessions
+          - turns
+          - tools
+          - skills
+          - code_lines
+          default: tokens
+      - name: cursor
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+          default: 50
       responses:
         '200':
           description: Leaderboard snapshot entries
@@ -1462,21 +1577,20 @@ paths:
                 $ref: '#/components/schemas/LeaderboardResponse'
         '400':
           $ref: '#/components/responses/ErrorResponse'
-
   /api/v1/public/compare:
     get:
       tags:
-        - Public
+      - Public
       operationId: compareUsers
       summary: Compare up to 3 public users (P1)
       security: []
       parameters:
-        - name: handles
-          in: query
-          required: true
-          schema:
-            type: string
-            example: maxbauer,alice,bob
+      - name: handles
+        in: query
+        required: true
+        schema:
+          type: string
+          example: maxbauer,alice,bob
       responses:
         '200':
           description: User comparison results
@@ -1486,11 +1600,10 @@ paths:
                 $ref: '#/components/schemas/CompareResponse'
         '400':
           $ref: '#/components/responses/ErrorResponse'
-
   /v1/installations/claim:
     post:
       tags:
-        - Collector
+      - Collector
       operationId: claimInstallation
       summary: Collector claims installation using 8-character binding code
       security: []
@@ -1501,11 +1614,11 @@ paths:
             schema:
               type: object
               required:
-                - code
-                - publicKey
-                - osType
-                - architecture
-                - collectorVersion
+              - code
+              - publicKey
+              - osType
+              - architecture
+              - collectorVersion
               properties:
                 code:
                   type: string
@@ -1517,7 +1630,10 @@ paths:
                   type: string
                 osType:
                   type: string
-                  enum: [windows, macos, linux]
+                  enum:
+                  - windows
+                  - macos
+                  - linux
                 osVersion:
                   type: string
                 architecture:
@@ -1542,15 +1658,14 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '409':
           $ref: '#/components/responses/ErrorResponse'
-
   /v1/installations/register:
     post:
       tags:
-        - Collector
+      - Collector
       operationId: registerInstallation
       summary: Collector registers installation using short-lived user auth
       security:
-        - BearerAuth: []
+      - BearerAuth: []
       requestBody:
         required: true
         content:
@@ -1558,10 +1673,10 @@ paths:
             schema:
               type: object
               required:
-                - publicKey
-                - osType
-                - architecture
-                - collectorVersion
+              - publicKey
+              - osType
+              - architecture
+              - collectorVersion
               properties:
                 publicKey:
                   type: string
@@ -1591,7 +1706,120 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
+  /v1/telemetry/batches:
+    post:
+      tags:
+      - Collector
+      operationId: ingestTelemetryBatch
+      summary: Ingest an Ed25519-signed telemetry batch
+      description: 'The collector signs the following UTF-8 canonical request using its registered Ed25519 private key:
 
+        `UPPERCASE_METHOD + "\\n" + ESCAPED_PATH + "\\n" + X-Timestamp + "\\n" + X-Nonce + "\\n" + lowercase(X-Body-SHA256)`.
+
+        `X-Body-SHA256` is the lowercase hexadecimal SHA-256 of the transmitted bytes, including gzip encoding when used.
+
+        The signature is unpadded base64url in `Authorization: Device <installation-id>:<signature>`.
+
+        Timestamps must be RFC3339 and within five minutes of server time. Nonces are single-use per installation.
+
+        `Idempotency-Key` is the batch id; replaying the same batch id with an identical transmitted body returns the original
+        ACK,
+
+        while reusing it with a different body returns `INGEST_BATCH_HASH_CONFLICT`.
+
+        '
+      security:
+      - DeviceAuth: []
+      parameters:
+      - name: X-Timestamp
+        in: header
+        required: true
+        description: RFC3339 request creation time used verbatim in the canonical signature.
+        schema:
+          type: string
+          format: date-time
+      - name: X-Nonce
+        in: header
+        required: true
+        description: Single-use opaque nonce containing 16 to 128 characters.
+        schema:
+          type: string
+          minLength: 16
+          maxLength: 128
+      - name: X-Body-SHA256
+        in: header
+        required: true
+        description: Lowercase hexadecimal SHA-256 of the transmitted request body bytes.
+        schema:
+          type: string
+          pattern: ^[0-9a-f]{64}$
+      - name: Idempotency-Key
+        in: header
+        required: true
+        description: Batch identifier, matching batchId when that body field is present.
+        schema:
+          type: string
+          maxLength: 30
+          pattern: ^bat_[A-Za-z0-9_-]+$
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TelemetryBatch'
+      responses:
+        '200':
+          description: Batch committed or an identical prior batch ACK replayed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TelemetryBatchAck'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/ErrorResponse'
+        '413':
+          $ref: '#/components/responses/ErrorResponse'
+        '415':
+          $ref: '#/components/responses/ErrorResponse'
+  /api/v1/me/device-grants:
+    post:
+      tags:
+      - Devices
+      operationId: createDeviceGrant
+      summary: Create a short-lived scoped installation registration grant
+      security:
+      - CookieAuth: []
+      responses:
+        '201':
+          description: Scoped grant created
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required:
+                - grantToken
+                - expiresAt
+                properties:
+                  grantToken:
+                    type: string
+                    pattern: ^dgt_
+                  expiresAt:
+                    type: string
+                    format: date-time
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '403':
+          $ref: '#/components/responses/ErrorResponse'
+      parameters:
+      - $ref: '#/components/parameters/CSRFToken'
+  /v1/telemetry/ingest:
+    $ref: '#/paths/~1v1~1telemetry~1batches'
 components:
   securitySchemes:
     CookieAuth:
@@ -1601,7 +1829,12 @@ components:
     BearerAuth:
       type: http
       scheme: bearer
-
+    DeviceAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: Device installation id and unpadded base64url Ed25519 signature in `Device <installation-id>:<signature>`
+        format.
   responses:
     ErrorResponse:
       description: Standard API Error
@@ -1610,14 +1843,14 @@ components:
           schema:
             type: object
             required:
-              - error
+            - error
             properties:
               error:
                 type: object
                 required:
-                  - code
-                  - messageKey
-                  - requestId
+                - code
+                - messageKey
+                - requestId
                 properties:
                   code:
                     type: string
@@ -1627,15 +1860,14 @@ components:
                     type: string
                   details:
                     type: object
-
   schemas:
     SessionUser:
       type: object
       required:
-        - userId
-        - displayName
-        - onboardingRequired
-        - productState
+      - userId
+      - displayName
+      - onboardingRequired
+      - productState
       properties:
         userId:
           type: string
@@ -1653,16 +1885,22 @@ components:
           type: boolean
         productState:
           type: string
-          enum: [email_unverified, new, active_private, active_public, suspended, deletion_pending, deleted]
-
+          enum:
+          - email_unverified
+          - new
+          - active_private
+          - active_public
+          - suspended
+          - deletion_pending
+          - deleted
     SessionItem:
       type: object
       required:
-        - sessionId
-        - sessionStatus
-        - lastSeenAt
-        - createdAt
-        - absoluteExpiresAt
+      - sessionId
+      - sessionStatus
+      - lastSeenAt
+      - createdAt
+      - absoluteExpiresAt
       properties:
         sessionId:
           type: string
@@ -1680,15 +1918,14 @@ components:
         absoluteExpiresAt:
           type: string
           format: date-time
-
     UserProfile:
       type: object
       required:
-        - userId
-        - displayName
-        - accountStatus
-        - leaderboardVisibility
-        - profileVersion
+      - userId
+      - displayName
+      - accountStatus
+      - leaderboardVisibility
+      - profileVersion
       properties:
         userId:
           type: string
@@ -1713,21 +1950,20 @@ components:
           type: string
         profileVersion:
           type: integer
-
     PrivacySettings:
       type: object
       required:
-        - userId
-        - publicProfileEnabled
-        - leaderboardVisibility
-        - showBio
-        - showTokenTotal
-        - showTrends
-        - showActivityCalendar
-        - showAgentBreakdown
-        - showSkillRanking
-        - showAchievements
-        - privacyVersion
+      - userId
+      - publicProfileEnabled
+      - leaderboardVisibility
+      - showBio
+      - showTokenTotal
+      - showTrends
+      - showActivityCalendar
+      - showAgentBreakdown
+      - showSkillRanking
+      - showAchievements
+      - privacyVersion
       properties:
         userId:
           type: string
@@ -1735,7 +1971,9 @@ components:
           type: boolean
         leaderboardVisibility:
           type: string
-          enum: [private, public]
+          enum:
+          - private
+          - public
         showBio:
           type: boolean
         showTokenTotal:
@@ -1752,39 +1990,41 @@ components:
           type: boolean
         privacyVersion:
           type: integer
-
     OnboardingPrivacyRequest:
       type: object
       additionalProperties: false
       required:
-        - publicProfileEnabled
-        - leaderboardVisibility
+      - publicProfileEnabled
+      - leaderboardVisibility
       properties:
         publicProfileEnabled:
           type: boolean
         leaderboardVisibility:
           type: string
-          enum: [private, public]
-
+          enum:
+          - private
+          - public
     UpdatePrivacyRequest:
       type: object
       additionalProperties: false
       required:
-        - publicProfileEnabled
-        - leaderboardVisibility
-        - showBio
-        - showTokenTotal
-        - showTrends
-        - showActivityCalendar
-        - showAgentBreakdown
-        - showSkillRanking
-        - showAchievements
+      - publicProfileEnabled
+      - leaderboardVisibility
+      - showBio
+      - showTokenTotal
+      - showTrends
+      - showActivityCalendar
+      - showAgentBreakdown
+      - showSkillRanking
+      - showAchievements
       properties:
         publicProfileEnabled:
           type: boolean
         leaderboardVisibility:
           type: string
-          enum: [private, public]
+          enum:
+          - private
+          - public
         showBio:
           type: boolean
         showTokenTotal:
@@ -1799,14 +2039,13 @@ components:
           type: boolean
         showAchievements:
           type: boolean
-
     PublicUserProfile:
       type: object
       required:
-        - handle
-        - displayName
-        - generatedAt
-        - projectionVersion
+      - handle
+      - displayName
+      - generatedAt
+      - projectionVersion
       properties:
         handle:
           type: string
@@ -1859,14 +2098,13 @@ components:
           type: boolean
         showAchievements:
           type: boolean
-
     TimeRange:
       type: object
       required:
-        - key
-        - from
-        - to
-        - timezone
+      - key
+      - from
+      - to
+      - timezone
       properties:
         key:
           type: string
@@ -1878,11 +2116,10 @@ components:
           format: date-time
         timezone:
           type: string
-
     MetricCost:
       type: object
       required:
-        - supported
+      - supported
       properties:
         amount:
           type: string
@@ -1892,52 +2129,49 @@ components:
           nullable: true
         supported:
           type: boolean
-
     MetricBigInt:
       type: object
       required:
-        - supported
+      - supported
       properties:
         value:
           type: string
           nullable: true
         supported:
           type: boolean
-
     MetricDecimal:
       type: object
       required:
-        - supported
+      - supported
       properties:
         value:
           type: string
           nullable: true
         supported:
           type: boolean
-
     PersonalSummary:
       type: object
       required:
-        - range
-        - metrics
-        - ranking
-        - sync
+      - range
+      - metrics
+      - ranking
+      - sync
       properties:
         range:
           $ref: '#/components/schemas/TimeRange'
         metrics:
           type: object
           required:
-            - estimatedCost
-            - totalTokens
-            - generatedCodeLines
-            - tokensPerCodeLine
-            - inputContextTokens
-            - outputTokens
-            - cacheHitRate
-            - activeDurationMs
-            - messageCount
-            - userMessageCount
+          - estimatedCost
+          - totalTokens
+          - generatedCodeLines
+          - tokensPerCodeLine
+          - inputContextTokens
+          - outputTokens
+          - cacheHitRate
+          - activeDurationMs
+          - messageCount
+          - userMessageCount
           properties:
             estimatedCost:
               $ref: '#/components/schemas/MetricCost'
@@ -1989,11 +2223,10 @@ components:
           nullable: true
         aggregationVersion:
           type: integer
-
     TrendPoint:
       type: object
       required:
-        - date
+      - date
       properties:
         date:
           type: string
@@ -2015,14 +2248,13 @@ components:
         reasoningTokens:
           type: string
           nullable: true
-
     TrendResponse:
       type: object
       required:
-        - range
-        - mode
-        - granularity
-        - points
+      - range
+      - mode
+      - granularity
+      - points
       properties:
         range:
           $ref: '#/components/schemas/TimeRange'
@@ -2049,14 +2281,13 @@ components:
           nullable: true
         aggregationVersion:
           type: integer
-
     BreakdownItem:
       type: object
       required:
-        - key
-        - label
-        - tokenTotal
-        - percentage
+      - key
+      - label
+      - tokenTotal
+      - percentage
       properties:
         key:
           type: string
@@ -2066,12 +2297,11 @@ components:
           type: string
         percentage:
           type: number
-
     BreakdownResponse:
       type: object
       required:
-        - range
-        - items
+      - range
+      - items
       properties:
         range:
           $ref: '#/components/schemas/TimeRange'
@@ -2085,14 +2315,13 @@ components:
           nullable: true
         aggregationVersion:
           type: integer
-
     SkillItem:
       type: object
       required:
-        - skillId
-        - skillPublicName
-        - useCount
-        - activeDays
+      - skillId
+      - skillPublicName
+      - useCount
+      - activeDays
       properties:
         skillId:
           type: string
@@ -2108,12 +2337,11 @@ components:
         previousDeltaPct:
           type: number
           nullable: true
-
     SkillsResponse:
       type: object
       required:
-        - range
-        - skills
+      - range
+      - skills
       properties:
         range:
           $ref: '#/components/schemas/TimeRange'
@@ -2127,14 +2355,13 @@ components:
           nullable: true
         aggregationVersion:
           type: integer
-
     CalendarDay:
       type: object
       required:
-        - date
-        - active
-        - level
-        - tokenTotal
+      - date
+      - active
+      - level
+      - tokenTotal
       properties:
         date:
           type: string
@@ -2144,14 +2371,13 @@ components:
           type: integer
         tokenTotal:
           type: string
-
     CalendarResponse:
       type: object
       required:
-        - days
-        - currentStreak
-        - longestStreak
-        - totalActiveDays
+      - days
+      - currentStreak
+      - longestStreak
+      - totalActiveDays
       properties:
         days:
           type: array
@@ -2169,13 +2395,12 @@ components:
           nullable: true
         aggregationVersion:
           type: integer
-
     FilterOptions:
       type: object
       required:
-        - agents
-        - providers
-        - models
+      - agents
+      - providers
+      - models
       properties:
         agents:
           type: array
@@ -2189,16 +2414,15 @@ components:
           type: array
           items:
             type: string
-
     DeviceItem:
       type: object
       required:
-        - installationId
-        - osType
-        - architecture
-        - collectorVersion
-        - installationStatus
-        - registeredAt
+      - installationId
+      - osType
+      - architecture
+      - collectorVersion
+      - installationStatus
+      - registeredAt
       properties:
         installationId:
           type: string
@@ -2230,16 +2454,15 @@ components:
           type: string
           format: date-time
           nullable: true
-
     ExportJob:
       type: object
       required:
-        - exportId
-        - userId
-        - exportScope
-        - exportFormat
-        - jobStatus
-        - createdAt
+      - exportId
+      - userId
+      - exportScope
+      - exportFormat
+      - jobStatus
+      - createdAt
       properties:
         exportId:
           type: string
@@ -2249,15 +2472,26 @@ components:
           type: string
         exportScope:
           type: string
-          enum: [summary, activity, all_aggregates]
+          enum:
+          - summary
+          - activity
+          - all_aggregates
         exportFormat:
           type: string
-          enum: [csv, json]
+          enum:
+          - csv
+          - json
         filter:
           type: object
         jobStatus:
           type: string
-          enum: [pending, running, completed, failed, expired, cancelled]
+          enum:
+          - pending
+          - running
+          - completed
+          - failed
+          - expired
+          - cancelled
         attemptCount:
           type: integer
         fileSize:
@@ -2284,15 +2518,14 @@ components:
         updatedAt:
           type: string
           format: date-time
-
     DeletionRequest:
       type: object
       required:
-        - requestId
-        - deletionScope
-        - requestStatus
-        - phase
-        - requestedAt
+      - requestId
+      - deletionScope
+      - requestStatus
+      - phase
+      - requestedAt
       properties:
         requestId:
           type: string
@@ -2301,12 +2534,21 @@ components:
           nullable: true
         deletionScope:
           type: string
-          enum: [account, installation, time_range, all_usage]
+          enum:
+          - account
+          - installation
+          - time_range
+          - all_usage
         scopeFilter:
           type: object
         requestStatus:
           type: string
-          enum: [pending, running, completed, failed, cancelled]
+          enum:
+          - pending
+          - running
+          - completed
+          - failed
+          - cancelled
         phase:
           type: string
         progressCursor:
@@ -2329,12 +2571,11 @@ components:
         auditReference:
           type: string
           nullable: true
-
     SearchUserResult:
       type: object
       required:
-        - handle
-        - displayName
+      - handle
+      - displayName
       properties:
         handle:
           type: string
@@ -2349,12 +2590,11 @@ components:
         rank:
           type: integer
           nullable: true
-
     SearchAgentResult:
       type: object
       required:
-        - agentId
-        - name
+      - agentId
+      - name
       properties:
         agentId:
           type: string
@@ -2362,15 +2602,14 @@ components:
           type: string
         description:
           type: string
-
     SearchSkillResult:
       type: object
       required:
-        - skillId
-        - skillPublicName
-        - useCount
-        - publicUserCount
-        - activeDays
+      - skillId
+      - skillPublicName
+      - useCount
+      - publicUserCount
+      - activeDays
       properties:
         skillId:
           type: string
@@ -2382,14 +2621,13 @@ components:
           type: integer
         activeDays:
           type: integer
-
     LeaderboardEntry:
       type: object
       required:
-        - rankNo
-        - handle
-        - displayName
-        - metricValue
+      - rankNo
+      - handle
+      - displayName
+      - metricValue
       properties:
         rankNo:
           type: integer
@@ -2405,15 +2643,14 @@ components:
         rankDelta:
           type: integer
           nullable: true
-
     LeaderboardResponse:
       type: object
       required:
-        - snapshotId
-        - boardKey
-        - window
-        - metric
-        - entries
+      - snapshotId
+      - boardKey
+      - window
+      - metric
+      - entries
       properties:
         snapshotId:
           type: string
@@ -2434,12 +2671,11 @@ components:
           type: string
           format: date-time
           nullable: true
-
     CompareUserItem:
       type: object
       required:
-        - handle
-        - visible
+      - handle
+      - visible
       properties:
         handle:
           type: string
@@ -2481,12 +2717,11 @@ components:
           type: string
           format: date-time
           nullable: true
-
     CompareResponse:
       type: object
       required:
-        - users
-        - generatedAt
+      - users
+      - generatedAt
       properties:
         users:
           type: array
@@ -2495,3 +2730,242 @@ components:
         generatedAt:
           type: string
           format: date-time
+    ActivityRow:
+      type: object
+      additionalProperties: false
+      required:
+      - date
+      - agentId
+      - tokenTotal
+      - generatedCodeLines
+      properties:
+        date:
+          type: string
+          format: date
+        agentId:
+          type: string
+        providerId:
+          type: string
+        modelId:
+          type: string
+        tokenTotal:
+          type: string
+          pattern: ^[0-9]+$
+        messageCount:
+          type: string
+          pattern: ^[0-9]+$
+        activeDurationMs:
+          type: string
+          pattern: ^[0-9]+$
+        generatedCodeLines:
+          type: string
+          pattern: ^[0-9]+$
+    ActivityResponse:
+      type: object
+      additionalProperties: false
+      required:
+      - items
+      - range
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ActivityRow'
+        nextCursor:
+          type: string
+        range:
+          $ref: '#/components/schemas/TimeRange'
+    TelemetryEvent:
+      type: object
+      additionalProperties: false
+      required:
+      - eventId
+      - schemaVersion
+      - adapterId
+      - adapterVersion
+      - agentId
+      - eventType
+      - accuracy
+      - sourceKind
+      - occurredAt
+      - privacyPolicyVersion
+      properties:
+        eventId: &id001
+          type: string
+          description: 32-byte hex or unpadded base64url privacy-safe hash.
+        schemaVersion:
+          type: integer
+          minimum: 1
+        adapterId:
+          type: string
+        adapterVersion:
+          type: string
+        agentId:
+          type: string
+        agentVersion:
+          type: string
+        providerId:
+          type: string
+        modelId:
+          type: string
+        eventType:
+          type: string
+          enum:
+          - session_started
+          - session_ended
+          - turn_started
+          - turn_completed
+          - model_usage_recorded
+          - tool_invoked
+          - skill_invoked
+          - code_changed
+          - cost_recorded
+          - agent_spawned
+        accuracy:
+          type: string
+          enum:
+          - exact
+          - derived
+          - estimated
+          - correlated
+        sourceKind:
+          type: string
+          enum:
+          - otlp
+          - jsonl
+          - sqlite_snapshot
+          - file_snapshot
+          - runtime_stream
+          - local_http_api
+          - command_snapshot
+          - remote_api
+        occurredAt:
+          type: string
+          format: date-time
+        sessionHash: *id001
+        parentSessionHash: *id001
+        turnHash: *id001
+        toolCallHash: *id001
+        tokenInput:
+          type: integer
+          minimum: 0
+        tokenOutput:
+          type: integer
+          minimum: 0
+        tokenCacheRead:
+          type: integer
+          minimum: 0
+        tokenCacheWrite:
+          type: integer
+          minimum: 0
+        tokenReasoning:
+          type: integer
+          minimum: 0
+        tokenTotal:
+          type: integer
+          minimum: 0
+        durationMs:
+          type: integer
+          minimum: 0
+        success:
+          type: boolean
+        toolCategory:
+          type: string
+        skillKey: *id001
+        skillPublicName:
+          type: string
+        skillInvokeType:
+          type: string
+        pluginKey: *id001
+        codeGeneratedLines:
+          type: integer
+          minimum: 0
+        codeAcceptedLines:
+          type: integer
+          minimum: 0
+        codeAddedLines:
+          type: integer
+          minimum: 0
+        codeDeletedLines:
+          type: integer
+          minimum: 0
+        codeFileCount:
+          type: integer
+          minimum: 0
+        costAmount:
+          type: string
+        costCurrency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        costSource:
+          type: string
+        privacyPolicyVersion:
+          type: integer
+          minimum: 1
+        metadata:
+          type: object
+    TelemetryBatch:
+      type: object
+      additionalProperties: false
+      required:
+      - batchId
+      - events
+      properties:
+        batchId:
+          type: string
+          maxLength: 30
+          pattern: ^bat_[A-Za-z0-9_-]+$
+        events:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/TelemetryEvent'
+    TelemetryRejection:
+      type: object
+      additionalProperties: false
+      required:
+      - code
+      properties:
+        eventId:
+          type: string
+        code:
+          type: string
+    TelemetryBatchAck:
+      type: object
+      additionalProperties: false
+      required:
+      - installationId
+      - batchId
+      - accepted
+      - duplicates
+      - rejected
+      - serverTime
+      properties:
+        installationId:
+          type: string
+        batchId:
+          type: string
+        accepted:
+          type: integer
+          minimum: 0
+        duplicates:
+          type: integer
+          minimum: 0
+        rejected:
+          type: array
+          items:
+            $ref: '#/components/schemas/TelemetryRejection'
+        serverTime:
+          type: string
+          format: date-time
+  parameters:
+    CSRFToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: Stable synchronizer token returned for the current session.
+      schema:
+        type: string
+        minLength: 1

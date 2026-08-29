@@ -126,8 +126,8 @@ func TestReadinessEndpoint_SchemaCompatibility(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503 from /readyz when schema is incompatible, got %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "not_ready") || !strings.Contains(rec.Body.String(), "0003") {
-		t.Fatalf("expected not_ready response body with error, got %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), "not_ready") || !strings.Contains(rec.Body.String(), "DEPENDENCY_NOT_READY") || strings.Contains(rec.Body.String(), "0003") {
+		t.Fatalf("expected safe not_ready response body, got %s", rec.Body.String())
 	}
 
 	// 2. Router with passing readiness checker

@@ -3,6 +3,7 @@ package memory
 import (
 	"time"
 
+	"tokendance/internal/config"
 	"tokendance/internal/crypto"
 	"tokendance/internal/domain"
 	"tokendance/internal/store"
@@ -13,8 +14,8 @@ func (m *MemoryStore) SeedUserForTest(userID, handle, email string, now time.Tim
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	hmacSecret := []byte("tokendance-dev-hmac-secret-at-least-32-bytes-long")
-	emailHash := crypto.HMACSHA256(hmacSecret, []byte(email))
+	cfg := config.DefaultConfig()
+	emailHash := crypto.HMACSHA256(cfg.EmailLookupKeys.Current(), []byte(email))
 	var h *string
 	visibility := domain.LeaderboardVisibilityPrivate
 	if handle != "" {
@@ -61,8 +62,8 @@ func (m *MemoryStore) SeedUserForTest(userID, handle, email string, now time.Tim
 		UpdatedAt:             now,
 	}
 
-	sessionTokenHash := crypto.HMACSHA256(hmacSecret, []byte("test-session-token-"+userID))
-	csrfTokenHash := crypto.HMACSHA256(hmacSecret, []byte("test-csrf-token-"+userID))
+	sessionTokenHash := crypto.HMACSHA256(cfg.SessionKeys.Current(), []byte("test-session-token-"+userID))
+	csrfTokenHash := crypto.HMACSHA256(cfg.CSRFKeys.Current(), []byte("test-csrf-token-"+userID))
 
 	sess := domain.UserSession{
 		SessionID:         "ses_" + userID,

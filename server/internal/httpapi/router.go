@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"tokendance/internal/analytics"
 	"tokendance/internal/auth"
@@ -57,7 +56,7 @@ func NewRouterWithReadiness(
 ) *chi.Mux {
 	r := chi.NewRouter()
 
-	mw := NewMiddleware(authService)
+	mw := NewMiddlewareWithConfig(authService, authService.Config())
 	handlers := NewHandlersWithReadiness(
 		authService,
 		profileService,
@@ -73,7 +72,6 @@ func NewRouterWithReadiness(
 
 	// Global Middlewares
 	r.Use(mw.RequestIDMiddleware)
-	r.Use(chimw.RealIP)
 	r.Use(mw.LoggerMiddleware)
 	r.Use(mw.Recoverer)
 	r.Use(mw.SessionResolver)
@@ -116,6 +114,7 @@ func NewRouterWithReadiness(
 
 		// Public Routes (no auth required)
 		api.Route("/public", func(pr chi.Router) {
+			pr.Use(mw.RateLimit(120, time.Minute))
 			pr.Get("/users/{handle}", handlers.GetPublicProfile)
 			pr.Get("/users/{handle}/trends", handlers.GetPublicTrends)
 			pr.Get("/users/{handle}/skills", handlers.GetPublicSkills)

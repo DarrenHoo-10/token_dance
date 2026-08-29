@@ -35,6 +35,31 @@ func TestAEADCipher_RoundTrip(t *testing.T) {
 	}
 }
 
+func TestAEADCipher_DecryptKeyringRotation(t *testing.T) {
+	oldKey := []byte("01234567890123456789012345678901")
+	newKey := []byte("11234567890123456789012345678901")
+	oldCipher, err := NewAEADCipher(oldKey, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ciphertext, err := oldCipher.Encrypt([]byte("rotated secret"), []byte("aad"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyring, err := NewAEADCipherKeyring(map[uint16][]byte{7: oldKey, 8: newKey}, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plaintext, err := keyring.Decrypt(ciphertext, []byte("aad"))
+	if err != nil || string(plaintext) != "rotated secret" {
+		t.Fatalf("old ciphertext did not decrypt through keyring: %q %v", plaintext, err)
+	}
+	newCiphertext, err := keyring.Encrypt([]byte("new secret"), []byte("aad"))
+	if err != nil || int(newCiphertext[0])<<8|int(newCiphertext[1]) != 8 {
+		t.Fatalf("new encryption did not use current version")
+	}
+}
+
 func TestAEADCipher_InvalidKeyLength(t *testing.T) {
 	_, err := NewAEADCipher([]byte("too-short"), 1)
 	if err != ErrInvalidKeyLength {

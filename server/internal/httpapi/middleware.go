@@ -2,86 +2,99 @@ package httpapi
 
 import (
 	"context"
-	"crypto/subtle"
+	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
-	"sync"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"tokendance/internal/auth"
+	"tokendance/internal/config"
 	"tokendance/internal/crypto"
 	"tokendance/internal/domain"
 )
 
 type Middleware struct {
-	authService *auth.Service
+	authService    *auth.Service
+	trustedProxies []*net.IPNet
+	redisClient    *redis.Client
+	maxRateEntries int
 }
 
 func NewMiddleware(authService *auth.Service) *Middleware {
-	return &Middleware{
-		authService: authService,
-	}
+	return NewMiddlewareWithConfig(authService, config.DefaultConfig())
 }
 
-type IPRateLimiter struct {
-	mu      sync.Mutex
-	records map[string][]time.Time
-	limit   int
-	window  time.Duration
-}
-
-func NewIPRateLimiter(limit int, window time.Duration) *IPRateLimiter {
-	return &IPRateLimiter{
-		records: make(map[string][]time.Time),
-		limit:   limit,
-		window:  window,
-	}
-}
-
-func (lim *IPRateLimiter) Allow(key string) bool {
-	lim.mu.Lock()
-	defer lim.mu.Unlock()
-
-	now := time.Now()
-	cutoff := now.Add(-lim.window)
-
-	timestamps := lim.records[key]
-	var valid []time.Time
-	for _, t := range timestamps {
-		if t.After(cutoff) {
-			valid = append(valid, t)
+func NewMiddlewareWithConfig(authService *auth.Service, cfg *config.Config) *Middleware {
+	m := &Middleware{authService: authService, maxRateEntries: cfg.RateLimitMaxEntries}
+	for _, rawCIDR := range cfg.TrustedProxyCIDRs {
+		_, cidr, err := net.ParseCIDR(rawCIDR)
+		if err == nil {
+			m.trustedProxies = append(m.trustedProxies, cidr)
 		}
 	}
-
-	if len(valid) >= lim.limit {
-		lim.records[key] = valid
-		return false
+	if cfg.RedisAddr != "" {
+		m.redisClient = redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, DialTimeout: 100 * time.Millisecond, ReadTimeout: 100 * time.Millisecond, WriteTimeout: 100 * time.Millisecond, MaxRetries: 0})
 	}
+	return m
+}
 
-	valid = append(valid, now)
-	lim.records[key] = valid
-	return true
+func (m *Middleware) isTrustedProxy(ip net.IP) bool {
+	for _, cidr := range m.trustedProxies {
+		if cidr.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func remoteIP(remoteAddr string) net.IP {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err == nil {
+		return net.ParseIP(host)
+	}
+	return net.ParseIP(strings.TrimSpace(remoteAddr))
+}
+
+func (m *Middleware) clientIP(r *http.Request) string {
+	peer := remoteIP(r.RemoteAddr)
+	if peer == nil {
+		return "unknown"
+	}
+	if !m.isTrustedProxy(peer) {
+		return peer.String()
+	}
+	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+		parts := strings.Split(forwarded, ",")
+		for i := len(parts) - 1; i >= 0; i-- {
+			candidate := net.ParseIP(strings.TrimSpace(parts[i]))
+			if candidate != nil && !m.isTrustedProxy(candidate) {
+				return candidate.String()
+			}
+		}
+	}
+	if candidate := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Real-IP"))); candidate != nil {
+		return candidate.String()
+	}
+	return peer.String()
 }
 
 func (m *Middleware) RateLimit(limit int, window time.Duration) func(http.Handler) http.Handler {
-	limiter := NewIPRateLimiter(limit, window)
+	memoryBackend := newMemoryRateLimitBackend(m.maxRateEntries)
+	var backend rateLimitBackend = memoryBackend
+	if m.redisClient != nil {
+		backend = fallbackRateLimitBackend{primary: &redisRateLimitBackend{client: m.redisClient}, fallback: memoryBackend}
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			ip := r.RemoteAddr
-			if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
-				ip = strings.TrimSpace(strings.Split(forwarded, ",")[0])
-			} else if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
-				ip = strings.TrimSpace(realIP)
-			}
-			if host, _, err := net.SplitHostPort(ip); err == nil {
-				ip = host
-			}
-
-			if !limiter.Allow(ip) {
-				w.Header().Set("Retry-After", "60")
+			key := r.URL.Path + ":" + m.clientIP(r)
+			allowed, err := backend.Allow(r.Context(), key, limit, window)
+			if err != nil || !allowed {
+				w.Header().Set("Retry-After", fmt.Sprintf("%d", max(1, int(window.Seconds()))))
 				WriteError(w, r, domain.NewAppError(429, "API_RATE_LIMIT_EXCEEDED", "api.rateLimited", "too many requests, please slow down", nil, domain.ErrRateLimited))
 				return
 			}
@@ -293,8 +306,7 @@ func (m *Middleware) RequireCSRF(next http.Handler) http.Handler {
 			return
 		}
 
-		expectedHash := m.authService.ComputeTokenHash(csrfHeader)
-		if subtle.ConstantTimeCompare(expectedHash[:], sess.CSRFTokenHash[:]) != 1 {
+		if !m.authService.ValidateCSRFToken(csrfHeader, sess.CSRFTokenHash) {
 			WriteError(w, r, domain.NewAppError(403, "CSRF_VALIDATION_FAILED", "auth.csrfFailed", "CSRF token mismatch", nil, domain.ErrCsrfFailed))
 			return
 		}

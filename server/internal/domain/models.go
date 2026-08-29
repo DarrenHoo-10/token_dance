@@ -110,6 +110,7 @@ type UserSession struct {
 	UserID            string        `json:"userId"`
 	SessionTokenHash  [32]byte      `json:"-"`
 	CSRFTokenHash     [32]byte      `json:"-"`
+	CSRFToken         string        `json:"-"`
 	CredentialVersion uint32        `json:"credentialVersion"`
 	SessionStatus     SessionStatus `json:"sessionStatus"`
 	DeviceLabel       *string       `json:"deviceLabel"`
@@ -322,6 +323,68 @@ type Installation struct {
 	LastSeenAt         *time.Time         `json:"lastSeenAt,omitempty"`
 	RevokedAt          *time.Time         `json:"revokedAt,omitempty"`
 	UpdatedAt          time.Time          `json:"updatedAt"`
+}
+
+type UsageEvent struct {
+	EventID              [32]byte
+	SchemaVersion        uint16
+	AdapterID            string
+	AdapterVersion       string
+	AgentID              string
+	AgentVersion         *string
+	ProviderID           *string
+	ModelID              *string
+	EventType            string
+	Accuracy             string
+	SourceKind           string
+	OccurredAt           time.Time
+	SessionHash          *[32]byte
+	ParentSessionHash    *[32]byte
+	TurnHash             *[32]byte
+	ToolCallHash         *[32]byte
+	TokenInput           *uint64
+	TokenOutput          *uint64
+	TokenCacheRead       *uint64
+	TokenCacheWrite      *uint64
+	TokenReasoning       *uint64
+	TokenTotal           *uint64
+	DurationMS           *uint64
+	Success              *bool
+	ToolCategory         *string
+	SkillKey             *[32]byte
+	SkillPublicName      *string
+	SkillInvokeType      *string
+	PluginKey            *[32]byte
+	CodeGeneratedLines   *uint64
+	CodeAcceptedLines    *uint64
+	CodeAddedLines       *uint64
+	CodeDeletedLines     *uint64
+	CodeFileCount        *uint32
+	CostAmount           *string
+	CostCurrency         *string
+	CostSource           *string
+	PrivacyPolicyVersion uint16
+	SafeExtensionJSON    []byte
+}
+
+type IngestBatch struct {
+	BatchID        string
+	InstallationID string
+	RequestSHA256  [32]byte
+	NonceHash      [32]byte
+	NonceExpiresAt time.Time
+	EventCount     uint32
+	RejectedCount  uint32
+	Events         []UsageEvent
+	ReceivedAt     time.Time
+}
+
+type IngestResult struct {
+	BatchID        string
+	AcceptedCount  uint32
+	DuplicateCount uint32
+	RejectedCount  uint32
+	CommittedAt    time.Time
 }
 
 // UserSecurityEvent represents user_security_events table
@@ -537,6 +600,32 @@ type CalendarResponse struct {
 	TotalActiveDays    int           `json:"totalActiveDays"`
 	DataWatermarkAt    *time.Time    `json:"dataWatermarkAt"`
 	AggregationVersion uint32        `json:"aggregationVersion"`
+}
+
+type ActivityQuery struct {
+	Range      TimeRange
+	AgentID    *string
+	ProviderID *string
+	ModelID    *string
+	Limit      int
+	Offset     int
+}
+
+type ActivityRow struct {
+	Date               string  `json:"date"`
+	AgentID            string  `json:"agentId"`
+	ProviderID         *string `json:"providerId,omitempty"`
+	ModelID            *string `json:"modelId,omitempty"`
+	TokenTotal         string  `json:"tokenTotal"`
+	MessageCount       *string `json:"messageCount,omitempty"`
+	ActiveDurationMs   *string `json:"activeDurationMs,omitempty"`
+	GeneratedCodeLines string  `json:"generatedCodeLines"`
+}
+
+type ActivityResponse struct {
+	Items      []ActivityRow `json:"items"`
+	NextCursor *string       `json:"nextCursor,omitempty"`
+	Range      TimeRange     `json:"range"`
 }
 
 type FilterOptions struct {

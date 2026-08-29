@@ -19,8 +19,8 @@ func (s *mediaStore) CreateAvatarUploadIntent(ctx context.Context, obj domain.Us
 	insertSQL := `
 		INSERT INTO user_upload_objects (
 			object_id, user_id, object_type, object_key, content_type,
-			byte_size, upload_status, expires_at, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			byte_size, content_sha256, upload_status, expires_at, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	_, err := s.db.ExecContext(ctx, insertSQL,
 		obj.ObjectID,
@@ -29,6 +29,7 @@ func (s *mediaStore) CreateAvatarUploadIntent(ctx context.Context, obj domain.Us
 		obj.ObjectKey,
 		nullStringFromPtr(obj.ContentType),
 		obj.ByteSize,
+		obj.ContentSha256[:],
 		obj.UploadStatus,
 		obj.ExpiresAt,
 		obj.CreatedAt,

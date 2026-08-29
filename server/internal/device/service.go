@@ -17,10 +17,11 @@ import (
 )
 
 type Service struct {
-	store     store.DeviceStore
-	authStore store.AuthStore
-	cfg       *config.Config
-	clk       clock.Clock
+	store       store.DeviceStore
+	ingestStore store.IngestStore
+	authStore   store.AuthStore
+	cfg         *config.Config
+	clk         clock.Clock
 }
 
 func NewService(st store.Store, cfg *config.Config, clk clock.Clock) *Service {
@@ -28,18 +29,20 @@ func NewService(st store.Store, cfg *config.Config, clk clock.Clock) *Service {
 		clk = clock.RealClock{}
 	}
 	return &Service{
-		store:     st.Device(),
-		authStore: st.Auth(),
-		cfg:       cfg,
-		clk:       clk,
+		store:       st.Device(),
+		ingestStore: st.Ingest(),
+		authStore:   st.Auth(),
+		cfg:         cfg,
+		clk:         clk,
 	}
 }
 
 type DeviceGrantClaims struct {
-	UserID    string `json:"userId"`
-	SessionID string `json:"sessionId"`
-	Scope     string `json:"scope"`
-	ExpiresAt int64  `json:"exp"`
+	UserID     string `json:"userId"`
+	SessionID  string `json:"sessionId"`
+	Scope      string `json:"scope"`
+	KeyVersion uint16 `json:"keyVersion"`
+	ExpiresAt  int64  `json:"exp"`
 }
 
 type DeviceGrantResult struct {
@@ -57,10 +60,11 @@ func (s *Service) CreateDeviceGrant(ctx context.Context, userID, sessionID strin
 	exp := now.Add(5 * time.Minute)
 
 	claims := DeviceGrantClaims{
-		UserID:    userID,
-		SessionID: sessionID,
-		Scope:     "installation:register",
-		ExpiresAt: exp.Unix(),
+		UserID:     userID,
+		SessionID:  sessionID,
+		Scope:      "installation:register",
+		KeyVersion: s.cfg.GrantKeys.CurrentVersion,
+		ExpiresAt:  exp.Unix(),
 	}
 
 	claimsBytes, err := json.Marshal(claims)
@@ -69,8 +73,7 @@ func (s *Service) CreateDeviceGrant(ctx context.Context, userID, sessionID strin
 	}
 
 	payloadB64 := base64.RawURLEncoding.EncodeToString(claimsBytes)
-	grantKey := crypto.HMACSHA256([]byte(s.cfg.HMACSecret), []byte("tokendance:device_grant_key"))
-	sig := crypto.HMACSHA256(grantKey[:], []byte(payloadB64))
+	sig := crypto.HMACSHA256(s.cfg.GrantKeys.Current(), []byte(payloadB64))
 	sigB64 := base64.RawURLEncoding.EncodeToString(sig[:])
 
 	token := "dgt_" + payloadB64 + "." + sigB64
@@ -101,15 +104,17 @@ func (s *Service) ValidateDeviceGrant(ctx context.Context, grantToken string) (s
 		return "", "", domain.NewAppError(401, "AUTH_INVALID_GRANT", "auth.invalidGrant", "invalid grant signature", nil, domain.ErrUnauthorized)
 	}
 
-	grantKey := crypto.HMACSHA256([]byte(s.cfg.HMACSecret), []byte("tokendance:device_grant_key"))
-	expectedSig := crypto.HMACSHA256(grantKey[:], []byte(parts[0]))
-	if subtle.ConstantTimeCompare(sigBytes, expectedSig[:]) != 1 {
-		return "", "", domain.NewAppError(401, "AUTH_INVALID_GRANT", "auth.invalidGrant", "grant signature mismatch", nil, domain.ErrUnauthorized)
-	}
-
 	var claims DeviceGrantClaims
 	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
 		return "", "", domain.NewAppError(401, "AUTH_INVALID_GRANT", "auth.invalidGrant", "failed to parse grant claims", nil, domain.ErrUnauthorized)
+	}
+	grantKey, ok := s.cfg.GrantKeys.Keys[claims.KeyVersion]
+	if !ok {
+		return "", "", domain.NewAppError(401, "AUTH_INVALID_GRANT", "auth.invalidGrant", "unknown grant key version", nil, domain.ErrUnauthorized)
+	}
+	expectedSig := crypto.HMACSHA256(grantKey, []byte(parts[0]))
+	if subtle.ConstantTimeCompare(sigBytes, expectedSig[:]) != 1 {
+		return "", "", domain.NewAppError(401, "AUTH_INVALID_GRANT", "auth.invalidGrant", "grant signature mismatch", nil, domain.ErrUnauthorized)
 	}
 
 	if claims.Scope != "installation:register" {
@@ -164,7 +169,7 @@ func (s *Service) CreateBindingChallenge(ctx context.Context, userID, sessionID 
 	}
 
 	normCode := crypto.NormalizeCrockfordCode(code)
-	codeHash := crypto.HMACSHA256([]byte(s.cfg.HMACSecret), []byte(normCode))
+	codeHash := crypto.HMACSHA256(s.cfg.BindingCodeKeys.Current(), []byte(normCode))
 
 	now := s.clk.Now()
 	expiresAt := now.Add(s.cfg.AuthBindCodeTTL)
@@ -177,7 +182,7 @@ func (s *Service) CreateBindingChallenge(ctx context.Context, userID, sessionID 
 		UserID:           userID,
 		SessionID:        sessionID,
 		CodeLookupHash:   codeHash,
-		CodeKeyVersion:   1,
+		CodeKeyVersion:   s.cfg.BindingCodeKeys.CurrentVersion,
 		ChallengeStatus:  domain.ChallengeStatusPending,
 		ExpiresAt:        expiresAt,
 		ActiveSessionKey: &sessionID,
@@ -229,7 +234,6 @@ func (s *Service) ClaimInstallation(ctx context.Context, in ClaimInput) (*domain
 		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "device.invalidOSType", "invalid osType", nil, domain.ErrInvalidArgument)
 	}
 
-	codeHash := crypto.HMACSHA256([]byte(s.cfg.HMACSecret), []byte(normCode))
 	now := s.clk.Now()
 
 	instIDToken, _ := crypto.GenerateOpaqueToken(13)
@@ -249,18 +253,26 @@ func (s *Service) ClaimInstallation(ctx context.Context, in ClaimInput) (*domain
 		UpdatedAt:          now,
 	}
 
-	claimed, err := s.store.ClaimInstallationTx(ctx, codeHash, inst, now)
-	if err != nil {
-		if err == domain.ErrChallengeInvalid {
-			return nil, domain.NewAppError(400, "DEVICE_BINDING_INVALID", "device.invalidBinding", "invalid or expired binding code", nil, err)
+	var claimed *domain.Installation
+	var claimErr error = domain.ErrChallengeInvalid
+	for _, version := range s.cfg.BindingCodeKeys.Versions() {
+		codeHash := crypto.HMACSHA256(s.cfg.BindingCodeKeys.Keys[version], []byte(normCode))
+		claimed, claimErr = s.store.ClaimInstallationTx(ctx, codeHash, inst, now)
+		if claimErr == nil || claimErr != domain.ErrChallengeInvalid {
+			break
 		}
-		if err == domain.ErrChallengeExpired {
-			return nil, domain.NewAppError(400, "DEVICE_BINDING_EXPIRED", "device.bindingExpired", "binding code expired", nil, err)
+	}
+	if claimErr != nil {
+		if claimErr == domain.ErrChallengeInvalid {
+			return nil, domain.NewAppError(400, "DEVICE_BINDING_INVALID", "device.invalidBinding", "invalid or expired binding code", nil, claimErr)
 		}
-		if err == domain.ErrPublicKeyConflict {
-			return nil, domain.NewAppError(409, "DEVICE_PUBLIC_KEY_CONFLICT", "device.publicKeyConflict", "device public key already registered to another user", nil, err)
+		if claimErr == domain.ErrChallengeExpired {
+			return nil, domain.NewAppError(400, "DEVICE_BINDING_EXPIRED", "device.bindingExpired", "binding code expired", nil, claimErr)
 		}
-		return nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to claim installation", nil, err)
+		if claimErr == domain.ErrPublicKeyConflict {
+			return nil, domain.NewAppError(409, "DEVICE_PUBLIC_KEY_CONFLICT", "device.publicKeyConflict", "device public key already registered to another user", nil, claimErr)
+		}
+		return nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to claim installation", nil, claimErr)
 	}
 
 	return claimed, nil
@@ -353,6 +365,40 @@ func (s *Service) RevokeDevice(ctx context.Context, installationID, userID strin
 		return nil, domain.NewAppError(404, "RESOURCE_NOT_FOUND", "device.notFound", "device not found", nil, err)
 	}
 	return inst, nil
+}
+
+func (s *Service) GetIngestInstallation(ctx context.Context, installationID string) (*domain.Installation, error) {
+	inst, err := s.ingestStore.GetIngestInstallation(ctx, installationID)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			return nil, domain.NewAppError(401, "DEVICE_AUTH_INVALID", "device.invalidSignature", "invalid device authentication", nil, domain.ErrUnauthorized)
+		}
+		return nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to load ingest installation", nil, err)
+	}
+	return inst, nil
+}
+
+func (s *Service) CommitIngest(ctx context.Context, batch domain.IngestBatch) (*domain.IngestResult, error) {
+	result, err := s.ingestStore.CommitIngest(ctx, batch)
+	if err == nil {
+		return result, nil
+	}
+	switch err {
+	case domain.ErrNotFound:
+		return nil, domain.NewAppError(401, "DEVICE_AUTH_INVALID", "device.invalidSignature", "invalid device authentication", nil, domain.ErrUnauthorized)
+	case domain.ErrDeviceRevoked:
+		return nil, domain.NewAppError(403, "DEVICE_REVOKED", "device.revoked", "device is revoked", nil, err)
+	case domain.ErrDeviceDisabled:
+		return nil, domain.NewAppError(403, "DEVICE_DISABLED", "device.disabled", "device is disabled", nil, err)
+	case domain.ErrAccountSuspended:
+		return nil, domain.NewAppError(403, "ACCOUNT_ACTION_NOT_ALLOWED", "auth.accountSuspended", "user account is not active", nil, err)
+	case domain.ErrNonceReplay:
+		return nil, domain.NewAppError(409, "INGEST_NONCE_REPLAY", "ingest.nonceReplay", "telemetry nonce has already been used", nil, err)
+	case domain.ErrBatchHashConflict:
+		return nil, domain.NewAppError(409, "INGEST_BATCH_HASH_CONFLICT", "ingest.batchHashConflict", "batch id was already used with a different request body", nil, err)
+	default:
+		return nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to commit telemetry batch", nil, err)
+	}
 }
 
 func (s *Service) AuthorizeIngest(ctx context.Context, installationID string) (*domain.Installation, *domain.User, error) {
