@@ -8,6 +8,10 @@
 /server/bin/
 /server/coverage.out
 
+# Python
+__pycache__/
+*.py[cod]
+
 # JavaScript
 /node_modules/
 /web/node_modules/
