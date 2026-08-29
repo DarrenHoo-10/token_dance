@@ -19,7 +19,7 @@ FROM data_deletion_requests
 WHERE deletion_scope = 'account'
   AND request_status IN ('pending', 'running', 'failed');
 
-DROP TEMPORARY TABLE migration_0002_active_account_guard;
+DROP TEMPORARY TABLE IF EXISTS migration_0002_active_account_guard;
 
 ALTER TABLE users
   DROP CHECK chk_users_account_status,

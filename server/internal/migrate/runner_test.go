@@ -385,6 +385,20 @@ func assertColumnExists(t *testing.T, db *sql.DB, table, column string) {
 	}
 }
 
+func TestTemporaryGuardDropIsReplaySafe(t *testing.T) {
+	db := getTestMySQLDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `CREATE TEMPORARY TABLE migration_0002_active_account_guard (user_id CHAR(30) PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := db.ExecContext(ctx, `DROP TEMPORARY TABLE IF EXISTS migration_0002_active_account_guard`); err != nil {
+			t.Fatalf("replayed temporary-table drop failed on attempt %d: %v", attempt+1, err)
+		}
+	}
+}
+
 func TestValidateSchemaCompatibility(t *testing.T) {
 	db := getTestMySQLDB(t)
 	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
