@@ -44,7 +44,6 @@ export const enUS = {
     completed: 'Completed',
     failed: 'Failed',
     expired: 'Expired',
-    mockLabel: 'TOKENDANCE PRODUCT · 2026',
     unknown: 'Unknown',
     notSupported: 'Not supported',
   },

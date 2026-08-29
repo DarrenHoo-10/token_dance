@@ -195,10 +195,10 @@ export const PublicProfilePage: React.FC = () => {
               className="mono-num"
               style={{ fontSize: 72, lineHeight: 0.9, letterSpacing: '-0.06em' }}
             >
-              #{profile.rank || 1}
+              {profile.rank ? `#${profile.rank}` : '—'}
             </strong>
             <span style={{ color: 'var(--lime)', fontWeight: 700, marginBottom: 8, fontSize: 13 }}>
-              {profile.percentile || 'Top 0.1%'}
+              {profile.percentile ? profile.percentile : '—'}
             </span>
           </div>
 
@@ -207,7 +207,14 @@ export const PublicProfilePage: React.FC = () => {
           </p>
 
           <div className="progress-track" style={{ marginTop: 24, backgroundColor: '#273129' }}>
-            <div className="progress-fill" style={{ width: '92%' }} />
+            <div
+              className="progress-fill"
+              style={{
+                width: profile.percentile && profile.percentile.includes('%')
+                  ? profile.percentile.replace(/[^0-9.]/g, '') + '%'
+                  : '100%',
+              }}
+            />
           </div>
         </div>
       </div>

@@ -34,7 +34,7 @@ export const Footer: React.FC = () => {
         </div>
 
         <div style={{ display: 'flex', gap: 20, fontFamily: 'var(--font-mono)', fontSize: 11 }}>
-          <span>{t('common.mockLabel')}</span>
+          <span>TOKENDANCE · 2026</span>
           <span>🔒 {t('auth.privacyPledge')}</span>
         </div>
       </div>

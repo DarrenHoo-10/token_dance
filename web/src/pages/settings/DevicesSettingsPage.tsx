@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { useNotification } from '@/context/NotificationContext';
 import { Button } from '@/components/common/Button';
@@ -11,6 +12,7 @@ import { api, ApiError } from '@/api/client';
 import type { CollectorDevice, DeviceBindingChallengeResponse } from '@/types/api';
 
 export const DevicesSettingsPage: React.FC = () => {
+  const { refreshSession } = useAuth();
   const { t } = useLocale();
   const { showToast } = useNotification();
 
@@ -62,6 +64,7 @@ export const DevicesSettingsPage: React.FC = () => {
       await api.pauseDevice(installationId);
       showToast(t('common.saved'), 'success');
       await fetchDevices();
+      await refreshSession();
     } catch (err) {
       showToast(err instanceof Error ? err.message : t('errors.unknown'), 'error');
     }
@@ -72,6 +75,7 @@ export const DevicesSettingsPage: React.FC = () => {
       await api.resumeDevice(installationId);
       showToast(t('common.saved'), 'success');
       await fetchDevices();
+      await refreshSession();
     } catch (err) {
       showToast(err instanceof Error ? err.message : t('errors.unknown'), 'error');
     }
@@ -84,6 +88,7 @@ export const DevicesSettingsPage: React.FC = () => {
       await api.revokeDevice(installationId);
       showToast(t('common.saved'), 'success');
       await fetchDevices();
+      await refreshSession();
     } catch (err) {
       showToast(err instanceof Error ? err.message : t('errors.unknown'), 'error');
     }

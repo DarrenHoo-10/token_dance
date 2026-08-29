@@ -16,7 +16,6 @@ describe('Auth & Onboarding Flow Tests', () => {
 
   it('renders LoginPage and handles login submission', async () => {
     const loginSpy = vi.spyOn(api, 'login').mockResolvedValue({
-      authenticated: true,
       user: {
         handle: 'maxbauer',
         displayName: 'Max Bauer',

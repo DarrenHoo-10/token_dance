@@ -757,15 +757,6 @@ func (m *MemoryStore) RequestDeletionTx(ctx context.Context, req domain.DataDele
 					b.UpdatedAt = now
 				}
 			}
-			for _, s := range m.sessions {
-				if s.UserID == *req.UserID && s.SessionStatus == domain.SessionStatusActive {
-					reason := "account_deletion"
-					s.SessionStatus = domain.SessionStatusRevoked
-					s.RevokedAt = &now
-					s.RevokeReason = &reason
-					s.UpdatedAt = now
-				}
-			}
 		}
 	}
 
@@ -1262,7 +1253,11 @@ func (m *MemoryStore) GetSkillRanking(ctx context.Context, userID string, r doma
 		}, nil
 	}
 
-	var items []domain.SkillItem
+	type sortableSkill struct {
+		item  domain.SkillItem
+		count uint64
+	}
+	var sList []sortableSkill
 	for _, f := range fixtures {
 		pubName := f.SkillPublicName
 		skillID := f.SkillID
@@ -1271,19 +1266,27 @@ func (m *MemoryStore) GetSkillRanking(ctx context.Context, userID string, r doma
 			hash := sha256.Sum256([]byte(f.SkillKey))
 			skillID = fmt.Sprintf("skl_%x", hash[:4])
 		}
-		items = append(items, domain.SkillItem{
-			SkillID:          skillID,
-			SkillPublicName:  pubName,
-			UseCount:         fmt.Sprintf("%d", f.UseCount),
-			ActiveDays:       f.ActiveDays,
-			SuccessRate:      f.SuccessRate,
-			PreviousDeltaPct: f.PreviousDeltaPct,
+		sList = append(sList, sortableSkill{
+			item: domain.SkillItem{
+				SkillID:          skillID,
+				SkillPublicName:  pubName,
+				UseCount:         fmt.Sprintf("%d", f.UseCount),
+				ActiveDays:       f.ActiveDays,
+				SuccessRate:      f.SuccessRate,
+				PreviousDeltaPct: f.PreviousDeltaPct,
+			},
+			count: f.UseCount,
 		})
 	}
 
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].UseCount > items[j].UseCount
+	sort.Slice(sList, func(i, j int) bool {
+		return sList[i].count > sList[j].count
 	})
+
+	var items []domain.SkillItem
+	for _, s := range sList {
+		items = append(items, s.item)
+	}
 
 	return &domain.SkillsResponse{
 		Range:              r,
@@ -1393,9 +1396,19 @@ func (m *MemoryStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 
 	var challenge *domain.DeviceBindingChallenge
 	for _, c := range m.bindingChallenges {
-		if c.CodeLookupHash == codeHash && c.ChallengeStatus == domain.ChallengeStatusPending {
-			challenge = c
-			break
+		if c.CodeLookupHash == codeHash {
+			if c.ChallengeStatus == domain.ChallengeStatusPending {
+				challenge = c
+				break
+			}
+			if c.ChallengeStatus == domain.ChallengeStatusConsumed && c.ConsumedInstallationID != nil {
+				if existing, ok := m.installations[*c.ConsumedInstallationID]; ok {
+					if existing.DevicePublicKey == inst.DevicePublicKey {
+						eCopy := *existing
+						return &eCopy, nil
+					}
+				}
+			}
 		}
 	}
 	if challenge == nil {

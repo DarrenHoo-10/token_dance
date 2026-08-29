@@ -17,10 +17,10 @@ export const ExplorePage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const initialQuery = searchParams.get('q') || 'codex';
+  const initialQuery = searchParams.get('q') || '';
   const [query, setQuery] = useState(initialQuery);
   const [activeTab, setActiveTab] = useState<'all' | 'users' | 'agents' | 'skills'>('all');
-  const [compareHandles, setCompareHandles] = useState<string[]>(['maxbauer', 'sophiadev']);
+  const [compareHandles, setCompareHandles] = useState<string[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | Error | null>(null);
@@ -30,23 +30,7 @@ export const ExplorePage: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      const res = await api.searchPublic(q).catch(() => ({
-        query: q,
-        totalCount: 31,
-        users: [
-          { handle: 'maxbauer', displayName: 'maxbauer', avatarUrl: null, bio: 'Building with AI every day', rank: 1, tokenTotal: '325.7M', topAgent: 'Claude Code 62%' },
-          { handle: 'sophiadev', displayName: 'sophiadev', avatarUrl: null, bio: 'Full-stack AI developer', rank: 2, tokenTotal: '215.4M', topAgent: 'Claude Code 58%' },
-          { handle: 'deworap', displayName: 'deworap', avatarUrl: null, bio: 'LLM engineer & hacker', rank: 3, tokenTotal: '178.9M', topAgent: 'Codex 45%' },
-          { handle: 'builderdan', displayName: 'builderdan', avatarUrl: null, bio: 'Open source enthusiast', rank: 4, tokenTotal: '142.6M', topAgent: 'Claude Code 60%' },
-        ],
-        agents: [
-          { agentId: 'codex', displayName: 'Codex', developerCount: '48.2K', tokenTotal30d: '4.8T', tags: ['coding', 'agentic', 'cli'] },
-        ],
-        skills: [
-          { skillPublicName: 'codex-review', useCount: 12800, userCount: 1600, growthDelta: 24, tags: ['public', '1.6K users'] },
-          { skillPublicName: 'codex-commit', useCount: 8400, userCount: 980, growthDelta: 18, tags: ['popular', '980 users'] },
-        ],
-      }));
+      const res = await api.searchPublic(q);
       setResults(res);
     } catch (err) {
       setError(err instanceof ApiError ? err : new Error(String(err)));

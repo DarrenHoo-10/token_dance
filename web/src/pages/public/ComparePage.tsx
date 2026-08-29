@@ -13,60 +13,23 @@ export const ComparePage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  const handlesParam = searchParams.get('handles') || 'maxbauer,sophiadev';
-  const handles = handlesParam.split(',').filter(Boolean);
+  const handlesParam = searchParams.get('handles') || '';
+  const handles = handlesParam.split(',').map((h) => h.trim()).filter(Boolean);
 
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError | Error | null>(null);
   const [comparison, setComparison] = useState<UserComparisonResponse | null>(null);
 
   const fetchComparison = useCallback(async () => {
-    if (handles.length === 0) return;
+    if (handles.length === 0) {
+      setLoading(false);
+      setComparison(null);
+      return;
+    }
     try {
       setLoading(true);
       setError(null);
-      const res = await api.compareUsers(handles, '30d', 'tokens').catch(() => ({
-        range: '30d',
-        metric: 'tokens',
-        generatedAt: new Date().toISOString(),
-        users: [
-          {
-            handle: 'maxbauer',
-            displayName: 'Max Bauer',
-            avatarUrl: null,
-            visible: true,
-            rank: 1,
-            tokenTotal: '325.7M',
-            codeLinesTotal: '864.2K',
-            activeDays: 28,
-            currentStreak: 23,
-            topAgent: 'Claude Code',
-            agentBreakdown: [
-              { agentId: 'claude-code', displayName: 'Claude Code', tokenTotal: '201900000', percentage: 62 },
-              { agentId: 'codex', displayName: 'Codex', tokenTotal: '81400000', percentage: 25 },
-              { agentId: 'cursor', displayName: 'Cursor', tokenTotal: '42400000', percentage: 13 },
-            ],
-          },
-          {
-            handle: 'sophiadev',
-            displayName: 'Sophia Dev',
-            avatarUrl: null,
-            visible: true,
-            rank: 2,
-            tokenTotal: '215.4M',
-            codeLinesTotal: '612.0K',
-            activeDays: 26,
-            currentStreak: 18,
-            topAgent: 'Claude Code',
-            agentBreakdown: [
-              { agentId: 'claude-code', displayName: 'Claude Code', tokenTotal: '124900000', percentage: 58 },
-              { agentId: 'codex', displayName: 'Codex', tokenTotal: '58100000', percentage: 27 },
-              { agentId: 'cursor', displayName: 'Cursor', tokenTotal: '32400000', percentage: 15 },
-            ],
-          },
-        ],
-      }));
-
+      const res = await api.compareUsers(handles, '30d', 'tokens');
       setComparison(res);
     } catch (err) {
       setError(err instanceof ApiError ? err : new Error(String(err)));

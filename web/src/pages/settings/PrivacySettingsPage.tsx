@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { useNotification } from '@/context/NotificationContext';
 import { Switch } from '@/components/common/Switch';
@@ -10,6 +11,7 @@ import { api, ApiError } from '@/api/client';
 import type { PrivacySettings } from '@/types/api';
 
 export const PrivacySettingsPage: React.FC = () => {
+  const { refreshSession } = useAuth();
   const { t } = useLocale();
   const { showToast } = useNotification();
 
@@ -55,6 +57,7 @@ export const PrivacySettingsPage: React.FC = () => {
       );
 
       setPrivacy(updated);
+      await refreshSession();
       showToast(t('common.saved'), 'success');
     } catch (err) {
       if (err instanceof ApiError) {

@@ -93,5 +93,50 @@ describe('Dashboard Components Tests', () => {
 
     expect(screen.getByText('正常')).toBeInTheDocument();
     expect(screen.getByText('Just now')).toBeInTheDocument();
+    expect(screen.getByText('0')).toBeInTheDocument();
+  });
+
+  it('ensures pendingLocalCount null stays unknown rather than 0', () => {
+    render(
+      <LocaleProvider>
+        <SyncStatusCard
+          lastCommittedAt={null}
+          pendingLocalCount={null}
+          status="healthy"
+        />
+      </LocaleProvider>
+    );
+
+    expect(screen.getByText('未知')).toBeInTheDocument();
+    expect(screen.queryByText('0')).not.toBeInTheDocument();
+  });
+
+  it('ensures supported=false differs from zero and renders N/A', () => {
+    const unsupportedMetrics: PersonalSummaryMetrics = {
+      estimatedCost: { amount: null, currency: 'USD', supported: false },
+      totalTokens: { value: null, supported: false },
+      generatedCodeLines: { value: '0', supported: true },
+      tokensPerCodeLine: { value: null, supported: false },
+      inputContextTokens: { value: null, supported: false },
+      outputTokens: { value: null, supported: false },
+      cacheHitRate: { value: null, supported: false },
+      activeDurationMs: { value: null, supported: false },
+      messageCount: { value: null, supported: false },
+      userMessageCount: { value: '0', supported: true },
+    };
+
+    render(
+      <LocaleProvider>
+        <MetricGrid metrics={unsupportedMetrics} />
+      </LocaleProvider>
+    );
+
+    // supported=false metrics display N/A badges
+    const naBadges = screen.getAllByText('N/A');
+    expect(naBadges.length).toBe(8);
+
+    // True zero value for supported=true metrics renders 0
+    const zeroValues = screen.getAllByText('0');
+    expect(zeroValues.length).toBeGreaterThanOrEqual(2);
   });
 });

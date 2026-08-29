@@ -3,6 +3,7 @@ import type {
   ApiErrorDetail,
   ApiErrorResponse,
   SessionResponse,
+  AuthResponse,
   LoginRequest,
   RegisterCodeRequest,
   RegisterRequest,
@@ -14,6 +15,7 @@ import type {
   PrivacySettings,
   UpdatePrivacyRequest,
   OnboardingRequest,
+  OnboardingResponse,
   AvatarUploadIntentResponse,
   PersonalSummary,
   TokenTrendsResponse,
@@ -164,8 +166,8 @@ class ApiHttpClient {
     });
   }
 
-  public async register(data: RegisterRequest): Promise<SessionResponse> {
-    const res = await this.request<SessionResponse>('/auth/register', {
+  public async register(data: RegisterRequest): Promise<AuthResponse> {
+    const res = await this.request<AuthResponse>('/auth/register', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -175,8 +177,8 @@ class ApiHttpClient {
     return res;
   }
 
-  public async login(data: LoginRequest): Promise<SessionResponse> {
-    const res = await this.request<SessionResponse>('/auth/login', {
+  public async login(data: LoginRequest): Promise<AuthResponse> {
+    const res = await this.request<AuthResponse>('/auth/login', {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -218,11 +220,16 @@ class ApiHttpClient {
   }
 
   // --- Onboarding & Profile ---
-  public async completeOnboarding(data: OnboardingRequest): Promise<{ profile: UserProfile; privacy: PrivacySettings; returnTo?: string }> {
-    return this.request<{ profile: UserProfile; privacy: PrivacySettings; returnTo?: string }>('/me/onboarding', {
+  public async completeOnboarding(data: OnboardingRequest): Promise<OnboardingResponse> {
+    const res = await this.request<OnboardingResponse>('/me/onboarding', {
       method: 'POST',
       body: JSON.stringify(data),
     });
+    // Ensure profile fallback if needed
+    if (res.user && !res.profile) {
+      res.profile = res.user;
+    }
+    return res;
   }
 
   public async getProfile(): Promise<UserProfile> {
@@ -391,10 +398,15 @@ class ApiHttpClient {
     if (idempotencyKey) {
       headers['Idempotency-Key'] = idempotencyKey;
     }
+    const payload = {
+      scope: data.scope || 'all_aggregates',
+      format: data.format || 'csv',
+      filter: data.filter || {},
+    };
     return this.request<ExportJob>('/me/exports', {
       method: 'POST',
       headers,
-      body: JSON.stringify(data),
+      body: JSON.stringify(payload),
     });
   }
 
@@ -411,9 +423,13 @@ class ApiHttpClient {
   }
 
   public async createDeletionRequest(data: CreateDeletionRequest): Promise<DeletionRequest> {
+    const payload = {
+      scope: data.scope || data.deletionScope || 'account',
+      confirmation: typeof data.confirmation === 'boolean' ? data.confirmation : Boolean(data.confirmation),
+    };
     return this.request<DeletionRequest>('/me/deletion-requests', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(payload),
     });
   }
 

@@ -42,6 +42,20 @@ export interface SessionResponse {
   absoluteExpiresAt?: string;
 }
 
+export interface AuthResponse {
+  user: SessionUser;
+  csrfToken?: string;
+  returnTo?: string;
+}
+
+export interface OnboardingResponse {
+  user: UserProfile;
+  privacy: PrivacySettings;
+  returnTo?: string;
+  // Fallback for profile alias
+  profile?: UserProfile;
+}
+
 export interface LoginRequest {
   email: string;
   password?: string;
@@ -195,7 +209,7 @@ export interface PersonalSummary {
 
 export interface TokenTrendItem {
   date: string;
-  tokenTotal: string;
+  tokenTotal?: string;
   inputTokens?: string;
   outputTokens?: string;
   cacheReadTokens?: string;
@@ -204,15 +218,17 @@ export interface TokenTrendItem {
 }
 
 export interface TokenTrendsResponse {
-  from: string;
-  to: string;
-  timezone: string;
-  granularity: 'day' | 'month';
-  agent: string;
-  model: string;
-  mode: 'total' | 'structure';
-  trends: TokenTrendItem[];
-  dataWatermarkAt: string;
+  from?: string;
+  to?: string;
+  timezone?: string;
+  granularity?: string;
+  agent?: string;
+  model?: string;
+  mode?: string;
+  trends?: TokenTrendItem[];
+  points?: TokenTrendItem[];
+  dataWatermarkAt?: string;
+  aggregationVersion?: number;
 }
 
 export interface AgentBreakdownItem {
@@ -266,9 +282,9 @@ export interface ActivityRow {
 }
 
 export interface FilterOptionsResponse {
-  agents: Array<{ id: string; name: string }>;
-  providers: Array<{ id: string; name: string }>;
-  models: Array<{ id: string; name: string; providerId: string }>;
+  agents: Array<string | { id: string; name: string }>;
+  providers: Array<string | { id: string; name: string }>;
+  models: Array<string | { id: string; name: string; providerId?: string }>;
 }
 
 // Devices
@@ -328,11 +344,12 @@ export interface ExportJob {
 }
 
 export interface CreateExportRequest {
-  scope: string;
-  rangeKey: string;
+  scope?: string;
+  format?: 'csv' | 'json';
+  filter?: Record<string, unknown>;
+  rangeKey?: string;
   from?: string;
   to?: string;
-  format: 'csv';
 }
 
 export interface ExportDownloadResponse {
@@ -342,7 +359,8 @@ export interface ExportDownloadResponse {
 
 export interface DeletionRequest {
   requestId: string;
-  deletionScope: DeletionScope;
+  deletionScope?: DeletionScope;
+  scope?: DeletionScope;
   targetId?: string | null;
   requestStatus: DeletionRequestStatus;
   createdAt: string;
@@ -352,9 +370,10 @@ export interface DeletionRequest {
 }
 
 export interface CreateDeletionRequest {
-  deletionScope: DeletionScope;
+  scope?: DeletionScope;
+  deletionScope?: DeletionScope;
   targetId?: string;
-  confirmation: string;
+  confirmation: boolean | string;
 }
 
 // Public & Community

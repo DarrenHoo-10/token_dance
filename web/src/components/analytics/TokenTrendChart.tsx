@@ -29,7 +29,7 @@ export const TokenTrendChart: React.FC<TokenTrendChartProps> = ({
 
   // Parse points
   const points = trends.map((item) => {
-    const total = parseFloat(item.tokenTotal) || 0;
+    const total = parseFloat(item.tokenTotal || '0') || 0;
     return {
       date: item.date,
       total,

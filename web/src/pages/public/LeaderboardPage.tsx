@@ -31,22 +31,7 @@ export const LeaderboardPage: React.FC = () => {
         agent: agentParam !== 'all' ? agentParam : undefined,
         q: qParam || undefined,
         limit: 50,
-      }).catch(() => ({
-        boardKey: 'global',
-        window: windowParam,
-        metric: metricParam,
-        agent: agentParam,
-        snapshotId: 'snp_01mock',
-        generatedAt: new Date().toISOString(),
-        totalEntries: 4,
-        nextCursor: null,
-        entries: [
-          { rankNo: 1, rankDelta: 2, handle: 'maxbauer', displayName: 'Max Bauer', avatarUrl: null, metricValue: '325700000', formattedMetric: '325.7M', topAgent: 'Claude Code', activeDays: 28 },
-          { rankNo: 2, rankDelta: 0, handle: 'sophiadev', displayName: 'Sophia Dev', avatarUrl: null, metricValue: '215400000', formattedMetric: '215.4M', topAgent: 'Claude Code', activeDays: 26 },
-          { rankNo: 3, rankDelta: -1, handle: 'deworap', displayName: 'Dewo Rap', avatarUrl: null, metricValue: '178900000', formattedMetric: '178.9M', topAgent: 'Codex', activeDays: 24 },
-          { rankNo: 4, rankDelta: 1, handle: 'builderdan', displayName: 'Builder Dan', avatarUrl: null, metricValue: '142600000', formattedMetric: '142.6M', topAgent: 'Claude Code', activeDays: 21 },
-        ],
-      }));
+      });
 
       setLeaderboard(res);
     } catch (err) {

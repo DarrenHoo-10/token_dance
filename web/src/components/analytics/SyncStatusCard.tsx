@@ -46,7 +46,11 @@ export const SyncStatusCard: React.FC<SyncStatusCardProps> = ({
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
         <span className="text-muted">{t('dashboard.pendingEvents')}</span>
-        <strong className="mono-num">{pendingLocalCount !== null ? pendingLocalCount : '0'}</strong>
+        <strong className="mono-num">
+          {pendingLocalCount !== null && pendingLocalCount !== undefined
+            ? pendingLocalCount.toLocaleString()
+            : t('common.unknown')}
+        </strong>
       </div>
     </div>
   );

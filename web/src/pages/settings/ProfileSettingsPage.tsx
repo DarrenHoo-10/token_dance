@@ -11,7 +11,7 @@ import { api, ApiError } from '@/api/client';
 import type { UserProfile, Locale } from '@/types/api';
 
 export const ProfileSettingsPage: React.FC = () => {
-  const { user, setUser } = useAuth();
+  const { user, setUser, refreshSession } = useAuth();
   const { setLocale, t } = useLocale();
   const { showToast } = useNotification();
 
@@ -74,6 +74,7 @@ export const ProfileSettingsPage: React.FC = () => {
           locale: updated.locale,
         });
       }
+      await refreshSession();
       showToast(t('common.saved'), 'success');
     } catch (err) {
       if (err instanceof ApiError) {

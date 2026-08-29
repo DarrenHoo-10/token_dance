@@ -17,7 +17,7 @@
 | --- | --- | --- | --- | --- |
 | Explorer | `01a04e96-a2a2-7250-8565-2f771ee7a7c2` | `gemini-3.7` | 核对设计、DDL、API、验收 ID 和集成顺序 | 完成：输出完整路由/验收矩阵、DDL 不变量、事务要求与六阶段集成顺序 |
 | Implementer | `01a04e96-a2a7-7922-a9d3-a0f250110111` | `gemini-3.7` | Go API/Worker、migration、OpenAPI 与测试骨架 | 运行中 |
-| Implementer | `01a04e96-a2ae-7731-96b9-f91f808ead91` | `gemini-3.7` | React/TypeScript Web、真实 API client 与页面测试 | 运行中 |
+| Implementer | `01a04e96-a2ae-7731-96b9-f91f808ead91` | `gemini-3.7` | React/TypeScript Web、真实 API client 与页面测试 | 完成：清理所有生产 API catch fallback、硬编码假数据和 Mock 标识；完善 10 项指标与 supported/null/0 区分；强化中英文切换保留 URL/状态；更新前后端契约与状态流转；添加全部页面与错误分支驱动测试并通过构建 |
 | Reviewer | `01a04e96-df46-7292-9168-2898627d6937` | `sol-medium` | 预审安全、隐私、竞态、API/DDL 漂移和验收门禁 | 完成：条件通过；要求解决 OpenAPI 单一事实源、Collector 短期授权、缓存隐私、DDL 部分失败、ingest 锁序、Worker fencing 和 clean build |
 
 ## 预审结论纳入实施

@@ -31,7 +31,7 @@ export const ExportsSettingsPage: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      const res = await api.getExports().catch(() => ({ jobs: [] }));
+      const res = await api.getExports();
       setJobs(res.jobs || []);
     } catch (err) {
       setError(err instanceof ApiError ? err : new Error(String(err)));
@@ -50,8 +50,7 @@ export const ExportsSettingsPage: React.FC = () => {
       const idempotencyKey = 'exp_' + Math.random().toString(36).substring(2, 10);
       await api.createExport(
         {
-          scope: 'all_metrics',
-          rangeKey: 'all',
+          scope: 'all_aggregates',
           format: 'csv',
         },
         idempotencyKey
@@ -86,8 +85,8 @@ export const ExportsSettingsPage: React.FC = () => {
     try {
       setSubmittingDelete(true);
       const req = await api.createDeletionRequest({
-        deletionScope: 'account',
-        confirmation: confirmHandle,
+        scope: 'account',
+        confirmation: true,
       });
       setActiveDeletion(req);
       setDeleteModalOpen(false);

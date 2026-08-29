@@ -44,7 +44,6 @@ export const zhCN = {
     completed: '已完成',
     failed: '失败',
     expired: '已过期',
-    mockLabel: 'TOKENDANCE PRODUCT · 2026',
     unknown: '未知',
     notSupported: '暂不支持',
   },

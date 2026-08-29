@@ -1,4 +1,5 @@
 import React from 'react';
+import { useLocale } from '@/context/LocaleContext';
 
 export interface MetricCardProps {
   label: string;
@@ -15,6 +16,8 @@ export const MetricCard: React.FC<MetricCardProps> = ({
   supported = true,
   unit,
 }) => {
+  const { t } = useLocale();
+
   return (
     <div className="metric-card">
       <div className="metric-card-label">
@@ -28,7 +31,7 @@ export const MetricCard: React.FC<MetricCardProps> = ({
 
       <div className="metric-card-value mono-num">
         {supported ? (
-          value !== null ? (
+          value !== null && value !== undefined ? (
             <>
               {value}
               {unit && <span style={{ fontSize: 13, fontWeight: 500, marginLeft: 4 }}>{unit}</span>}
@@ -42,7 +45,7 @@ export const MetricCard: React.FC<MetricCardProps> = ({
       </div>
 
       <div className="metric-card-hint">
-        {hint || (supported ? ' ' : 'Not supported')}
+        {hint || (supported ? ' ' : t('common.notSupported'))}
       </div>
     </div>
   );

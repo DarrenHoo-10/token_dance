@@ -57,12 +57,13 @@ export const OnboardingPage: React.FC = () => {
       });
 
       setLocale(selectedLocale);
+      const profileObj = res.user || res.profile;
       if (user) {
         setUser({
           ...user,
-          displayName: res.profile.displayName,
-          handle: res.profile.handle,
-          locale: res.profile.locale,
+          displayName: profileObj?.displayName || displayName.trim(),
+          handle: profileObj?.handle || cleanHandle,
+          locale: (profileObj?.locale as Locale) || selectedLocale,
           onboardingRequired: false,
           productState: isPublic ? 'active_public' : 'active_private',
         });

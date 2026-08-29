@@ -64,18 +64,7 @@ export const PersonalDashboardPage: React.FC = () => {
         api.getAgentBreakdowns(range),
         api.getPersonalSkills(range),
         api.getActivityCalendar('10w'),
-        api.getFilterOptions().catch(() => ({
-          agents: [
-            { id: 'codex', name: 'Codex' },
-            { id: 'claude-code', name: 'Claude Code' },
-            { id: 'cursor', name: 'Cursor' },
-          ],
-          providers: [{ id: 'anthropic', name: 'Anthropic' }, { id: 'openai', name: 'OpenAI' }],
-          models: [
-            { id: 'claude-3-7-sonnet', name: 'Claude 3.7 Sonnet', providerId: 'anthropic' },
-            { id: 'gpt-4o', name: 'GPT-4o', providerId: 'openai' },
-          ],
-        })),
+        api.getFilterOptions(),
       ]);
 
       setSummary(summaryRes);
@@ -203,11 +192,15 @@ export const PersonalDashboardPage: React.FC = () => {
                 style={{ height: 32, fontSize: 11, padding: '0 8px', cursor: 'pointer' }}
               >
                 <option value="all">{t('dashboard.allAgents')}</option>
-                {filterOptions.agents.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
+                {filterOptions.agents.map((a) => {
+                  const key = typeof a === 'string' ? a : a.id;
+                  const label = typeof a === 'string' ? a : a.name;
+                  return (
+                    <option key={key} value={key}>
+                      {label}
+                    </option>
+                  );
+                })}
               </select>
 
               {/* Model Filter */}
@@ -219,16 +212,20 @@ export const PersonalDashboardPage: React.FC = () => {
                 style={{ height: 32, fontSize: 11, padding: '0 8px', cursor: 'pointer' }}
               >
                 <option value="all">{t('dashboard.allModels')}</option>
-                {filterOptions.models.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
+                {filterOptions.models.map((m) => {
+                  const key = typeof m === 'string' ? m : m.id;
+                  const label = typeof m === 'string' ? m : m.name;
+                  return (
+                    <option key={key} value={key}>
+                      {label}
+                    </option>
+                  );
+                })}
               </select>
             </div>
           </div>
 
-          <TokenTrendChart trends={trends?.trends || []} />
+          <TokenTrendChart trends={trends?.points || trends?.trends || []} />
         </div>
 
         {/* Agent Breakdown Panel */}
@@ -306,7 +303,7 @@ export const PersonalDashboardPage: React.FC = () => {
 
           <SyncStatusCard
             lastCommittedAt={summary?.sync?.lastCommittedAt || null}
-            pendingLocalCount={summary?.sync?.pendingLocalCount || 0}
+            pendingLocalCount={summary?.sync?.pendingLocalCount ?? null}
             status={summary?.sync?.status || 'healthy'}
           />
         </div>

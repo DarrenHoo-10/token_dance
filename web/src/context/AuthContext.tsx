@@ -60,7 +60,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const login = async (data: LoginRequest) => {
     setError(null);
     const res = await api.login(data);
-    if (res.authenticated && res.user) {
+    if (res && res.user) {
       setUser(res.user);
       setAuthenticated(true);
       if (res.user.locale) {
@@ -72,7 +72,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (data: RegisterRequest) => {
     setError(null);
     const res = await api.register(data);
-    if (res.authenticated && res.user) {
+    if (res && res.user) {
       setUser(res.user);
       setAuthenticated(true);
       if (res.user.locale) {
