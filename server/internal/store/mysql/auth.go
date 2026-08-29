@@ -65,6 +65,15 @@ func (s *authStore) CreateOrReplaceEmailChallenge(ctx context.Context, challenge
 		return nil, fmt.Errorf("failed to insert challenge: %w", err)
 	}
 
+	nextAttemptAt := outbox.NextAttemptAt
+	if nextAttemptAt.IsZero() {
+		nextAttemptAt = now
+	}
+	expiresAt := outbox.ExpiresAt
+	if expiresAt.IsZero() || !expiresAt.After(now) {
+		expiresAt = now.Add(24 * time.Hour)
+	}
+
 	// Insert outbox
 	insertOutboxSQL := `
 		INSERT INTO email_outbox (
@@ -85,8 +94,8 @@ func (s *authStore) CreateOrReplaceEmailChallenge(ctx context.Context, challenge
 		outbox.EncryptionKeyVersion,
 		outbox.DeliveryStatus,
 		outbox.AttemptCount,
-		outbox.NextAttemptAt,
-		outbox.ExpiresAt,
+		nextAttemptAt,
+		expiresAt,
 		outbox.CreatedAt,
 		outbox.UpdatedAt,
 	); err != nil {
@@ -207,16 +216,7 @@ func (s *authStore) CompleteRegistrationTx(ctx context.Context, in store.Registr
 		return nil, domain.ErrChallengeInvalid
 	}
 
-	// Update challenge
-	updateChallengeSQL := `
-		UPDATE email_challenges
-		SET challenge_status = 'consumed', consumed_at = ?, user_id = ?, updated_at = ?
-		WHERE challenge_id = ?`
-	if _, err := tx.ExecContext(ctx, updateChallengeSQL, now, in.User.UserID, now, in.ChallengeID); err != nil {
-		return nil, fmt.Errorf("failed to mark challenge consumed: %w", err)
-	}
-
-	// Insert user
+	// 1. Insert user first to satisfy foreign keys
 	insertUserSQL := `
 		INSERT INTO users (
 			user_id, auth_subject_hash, email_lookup_hash, email_ciphertext, handle,
@@ -248,6 +248,15 @@ func (s *authStore) CompleteRegistrationTx(ctx context.Context, in store.Registr
 		in.User.UpdatedAt,
 	); err != nil {
 		return nil, fmt.Errorf("failed to insert user: %w", err)
+	}
+
+	// 2. Update challenge with user_id pointer
+	updateChallengeSQL := `
+		UPDATE email_challenges
+		SET challenge_status = 'consumed', consumed_at = ?, user_id = ?, updated_at = ?
+		WHERE challenge_id = ?`
+	if _, err := tx.ExecContext(ctx, updateChallengeSQL, now, in.User.UserID, now, in.ChallengeID); err != nil {
+		return nil, fmt.Errorf("failed to mark challenge consumed: %w", err)
 	}
 
 	// Insert credential

@@ -249,6 +249,19 @@ CREATE TABLE user_privacy_settings (
     FOREIGN KEY (user_id) REFERENCES users (user_id) ON DELETE CASCADE
 ) ENGINE = InnoDB;
 
+-- Backfill default private settings for any pre-existing users from 0001 baseline
+INSERT INTO user_privacy_settings (
+  user_id, public_profile_enabled, show_bio, show_token_total,
+  show_trends, show_activity_calendar, show_agent_breakdown,
+  show_skill_ranking, show_achievements, privacy_version,
+  created_at, updated_at
+)
+SELECT
+  user_id, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, FALSE, 1,
+  CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3)
+FROM users
+ON DUPLICATE KEY UPDATE privacy_version = VALUES(privacy_version);
+
 CREATE TABLE public_user_profiles (
   user_id                       CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   handle                        VARCHAR(32) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,

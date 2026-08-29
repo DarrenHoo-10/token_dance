@@ -26,6 +26,9 @@ func getTestStore(t *testing.T) (*Store, *sql.DB, func()) {
 	}
 
 	ctx := context.Background()
+	// Acquire test lock to avoid concurrent schema reset when multiple test packages run
+	_, _ = db.ExecContext(ctx, "SELECT GET_LOCK('tokendance_global_test_lock', 60)")
+
 	runner := migrate.NewRunner(db)
 	if err := runner.ResetCleanSchema(ctx); err != nil {
 		t.Fatalf("failed to reset clean schema: %v", err)
@@ -38,6 +41,7 @@ func getTestStore(t *testing.T) (*Store, *sql.DB, func()) {
 
 	cleanup := func() {
 		_ = runner.ResetCleanSchema(context.Background())
+		_, _ = db.ExecContext(context.Background(), "SELECT RELEASE_LOCK('tokendance_global_test_lock')")
 		_ = db.Close()
 	}
 
@@ -249,11 +253,15 @@ func TestMySQL_ProfileAndPrivacyLifecycle(t *testing.T) {
 		PayloadCiphertext:    []byte("{}"),
 		EncryptionKeyVersion: 1,
 		DeliveryStatus:       "pending",
+		AttemptCount:         0,
+		NextAttemptAt:        now,
 		ExpiresAt:            now.Add(24 * time.Hour),
 		CreatedAt:            now,
 		UpdatedAt:            now,
 	}
-	_, _ = auth.CreateOrReplaceEmailChallenge(ctx, ch, outbox)
+	if _, err := auth.CreateOrReplaceEmailChallenge(ctx, ch, outbox); err != nil {
+		t.Fatalf("failed to create challenge: %v", err)
+	}
 
 	_, err := auth.CompleteRegistrationTx(ctx, store.RegistrationTxInput{
 		User: domain.User{
@@ -402,11 +410,15 @@ func TestMySQL_DeviceAndExportLifecycle(t *testing.T) {
 		PayloadCiphertext:    []byte("{}"),
 		EncryptionKeyVersion: 1,
 		DeliveryStatus:       "pending",
+		AttemptCount:         0,
+		NextAttemptAt:        now,
 		ExpiresAt:            now.Add(24 * time.Hour),
 		CreatedAt:            now,
 		UpdatedAt:            now,
 	}
-	_, _ = auth.CreateOrReplaceEmailChallenge(ctx, ch, outbox)
+	if _, err := auth.CreateOrReplaceEmailChallenge(ctx, ch, outbox); err != nil {
+		t.Fatalf("failed to create challenge: %v", err)
+	}
 
 	_, err := auth.CompleteRegistrationTx(ctx, store.RegistrationTxInput{
 		User: domain.User{

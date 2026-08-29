@@ -38,7 +38,11 @@ func getTestMySQLDB(t *testing.T) *sql.DB {
 
 func TestWorker_LeaseClaimAndFencingIntegration(t *testing.T) {
 	db := getTestMySQLDB(t)
-	defer db.Close()
+	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
+	defer func() {
+		_, _ = db.Exec("SELECT RELEASE_LOCK('tokendance_global_test_lock')")
+		db.Close()
+	}()
 
 	ctx := context.Background()
 	runner := migrate.NewRunner(db)
@@ -95,7 +99,11 @@ func TestWorker_LeaseClaimAndFencingIntegration(t *testing.T) {
 
 func TestWorker_ProcessExpirations(t *testing.T) {
 	db := getTestMySQLDB(t)
-	defer db.Close()
+	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
+	defer func() {
+		_, _ = db.Exec("SELECT RELEASE_LOCK('tokendance_global_test_lock')")
+		db.Close()
+	}()
 
 	ctx := context.Background()
 	runner := migrate.NewRunner(db)
@@ -109,8 +117,9 @@ func TestWorker_ProcessExpirations(t *testing.T) {
 	clk := clock.RealClock{}
 	w := NewWorker(db, clk)
 
-	// Seed expired challenge
-	past := time.Now().UTC().Add(-1 * time.Hour)
+	// Seed expired challenge (expires_at in past, but created_at before expires_at to satisfy check constraint)
+	pastExpiry := time.Now().UTC().Add(-1 * time.Hour)
+	pastCreated := pastExpiry.Add(-10 * time.Minute)
 	chID := "emc_expired_01"
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO email_challenges (
@@ -118,7 +127,7 @@ func TestWorker_ProcessExpirations(t *testing.T) {
 			challenge_type, code_hash, code_key_version, challenge_status,
 			attempt_count, max_attempts, send_count, expires_at, created_at, updated_at
 		) VALUES (?, UNHEX(SHA2('email', 256)), 'ct', 1, 'register', UNHEX(SHA2('code', 256)), 1, 'pending', 0, 6, 1, ?, ?, ?)`,
-		chID, past, past, past)
+		chID, pastExpiry, pastCreated, pastCreated)
 	if err != nil {
 		t.Fatalf("failed to seed email challenge: %v", err)
 	}

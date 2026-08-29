@@ -98,7 +98,11 @@ func getTestMySQLDB(t *testing.T) *sql.DB {
 // Path 1: Clean Install (0001 -> 0002 -> 0003)
 func TestMigrationRunnerIntegration_CleanInstall(t *testing.T) {
 	db := getTestMySQLDB(t)
-	defer db.Close()
+	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
+	defer func() {
+		_, _ = db.Exec("SELECT RELEASE_LOCK('tokendance_global_test_lock')")
+		db.Close()
+	}()
 
 	ctx := context.Background()
 	runner := NewRunner(db)
@@ -127,7 +131,11 @@ func TestMigrationRunnerIntegration_CleanInstall(t *testing.T) {
 // Path 2: Upgrade from 0001 baseline with user privacy backfill
 func TestMigrationRunnerIntegration_UpgradeFrom0001(t *testing.T) {
 	db := getTestMySQLDB(t)
-	defer db.Close()
+	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
+	defer func() {
+		_, _ = db.Exec("SELECT RELEASE_LOCK('tokendance_global_test_lock')")
+		db.Close()
+	}()
 
 	ctx := context.Background()
 	runner := NewRunner(db)
@@ -179,7 +187,11 @@ func TestMigrationRunnerIntegration_UpgradeFrom0001(t *testing.T) {
 // Path 3: Reject dirty baseline before persistent 0002 DDL
 func TestMigrationRunnerIntegration_RejectDirtyBaseline(t *testing.T) {
 	db := getTestMySQLDB(t)
-	defer db.Close()
+	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
+	defer func() {
+		_, _ = db.Exec("SELECT RELEASE_LOCK('tokendance_global_test_lock')")
+		db.Close()
+	}()
 
 	ctx := context.Background()
 	runner := NewRunner(db)
