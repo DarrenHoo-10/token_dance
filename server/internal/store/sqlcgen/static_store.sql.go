@@ -116,7 +116,7 @@ func (q *Queries) DeleteSnapshotEntries(ctx context.Context, snapshotID string) 
 }
 
 const getDeletionRequestByOwner = `-- name: GetDeletionRequestByOwner :one
-SELECT request_id, user_id, deletion_scope, scope_filter_json, request_status, phase,
+SELECT request_id, user_id, deletion_scope, COALESCE(scope_filter_json, JSON_OBJECT()) AS scope_filter_json, request_status, phase,
        progress_cursor, cancel_before, cancelled_at, requested_at, completed_at, audit_reference
 FROM data_deletion_requests
 WHERE request_id = ? AND user_id = ?
