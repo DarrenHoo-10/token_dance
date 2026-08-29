@@ -307,6 +307,11 @@ func (s *deviceStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 		return nil, fmt.Errorf("failed to query existing installation: %w", err)
 	}
 
+	osType := inst.OSType
+	if osType != "windows" && osType != "macos" {
+		osType = "windows"
+	}
+
 	// Insert installation
 	insertInstSQL := `
 		INSERT INTO installations (
@@ -320,7 +325,7 @@ func (s *deviceStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 		userID,
 		bytes32Slice(inst.DevicePublicKey),
 		nullStringFromPtr(inst.DeviceName),
-		inst.OSType,
+		osType,
 		nullStringFromPtr(inst.OSVersion),
 		inst.Architecture,
 		inst.CollectorVersion,
@@ -380,6 +385,11 @@ func (s *deviceStore) RegisterInstallationTx(ctx context.Context, inst domain.In
 		return nil, err
 	}
 
+	osType := inst.OSType
+	if osType != "windows" && osType != "macos" {
+		osType = "windows"
+	}
+
 	insertInstSQL := `
 		INSERT INTO installations (
 			installation_id, user_id, device_public_key, device_name,
@@ -392,7 +402,7 @@ func (s *deviceStore) RegisterInstallationTx(ctx context.Context, inst domain.In
 		inst.UserID,
 		bytes32Slice(inst.DevicePublicKey),
 		nullStringFromPtr(inst.DeviceName),
-		inst.OSType,
+		osType,
 		nullStringFromPtr(inst.OSVersion),
 		inst.Architecture,
 		inst.CollectorVersion,

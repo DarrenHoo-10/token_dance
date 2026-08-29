@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"testing"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"tokendance/internal/clock"
 	"tokendance/internal/config"
 	"tokendance/internal/domain"
+	emailpkg "tokendance/internal/email"
 	"tokendance/internal/store/memory"
 )
 
@@ -50,13 +52,15 @@ func TestAuthFlows(t *testing.T) {
 		t.Fatalf("expected error on wrong verification code")
 	}
 
-	var code string
-	for i := 0; i <= 999999; i++ {
-		cStr := formatCode(i)
-		cHash := svc.ComputeTokenHash(cStr)
-		if cHash == challenge.CodeHash {
-			code = cStr
-			break
+	code := svc.EmailSink().LatestCode(email)
+	if code == "" {
+		for i := 0; i <= 999999; i++ {
+			cStr := formatCode(i)
+			cHash := svc.ComputeTokenHash(cStr)
+			if cHash == challenge.CodeHash {
+				code = cStr
+				break
+			}
 		}
 	}
 	if code == "" {
@@ -137,6 +141,111 @@ func TestAuthFlows(t *testing.T) {
 	_, _, err = svc.ResolveSession(ctx, loginResult.SessionToken)
 	if err == nil {
 		t.Errorf("logged out session should be revoked")
+	}
+}
+
+func TestAEADCiphertext_NoPlaintextInDB(t *testing.T) {
+	ctx := context.Background()
+	svc, st, _ := setupAuthService(t)
+
+	sink := emailpkg.NewDeliverySink()
+	svc.SetEmailSink(sink)
+
+	email := "confidential-pilot@tokendance.dev"
+	password := "StrongPass123!"
+
+	// 1. Request Code
+	if err := svc.RequestRegistrationCode(ctx, email, "en-US"); err != nil {
+		t.Fatalf("failed to request registration code: %v", err)
+	}
+
+	// Verify challenge in store does NOT contain plaintext email
+	emailHash := svc.ComputeEmailLookupHash(email)
+	challenge, err := st.FindPendingEmailChallenge(ctx, domain.ChallengeTypeRegister, emailHash)
+	if err != nil {
+		t.Fatalf("failed to find pending challenge: %v", err)
+	}
+
+	if bytes.Contains(challenge.EmailCiphertext, []byte(email)) {
+		t.Fatalf("email_challenges.email_ciphertext contains plaintext email: %s", string(challenge.EmailCiphertext))
+	}
+	if len(challenge.EmailCiphertext) < 28 {
+		t.Fatalf("email_challenges.email_ciphertext length is too short for AEAD: %d", len(challenge.EmailCiphertext))
+	}
+
+	// Retrieve code from deterministic delivery sink
+	code := sink.LatestCode(email)
+	if len(code) != 6 {
+		t.Fatalf("expected 6-digit code from test delivery sink, got %s", code)
+	}
+
+	// 2. Complete Registration
+	regResult, err := svc.CompleteRegistration(ctx, email, code, password, "/dashboard")
+	if err != nil {
+		t.Fatalf("failed to complete registration: %v", err)
+	}
+
+	// Verify users.email_ciphertext in store does NOT contain plaintext email
+	if bytes.Contains(regResult.User.EmailCiphertext, []byte(email)) {
+		t.Fatalf("users.email_ciphertext contains plaintext email: %s", string(regResult.User.EmailCiphertext))
+	}
+	if len(regResult.User.EmailCiphertext) < 28 {
+		t.Fatalf("users.email_ciphertext length is too short for AEAD: %d", len(regResult.User.EmailCiphertext))
+	}
+
+	// Verify decryption recovers exact normalized email
+	decryptedEmail, err := svc.DecryptUserEmail(regResult.User)
+	if err != nil {
+		t.Fatalf("failed to decrypt user email: %v", err)
+	}
+	if decryptedEmail != email {
+		t.Fatalf("expected decrypted email %s, got %s", email, decryptedEmail)
+	}
+}
+
+func TestTestAuthCode_EnvBehavior(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. In dev/test environment, TOKENDANCE_TEST_AUTH_CODE is honored
+	st := memory.NewMemoryStore()
+	cfg := config.DefaultConfig()
+	cfg.Environment = "test"
+	cfg.TestAuthCode = "778899"
+	clk := clock.NewMockClock(time.Now().UTC())
+
+	svc := NewService(st, cfg, clk)
+	sink := emailpkg.NewDeliverySink()
+	svc.SetEmailSink(sink)
+
+	email := "testcode@tokendance.dev"
+	if err := svc.RequestRegistrationCode(ctx, email, "en-US"); err != nil {
+		t.Fatalf("failed to request code: %v", err)
+	}
+
+	if code := sink.LatestCode(email); code != "778899" {
+		t.Fatalf("expected test auth code 778899 in test env, got %s", code)
+	}
+
+	// Verification with 778899 must succeed
+	regResult, err := svc.CompleteRegistration(ctx, email, "778899", "Password123!", "/")
+	if err != nil {
+		t.Fatalf("expected registration to succeed with test auth code: %v", err)
+	}
+	if regResult.User == nil {
+		t.Fatalf("expected created user")
+	}
+
+	// 2. In production environment, TOKENDANCE_TEST_AUTH_CODE is strictly prohibited
+	prodCfg := config.DefaultConfig()
+	prodCfg.Environment = "production"
+	prodCfg.MySQLDSN = "root:pass@tcp(127.0.0.1:3306)/tokendance"
+	prodCfg.EncryptionKey = "prod-32-byte-encryption-key-0001"
+	prodCfg.HMACSecret = "prod-32-byte-hmac-secret-tokendance-01"
+	prodCfg.EmailProvider = "worker"
+	prodCfg.TestAuthCode = "778899"
+
+	if err := prodCfg.Validate(); err == nil {
+		t.Fatalf("expected config.Validate to fail when TOKENDANCE_TEST_AUTH_CODE is set in production")
 	}
 }
 

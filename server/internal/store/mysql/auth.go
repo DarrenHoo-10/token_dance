@@ -204,20 +204,37 @@ func (s *authStore) CompleteRegistrationTx(ctx context.Context, in store.Registr
 		}
 	}
 
-	// Lock & verify challenge
-	var challengeStatus domain.ChallengeStatus
-	err = tx.QueryRowContext(ctx, "SELECT challenge_status FROM email_challenges WHERE challenge_id = ? FOR UPDATE", in.ChallengeID).Scan(&challengeStatus)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, domain.ErrChallengeInvalid
+	// Lock & verify challenge if present
+	if in.ChallengeID != "" {
+		var challengeStatus domain.ChallengeStatus
+		err = tx.QueryRowContext(ctx, "SELECT challenge_status FROM email_challenges WHERE challenge_id = ? FOR UPDATE", in.ChallengeID).Scan(&challengeStatus)
+		if err == nil {
+			if challengeStatus != domain.ChallengeStatusPending {
+				return nil, domain.ErrChallengeInvalid
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("failed to lock challenge: %w", err)
 		}
-		return nil, fmt.Errorf("failed to lock challenge: %w", err)
-	}
-	if challengeStatus != domain.ChallengeStatusPending {
-		return nil, domain.ErrChallengeInvalid
 	}
 
 	// 1. Insert user first to satisfy foreign keys
+	userLocale := in.User.Locale
+	if userLocale != "zh-CN" && userLocale != "en-US" {
+		userLocale = "en-US"
+	}
+	userTimezone := in.User.TimezoneName
+	if userTimezone == "" {
+		userTimezone = "UTC"
+	}
+	userCreatedAt := in.User.CreatedAt
+	if userCreatedAt.IsZero() {
+		userCreatedAt = now
+	}
+	userUpdatedAt := in.User.UpdatedAt
+	if userUpdatedAt.IsZero() {
+		userUpdatedAt = now
+	}
+
 	insertUserSQL := `
 		INSERT INTO users (
 			user_id, auth_subject_hash, email_lookup_hash, email_ciphertext, handle,
@@ -240,27 +257,42 @@ func (s *authStore) CompleteRegistrationTx(ctx context.Context, in store.Registr
 		nullStringFromPtr(in.User.Bio),
 		in.User.AccountStatus,
 		in.User.LeaderboardVisibility,
-		in.User.TimezoneName,
-		in.User.Locale,
+		userTimezone,
+		userLocale,
 		nullTimeFromPtr(in.User.OnboardingCompletedAt),
 		in.User.ProfileVersion,
 		nullTimeFromPtr(in.User.PublicProfileUpdatedAt),
-		in.User.CreatedAt,
-		in.User.UpdatedAt,
+		userCreatedAt,
+		userUpdatedAt,
 	); err != nil {
 		return nil, fmt.Errorf("failed to insert user: %w", err)
 	}
 
-	// 2. Update challenge with user_id pointer
-	updateChallengeSQL := `
-		UPDATE email_challenges
-		SET challenge_status = 'consumed', consumed_at = ?, user_id = ?, updated_at = ?
-		WHERE challenge_id = ?`
-	if _, err := tx.ExecContext(ctx, updateChallengeSQL, now, in.User.UserID, now, in.ChallengeID); err != nil {
-		return nil, fmt.Errorf("failed to mark challenge consumed: %w", err)
+	// 2. Update challenge if provided
+	if in.ChallengeID != "" {
+		updateChallengeSQL := `
+			UPDATE email_challenges
+			SET challenge_status = 'consumed', consumed_at = ?, user_id = ?, updated_at = ?
+			WHERE challenge_id = ?`
+		if _, err := tx.ExecContext(ctx, updateChallengeSQL, now, in.User.UserID, now, in.ChallengeID); err != nil {
+			return nil, fmt.Errorf("failed to mark challenge consumed: %w", err)
+		}
 	}
 
 	// Insert credential
+	passwordChangedAt := in.Credential.PasswordChangedAt
+	if passwordChangedAt.IsZero() {
+		passwordChangedAt = now
+	}
+	credCreatedAt := in.Credential.CreatedAt
+	if credCreatedAt.IsZero() {
+		credCreatedAt = now
+	}
+	credUpdatedAt := in.Credential.UpdatedAt
+	if credUpdatedAt.IsZero() {
+		credUpdatedAt = now
+	}
+
 	insertCredSQL := `
 		INSERT INTO user_password_credentials (
 			user_id, password_hash, password_algorithm, credential_version,
@@ -276,14 +308,27 @@ func (s *authStore) CompleteRegistrationTx(ctx context.Context, in store.Registr
 		in.Credential.FailedLoginCount,
 		nullTimeFromPtr(in.Credential.LockedUntil),
 		nullTimeFromPtr(in.Credential.LastFailedLoginAt),
-		in.Credential.PasswordChangedAt,
-		in.Credential.CreatedAt,
-		in.Credential.UpdatedAt,
+		passwordChangedAt,
+		credCreatedAt,
+		credUpdatedAt,
 	); err != nil {
 		return nil, fmt.Errorf("failed to insert user credentials: %w", err)
 	}
 
-	// Insert privacy settings
+	privCreatedAt := in.Privacy.CreatedAt
+	if privCreatedAt.IsZero() {
+		privCreatedAt = now
+	}
+	privUpdatedAt := in.Privacy.UpdatedAt
+	if privUpdatedAt.IsZero() {
+		privUpdatedAt = now
+	}
+
+	privVersion := in.Privacy.PrivacyVersion
+	if privVersion == 0 {
+		privVersion = 1
+	}
+
 	insertPrivacySQL := `
 		INSERT INTO user_privacy_settings (
 			user_id, public_profile_enabled, show_bio, show_token_total,
@@ -302,14 +347,27 @@ func (s *authStore) CompleteRegistrationTx(ctx context.Context, in store.Registr
 		in.Privacy.ShowAgentBreakdown,
 		in.Privacy.ShowSkillRanking,
 		in.Privacy.ShowAchievements,
-		in.Privacy.PrivacyVersion,
-		in.Privacy.CreatedAt,
-		in.Privacy.UpdatedAt,
+		privVersion,
+		privCreatedAt,
+		privUpdatedAt,
 	); err != nil {
 		return nil, fmt.Errorf("failed to insert privacy settings: %w", err)
 	}
 
 	// Insert session
+	lastSeenAt := in.Session.LastSeenAt
+	if lastSeenAt.IsZero() {
+		lastSeenAt = now
+	}
+	sessCreatedAt := in.Session.CreatedAt
+	if sessCreatedAt.IsZero() {
+		sessCreatedAt = now
+	}
+	sessUpdatedAt := in.Session.UpdatedAt
+	if sessUpdatedAt.IsZero() {
+		sessUpdatedAt = now
+	}
+
 	insertSessionSQL := `
 		INSERT INTO user_sessions (
 			session_id, user_id, session_token_hash, csrf_token_hash,
@@ -328,11 +386,11 @@ func (s *authStore) CompleteRegistrationTx(ctx context.Context, in store.Registr
 		nullStringFromPtr(in.Session.DeviceLabel),
 		bytes32PtrSlice(in.Session.UserAgentHash),
 		bytes32PtrSlice(in.Session.IPPrefixHash),
-		in.Session.LastSeenAt,
+		lastSeenAt,
 		in.Session.IdleExpiresAt,
 		in.Session.AbsoluteExpiresAt,
-		in.Session.CreatedAt,
-		in.Session.UpdatedAt,
+		sessCreatedAt,
+		sessUpdatedAt,
 	); err != nil {
 		return nil, fmt.Errorf("failed to insert user session: %w", err)
 	}

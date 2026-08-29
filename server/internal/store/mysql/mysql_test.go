@@ -1,7 +1,6 @@
 package mysql
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -574,5 +573,769 @@ func TestMySQL_DeviceAndExportLifecycle(t *testing.T) {
 	jobs, err := exp.ListJobs(ctx, userID)
 	if err != nil || len(jobs) != 1 {
 		t.Fatalf("expected 1 export job, got %d, err: %v", len(jobs), err)
+	}
+}
+
+func seedTestUser(t *testing.T, db *sql.DB, st *Store, userID, handle, displayName, email string, public bool, now time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	emailHash := crypto.SHA256([]byte(email))
+	sessTokenHash := crypto.SHA256([]byte("sess_" + userID))
+	csrfTokenHash := crypto.SHA256([]byte("csrf_" + userID))
+
+	visibility := domain.LeaderboardVisibilityPrivate
+	if public {
+		visibility = domain.LeaderboardVisibilityPublic
+	}
+
+	_, err := st.Auth().CompleteRegistrationTx(ctx, store.RegistrationTxInput{
+		User: domain.User{
+			UserID:                userID,
+			AuthSubjectHash:       crypto.SHA256([]byte("auth_" + userID)),
+			EmailLookupHash:       &emailHash,
+			EmailCiphertext:       []byte("encrypted:" + email),
+			DisplayName:           displayName,
+			AccountStatus:         domain.AccountStatusActive,
+			LeaderboardVisibility: visibility,
+			TimezoneName:          "UTC",
+			Locale:                "en-US",
+			ProfileVersion:        1,
+			CreatedAt:             now,
+			UpdatedAt:             now,
+		},
+		Credential: domain.UserPasswordCredential{
+			UserID:            userID,
+			PasswordHash:      "hash",
+			PasswordAlgorithm: "argon2id",
+			CredentialVersion: 1,
+			PasswordChangedAt: now,
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		},
+		Privacy: domain.UserPrivacySettings{
+			UserID:               userID,
+			PublicProfileEnabled: public,
+			PrivacyVersion:       1,
+			CreatedAt:            now,
+			UpdatedAt:            now,
+		},
+		Session: domain.UserSession{
+			SessionID:         "ses_" + userID,
+			UserID:            userID,
+			SessionTokenHash:  sessTokenHash,
+			CSRFTokenHash:     csrfTokenHash,
+			CredentialVersion: 1,
+			SessionStatus:     domain.SessionStatusActive,
+			LastSeenAt:        now,
+			IdleExpiresAt:     now.Add(24 * time.Hour),
+			AbsoluteExpiresAt: now.Add(30 * 24 * time.Hour),
+			CreatedAt:         now,
+			UpdatedAt:         now,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to seed user %s: %v", userID, err)
+	}
+
+	if handle != "" {
+		_, _, err = st.Profile().CompleteOnboardingTx(ctx, userID, handle, displayName, "UTC", "en-US", domain.UserPrivacySettings{
+			PublicProfileEnabled: public,
+			ShowBio:              public,
+			ShowTokenTotal:       public,
+			ShowTrends:           public,
+			ShowActivityCalendar: public,
+			ShowAgentBreakdown:   public,
+			ShowSkillRanking:     public,
+			ShowAchievements:     public,
+		}, domain.UserSecurityEvent{EventID: "evt_seed_" + userID, UserID: &userID, EventType: "user.onboarding_completed", Outcome: "success", CreatedAt: now}, now)
+		if err != nil {
+			t.Fatalf("failed to complete onboarding for %s: %v", userID, err)
+		}
+	}
+}
+
+func TestMySQL_SeededMetricsAndUnsupportedVsZero(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+
+	// User A: Version 2 complete metrics
+	userA := "usr_metric_a"
+	seedTestUser(t, db, st, userA, "user_a", "User A", "user_a@tokendance.dev", true, now)
+
+	// User B: Version 1 metrics without extensions (null columns)
+	userB := "usr_metric_b"
+	seedTestUser(t, db, st, userB, "user_b", "User B", "user_b@tokendance.dev", true, now)
+
+	// User C: Zero metrics (no rows)
+	userC := "usr_metric_c"
+	seedTestUser(t, db, st, userC, "user_c", "User C", "user_c@tokendance.dev", true, now)
+
+	// Insert User A rows into daily_user_agent_metrics (agg_version = 2)
+	metricDateStr := "2026-08-29"
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO daily_user_agent_metrics (
+			metric_date, user_id, agent_id, exact_token_total, derived_token_total,
+			token_input_total, token_output_total, token_cache_read_total, token_cache_write_total, token_reasoning_total,
+			code_generated_lines, active_duration_ms, message_count, user_message_count,
+			cost_amount, cost_currency, source_max_event_pk, aggregation_version, computed_at
+		) VALUES (
+			?, ?, 'claude-code', 1000000, 500000,
+			800000, 400000, 300000, 0, 50000,
+			2500, 3600000, 120, 45,
+			12.50000000, 'USD', 100, 2, ?
+		)`, metricDateStr, userA, now)
+	if err != nil {
+		t.Fatalf("failed to insert user A metrics: %v", err)
+	}
+
+	// Insert User B rows into daily_user_agent_metrics (agg_version = 1, extensions NULL)
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO daily_user_agent_metrics (
+			metric_date, user_id, agent_id, exact_token_total, derived_token_total,
+			token_input_total, token_output_total, token_cache_read_total, token_cache_write_total, token_reasoning_total,
+			code_generated_lines, active_duration_ms, message_count, user_message_count,
+			cost_amount, cost_currency, source_max_event_pk, aggregation_version, computed_at
+		) VALUES (
+			?, ?, 'cursor', 500000, 200000,
+			NULL, NULL, NULL, NULL, NULL,
+			1000, NULL, NULL, NULL,
+			5.00000000, 'USD', 101, 1, ?
+		)`, metricDateStr, userB, now)
+	if err != nil {
+		t.Fatalf("failed to insert user B metrics: %v", err)
+	}
+
+	r := domain.TimeRange{
+		Key:      domain.TimeRange30d,
+		From:     now.AddDate(0, 0, -30),
+		To:       now,
+		Timezone: "UTC",
+	}
+
+	// 1. Verify User A (Agg version 2 -> supported=true with correct formula outputs)
+	sumA, err := st.Analytics().GetPersonalSummary(ctx, userA, r)
+	if err != nil {
+		t.Fatalf("failed to get personal summary for user A: %v", err)
+	}
+
+	if sumA.Metrics.TotalTokens.Value == nil || *sumA.Metrics.TotalTokens.Value != "1500000" {
+		t.Errorf("expected user A total tokens 1500000, got %v", sumA.Metrics.TotalTokens.Value)
+	}
+	if sumA.Metrics.GeneratedCodeLines.Value == nil || *sumA.Metrics.GeneratedCodeLines.Value != "2500" {
+		t.Errorf("expected user A code lines 2500, got %v", sumA.Metrics.GeneratedCodeLines.Value)
+	}
+	if sumA.Metrics.TokensPerCodeLine.Value == nil || *sumA.Metrics.TokensPerCodeLine.Value != "600.00" {
+		t.Errorf("expected user A tokens per code line 600.00, got %v", sumA.Metrics.TokensPerCodeLine.Value)
+	}
+	if !sumA.Metrics.InputContextTokens.Supported || sumA.Metrics.InputContextTokens.Value == nil || *sumA.Metrics.InputContextTokens.Value != "1100000" { // 800000 + 300000
+		t.Errorf("expected user A inputContextTokens 1100000, got %+v", sumA.Metrics.InputContextTokens)
+	}
+	if !sumA.Metrics.OutputTokens.Supported || sumA.Metrics.OutputTokens.Value == nil || *sumA.Metrics.OutputTokens.Value != "400000" {
+		t.Errorf("expected user A outputTokens 400000, got %+v", sumA.Metrics.OutputTokens)
+	}
+	if !sumA.Metrics.CacheHitRate.Supported || sumA.Metrics.CacheHitRate.Value == nil || *sumA.Metrics.CacheHitRate.Value != "0.273" { // 300000 / 1100000 = 0.2727... -> 0.273
+		t.Errorf("expected user A cacheHitRate 0.273, got %+v", sumA.Metrics.CacheHitRate)
+	}
+	if !sumA.Metrics.ActiveDurationMs.Supported || sumA.Metrics.ActiveDurationMs.Value == nil || *sumA.Metrics.ActiveDurationMs.Value != "3600000" {
+		t.Errorf("expected user A activeDurationMs 3600000, got %+v", sumA.Metrics.ActiveDurationMs)
+	}
+	if !sumA.Metrics.MessageCount.Supported || sumA.Metrics.MessageCount.Value == nil || *sumA.Metrics.MessageCount.Value != "120" {
+		t.Errorf("expected user A messageCount 120, got %+v", sumA.Metrics.MessageCount)
+	}
+	if !sumA.Metrics.UserMessageCount.Supported || sumA.Metrics.UserMessageCount.Value == nil || *sumA.Metrics.UserMessageCount.Value != "45" {
+		t.Errorf("expected user A userMessageCount 45, got %+v", sumA.Metrics.UserMessageCount)
+	}
+	if !sumA.Metrics.EstimatedCost.Supported || sumA.Metrics.EstimatedCost.Amount == nil || *sumA.Metrics.EstimatedCost.Amount != "12.50000000" {
+		t.Errorf("expected user A cost 12.50000000, got %+v", sumA.Metrics.EstimatedCost)
+	}
+
+	// 2. Verify User B (Agg version 1 -> supported=false with value=nil for extensions)
+	sumB, err := st.Analytics().GetPersonalSummary(ctx, userB, r)
+	if err != nil {
+		t.Fatalf("failed to get personal summary for user B: %v", err)
+	}
+
+	if sumB.Metrics.TotalTokens.Value == nil || *sumB.Metrics.TotalTokens.Value != "700000" {
+		t.Errorf("expected user B total tokens 700000, got %v", sumB.Metrics.TotalTokens.Value)
+	}
+	if sumB.Metrics.InputContextTokens.Supported || sumB.Metrics.InputContextTokens.Value != nil {
+		t.Errorf("expected user B inputContextTokens supported=false and value=nil, got %+v", sumB.Metrics.InputContextTokens)
+	}
+	if sumB.Metrics.OutputTokens.Supported || sumB.Metrics.OutputTokens.Value != nil {
+		t.Errorf("expected user B outputTokens supported=false and value=nil, got %+v", sumB.Metrics.OutputTokens)
+	}
+	if sumB.Metrics.CacheHitRate.Supported || sumB.Metrics.CacheHitRate.Value != nil {
+		t.Errorf("expected user B cacheHitRate supported=false and value=nil, got %+v", sumB.Metrics.CacheHitRate)
+	}
+	if sumB.Metrics.ActiveDurationMs.Supported || sumB.Metrics.ActiveDurationMs.Value != nil {
+		t.Errorf("expected user B activeDurationMs supported=false and value=nil, got %+v", sumB.Metrics.ActiveDurationMs)
+	}
+	if sumB.Metrics.MessageCount.Supported || sumB.Metrics.MessageCount.Value != nil {
+		t.Errorf("expected user B messageCount supported=false and value=nil, got %+v", sumB.Metrics.MessageCount)
+	}
+	if sumB.Metrics.UserMessageCount.Supported || sumB.Metrics.UserMessageCount.Value != nil {
+		t.Errorf("expected user B userMessageCount supported=false and value=nil, got %+v", sumB.Metrics.UserMessageCount)
+	}
+
+	// 3. Verify User C (Zero rows -> supported=true with real zero strings)
+	sumC, err := st.Analytics().GetPersonalSummary(ctx, userC, r)
+	if err != nil {
+		t.Fatalf("failed to get personal summary for user C: %v", err)
+	}
+
+	if !sumC.Metrics.TotalTokens.Supported || sumC.Metrics.TotalTokens.Value == nil || *sumC.Metrics.TotalTokens.Value != "0" {
+		t.Errorf("expected user C total tokens '0', got %+v", sumC.Metrics.TotalTokens)
+	}
+	if !sumC.Metrics.InputContextTokens.Supported || sumC.Metrics.InputContextTokens.Value == nil || *sumC.Metrics.InputContextTokens.Value != "0" {
+		t.Errorf("expected user C inputContextTokens '0', got %+v", sumC.Metrics.InputContextTokens)
+	}
+	if !sumC.Metrics.OutputTokens.Supported || sumC.Metrics.OutputTokens.Value == nil || *sumC.Metrics.OutputTokens.Value != "0" {
+		t.Errorf("expected user C outputTokens '0', got %+v", sumC.Metrics.OutputTokens)
+	}
+	if sumC.Metrics.TokensPerCodeLine.Value != nil {
+		t.Errorf("expected user C tokensPerCodeLine nil, got %v", sumC.Metrics.TokensPerCodeLine.Value)
+	}
+}
+
+func TestMySQL_DimensionFiltersAndBreakdowns(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	userID := "usr_filter_test"
+	seedTestUser(t, db, st, userID, "filteruser", "Filter User", "filter@tokendance.dev", true, now)
+
+	// Seed daily_user_agent_metrics for 2 agents
+	d1 := "2026-08-28"
+	d2 := "2026-08-29"
+
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO daily_user_agent_metrics (
+			metric_date, user_id, agent_id, exact_token_total, derived_token_total,
+			token_input_total, token_output_total, token_cache_read_total, token_cache_write_total, token_reasoning_total,
+			code_generated_lines, active_duration_ms, message_count, user_message_count,
+			cost_amount, cost_currency, source_max_event_pk, aggregation_version, computed_at
+		) VALUES
+		(?, ?, 'claude-code', 600000, 0, 400000, 150000, 50000, 0, 10000, 100, 1000, 10, 5, 6.0, 'USD', 1, 2, ?),
+		(?, ?, 'cursor', 400000, 0, 250000, 100000, 50000, 0, 5000, 50, 800, 8, 4, 4.0, 'USD', 2, 2, ?),
+		(?, ?, 'claude-code', 800000, 0, 500000, 200000, 100000, 0, 20000, 150, 1200, 15, 6, 8.0, 'USD', 3, 2, ?)`,
+		d1, userID, now,
+		d1, userID, now,
+		d2, userID, now,
+	)
+	if err != nil {
+		t.Fatalf("failed to insert daily_user_agent_metrics: %v", err)
+	}
+
+	// Seed daily_user_agent_model_metrics for 3 models across 2 providers
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO daily_user_agent_model_metrics (
+			metric_date, user_id, agent_id, provider_id, model_id, exact_token_total, derived_token_total,
+			token_input_total, token_output_total, token_cache_read_total, token_cache_write_total, token_reasoning_total,
+			model_request_count, cost_amount, cost_currency, source_max_event_pk, aggregation_version, computed_at
+		) VALUES
+		(?, ?, 'claude-code', 'anthropic', 'claude-3-7-sonnet', 600000, 0, 400000, 150000, 50000, 0, 10000, 10, 6.0, 'USD', 1, 2, ?),
+		(?, ?, 'cursor', 'openai', 'gpt-4o', 400000, 0, 250000, 100000, 50000, 0, 5000, 8, 4.0, 'USD', 2, 2, ?),
+		(?, ?, 'claude-code', 'bedrock', 'claude-3-7-sonnet', 800000, 0, 500000, 200000, 100000, 0, 20000, 15, 8.0, 'USD', 3, 2, ?)`,
+		d1, userID, now,
+		d1, userID, now,
+		d2, userID, now,
+	)
+	if err != nil {
+		t.Fatalf("failed to insert daily_user_agent_model_metrics: %v", err)
+	}
+
+	r := domain.TimeRange{
+		Key:      domain.TimeRange30d,
+		From:     now.AddDate(0, 0, -30),
+		To:       now,
+		Timezone: "UTC",
+	}
+
+	// 1. Test FilterOptions
+	opts, err := st.Analytics().GetFilterOptions(ctx, userID)
+	if err != nil {
+		t.Fatalf("failed to get filter options: %v", err)
+	}
+	if len(opts.Agents) != 2 || opts.Agents[0] != "claude-code" || opts.Agents[1] != "cursor" {
+		t.Errorf("unexpected agents in filter options: %+v", opts.Agents)
+	}
+	if len(opts.Providers) != 3 {
+		t.Errorf("expected 3 providers in filter options, got %+v", opts.Providers)
+	}
+	if len(opts.Models) != 2 {
+		t.Errorf("expected 2 models in filter options, got %+v", opts.Models)
+	}
+
+	// 2. Test TokenTrend with all filters vs dimension filters
+	trendAll, err := st.Analytics().GetTokenTrend(ctx, userID, r, "total", nil, nil, nil)
+	if err != nil || len(trendAll.Points) != 2 {
+		t.Fatalf("expected 2 trend points for all agents, got %d, err: %v", len(trendAll.Points), err)
+	}
+	// Day 1 total should be 600000 + 400000 = 1000000
+	if trendAll.Points[0].TokenTotal == nil || *trendAll.Points[0].TokenTotal != "1000000" {
+		t.Errorf("expected day 1 total tokens 1000000, got %v", trendAll.Points[0].TokenTotal)
+	}
+
+	// Filter by agent = claude-code
+	agentClaude := "claude-code"
+	trendClaude, err := st.Analytics().GetTokenTrend(ctx, userID, r, "total", &agentClaude, nil, nil)
+	if err != nil || len(trendClaude.Points) != 2 {
+		t.Fatalf("expected 2 trend points for claude-code, got %d, err: %v", len(trendClaude.Points), err)
+	}
+	if trendClaude.Points[0].TokenTotal == nil || *trendClaude.Points[0].TokenTotal != "600000" {
+		t.Errorf("expected day 1 claude-code tokens 600000, got %v", trendClaude.Points[0].TokenTotal)
+	}
+
+	// Filter by model = gpt-4o
+	modelGpt := "gpt-4o"
+	trendGpt, err := st.Analytics().GetTokenTrend(ctx, userID, r, "total", nil, nil, &modelGpt)
+	if err != nil || len(trendGpt.Points) != 1 {
+		t.Fatalf("expected 1 trend point for gpt-4o, got %d, err: %v", len(trendGpt.Points), err)
+	}
+	if trendGpt.Points[0].TokenTotal == nil || *trendGpt.Points[0].TokenTotal != "400000" {
+		t.Errorf("expected day 1 gpt-4o tokens 400000, got %v", trendGpt.Points[0].TokenTotal)
+	}
+
+	// 3. Test AgentBreakdown
+	ab, err := st.Analytics().GetAgentBreakdown(ctx, userID, r)
+	if err != nil || len(ab.Items) != 2 {
+		t.Fatalf("expected 2 agent breakdown items, got %d, err: %v", len(ab.Items), err)
+	}
+	// claude-code has 1400000 / 1800000 = 77.8%, cursor has 400000 / 1800000 = 22.2%
+	if ab.Items[0].Key != "claude-code" || ab.Items[0].TokenTotal != "1400000" || ab.Items[0].Percentage != 77.8 {
+		t.Errorf("unexpected agent breakdown item 0: %+v", ab.Items[0])
+	}
+
+	// 4. Test ModelBreakdown
+	mb, err := st.Analytics().GetModelBreakdown(ctx, userID, r)
+	if err != nil || len(mb.Items) != 2 {
+		t.Fatalf("expected 2 model breakdown items, got %d, err: %v", len(mb.Items), err)
+	}
+
+	// 5. Test ActivityCalendar
+	cal, err := st.Analytics().GetActivityCalendar(ctx, userID, r)
+	if err != nil {
+		t.Fatalf("failed to get activity calendar: %v", err)
+	}
+	if cal.TotalActiveDays != 2 {
+		t.Errorf("expected 2 total active days, got %d", cal.TotalActiveDays)
+	}
+}
+
+func TestMySQL_OldSnapshotPrivacyClosure(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+
+	aliceID := "usr_snap_alice"
+	bobID := "usr_snap_bob"
+	seedTestUser(t, db, st, aliceID, "alice_snap", "Alice Snap", "alice@snap.test", true, now)
+	seedTestUser(t, db, st, bobID, "bob_snap", "Bob Snap", "bob@snap.test", true, now)
+
+	// Publish snapshot containing Alice (#1) and Bob (#2)
+	snapID := "snp_closure_01"
+	entries := []domain.LeaderboardEntry{
+		{RankNo: 1, Handle: "alice_snap", DisplayName: "Alice Snap", MetricValue: "5000000"},
+		{RankNo: 2, Handle: "bob_snap", DisplayName: "Bob Snap", MetricValue: "3000000"},
+	}
+	if err := st.Leaderboard().PublishSnapshot(ctx, snapID, "global", "30d", "tokens", entries, now); err != nil {
+		t.Fatalf("failed to publish snapshot: %v", err)
+	}
+
+	// Query leaderboard: both users present
+	lb1, err := st.Leaderboard().GetLeaderboard(ctx, "global", "30d", "tokens", nil, 50)
+	if err != nil || len(lb1.Entries) != 2 {
+		t.Fatalf("expected 2 entries in leaderboard, got %d, err: %v", len(lb1.Entries), err)
+	}
+
+	// Bob switches privacy to private (public_profile_enabled = false)
+	_, err = st.Privacy().UpdatePrivacyTx(ctx, bobID, domain.UserPrivacySettings{
+		PublicProfileEnabled: false,
+	}, 0, domain.UserSecurityEvent{EventID: "evt_priv_bob", UserID: &bobID, EventType: "privacy_changed", CreatedAt: now}, now)
+	if err != nil {
+		t.Fatalf("failed to update Bob's privacy: %v", err)
+	}
+
+	// Query old snapshot again: Bob must be immediately closed out by privacy join!
+	lb2, err := st.Leaderboard().GetLeaderboard(ctx, "global", "30d", "tokens", nil, 50)
+	if err != nil {
+		t.Fatalf("failed to get leaderboard after privacy update: %v", err)
+	}
+	if len(lb2.Entries) != 1 || lb2.Entries[0].Handle != "alice_snap" {
+		t.Fatalf("expected only Alice in leaderboard after Bob disabled public profile, got: %+v", lb2.Entries)
+	}
+
+	// Alice updates her display name and avatar in public profile
+	newDisplay := "Alice Superstar"
+	newAvatar := "https://cdn.example.com/alice_new.png"
+	_, err = db.ExecContext(ctx, `
+		UPDATE public_user_profiles
+		SET display_name = ?, avatar_url = ?, projection_version = projection_version + 1
+		WHERE user_id = ?`, newDisplay, newAvatar, aliceID)
+	if err != nil {
+		t.Fatalf("failed to update Alice public profile: %v", err)
+	}
+
+	// Leaderboard reads must join current published public projection
+	lb3, err := st.Leaderboard().GetLeaderboard(ctx, "global", "30d", "tokens", nil, 50)
+	if err != nil {
+		t.Fatalf("failed to get leaderboard: %v", err)
+	}
+	if len(lb3.Entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(lb3.Entries))
+	}
+	if lb3.Entries[0].DisplayName != "Alice Superstar" || lb3.Entries[0].AvatarURL == nil || *lb3.Entries[0].AvatarURL != newAvatar {
+		t.Errorf("expected current projection display name and avatar, got: %+v", lb3.Entries[0])
+	}
+
+	// Alice suspends account
+	_, err = db.ExecContext(ctx, "UPDATE users SET account_status = 'suspended' WHERE user_id = ?", aliceID)
+	if err != nil {
+		t.Fatalf("failed to suspend Alice: %v", err)
+	}
+
+	lb4, err := st.Leaderboard().GetLeaderboard(ctx, "global", "30d", "tokens", nil, 50)
+	if err != nil {
+		t.Fatalf("failed to get leaderboard: %v", err)
+	}
+	if len(lb4.Entries) != 0 {
+		t.Fatalf("expected 0 entries after Alice suspended account, got %d", len(lb4.Entries))
+	}
+}
+
+func TestMySQL_PublicDTOWhitelist(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	userID := "usr_whitelist_test"
+	seedTestUser(t, db, st, userID, "whitelist_pilot", "Whitelist Pilot", "whitelist@tokendance.dev", true, now)
+
+	// Add bio and token metrics
+	bioText := "Security and privacy enthusiast"
+	_, err := db.ExecContext(ctx, "UPDATE users SET bio = ? WHERE user_id = ?", bioText, userID)
+	if err != nil {
+		t.Fatalf("failed to update bio: %v", err)
+	}
+	_, err = db.ExecContext(ctx, "UPDATE public_user_profiles SET bio = ? WHERE user_id = ?", bioText, userID)
+	if err != nil {
+		t.Fatalf("failed to update public bio: %v", err)
+	}
+
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO daily_user_agent_metrics (
+			metric_date, user_id, agent_id, exact_token_total, derived_token_total,
+			token_input_total, token_output_total, token_cache_read_total, token_cache_write_total, token_reasoning_total,
+			code_generated_lines, active_duration_ms, message_count, user_message_count,
+			cost_amount, cost_currency, source_max_event_pk, aggregation_version, computed_at
+		) VALUES (
+			'2026-08-29', ?, 'claude-code', 3000000, 0,
+			2000000, 800000, 200000, 0, 50000,
+			500, 1800000, 50, 20,
+			30.0, 'USD', 1, 2, ?
+		)`, userID, now)
+	if err != nil {
+		t.Fatalf("failed to insert metrics: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	clk := clock.NewMockClock(now)
+	authSvc := auth.NewService(st, cfg, clk)
+	profSvc := profile.NewService(st, clk)
+	privSvc := privacy.NewService(st, clk)
+	anSvc := analytics.NewService(st, clk)
+	devSvc := device.NewService(st, cfg, clk)
+	expSvc := export.NewService(st, clk, provider.NewMemoryObjectStorage(""))
+	mediaSvc := media.NewService(st, cfg, clk, provider.NewMemoryObjectStorage(""))
+	searchSvc := search.NewService(st, clk)
+	lbSvc := leaderboard.NewService(st)
+
+	router := httpapi.NewRouter(authSvc, profSvc, privSvc, anSvc, devSvc, expSvc, mediaSvc, searchSvc, lbSvc)
+
+	// Call GET /api/v1/public/users/whitelist_pilot
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/public/users/whitelist_pilot", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 from get public profile, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	bodyStr := rec.Body.String()
+	// Whitelist verification: must contain public fields
+	if !strings.Contains(bodyStr, `"handle":"whitelist_pilot"`) ||
+		!strings.Contains(bodyStr, `"displayName":"Whitelist Pilot"`) ||
+		!strings.Contains(bodyStr, `"bio":"Security and privacy enthusiast"`) ||
+		!strings.Contains(bodyStr, `"tokenTotal":"3000000"`) {
+		t.Errorf("missing expected whitelisted public fields in response: %s", bodyStr)
+	}
+
+	// Whitelist verification: must NEVER leak internal or sensitive fields
+	if strings.Contains(bodyStr, userID) ||
+		strings.Contains(bodyStr, "whitelist@tokendance.dev") ||
+		strings.Contains(bodyStr, "email") ||
+		strings.Contains(bodyStr, "timezone") ||
+		strings.Contains(bodyStr, "locale") ||
+		strings.Contains(bodyStr, "password") {
+		t.Errorf("public response leaked private/internal fields: %s", bodyStr)
+	}
+
+	// Update privacy: hide bio and token total
+	_, err = st.Privacy().UpdatePrivacyTx(ctx, userID, domain.UserPrivacySettings{
+		PublicProfileEnabled: true,
+		ShowBio:              false,
+		ShowTokenTotal:       false,
+	}, 0, domain.UserSecurityEvent{EventID: "evt_priv_hide", UserID: &userID, EventType: "privacy_changed", CreatedAt: now}, now)
+	if err != nil {
+		t.Fatalf("failed to update privacy: %v", err)
+	}
+
+	rec2 := httptest.NewRecorder()
+	router.ServeHTTP(rec2, req)
+
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+
+	var pubDTO domain.PublicProfileDTO
+	if err := json.Unmarshal(rec2.Body.Bytes(), &pubDTO); err != nil {
+		t.Fatalf("failed to unmarshal public profile: %v", err)
+	}
+	if pubDTO.Bio != nil {
+		t.Errorf("expected Bio to be null/omitted when ShowBio is false, got %v", *pubDTO.Bio)
+	}
+	if pubDTO.TokenTotal != nil {
+		t.Errorf("expected TokenTotal to be null/omitted when ShowTokenTotal is false, got %v", *pubDTO.TokenTotal)
+	}
+}
+
+func TestMySQL_SkillMinimumSample(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+
+	// Seed 6 public users
+	for i := 1; i <= 6; i++ {
+		uID := fmt.Sprintf("usr_sk_%d", i)
+		hName := fmt.Sprintf("sk_user_%d", i)
+		seedTestUser(t, db, st, uID, hName, fmt.Sprintf("Skill User %d", i), fmt.Sprintf("sk%d@tokendance.dev", i), true, now)
+	}
+
+	// Skill 1: Popular Skill -> Used by 5 public users across 3 distinct dates (>= 5 users & >= 3 days)
+	skillKey1 := crypto.SHA256([]byte("skill.popular"))
+	dates := []string{"2026-08-27", "2026-08-28", "2026-08-29"}
+	for i := 1; i <= 5; i++ {
+		uID := fmt.Sprintf("usr_sk_%d", i)
+		for _, d := range dates {
+			_, err := db.ExecContext(ctx, `
+				INSERT INTO daily_skill_metrics (
+					metric_date, user_id, agent_id, skill_key, skill_public_name,
+					use_count, exact_use_count, success_count, failure_count,
+					source_max_event_pk, aggregation_version, computed_at
+				) VALUES (?, ?, 'claude-code', ?, 'Popular AST Parser', 100, 100, 95, 5, 1, 2, ?)`,
+				d, uID, skillKey1[:], now)
+			if err != nil {
+				t.Fatalf("failed to insert skill metrics for popular skill: %v", err)
+			}
+		}
+	}
+
+	// Skill 2: Low Sample Skill -> Used by only 2 users (< 5 users)
+	skillKey2 := crypto.SHA256([]byte("skill.lowsample"))
+	for i := 1; i <= 2; i++ {
+		uID := fmt.Sprintf("usr_sk_%d", i)
+		_, err := db.ExecContext(ctx, `
+			INSERT INTO daily_skill_metrics (
+				metric_date, user_id, agent_id, skill_key, skill_public_name,
+				use_count, exact_use_count, success_count, failure_count,
+				source_max_event_pk, aggregation_version, computed_at
+			) VALUES ('2026-08-29', ?, 'cursor', ?, 'Rare Test Generator', 50, 50, 50, 0, 2, 2, ?)`,
+			uID, skillKey2[:], now)
+		if err != nil {
+			t.Fatalf("failed to insert skill metrics for low sample skill: %v", err)
+		}
+	}
+
+	// 1. Search for skills -> Only Popular AST Parser should be returned
+	res, err := st.Search().Search(ctx, "Parser", 20, now)
+	if err != nil {
+		t.Fatalf("failed to search skills: %v", err)
+	}
+	if len(res.Skills) != 1 || res.Skills[0].SkillPublicName != "Popular AST Parser" {
+		t.Fatalf("expected only Popular AST Parser in search results, got: %+v", res.Skills)
+	}
+	if res.Skills[0].PublicUserCount != 5 || res.Skills[0].ActiveDays != 3 {
+		t.Errorf("unexpected publicUserCount or activeDays: %+v", res.Skills[0])
+	}
+
+	// Search for rare skill -> 0 results
+	resRare, err := st.Search().Search(ctx, "Generator", 20, now)
+	if err != nil {
+		t.Fatalf("failed to search rare skill: %v", err)
+	}
+	if len(resRare.Skills) != 0 {
+		t.Fatalf("expected 0 skills for low sample skill, got %d", len(resRare.Skills))
+	}
+
+	// User 5 turns off public profile -> public users drops to 4 (< 5)
+	user5ID := "usr_sk_5"
+	_, err = st.Privacy().UpdatePrivacyTx(ctx, user5ID, domain.UserPrivacySettings{
+		PublicProfileEnabled: false,
+	}, 0, domain.UserSecurityEvent{EventID: "evt_priv_u5", UserID: &user5ID, EventType: "privacy_changed", CreatedAt: now}, now)
+	if err != nil {
+		t.Fatalf("failed to disable user 5 public profile: %v", err)
+	}
+
+	// Search again for Parser -> should now be EXCLUDED because public users is 4 < 5
+	resAfter, err := st.Search().Search(ctx, "Parser", 20, now)
+	if err != nil {
+		t.Fatalf("failed to search: %v", err)
+	}
+	if len(resAfter.Skills) != 0 {
+		t.Fatalf("expected 0 skills after public user count dropped below 5, got %d", len(resAfter.Skills))
+	}
+}
+
+func TestMySQL_CompareHiddenValues(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+
+	// User 1: Public with full visibility
+	u1 := "usr_cmp_full"
+	seedTestUser(t, db, st, u1, "cmp_full", "Full User", "full@tokendance.dev", true, now)
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO daily_user_agent_metrics (
+			metric_date, user_id, agent_id, exact_token_total, derived_token_total,
+			token_input_total, token_output_total, token_cache_read_total, token_cache_write_total, token_reasoning_total,
+			code_generated_lines, active_duration_ms, message_count, user_message_count,
+			cost_amount, cost_currency, source_max_event_pk, aggregation_version, computed_at
+		) VALUES ('2026-08-29', ?, 'claude-code', 2000000, 0, 1200000, 600000, 200000, 0, 20000, 400, 1800000, 60, 25, 20.0, 'USD', 1, 2, ?)`,
+		u1, now)
+	if err != nil {
+		t.Fatalf("failed to insert metrics for u1: %v", err)
+	}
+
+	// User 2: Public but all show_* disabled
+	u2 := "usr_cmp_minimal"
+	seedTestUser(t, db, st, u2, "cmp_minimal", "Minimal User", "min@tokendance.dev", true, now)
+	_, err = st.Privacy().UpdatePrivacyTx(ctx, u2, domain.UserPrivacySettings{
+		PublicProfileEnabled: true,
+		ShowBio:              false,
+		ShowTokenTotal:       false,
+		ShowTrends:           false,
+		ShowActivityCalendar: false,
+		ShowAgentBreakdown:   false,
+		ShowSkillRanking:     false,
+		ShowAchievements:     false,
+	}, 0, domain.UserSecurityEvent{EventID: "evt_min_priv", UserID: &u2, EventType: "privacy_changed", CreatedAt: now}, now)
+	if err != nil {
+		t.Fatalf("failed to update u2 privacy: %v", err)
+	}
+	_, err = db.ExecContext(ctx, `
+		INSERT INTO daily_user_agent_metrics (
+			metric_date, user_id, agent_id, exact_token_total, derived_token_total,
+			token_input_total, token_output_total, token_cache_read_total, token_cache_write_total, token_reasoning_total,
+			code_generated_lines, active_duration_ms, message_count, user_message_count,
+			cost_amount, cost_currency, source_max_event_pk, aggregation_version, computed_at
+		) VALUES ('2026-08-29', ?, 'cursor', 5000000, 0, 3000000, 1500000, 500000, 0, 30000, 1000, 3600000, 100, 40, 50.0, 'USD', 2, 2, ?)`,
+		u2, now)
+	if err != nil {
+		t.Fatalf("failed to insert metrics for u2: %v", err)
+	}
+
+	// User 3: Private user
+	u3 := "usr_cmp_private"
+	seedTestUser(t, db, st, u3, "cmp_private", "Private User", "priv@tokendance.dev", false, now)
+
+	cfg := config.DefaultConfig()
+	clk := clock.NewMockClock(now)
+	authSvc := auth.NewService(st, cfg, clk)
+	profSvc := profile.NewService(st, clk)
+	privSvc := privacy.NewService(st, clk)
+	anSvc := analytics.NewService(st, clk)
+	devSvc := device.NewService(st, cfg, clk)
+	expSvc := export.NewService(st, clk, provider.NewMemoryObjectStorage(""))
+	mediaSvc := media.NewService(st, cfg, clk, provider.NewMemoryObjectStorage(""))
+	searchSvc := search.NewService(st, clk)
+	lbSvc := leaderboard.NewService(st)
+
+	router := httpapi.NewRouter(authSvc, profSvc, privSvc, anSvc, devSvc, expSvc, mediaSvc, searchSvc, lbSvc)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/public/compare?handles=cmp_full,cmp_minimal,cmp_private", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 from compare, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var cmpResp domain.CompareResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &cmpResp); err != nil {
+		t.Fatalf("failed to unmarshal compare response: %v", err)
+	}
+
+	if len(cmpResp.Users) != 3 {
+		t.Fatalf("expected 3 users in comparison, got %d", len(cmpResp.Users))
+	}
+
+	// User 1 (Full): visible=true and all metrics populated
+	userFull := cmpResp.Users[0]
+	if !userFull.Visible || userFull.Handle != "cmp_full" {
+		t.Errorf("expected cmp_full visible=true, got %+v", userFull)
+	}
+	if userFull.TokenTotal == nil || *userFull.TokenTotal != "2000000" {
+		t.Errorf("expected cmp_full tokenTotal 2000000, got %v", userFull.TokenTotal)
+	}
+	if len(userFull.AgentBreakdown) == 0 {
+		t.Errorf("expected cmp_full agentBreakdown populated")
+	}
+	if userFull.ActiveDays == nil || *userFull.ActiveDays != 1 {
+		t.Errorf("expected cmp_full activeDays 1, got %v", userFull.ActiveDays)
+	}
+
+	// User 2 (Minimal): visible=true, displayName/avatar populated, but all gated metrics NIL
+	userMin := cmpResp.Users[1]
+	if !userMin.Visible || userMin.Handle != "cmp_minimal" {
+		t.Errorf("expected cmp_minimal visible=true, got %+v", userMin)
+	}
+	if userMin.DisplayName == nil || *userMin.DisplayName != "Minimal User" {
+		t.Errorf("expected cmp_minimal displayName 'Minimal User', got %v", userMin.DisplayName)
+	}
+	if userMin.TokenTotal != nil {
+		t.Errorf("expected cmp_minimal tokenTotal NIL when show_token_total=false, got %v", *userMin.TokenTotal)
+	}
+	if userMin.CodeLinesTotal != nil {
+		t.Errorf("expected cmp_minimal codeLinesTotal NIL when show_token_total=false, got %v", *userMin.CodeLinesTotal)
+	}
+	if len(userMin.AgentBreakdown) > 0 {
+		t.Errorf("expected cmp_minimal agentBreakdown empty when show_agent_breakdown=false, got %+v", userMin.AgentBreakdown)
+	}
+	if len(userMin.SkillRanking) > 0 {
+		t.Errorf("expected cmp_minimal skillRanking empty when show_skill_ranking=false, got %+v", userMin.SkillRanking)
+	}
+	if userMin.ActiveDays != nil || userMin.CurrentStreak != nil {
+		t.Errorf("expected cmp_minimal calendar stats NIL when show_activity_calendar=false")
+	}
+
+	// User 3 (Private): visible=false without any values
+	userPriv := cmpResp.Users[2]
+	if userPriv.Visible || userPriv.Handle != "cmp_private" {
+		t.Errorf("expected cmp_private visible=false, got %+v", userPriv)
+	}
+	if userPriv.DisplayName != nil || userPriv.AvatarURL != nil || userPriv.TokenTotal != nil || userPriv.Rank != nil {
+		t.Errorf("expected cmp_private to have no values leaked, got %+v", userPriv)
 	}
 }

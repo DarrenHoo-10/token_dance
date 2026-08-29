@@ -135,7 +135,7 @@ func (s *profileStore) CompleteOnboardingTx(ctx context.Context, userID string, 
 			show_agent_breakdown = VALUES(show_agent_breakdown),
 			show_skill_ranking = VALUES(show_skill_ranking),
 			show_achievements = VALUES(show_achievements),
-			privacy_version = privacy_version + 1,
+			privacy_version = 1,
 			updated_at = VALUES(updated_at)`
 
 	if _, err := tx.ExecContext(ctx, upsertPrivacySQL,
@@ -232,6 +232,7 @@ func (s *profileStore) CompleteOnboardingTx(ctx context.Context, userID string, 
 	u.DisplayName = displayName
 	u.TimezoneName = timezone
 	u.Locale = locale
+	u.LeaderboardVisibility = visibility
 	u.OnboardingCompletedAt = &now
 	u.ProfileVersion = newProfileVer
 	u.UpdatedAt = now

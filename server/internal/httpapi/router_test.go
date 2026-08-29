@@ -2,10 +2,13 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +83,80 @@ func TestHealthEndpoints(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Errorf("expected 200 from /readyz, got %d", rec.Code)
+	}
+}
+
+func TestReadinessEndpoint_SchemaCompatibility(t *testing.T) {
+	st := memory.NewMemoryStore()
+	cfg := config.DefaultConfig()
+	clk := clock.NewMockClock(time.Now().UTC())
+
+	authService := auth.NewService(st, cfg, clk)
+	profileService := profile.NewService(st, clk)
+	privacyService := privacy.NewService(st, clk)
+	analyticsService := analytics.NewService(st, clk)
+	deviceService := device.NewService(st, cfg, clk)
+	exportService := export.NewService(st, clk, testStorage)
+	mediaService := media.NewService(st, cfg, clk, testStorage)
+	searchService := search.NewService(st, clk)
+	leaderboardService := leaderboard.NewService(st)
+
+	// 1. Router with failing readiness checker
+	failingChecker := func(ctx context.Context) error {
+		return fmt.Errorf("schema missing migration 0003")
+	}
+
+	failingRouter := NewRouterWithReadiness(
+		authService,
+		profileService,
+		privacyService,
+		analyticsService,
+		deviceService,
+		exportService,
+		mediaService,
+		searchService,
+		leaderboardService,
+		failingChecker,
+	)
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+	failingRouter.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 from /readyz when schema is incompatible, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "not_ready") || !strings.Contains(rec.Body.String(), "0003") {
+		t.Fatalf("expected not_ready response body with error, got %s", rec.Body.String())
+	}
+
+	// 2. Router with passing readiness checker
+	passingChecker := func(ctx context.Context) error {
+		return nil
+	}
+
+	passingRouter := NewRouterWithReadiness(
+		authService,
+		profileService,
+		privacyService,
+		analyticsService,
+		deviceService,
+		exportService,
+		mediaService,
+		searchService,
+		leaderboardService,
+		passingChecker,
+	)
+
+	req = httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec = httptest.NewRecorder()
+	passingRouter.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 from /readyz when schema is compatible, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "ready") {
+		t.Fatalf("expected ready response body, got %s", rec.Body.String())
 	}
 }
 
