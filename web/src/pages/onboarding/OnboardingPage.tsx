@@ -8,6 +8,7 @@ import { Select } from '@/components/common/Select';
 import { Button } from '@/components/common/Button';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
 import { api, ApiError } from '@/api/client';
+import { getApiErrorMessage } from '@/i18n';
 import type { Locale } from '@/types/api';
 
 export const OnboardingPage: React.FC = () => {
@@ -75,7 +76,7 @@ export const OnboardingPage: React.FC = () => {
       navigate(destination);
     } catch (err) {
       if (err instanceof ApiError) {
-        setErrorMessage(t(err.messageKey) || err.message);
+        setErrorMessage(getApiErrorMessage(t, err));
       } else if (err instanceof Error) {
         setErrorMessage(err.message);
       } else {

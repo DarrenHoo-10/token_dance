@@ -455,14 +455,15 @@ func (h *Handlers) GetPrivacy(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdatePrivacyReq struct {
-	PublicProfileEnabled bool `json:"publicProfileEnabled"`
-	ShowBio              bool `json:"showBio"`
-	ShowTokenTotal       bool `json:"showTokenTotal"`
-	ShowTrends           bool `json:"showTrends"`
-	ShowActivityCalendar bool `json:"showActivityCalendar"`
-	ShowAgentBreakdown   bool `json:"showAgentBreakdown"`
-	ShowSkillRanking     bool `json:"showSkillRanking"`
-	ShowAchievements     bool `json:"showAchievements"`
+	PublicProfileEnabled  bool                         `json:"publicProfileEnabled"`
+	LeaderboardVisibility domain.LeaderboardVisibility `json:"leaderboardVisibility"`
+	ShowBio               bool                         `json:"showBio"`
+	ShowTokenTotal        bool                         `json:"showTokenTotal"`
+	ShowTrends            bool                         `json:"showTrends"`
+	ShowActivityCalendar  bool                         `json:"showActivityCalendar"`
+	ShowAgentBreakdown    bool                         `json:"showAgentBreakdown"`
+	ShowSkillRanking      bool                         `json:"showSkillRanking"`
+	ShowAchievements      bool                         `json:"showAchievements"`
 }
 
 func (h *Handlers) UpdatePrivacy(w http.ResponseWriter, r *http.Request) {
@@ -485,15 +486,16 @@ func (h *Handlers) UpdatePrivacy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	in := privacy.UpdatePrivacyInput{
-		PublicProfileEnabled: req.PublicProfileEnabled,
-		ShowBio:              req.ShowBio,
-		ShowTokenTotal:       req.ShowTokenTotal,
-		ShowTrends:           req.ShowTrends,
-		ShowActivityCalendar: req.ShowActivityCalendar,
-		ShowAgentBreakdown:   req.ShowAgentBreakdown,
-		ShowSkillRanking:     req.ShowSkillRanking,
-		ShowAchievements:     req.ShowAchievements,
-		ExpectedVersion:      expectedVersion,
+		PublicProfileEnabled:  req.PublicProfileEnabled,
+		LeaderboardVisibility: req.LeaderboardVisibility,
+		ShowBio:               req.ShowBio,
+		ShowTokenTotal:        req.ShowTokenTotal,
+		ShowTrends:            req.ShowTrends,
+		ShowActivityCalendar:  req.ShowActivityCalendar,
+		ShowAgentBreakdown:    req.ShowAgentBreakdown,
+		ShowSkillRanking:      req.ShowSkillRanking,
+		ShowAchievements:      req.ShowAchievements,
+		ExpectedVersion:       expectedVersion,
 	}
 
 	p, err := h.privacy.UpdatePrivacy(r.Context(), user.UserID, in)

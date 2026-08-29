@@ -7,16 +7,16 @@ export interface SyncStatusCardProps {
   status?: 'healthy' | 'warning' | 'delayed' | 'unknown' | string;
 }
 
-function timeAgo(dateStr: string | null): string {
+function timeAgo(dateStr: string | null, t: (key: string, params?: Record<string, string | number>) => string): string {
   if (!dateStr) return '—';
   const diffMs = Date.now() - new Date(dateStr).getTime();
   if (diffMs < 0 || isNaN(diffMs)) return '—';
   const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
+  if (diffMins < 1) return t('dashboard.justNow');
+  if (diffMins < 60) return t('dashboard.minsAgo', { count: diffMins });
   const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  return `${Math.floor(diffHours / 24)}d ago`;
+  if (diffHours < 24) return t('dashboard.hoursAgo', { count: diffHours });
+  return t('dashboard.daysAgo', { count: Math.floor(diffHours / 24) });
 }
 
 export const SyncStatusCard: React.FC<SyncStatusCardProps> = ({
@@ -73,7 +73,7 @@ export const SyncStatusCard: React.FC<SyncStatusCardProps> = ({
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 8, borderBottom: '1px solid var(--border-light)', fontSize: 12 }}>
         <span className="text-muted">{t('settings.lastSeen')}</span>
-        <strong className="mono-num">{timeAgo(lastCommittedAt)}</strong>
+        <strong className="mono-num">{timeAgo(lastCommittedAt, t)}</strong>
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>

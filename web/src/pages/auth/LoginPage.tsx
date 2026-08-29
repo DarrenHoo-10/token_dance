@@ -7,6 +7,7 @@ import { Input } from '@/components/common/Input';
 import { Button } from '@/components/common/Button';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
 import { ApiError } from '@/api/client';
+import { getApiErrorMessage } from '@/i18n';
 
 export const LoginPage: React.FC = () => {
   const { login } = useAuth();
@@ -46,7 +47,7 @@ export const LoginPage: React.FC = () => {
       }
     } catch (err) {
       if (err instanceof ApiError) {
-        setErrorMessage(t(err.messageKey) || t('auth.invalidCredentials') || err.message);
+        setErrorMessage(getApiErrorMessage(t, err));
       } else if (err instanceof Error) {
         setErrorMessage(err.message);
       } else {
@@ -107,22 +108,22 @@ export const LoginPage: React.FC = () => {
           }}
         >
           <div>
-            <small style={{ color: '#88928a', fontSize: 11 }}>{t('metrics.tokensDanced')}</small>
-            <strong className="mono-num" style={{ display: 'block', fontSize: 20, marginTop: 4 }}>
-              325.7M
-            </strong>
+            <strong style={{ display: 'block', fontSize: 15 }}>{t('auth.editorialPrivacyTitle')}</strong>
+            <small style={{ display: 'block', color: '#88928a', fontSize: 11, marginTop: 4 }}>
+              {t('auth.editorialPrivacyCopy')}
+            </small>
           </div>
           <div>
-            <small style={{ color: '#88928a', fontSize: 11 }}>{t('metrics.globalRank')}</small>
-            <strong className="mono-num" style={{ display: 'block', fontSize: 20, marginTop: 4 }}>
-              #37
-            </strong>
+            <strong style={{ display: 'block', fontSize: 15 }}>{t('auth.editorialControlTitle')}</strong>
+            <small style={{ display: 'block', color: '#88928a', fontSize: 11, marginTop: 4 }}>
+              {t('auth.editorialControlCopy')}
+            </small>
           </div>
           <div>
-            <small style={{ color: '#88928a', fontSize: 11 }}>{t('metrics.activeStreak')}</small>
-            <strong className="mono-num" style={{ display: 'block', fontSize: 20, marginTop: 4 }}>
-              23 {t('metrics.days')}
-            </strong>
+            <strong style={{ display: 'block', fontSize: 15 }}>{t('auth.editorialInsightTitle')}</strong>
+            <small style={{ display: 'block', color: '#88928a', fontSize: 11, marginTop: 4 }}>
+              {t('auth.editorialInsightCopy')}
+            </small>
           </div>
         </div>
       </aside>

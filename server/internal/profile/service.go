@@ -114,6 +114,11 @@ func (s *Service) CompleteOnboarding(ctx context.Context, userID string, in Onbo
 	if in.Locale != "zh-CN" && in.Locale != "en-US" {
 		in.Locale = "en-US"
 	}
+	if in.Privacy.PublicProfileEnabled {
+		in.Privacy.LeaderboardVisibility = domain.LeaderboardVisibilityPublic
+	} else {
+		in.Privacy.LeaderboardVisibility = domain.LeaderboardVisibilityPrivate
+	}
 
 	now := s.clk.Now()
 	eventID, _ := crypto.GenerateOpaqueToken(13)

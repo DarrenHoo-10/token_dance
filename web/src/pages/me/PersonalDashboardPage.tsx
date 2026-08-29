@@ -137,7 +137,7 @@ export const PersonalDashboardPage: React.FC = () => {
 
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           {/* Time range segmented control */}
-          <div className="segmented-control" role="tablist" aria-label="Time range selector">
+          <div className="segmented-control" role="tablist" aria-label={t('dashboard.timeRangeSelector')}>
             {[
               { key: 'today', label: t('common.today') },
               { key: '7d', label: t('common.days7') },
@@ -187,7 +187,7 @@ export const PersonalDashboardPage: React.FC = () => {
             <div style={{ display: 'flex', gap: 8 }}>
               {/* Agent Filter */}
               <select
-                aria-label="Agent Filter"
+                aria-label={t('dashboard.agentFilter')}
                 value={selectedAgent}
                 onChange={(e) => setSelectedAgent(e.target.value)}
                 className="form-input"
@@ -207,7 +207,7 @@ export const PersonalDashboardPage: React.FC = () => {
 
               {/* Model Filter */}
               <select
-                aria-label="Model Filter"
+                aria-label={t('dashboard.modelFilter')}
                 value={selectedModel}
                 onChange={(e) => setSelectedModel(e.target.value)}
                 className="form-input"

@@ -8,6 +8,7 @@ import { Badge } from '@/components/common/Badge';
 import { LoadingState } from '@/components/states/LoadingState';
 import { ErrorState } from '@/components/states/ErrorState';
 import { api, ApiError } from '@/api/client';
+import { getApiErrorMessage } from '@/i18n';
 import type { PrivacySettings } from '@/types/api';
 
 export const PrivacySettingsPage: React.FC = () => {
@@ -61,7 +62,7 @@ export const PrivacySettingsPage: React.FC = () => {
       showToast(t('common.saved'), 'success');
     } catch (err) {
       if (err instanceof ApiError) {
-        showToast(t(err.messageKey) || err.message, 'error');
+        showToast(getApiErrorMessage(t, err), 'error');
       } else {
         showToast(t('errors.unknown'), 'error');
       }
@@ -97,7 +98,7 @@ export const PrivacySettingsPage: React.FC = () => {
                 setPrivacy({
                   ...privacy,
                   leaderboardVisibility: checked ? 'public' : 'private',
-                  publicProfileEnabled: checked ? true : privacy.publicProfileEnabled,
+                  publicProfileEnabled: checked,
                 })
               }
             />

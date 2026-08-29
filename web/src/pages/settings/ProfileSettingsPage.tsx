@@ -8,6 +8,7 @@ import { Button } from '@/components/common/Button';
 import { LoadingState } from '@/components/states/LoadingState';
 import { ErrorState } from '@/components/states/ErrorState';
 import { api, ApiError } from '@/api/client';
+import { getApiErrorMessage } from '@/i18n';
 import type { UserProfile, Locale } from '@/types/api';
 
 export const ProfileSettingsPage: React.FC = () => {
@@ -78,7 +79,7 @@ export const ProfileSettingsPage: React.FC = () => {
       showToast(t('common.saved'), 'success');
     } catch (err) {
       if (err instanceof ApiError) {
-        showToast(t(err.messageKey) || err.message, 'error');
+        showToast(getApiErrorMessage(t, err), 'error');
       } else {
         showToast(t('errors.unknown'), 'error');
       }

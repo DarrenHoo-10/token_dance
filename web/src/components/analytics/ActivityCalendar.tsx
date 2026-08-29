@@ -1,4 +1,5 @@
 import React from 'react';
+import { useLocale } from '@/context/LocaleContext';
 import type { ActivityCalendarDay } from '@/types/api';
 
 export interface ActivityCalendarProps {
@@ -7,6 +8,8 @@ export interface ActivityCalendarProps {
 }
 
 export const ActivityCalendar: React.FC<ActivityCalendarProps> = ({ days }) => {
+  const { t } = useLocale();
+
   // If fewer than 70 days, generate padding days
   const fullDays: ActivityCalendarDay[] = [...days];
   while (fullDays.length < 70) {
@@ -21,12 +24,13 @@ export const ActivityCalendar: React.FC<ActivityCalendarProps> = ({ days }) => {
 
   return (
     <div>
-      <div className="heatmap-grid" role="grid" aria-label="Activity heatmap">
+      <div className="heatmap-grid" role="grid" aria-label={t('dashboard.activityHeatmap')}>
         {displayDays.map((day, idx) => (
           <div
             key={idx}
             className={`heatmap-cell level-${day.level}`}
-            title={`${day.date}: ${day.tokenTotal} tokens`}
+            title={t('dashboard.activityCellLabel', { date: day.date, tokens: day.tokenTotal })}
+            aria-label={t('dashboard.activityCellLabel', { date: day.date, tokens: day.tokenTotal })}
             role="gridcell"
           />
         ))}
@@ -43,13 +47,13 @@ export const ActivityCalendar: React.FC<ActivityCalendarProps> = ({ days }) => {
           color: 'var(--text-subtle)',
         }}
       >
-        <span>Less</span>
+        <span>{t('dashboard.lessActivity')}</span>
         <div className="heatmap-cell level-0" style={{ width: 10, height: 10 }} />
         <div className="heatmap-cell level-1" style={{ width: 10, height: 10 }} />
         <div className="heatmap-cell level-2" style={{ width: 10, height: 10 }} />
         <div className="heatmap-cell level-3" style={{ width: 10, height: 10 }} />
         <div className="heatmap-cell level-4" style={{ width: 10, height: 10 }} />
-        <span>More</span>
+        <span>{t('dashboard.moreActivity')}</span>
       </div>
     </div>
   );

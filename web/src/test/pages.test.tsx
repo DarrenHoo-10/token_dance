@@ -333,7 +333,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
   });
 
   describe('Privacy & Device Updates Invalidate Shared Surfaces', () => {
-    it('invalidates and refetches session when privacy is updated', async () => {
+    it('toggles public profile and leaderboard visibility together', async () => {
       const getSessionSpy = vi.spyOn(api, 'getSession').mockResolvedValue({
         authenticated: true,
         user: {
@@ -360,31 +360,65 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         privacyVersion: 1,
       });
 
-      const updatePrivacySpy = vi.spyOn(api, 'updatePrivacy').mockResolvedValue({
-        publicProfileEnabled: true,
-        leaderboardVisibility: 'public',
-        showBio: true,
-        showTokenTotal: true,
-        showTrends: true,
-        showActivityCalendar: true,
-        showAgentBreakdown: true,
-        showSkillRanking: true,
-        showAchievements: true,
-        privacyVersion: 2,
-      });
+      const updatePrivacySpy = vi.spyOn(api, 'updatePrivacy')
+        .mockResolvedValueOnce({
+          publicProfileEnabled: true,
+          leaderboardVisibility: 'public',
+          showBio: false,
+          showTokenTotal: false,
+          showTrends: false,
+          showActivityCalendar: false,
+          showAgentBreakdown: false,
+          showSkillRanking: false,
+          showAchievements: false,
+          privacyVersion: 2,
+        })
+        .mockResolvedValueOnce({
+          publicProfileEnabled: false,
+          leaderboardVisibility: 'private',
+          showBio: false,
+          showTokenTotal: false,
+          showTrends: false,
+          showActivityCalendar: false,
+          showAgentBreakdown: false,
+          showSkillRanking: false,
+          showAchievements: false,
+          privacyVersion: 3,
+        });
 
       renderWithProviders(<PrivacySettingsPage />, '/settings/privacy');
 
-      await waitFor(() => {
-        expect(screen.getByText('参加公开排行榜')).toBeInTheDocument();
-      });
-
+      const visibilitySwitch = await screen.findByRole('checkbox', { name: '参加公开排行榜' });
       const saveBtn = screen.getByText('保存');
+
+      fireEvent.click(visibilitySwitch);
       fireEvent.click(saveBtn);
 
       await waitFor(() => {
-        expect(updatePrivacySpy).toHaveBeenCalled();
+        expect(updatePrivacySpy).toHaveBeenNthCalledWith(
+          1,
+          expect.objectContaining({
+            publicProfileEnabled: true,
+            leaderboardVisibility: 'public',
+          }),
+          1
+        );
         expect(getSessionSpy).toHaveBeenCalledTimes(2);
+      });
+
+      fireEvent.click(visibilitySwitch);
+      fireEvent.click(saveBtn);
+
+      await waitFor(() => {
+        expect(updatePrivacySpy).toHaveBeenNthCalledWith(
+          2,
+          expect.objectContaining({
+            publicProfileEnabled: false,
+            leaderboardVisibility: 'private',
+          }),
+          2
+        );
+        expect(getSessionSpy).toHaveBeenCalledTimes(3);
       });
     });
 

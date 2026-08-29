@@ -191,18 +191,19 @@ type EmailOutbox struct {
 
 // UserPrivacySettings represents user_privacy_settings table
 type UserPrivacySettings struct {
-	UserID               string    `json:"userId"`
-	PublicProfileEnabled bool      `json:"publicProfileEnabled"`
-	ShowBio              bool      `json:"showBio"`
-	ShowTokenTotal       bool      `json:"showTokenTotal"`
-	ShowTrends           bool      `json:"showTrends"`
-	ShowActivityCalendar bool      `json:"showActivityCalendar"`
-	ShowAgentBreakdown   bool      `json:"showAgentBreakdown"`
-	ShowSkillRanking     bool      `json:"showSkillRanking"`
-	ShowAchievements     bool      `json:"showAchievements"`
-	PrivacyVersion       uint64    `json:"privacyVersion"`
-	CreatedAt            time.Time `json:"createdAt"`
-	UpdatedAt            time.Time `json:"updatedAt"`
+	UserID                string                `json:"userId"`
+	PublicProfileEnabled  bool                  `json:"publicProfileEnabled"`
+	LeaderboardVisibility LeaderboardVisibility `json:"leaderboardVisibility"`
+	ShowBio               bool                  `json:"showBio"`
+	ShowTokenTotal        bool                  `json:"showTokenTotal"`
+	ShowTrends            bool                  `json:"showTrends"`
+	ShowActivityCalendar  bool                  `json:"showActivityCalendar"`
+	ShowAgentBreakdown    bool                  `json:"showAgentBreakdown"`
+	ShowSkillRanking      bool                  `json:"showSkillRanking"`
+	ShowAchievements      bool                  `json:"showAchievements"`
+	PrivacyVersion        uint64                `json:"privacyVersion"`
+	CreatedAt             time.Time             `json:"createdAt"`
+	UpdatedAt             time.Time             `json:"updatedAt"`
 }
 
 // ProfileStatus represents public_user_profiles.profile_status

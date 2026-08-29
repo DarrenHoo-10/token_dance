@@ -9,6 +9,7 @@ import { LoadingState } from '@/components/states/LoadingState';
 import { ErrorState } from '@/components/states/ErrorState';
 import { EmptyState } from '@/components/states/EmptyState';
 import { api, ApiError } from '@/api/client';
+import { getApiErrorMessage } from '@/i18n';
 import type { CollectorDevice, DeviceBindingChallengeResponse } from '@/types/api';
 
 export const DevicesSettingsPage: React.FC = () => {
@@ -50,7 +51,7 @@ export const DevicesSettingsPage: React.FC = () => {
       setBindModalOpen(true);
     } catch (err) {
       if (err instanceof ApiError) {
-        showToast(t(err.messageKey) || err.message, 'error');
+        showToast(getApiErrorMessage(t, err), 'error');
       } else {
         showToast(t('errors.unknown'), 'error');
       }
@@ -66,7 +67,7 @@ export const DevicesSettingsPage: React.FC = () => {
       await fetchDevices();
       await refreshSession();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : t('errors.unknown'), 'error');
+      showToast(err instanceof ApiError ? getApiErrorMessage(t, err) : t('errors.unknown'), 'error');
     }
   };
 
@@ -77,7 +78,7 @@ export const DevicesSettingsPage: React.FC = () => {
       await fetchDevices();
       await refreshSession();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : t('errors.unknown'), 'error');
+      showToast(err instanceof ApiError ? getApiErrorMessage(t, err) : t('errors.unknown'), 'error');
     }
   };
 
@@ -90,7 +91,7 @@ export const DevicesSettingsPage: React.FC = () => {
       await fetchDevices();
       await refreshSession();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : t('errors.unknown'), 'error');
+      showToast(err instanceof ApiError ? getApiErrorMessage(t, err) : t('errors.unknown'), 'error');
     }
   };
 

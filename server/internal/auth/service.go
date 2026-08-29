@@ -441,18 +441,19 @@ func (s *Service) CompleteRegistration(ctx context.Context, email, code, passwor
 	}
 
 	privacy := domain.UserPrivacySettings{
-		UserID:               userID,
-		PublicProfileEnabled: false,
-		ShowBio:              false,
-		ShowTokenTotal:       false,
-		ShowTrends:           false,
-		ShowActivityCalendar: false,
-		ShowAgentBreakdown:   false,
-		ShowSkillRanking:     false,
-		ShowAchievements:     false,
-		PrivacyVersion:       1,
-		CreatedAt:            now,
-		UpdatedAt:            now,
+		UserID:                userID,
+		PublicProfileEnabled:  false,
+		LeaderboardVisibility: domain.LeaderboardVisibilityPrivate,
+		ShowBio:               false,
+		ShowTokenTotal:        false,
+		ShowTrends:            false,
+		ShowActivityCalendar:  false,
+		ShowAgentBreakdown:    false,
+		ShowSkillRanking:      false,
+		ShowAchievements:      false,
+		PrivacyVersion:        1,
+		CreatedAt:             now,
+		UpdatedAt:             now,
 	}
 
 	session := domain.UserSession{

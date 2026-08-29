@@ -19,7 +19,7 @@ export const SkillRanking: React.FC<SkillRankingProps> = ({ skills }) => {
   if (!skills || skills.length === 0) {
     return (
       <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-subtle)', fontSize: 12 }}>
-        No skill usage recorded
+        {t('dashboard.noSkillData')}
       </div>
     );
   }

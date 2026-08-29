@@ -5,6 +5,8 @@ import { MetricGrid } from '@/components/analytics/MetricGrid';
 import { AgentBreakdown } from '@/components/analytics/AgentBreakdown';
 import { SkillRanking } from '@/components/analytics/SkillRanking';
 import { SyncStatusCard } from '@/components/analytics/SyncStatusCard';
+import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
+import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
 import type { PersonalSummaryMetrics, AgentBreakdownItem, SkillItem } from '@/types/api';
 
 describe('Dashboard Components Tests', () => {
@@ -92,7 +94,7 @@ describe('Dashboard Components Tests', () => {
     );
 
     expect(screen.getByText('正常')).toBeInTheDocument();
-    expect(screen.getByText('Just now')).toBeInTheDocument();
+    expect(screen.getByText('刚刚')).toBeInTheDocument();
     expect(screen.getByText('0')).toBeInTheDocument();
   });
 
@@ -109,6 +111,24 @@ describe('Dashboard Components Tests', () => {
 
     expect(screen.getByText('未知')).toBeInTheDocument();
     expect(screen.queryByText('0')).not.toBeInTheDocument();
+  });
+
+  it('localizes empty dashboard states and accessibility labels', () => {
+    render(
+      <LocaleProvider>
+        <TokenTrendChart trends={[]} />
+        <AgentBreakdown items={[]} />
+        <SkillRanking skills={[]} />
+        <ActivityCalendar days={[]} />
+      </LocaleProvider>
+    );
+
+    expect(screen.getByText('当前筛选条件下暂无趋势数据')).toBeInTheDocument();
+    expect(screen.getByText('尚未记录 Agent 数据')).toBeInTheDocument();
+    expect(screen.getByText('尚未记录 Skill 使用数据')).toBeInTheDocument();
+    expect(screen.getByText('较少')).toBeInTheDocument();
+    expect(screen.getByText('较多')).toBeInTheDocument();
+    expect(screen.getByRole('grid', { name: '活跃度热力图' })).toBeInTheDocument();
   });
 
   it('ensures supported=false differs from zero and renders N/A', () => {

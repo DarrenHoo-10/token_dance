@@ -26,6 +26,7 @@ export const Switch: React.FC<SwitchProps> = ({
       <label className="switch-control" style={{ opacity: disabled ? 0.6 : 1 }}>
         <input
           type="checkbox"
+          aria-label={label}
           checked={checked}
           disabled={disabled}
           onChange={(e) => onChange(e.target.checked)}

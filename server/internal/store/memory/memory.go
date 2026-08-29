@@ -687,6 +687,9 @@ func (m *MemoryStore) GetPrivacy(ctx context.Context, userID string) (*domain.Us
 		return nil, domain.ErrNotFound
 	}
 	pCopy := *p
+	if u, ok := m.users[userID]; ok {
+		pCopy.LeaderboardVisibility = u.LeaderboardVisibility
+	}
 	return &pCopy, nil
 }
 
@@ -709,6 +712,7 @@ func (m *MemoryStore) UpdatePrivacyTx(ctx context.Context, userID string, in dom
 	}
 
 	p.PublicProfileEnabled = in.PublicProfileEnabled
+	p.LeaderboardVisibility = in.LeaderboardVisibility
 	p.ShowBio = in.ShowBio
 	p.ShowTokenTotal = in.ShowTokenTotal
 	p.ShowTrends = in.ShowTrends
@@ -719,11 +723,15 @@ func (m *MemoryStore) UpdatePrivacyTx(ctx context.Context, userID string, in dom
 	p.PrivacyVersion++
 	p.UpdatedAt = now
 
-	if in.PublicProfileEnabled {
-		u.LeaderboardVisibility = domain.LeaderboardVisibilityPublic
-	} else {
-		u.LeaderboardVisibility = domain.LeaderboardVisibilityPrivate
+	visibility := in.LeaderboardVisibility
+	if visibility == "" {
+		visibility = domain.LeaderboardVisibilityPrivate
+		if in.PublicProfileEnabled {
+			visibility = domain.LeaderboardVisibilityPublic
+		}
 	}
+	u.LeaderboardVisibility = visibility
+	p.LeaderboardVisibility = visibility
 	u.PublicProfileUpdatedAt = &now
 	u.UpdatedAt = now
 

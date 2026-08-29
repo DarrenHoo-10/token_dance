@@ -1,4 +1,5 @@
 import React from 'react';
+import { useLocale } from '@/context/LocaleContext';
 import type { TokenTrendItem } from '@/types/api';
 
 export interface TokenTrendChartProps {
@@ -11,6 +12,8 @@ export const TokenTrendChart: React.FC<TokenTrendChartProps> = ({
   trends,
   height = 180,
 }) => {
+  const { t } = useLocale();
+
   if (!trends || trends.length === 0) {
     return (
       <div
@@ -22,7 +25,7 @@ export const TokenTrendChart: React.FC<TokenTrendChartProps> = ({
           fontSize: 12,
         }}
       >
-        No trend data for selected filter
+        {t('dashboard.noTrendData')}
       </div>
     );
   }

@@ -46,18 +46,19 @@ func (m *MemoryStore) SeedUserForTest(userID, handle, email string, now time.Tim
 	}
 
 	priv := domain.UserPrivacySettings{
-		UserID:               userID,
-		PublicProfileEnabled: false,
-		ShowBio:              false,
-		ShowTokenTotal:       false,
-		ShowTrends:           false,
-		ShowActivityCalendar: false,
-		ShowAgentBreakdown:   false,
-		ShowSkillRanking:     false,
-		ShowAchievements:     false,
-		PrivacyVersion:       1,
-		CreatedAt:            now,
-		UpdatedAt:            now,
+		UserID:                userID,
+		PublicProfileEnabled:  false,
+		LeaderboardVisibility: domain.LeaderboardVisibilityPrivate,
+		ShowBio:               false,
+		ShowTokenTotal:        false,
+		ShowTrends:            false,
+		ShowActivityCalendar:  false,
+		ShowAgentBreakdown:    false,
+		ShowSkillRanking:      false,
+		ShowAchievements:      false,
+		PrivacyVersion:        1,
+		CreatedAt:             now,
+		UpdatedAt:             now,
 	}
 
 	sessionTokenHash := crypto.HMACSHA256(hmacSecret, []byte("test-session-token-"+userID))

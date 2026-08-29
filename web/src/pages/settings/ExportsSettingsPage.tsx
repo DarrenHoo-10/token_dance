@@ -9,6 +9,7 @@ import { Input } from '@/components/common/Input';
 import { LoadingState } from '@/components/states/LoadingState';
 import { ErrorState } from '@/components/states/ErrorState';
 import { api, ApiError } from '@/api/client';
+import { getApiErrorMessage } from '@/i18n';
 import type { ExportJob, DeletionRequest } from '@/types/api';
 
 export const ExportsSettingsPage: React.FC = () => {
@@ -58,7 +59,7 @@ export const ExportsSettingsPage: React.FC = () => {
       showToast(t('common.saved'), 'success');
       await fetchData();
     } catch (err) {
-      showToast(err instanceof Error ? err.message : t('errors.unknown'), 'error');
+      showToast(err instanceof ApiError ? getApiErrorMessage(t, err) : t('errors.unknown'), 'error');
     } finally {
       setCreatingExport(false);
     }
@@ -71,7 +72,7 @@ export const ExportsSettingsPage: React.FC = () => {
         window.open(res.downloadUrl, '_blank');
       }
     } catch (err) {
-      showToast(err instanceof Error ? err.message : t('errors.unknown'), 'error');
+      showToast(err instanceof ApiError ? getApiErrorMessage(t, err) : t('errors.unknown'), 'error');
     }
   };
 
@@ -92,7 +93,7 @@ export const ExportsSettingsPage: React.FC = () => {
       setDeleteModalOpen(false);
       showToast(t('settings.deleteTitle'), 'info');
     } catch (err) {
-      showToast(err instanceof Error ? err.message : t('errors.unknown'), 'error');
+      showToast(err instanceof ApiError ? getApiErrorMessage(t, err) : t('errors.unknown'), 'error');
     } finally {
       setSubmittingDelete(false);
     }
@@ -105,7 +106,7 @@ export const ExportsSettingsPage: React.FC = () => {
       setActiveDeletion(null);
       showToast(t('settings.cancelDeletion'), 'success');
     } catch (err) {
-      showToast(err instanceof Error ? err.message : t('errors.unknown'), 'error');
+      showToast(err instanceof ApiError ? getApiErrorMessage(t, err) : t('errors.unknown'), 'error');
     }
   };
 

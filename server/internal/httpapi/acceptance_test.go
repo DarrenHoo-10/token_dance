@@ -767,9 +767,10 @@ func TestUSR021_PublicProfileProjectionAndSameTransactionHidden(t *testing.T) {
 
 	// 1. Enable Public Profile in Privacy
 	enablePrivBody, _ := json.Marshal(map[string]interface{}{
-		"publicProfileEnabled": true,
-		"showBio":              true,
-		"showTokenTotal":       true,
+		"publicProfileEnabled":  true,
+		"leaderboardVisibility": "public",
+		"showBio":               true,
+		"showTokenTotal":        true,
 	})
 	reqEnable := httptest.NewRequest(http.MethodPatch, "/api/v1/me/privacy", bytes.NewReader(enablePrivBody))
 	reqEnable.Header.Set("Content-Type", "application/json")
@@ -780,6 +781,11 @@ func TestUSR021_PublicProfileProjectionAndSameTransactionHidden(t *testing.T) {
 
 	if recEnable.Code != http.StatusOK {
 		t.Fatalf("expected 200 on enabling public profile, got %d: %s", recEnable.Code, recEnable.Body.String())
+	}
+	var enabledPrivacy domain.UserPrivacySettings
+	_ = json.Unmarshal(recEnable.Body.Bytes(), &enabledPrivacy)
+	if !enabledPrivacy.PublicProfileEnabled || enabledPrivacy.LeaderboardVisibility != domain.LeaderboardVisibilityPublic {
+		t.Fatalf("expected public profile and leaderboard visibility to update together: %+v", enabledPrivacy)
 	}
 
 	reqPub := httptest.NewRequest(http.MethodGet, "/api/v1/public/users/"+handle, nil)
@@ -827,8 +833,9 @@ func TestUSR021_PublicProfileProjectionAndSameTransactionHidden(t *testing.T) {
 
 	// 3. Disable Public Profile in Privacy -> Immediately Hidden in Same Transaction
 	privBody, _ := json.Marshal(map[string]interface{}{
-		"publicProfileEnabled": false,
-		"showBio":              false,
+		"publicProfileEnabled":  false,
+		"leaderboardVisibility": "private",
+		"showBio":               false,
 	})
 	reqPriv := httptest.NewRequest(http.MethodPatch, "/api/v1/me/privacy", bytes.NewReader(privBody))
 	reqPriv.Header.Set("Content-Type", "application/json")
@@ -839,6 +846,11 @@ func TestUSR021_PublicProfileProjectionAndSameTransactionHidden(t *testing.T) {
 
 	if recPriv.Code != http.StatusOK {
 		t.Fatalf("expected 200 on privacy update, got %d: %s", recPriv.Code, recPriv.Body.String())
+	}
+	var disabledPrivacy domain.UserPrivacySettings
+	_ = json.Unmarshal(recPriv.Body.Bytes(), &disabledPrivacy)
+	if disabledPrivacy.PublicProfileEnabled || disabledPrivacy.LeaderboardVisibility != domain.LeaderboardVisibilityPrivate {
+		t.Fatalf("expected public profile and leaderboard visibility to update together: %+v", disabledPrivacy)
 	}
 
 	// Immediate concurrent public read -> MUST RETURN 404 NOT FOUND

@@ -11,6 +11,30 @@ export const translations: Record<Locale, TranslationDictionary> = {
 
 export const defaultLocale: Locale = 'zh-CN';
 
+type TranslationFn = (key: string, params?: Record<string, string | number>) => string;
+
+export interface LocalizableApiError {
+  status: number;
+  code: string;
+  messageKey: string;
+}
+
+export function getApiErrorMessage(t: TranslationFn, error: LocalizableApiError): string {
+  const candidates = [
+    error.messageKey,
+    `errors.${error.code}`,
+    `errors.http_${error.status}`,
+    'errors.unknown',
+  ];
+
+  for (const key of candidates) {
+    const translated = t(key);
+    if (translated !== key) return translated;
+  }
+
+  return t('errors.unknown');
+}
+
 // Helper function to resolve nested keys like "auth.titleLogin"
 export function getTranslation(locale: Locale, key: string, params?: Record<string, string | number>): string {
   const dict = translations[locale] || translations[defaultLocale];

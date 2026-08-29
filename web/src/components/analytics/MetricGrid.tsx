@@ -46,7 +46,7 @@ export const MetricGrid: React.FC<MetricGridProps> = ({ metrics }) => {
   const { t } = useLocale();
 
   return (
-    <div className="metric-grid-10" aria-label="10 Core Developer Metrics">
+    <div className="metric-grid-10" aria-label={t('dashboard.coreMetricsLabel')}>
       {/* 1. Estimated Cost */}
       <MetricCard
         label={t('metrics.estimatedCost')}

@@ -36,18 +36,31 @@ func (s *Service) GetPrivacy(ctx context.Context, userID string) (*domain.UserPr
 }
 
 type UpdatePrivacyInput struct {
-	PublicProfileEnabled bool   `json:"publicProfileEnabled"`
-	ShowBio              bool   `json:"showBio"`
-	ShowTokenTotal       bool   `json:"showTokenTotal"`
-	ShowTrends           bool   `json:"showTrends"`
-	ShowActivityCalendar bool   `json:"showActivityCalendar"`
-	ShowAgentBreakdown   bool   `json:"showAgentBreakdown"`
-	ShowSkillRanking     bool   `json:"showSkillRanking"`
-	ShowAchievements     bool   `json:"showAchievements"`
-	ExpectedVersion      uint64 `json:"expectedVersion"`
+	PublicProfileEnabled  bool                         `json:"publicProfileEnabled"`
+	LeaderboardVisibility domain.LeaderboardVisibility `json:"leaderboardVisibility"`
+	ShowBio               bool                         `json:"showBio"`
+	ShowTokenTotal        bool                         `json:"showTokenTotal"`
+	ShowTrends            bool                         `json:"showTrends"`
+	ShowActivityCalendar  bool                         `json:"showActivityCalendar"`
+	ShowAgentBreakdown    bool                         `json:"showAgentBreakdown"`
+	ShowSkillRanking      bool                         `json:"showSkillRanking"`
+	ShowAchievements      bool                         `json:"showAchievements"`
+	ExpectedVersion       uint64                       `json:"expectedVersion"`
 }
 
 func (s *Service) UpdatePrivacy(ctx context.Context, userID string, in UpdatePrivacyInput) (*domain.UserPrivacySettings, error) {
+	if in.LeaderboardVisibility == "" {
+		if in.PublicProfileEnabled {
+			in.LeaderboardVisibility = domain.LeaderboardVisibilityPublic
+		} else {
+			in.LeaderboardVisibility = domain.LeaderboardVisibilityPrivate
+		}
+	}
+	if (in.LeaderboardVisibility != domain.LeaderboardVisibilityPublic && in.LeaderboardVisibility != domain.LeaderboardVisibilityPrivate) ||
+		(in.PublicProfileEnabled != (in.LeaderboardVisibility == domain.LeaderboardVisibilityPublic)) {
+		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "privacy.visibilityMismatch", "leaderboard visibility must match public profile state", nil, domain.ErrInvalidArgument)
+	}
+
 	now := s.clk.Now()
 	eventID, _ := crypto.GenerateOpaqueToken(13)
 	event := domain.UserSecurityEvent{
@@ -60,15 +73,16 @@ func (s *Service) UpdatePrivacy(ctx context.Context, userID string, in UpdatePri
 	}
 
 	settings := domain.UserPrivacySettings{
-		UserID:               userID,
-		PublicProfileEnabled: in.PublicProfileEnabled,
-		ShowBio:              in.ShowBio,
-		ShowTokenTotal:       in.ShowTokenTotal,
-		ShowTrends:           in.ShowTrends,
-		ShowActivityCalendar: in.ShowActivityCalendar,
-		ShowAgentBreakdown:   in.ShowAgentBreakdown,
-		ShowSkillRanking:     in.ShowSkillRanking,
-		ShowAchievements:     in.ShowAchievements,
+		UserID:                userID,
+		PublicProfileEnabled:  in.PublicProfileEnabled,
+		LeaderboardVisibility: in.LeaderboardVisibility,
+		ShowBio:               in.ShowBio,
+		ShowTokenTotal:        in.ShowTokenTotal,
+		ShowTrends:            in.ShowTrends,
+		ShowActivityCalendar:  in.ShowActivityCalendar,
+		ShowAgentBreakdown:    in.ShowAgentBreakdown,
+		ShowSkillRanking:      in.ShowSkillRanking,
+		ShowAchievements:      in.ShowAchievements,
 	}
 
 	p, err := s.store.UpdatePrivacyTx(ctx, userID, settings, in.ExpectedVersion, event, now)

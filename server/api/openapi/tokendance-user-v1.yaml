@@ -428,7 +428,7 @@ paths:
                   type: string
                   enum: [zh-CN, en-US]
                 privacy:
-                  $ref: '#/components/schemas/PrivacySettings'
+                  $ref: '#/components/schemas/OnboardingPrivacyRequest'
                 returnTo:
                   type: string
       responses:
@@ -548,7 +548,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/PrivacySettings'
+              $ref: '#/components/schemas/UpdatePrivacyRequest'
       responses:
         '200':
           description: Privacy settings updated
@@ -1708,6 +1708,7 @@ components:
       required:
         - userId
         - publicProfileEnabled
+        - leaderboardVisibility
         - showBio
         - showTokenTotal
         - showTrends
@@ -1721,6 +1722,9 @@ components:
           type: string
         publicProfileEnabled:
           type: boolean
+        leaderboardVisibility:
+          type: string
+          enum: [private, public]
         showBio:
           type: boolean
         showTokenTotal:
@@ -1737,6 +1741,53 @@ components:
           type: boolean
         privacyVersion:
           type: integer
+
+    OnboardingPrivacyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - publicProfileEnabled
+        - leaderboardVisibility
+      properties:
+        publicProfileEnabled:
+          type: boolean
+        leaderboardVisibility:
+          type: string
+          enum: [private, public]
+
+    UpdatePrivacyRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - publicProfileEnabled
+        - leaderboardVisibility
+        - showBio
+        - showTokenTotal
+        - showTrends
+        - showActivityCalendar
+        - showAgentBreakdown
+        - showSkillRanking
+        - showAchievements
+      properties:
+        publicProfileEnabled:
+          type: boolean
+        leaderboardVisibility:
+          type: string
+          enum: [private, public]
+        showBio:
+          type: boolean
+        showTokenTotal:
+          type: boolean
+        showTrends:
+          type: boolean
+        showActivityCalendar:
+          type: boolean
+        showAgentBreakdown:
+          type: boolean
+        showSkillRanking:
+          type: boolean
+        showAchievements:
+          type: boolean
 
     PublicUserProfile:
       type: object

@@ -31,15 +31,16 @@ func TestPrivacyAndPublicProjection(t *testing.T) {
 
 	// 2. Update Privacy to public
 	in := UpdatePrivacyInput{
-		PublicProfileEnabled: true,
-		ShowBio:              true,
-		ShowTokenTotal:       true,
-		ShowTrends:           true,
-		ShowActivityCalendar: true,
-		ShowAgentBreakdown:   true,
-		ShowSkillRanking:     true,
-		ShowAchievements:     false,
-		ExpectedVersion:      p.PrivacyVersion,
+		PublicProfileEnabled:  true,
+		LeaderboardVisibility: domain.LeaderboardVisibilityPublic,
+		ShowBio:               true,
+		ShowTokenTotal:        true,
+		ShowTrends:            true,
+		ShowActivityCalendar:  true,
+		ShowAgentBreakdown:    true,
+		ShowSkillRanking:      true,
+		ShowAchievements:      false,
+		ExpectedVersion:       p.PrivacyVersion,
 	}
 
 	updated, err := svc.UpdatePrivacy(ctx, userID, in)
@@ -65,6 +66,7 @@ func TestPrivacyAndPublicProjection(t *testing.T) {
 	// 4. Update privacy back to private
 	inPrivate := in
 	inPrivate.PublicProfileEnabled = false
+	inPrivate.LeaderboardVisibility = domain.LeaderboardVisibilityPrivate
 	inPrivate.ExpectedVersion = updated.PrivacyVersion
 
 	_, err = svc.UpdatePrivacy(ctx, userID, inPrivate)

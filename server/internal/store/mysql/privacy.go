@@ -18,18 +18,21 @@ type privacyStore struct {
 
 func (s *privacyStore) GetPrivacy(ctx context.Context, userID string) (*domain.UserPrivacySettings, error) {
 	query := `
-		SELECT user_id, public_profile_enabled, show_bio, show_token_total,
-		       show_trends, show_activity_calendar, show_agent_breakdown,
-		       show_skill_ranking, show_achievements, privacy_version,
-		       created_at, updated_at
-		FROM user_privacy_settings
-		WHERE user_id = ?
+		SELECT p.user_id, p.public_profile_enabled, u.leaderboard_visibility,
+		       p.show_bio, p.show_token_total, p.show_trends,
+		       p.show_activity_calendar, p.show_agent_breakdown,
+		       p.show_skill_ranking, p.show_achievements, p.privacy_version,
+		       p.created_at, p.updated_at
+		FROM user_privacy_settings p
+		JOIN users u ON u.user_id = p.user_id
+		WHERE p.user_id = ?
 		LIMIT 1`
 
 	var p domain.UserPrivacySettings
 	err := s.db.QueryRowContext(ctx, query, userID).Scan(
 		&p.UserID,
 		&p.PublicProfileEnabled,
+		&p.LeaderboardVisibility,
 		&p.ShowBio,
 		&p.ShowTokenTotal,
 		&p.ShowTrends,
@@ -98,10 +101,13 @@ func (s *privacyStore) UpdatePrivacyTx(ctx context.Context, userID string, in do
 		return nil, fmt.Errorf("failed to update privacy settings: %w", err)
 	}
 
-	// Update user visibility
-	visibility := domain.LeaderboardVisibilityPrivate
-	if in.PublicProfileEnabled {
-		visibility = domain.LeaderboardVisibilityPublic
+	// Update user visibility in the same transaction as privacy and projection state.
+	visibility := in.LeaderboardVisibility
+	if visibility == "" {
+		visibility = domain.LeaderboardVisibilityPrivate
+		if in.PublicProfileEnabled {
+			visibility = domain.LeaderboardVisibilityPublic
+		}
 	}
 
 	updateUserSQL := `
@@ -201,6 +207,7 @@ func (s *privacyStore) UpdatePrivacyTx(ctx context.Context, userID string, in do
 
 	pCopy := in
 	pCopy.UserID = userID
+	pCopy.LeaderboardVisibility = visibility
 	pCopy.PrivacyVersion = newPrivacyVer
 	pCopy.UpdatedAt = now
 

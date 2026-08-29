@@ -1,4 +1,5 @@
 import React from 'react';
+import { useLocale } from '@/context/LocaleContext';
 import type { AgentBreakdownItem } from '@/types/api';
 
 export interface AgentBreakdownProps {
@@ -14,10 +15,12 @@ function formatTokens(tokenTotal: string): string {
 }
 
 export const AgentBreakdown: React.FC<AgentBreakdownProps> = ({ items }) => {
+  const { t } = useLocale();
+
   if (!items || items.length === 0) {
     return (
       <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-subtle)', fontSize: 12 }}>
-        No agent data recorded yet
+        {t('dashboard.noAgentData')}
       </div>
     );
   }
@@ -26,7 +29,7 @@ export const AgentBreakdown: React.FC<AgentBreakdownProps> = ({ items }) => {
     <div className="agent-bar-group">
       {items.map((agent, idx) => {
         const itemKey = agent.key || agent.agentId || `agent-${idx}`;
-        const itemLabel = agent.displayName || agent.label || agent.key || agent.agentId || 'Unknown Agent';
+        const itemLabel = agent.displayName || agent.label || agent.key || agent.agentId || t('dashboard.unknownAgent');
         const pct = typeof agent.percentage === 'number' ? agent.percentage : parseFloat(agent.percentage) || 0;
 
         return (

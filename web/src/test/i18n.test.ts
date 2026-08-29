@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getTranslation, translations } from '@/i18n';
+import { getApiErrorMessage, getTranslation, translations } from '@/i18n';
 
 describe('I18n Translation Tests', () => {
   it('resolves nested keys for zh-CN and en-US', () => {
@@ -16,6 +16,13 @@ describe('I18n Translation Tests', () => {
 
     expect(zhBanner).toContain('2026-09-06');
     expect(enBanner).toContain('2026-09-06');
+  });
+
+  it('maps raw API message keys to localized error copy', () => {
+    const error = { status: 400, code: 'API_INVALID_ARGUMENT', messageKey: 'api.invalidBody' };
+
+    expect(getApiErrorMessage((key) => getTranslation('zh-CN', key), error)).toBe('请求内容无效，请检查后重试');
+    expect(getApiErrorMessage((key) => getTranslation('en-US', key), error)).toBe('The request is invalid. Please review it and try again.');
   });
 
   it('contains consistent root sections in both locales', () => {

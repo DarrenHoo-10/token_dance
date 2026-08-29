@@ -6,6 +6,7 @@ import { Input } from '@/components/common/Input';
 import { Button } from '@/components/common/Button';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
 import { api, ApiError } from '@/api/client';
+import { getApiErrorMessage } from '@/i18n';
 
 export const ForgotPasswordPage: React.FC = () => {
   const { t } = useLocale();
@@ -36,7 +37,7 @@ export const ForgotPasswordPage: React.FC = () => {
       navigate(`/reset-password?${params.toString()}`);
     } catch (err) {
       if (err instanceof ApiError) {
-        setErrorMessage(t(err.messageKey) || err.message);
+        setErrorMessage(getApiErrorMessage(t, err));
       } else if (err instanceof Error) {
         setErrorMessage(err.message);
       }

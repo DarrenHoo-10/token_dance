@@ -2,6 +2,7 @@ import React from 'react';
 import { useLocale } from '@/context/LocaleContext';
 import { Button } from '@/components/common/Button';
 import { ApiError } from '@/api/client';
+import { getApiErrorMessage } from '@/i18n';
 
 export interface ErrorStateProps {
   error?: Error | ApiError | null;
@@ -23,7 +24,7 @@ export const ErrorState: React.FC<ErrorStateProps> = ({
 
   if (error instanceof ApiError) {
     errorCode = error.code;
-    errorMessage = t(error.messageKey) || error.message;
+    errorMessage = getApiErrorMessage(t, error);
   } else if (error instanceof Error) {
     errorMessage = error.message;
   }

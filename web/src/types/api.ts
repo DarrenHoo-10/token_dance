@@ -122,7 +122,7 @@ export interface UpdateProfileRequest {
 export interface PrivacySettings {
   userId?: string;
   publicProfileEnabled: boolean;
-  leaderboardVisibility?: LeaderboardVisibility;
+  leaderboardVisibility: LeaderboardVisibility;
   showBio: boolean;
   showTokenTotal: boolean;
   showTrends: boolean;
@@ -134,8 +134,8 @@ export interface PrivacySettings {
 }
 
 export interface UpdatePrivacyRequest {
-  publicProfileEnabled?: boolean;
-  leaderboardVisibility?: LeaderboardVisibility;
+  publicProfileEnabled: boolean;
+  leaderboardVisibility: LeaderboardVisibility;
   showBio?: boolean;
   showTokenTotal?: boolean;
   showTrends?: boolean;
