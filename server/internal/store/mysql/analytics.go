@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -70,7 +72,8 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 		FROM daily_user_agent_metrics
 		WHERE user_id = ? AND metric_date >= ? AND metric_date <= ?`
 
-	fromStr, toStr, _ := rangeDateStrings(r)
+	plan := planUTCAggregates(r)
+	fromStr, toStr := plan.fromDate, plan.toDate
 
 	var rowCount int
 	var costAmount float64
@@ -100,6 +103,24 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("failed to query personal summary: %w", err)
 	}
+
+	raw, err := s.queryRawSummary(ctx, userID, plan.raw)
+	if err != nil {
+		return nil, err
+	}
+	rowCount += int(raw.rowCount)
+	costAmount += raw.cost
+	totalTokens += raw.tokens
+	codeLines += raw.codeLines
+	addNullInt64(&inputTokensNull, raw.input)
+	addNullInt64(&outputTokensNull, raw.output)
+	addNullInt64(&cacheReadNull, raw.cacheRead)
+	addNullInt64(&cacheWriteNull, raw.cacheWrite)
+	addNullInt64(&reasoningNull, raw.reasoning)
+	addNullInt64(&activeDurationNull, raw.duration)
+	addNullInt64(&messageCountNull, raw.messages)
+	addNullInt64(&userMsgNull, raw.userMessages)
+	maxNullTime(&maxComputedAtNull, raw.maxReceivedAt)
 
 	costAmtStr := fmt.Sprintf("%.8f", costAmount)
 	costCurr := "USD"
@@ -133,7 +154,7 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 		messageMetric = domain.MetricBigInt{Value: &zeroStr, Supported: true}
 		userMessageMetric = domain.MetricBigInt{Value: &zeroStr, Supported: true}
 	} else {
-		extSupported := minAggVerNull.Valid && minAggVerNull.Int64 >= 2
+		extSupported := (!minAggVerNull.Valid || minAggVerNull.Int64 >= 2)
 
 		if extSupported && inputTokensNull.Valid && cacheReadNull.Valid {
 			inpVal := uint64(inputTokensNull.Int64) + uint64(cacheReadNull.Int64)
@@ -255,10 +276,12 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 }
 
 func (s *analyticsStore) GetTokenTrend(ctx context.Context, userID string, r domain.TimeRange, mode string, agentID, providerID, modelID *string) (*domain.TrendResponse, error) {
-	fromStr, toStr, _ := rangeDateStrings(r)
+	plan := planUTCAggregates(r)
+	fromStr, toStr := plan.fromDate, plan.toDate
 
 	hasModelFilter := (providerID != nil && *providerID != "" && *providerID != "all") || (modelID != nil && *modelID != "" && *modelID != "all")
 
+	// sqlc-dynamic-reviewed: optional dimensions select one of two fixed aggregate tables.
 	var query string
 	var args []interface{}
 	args = append(args, userID, fromStr, toStr)
@@ -388,6 +411,45 @@ func (s *analyticsStore) GetTokenTrend(ctx context.Context, userID string, r dom
 		return nil, fmt.Errorf("token trend rows iteration error: %w", err)
 	}
 
+	rawPoints, err := s.queryRawTokenPoints(ctx, userID, r.Timezone, plan.raw, agentID, providerID, modelID)
+	if err != nil {
+		return nil, err
+	}
+	pointByDate := make(map[string]domain.TrendPoint, len(points)+len(rawPoints))
+	for _, point := range points {
+		pointByDate[point.Date] = point
+	}
+	addValue := func(target **string, delta uint64) {
+		value := delta
+		if *target != nil {
+			if parsed, parseErr := strconv.ParseUint(**target, 10, 64); parseErr == nil {
+				value += parsed
+			}
+		}
+		formatted := fmt.Sprintf("%d", value)
+		*target = &formatted
+	}
+	for _, rawPoint := range rawPoints {
+		point := pointByDate[rawPoint.date]
+		point.Date = rawPoint.date
+		if mode == "structure" {
+			addValue(&point.InputTokens, rawPoint.input)
+			addValue(&point.OutputTokens, rawPoint.output)
+			addValue(&point.CacheReadTokens, rawPoint.cacheRead)
+			addValue(&point.CacheWriteTokens, rawPoint.cacheWrite)
+			addValue(&point.ReasoningTokens, rawPoint.reasoning)
+		} else {
+			addValue(&point.TokenTotal, rawPoint.total)
+		}
+		pointByDate[rawPoint.date] = point
+		maxNullTime(&maxComputedAtNull, rawPoint.watermark)
+	}
+	points = points[:0]
+	for _, point := range pointByDate {
+		points = append(points, point)
+	}
+	sort.Slice(points, func(i, j int) bool { return points[i].Date < points[j].Date })
+
 	var dataWatermarkAt *time.Time
 	if maxComputedAtNull.Valid {
 		tVal := maxComputedAtNull.Time
@@ -413,7 +475,8 @@ func (s *analyticsStore) GetTokenTrend(ctx context.Context, userID string, r dom
 }
 
 func (s *analyticsStore) GetAgentBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error) {
-	fromStr, toStr, _ := rangeDateStrings(r)
+	plan := planUTCAggregates(r)
+	fromStr, toStr := plan.fromDate, plan.toDate
 
 	query := `
 		SELECT
@@ -470,6 +533,30 @@ func (s *analyticsStore) GetAgentBreakdown(ctx context.Context, userID string, r
 		return nil, fmt.Errorf("agent breakdown rows iteration error: %w", err)
 	}
 
+	rawBoundaryItems, err := s.queryRawBreakdown(ctx, userID, plan.raw, "agent_id")
+	if err != nil {
+		return nil, err
+	}
+	byAgent := make(map[string]uint64, len(rawItems)+len(rawBoundaryItems))
+	for _, item := range rawItems {
+		byAgent[item.agentID] += item.tokens
+	}
+	for _, item := range rawBoundaryItems {
+		byAgent[item.key] += item.tokens
+		sumTokens += item.tokens
+		maxNullTime(&maxComputedAtNull, item.watermark)
+	}
+	rawItems = rawItems[:0]
+	for agentID, tokens := range byAgent {
+		rawItems = append(rawItems, rawAgentItem{agentID: agentID, tokens: tokens})
+	}
+	sort.Slice(rawItems, func(i, j int) bool {
+		if rawItems[i].tokens == rawItems[j].tokens {
+			return rawItems[i].agentID < rawItems[j].agentID
+		}
+		return rawItems[i].tokens > rawItems[j].tokens
+	})
+
 	items := make([]domain.BreakdownItem, 0)
 	for _, it := range rawItems {
 		pct := 0.0
@@ -504,7 +591,8 @@ func (s *analyticsStore) GetAgentBreakdown(ctx context.Context, userID string, r
 }
 
 func (s *analyticsStore) GetModelBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error) {
-	fromStr, toStr, _ := rangeDateStrings(r)
+	plan := planUTCAggregates(r)
+	fromStr, toStr := plan.fromDate, plan.toDate
 
 	query := `
 		SELECT
@@ -560,6 +648,30 @@ func (s *analyticsStore) GetModelBreakdown(ctx context.Context, userID string, r
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("model breakdown rows iteration error: %w", err)
 	}
+
+	rawBoundaryItems, err := s.queryRawBreakdown(ctx, userID, plan.raw, "model_id")
+	if err != nil {
+		return nil, err
+	}
+	byModel := make(map[string]uint64, len(rawItems)+len(rawBoundaryItems))
+	for _, item := range rawItems {
+		byModel[item.modelID] += item.tokens
+	}
+	for _, item := range rawBoundaryItems {
+		byModel[item.key] += item.tokens
+		sumTokens += item.tokens
+		maxNullTime(&maxComputedAtNull, item.watermark)
+	}
+	rawItems = rawItems[:0]
+	for modelID, tokens := range byModel {
+		rawItems = append(rawItems, rawModelItem{modelID: modelID, tokens: tokens})
+	}
+	sort.Slice(rawItems, func(i, j int) bool {
+		if rawItems[i].tokens == rawItems[j].tokens {
+			return rawItems[i].modelID < rawItems[j].modelID
+		}
+		return rawItems[i].tokens > rawItems[j].tokens
+	})
 
 	items := make([]domain.BreakdownItem, 0)
 	for _, it := range rawItems {
@@ -695,7 +807,8 @@ func (s *analyticsStore) GetSkillRanking(ctx context.Context, userID string, r d
 }
 
 func (s *analyticsStore) GetActivityCalendar(ctx context.Context, userID string, r domain.TimeRange) (*domain.CalendarResponse, error) {
-	fromStr, toStr, loc := rangeDateStrings(r)
+	plan := planUTCAggregates(r)
+	fromStr, toStr, loc := plan.fromDate, plan.toDate, plan.loc
 
 	query := `
 		SELECT
@@ -744,6 +857,15 @@ func (s *analyticsStore) GetActivityCalendar(ctx context.Context, userID string,
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("activity calendar rows iteration error: %w", err)
+	}
+
+	rawPoints, err := s.queryRawTokenPoints(ctx, userID, r.Timezone, plan.raw, nil, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, point := range rawPoints {
+		dayTokenMap[point.date] += point.total
+		maxNullTime(&maxComputedAtNull, point.watermark)
 	}
 
 	var days []domain.CalendarDay
@@ -827,6 +949,7 @@ func (s *analyticsStore) GetActivityCalendar(ctx context.Context, userID string,
 func (s *analyticsStore) GetActivity(ctx context.Context, userID string, q domain.ActivityQuery) ([]domain.ActivityRow, error) {
 	fromStr, toStr, _ := rangeDateStrings(q.Range)
 	modelDetail := q.ProviderID != nil || q.ModelID != nil
+	// sqlc-dynamic-reviewed: validated optional filters and pagination require a bounded query builder.
 	var query string
 	args := []interface{}{userID, fromStr, toStr}
 	if modelDetail {

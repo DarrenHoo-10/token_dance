@@ -9,6 +9,7 @@ import (
 	mysqlerr "github.com/go-sql-driver/mysql"
 
 	"tokendance/internal/domain"
+	"tokendance/internal/telemetry"
 )
 
 type ingestStore struct {
@@ -184,6 +185,9 @@ func (s *ingestStore) CommitIngest(ctx context.Context, batch domain.IngestBatch
 }
 
 func insertUsageEvent(ctx context.Context, tx *sql.Tx, batch domain.IngestBatch, userID string, event *domain.UsageEvent) (bool, error) {
+	if err := telemetry.ValidateSafeExtensionJSON(event.EventType, event.SafeExtensionJSON); err != nil {
+		return false, err
+	}
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO usage_events (
 			event_id, schema_version, batch_id, installation_id, user_id,

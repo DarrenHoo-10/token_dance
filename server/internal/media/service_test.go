@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -41,6 +42,27 @@ func createTestJPEG(w, h int) []byte {
 	buf := new(bytes.Buffer)
 	_ = jpeg.Encode(buf, img, nil)
 	return buf.Bytes()
+}
+
+type failingPresignStorage struct{ provider.ObjectStorage }
+
+func (s failingPresignStorage) PresignUploadURL(context.Context, string, time.Duration) (string, error) {
+	return "", errors.New("presign unavailable")
+}
+
+func TestCreateAvatarIntentReturnsDependencyErrorOnPresignFailure(t *testing.T) {
+	st := memory.NewMemoryStore()
+	cfg := config.DefaultConfig()
+	svc := NewService(st, cfg, clock.NewMockClock(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)), failingPresignStorage{ObjectStorage: provider.NewMemoryObjectStorage("")})
+	_, err := svc.CreateAvatarIntent(context.Background(), "usr_presign_failure", CreateAvatarIntentInput{
+		ContentType: "image/png",
+		ByteSize:    1024,
+		Sha256:      "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+	})
+	var appErr *domain.AppError
+	if !errors.As(err, &appErr) || appErr.HTTPStatus != 503 || appErr.Code != "DEPENDENCY_UNAVAILABLE" {
+		t.Fatalf("expected dependency unavailable error, got %v", err)
+	}
 }
 
 func TestMediaService(t *testing.T) {

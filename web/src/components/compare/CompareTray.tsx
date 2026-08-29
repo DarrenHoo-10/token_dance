@@ -26,7 +26,7 @@ export const CompareTray: React.FC<CompareTrayProps> = ({
   };
 
   return (
-    <div className="compare-tray-float" role="region" aria-label="Compare Tray">
+    <div className="compare-tray-float" role="region" aria-label={t('explore.compareTrayTitle')}>
       <strong style={{ fontSize: 13, marginRight: 8 }}>{t('explore.compareTrayTitle')}</strong>
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>

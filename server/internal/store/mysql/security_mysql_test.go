@@ -111,6 +111,69 @@ func TestMySQL_LoginFailureCounterConcurrency(t *testing.T) {
 	}
 }
 
+func TestMySQL_RegistrationCodeFailuresIncrementAndLockAtomically(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	auth := st.Auth()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	challengeID := "ech_register_wrong_race"
+	challenge := domain.EmailChallenge{
+		ChallengeID:     challengeID,
+		EmailLookupHash: crypto.SHA256([]byte("register-race@example.com")),
+		EmailCiphertext: []byte("register-race@example.com"),
+		EmailKeyVersion: 1,
+		ChallengeType:   domain.ChallengeTypeRegister,
+		CodeHash:        crypto.SHA256([]byte("123456")),
+		CodeKeyVersion:  1,
+		ChallengeStatus: domain.ChallengeStatusPending,
+		MaxAttempts:     6,
+		SendCount:       1,
+		ExpiresAt:       now.Add(10 * time.Minute),
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	outbox := domain.EmailOutbox{
+		EmailID:              "eml_register_wrong_race",
+		ChallengeID:          &challengeID,
+		IdempotencyKey:       crypto.SHA256([]byte("idemp:register-wrong-race")),
+		TemplateKey:          "auth.register_code",
+		Locale:               "en-US",
+		RecipientCiphertext:  []byte("register-race@example.com"),
+		PayloadCiphertext:    []byte(`{"code":"123456"}`),
+		EncryptionKeyVersion: 1,
+		DeliveryStatus:       "pending",
+		NextAttemptAt:        now,
+		ExpiresAt:            now.Add(10 * time.Minute),
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	if _, err := auth.CreateOrReplaceEmailChallenge(ctx, challenge, outbox); err != nil {
+		t.Fatalf("create registration challenge: %v", err)
+	}
+
+	const concurrency = 12
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			_ = auth.RecordEmailChallengeFailure(context.Background(), challengeID, now)
+		}()
+	}
+	wg.Wait()
+
+	var attempts uint16
+	var status domain.ChallengeStatus
+	if err := db.QueryRowContext(ctx, "SELECT attempt_count, challenge_status FROM email_challenges WHERE challenge_id = ?", challengeID).Scan(&attempts, &status); err != nil {
+		t.Fatalf("read registration challenge: %v", err)
+	}
+	if attempts != challenge.MaxAttempts || status != domain.ChallengeStatusLocked {
+		t.Fatalf("expected exactly %d attempts and locked status, got attempts=%d status=%s", challenge.MaxAttempts, attempts, status)
+	}
+}
+
 // TestMySQL_PasswordResetConcurrencyAndReplay verifies that multiple concurrent
 // reset password transactions with the same code do not race or replay.
 func TestMySQL_PasswordResetConcurrencyAndReplay(t *testing.T) {

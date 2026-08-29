@@ -30,6 +30,7 @@ import (
 	"tokendance/internal/privacy"
 	"tokendance/internal/profile"
 	"tokendance/internal/search"
+	"tokendance/internal/telemetry"
 )
 
 type Handlers struct {
@@ -906,45 +907,45 @@ type TelemetryBatchInput struct {
 }
 
 type TelemetryEventInput struct {
-	EventID              string                 `json:"eventId"`
-	SchemaVersion        uint16                 `json:"schemaVersion"`
-	AdapterID            string                 `json:"adapterId"`
-	AdapterVersion       string                 `json:"adapterVersion"`
-	AgentID              string                 `json:"agentId"`
-	AgentVersion         *string                `json:"agentVersion,omitempty"`
-	ProviderID           *string                `json:"providerId,omitempty"`
-	ModelID              *string                `json:"modelId,omitempty"`
-	EventType            string                 `json:"eventType"`
-	Accuracy             string                 `json:"accuracy"`
-	SourceKind           string                 `json:"sourceKind"`
-	OccurredAt           string                 `json:"occurredAt"`
-	SessionHash          *string                `json:"sessionHash,omitempty"`
-	ParentSessionHash    *string                `json:"parentSessionHash,omitempty"`
-	TurnHash             *string                `json:"turnHash,omitempty"`
-	ToolCallHash         *string                `json:"toolCallHash,omitempty"`
-	TokenInput           *uint64                `json:"tokenInput,omitempty"`
-	TokenOutput          *uint64                `json:"tokenOutput,omitempty"`
-	TokenCacheRead       *uint64                `json:"tokenCacheRead,omitempty"`
-	TokenCacheWrite      *uint64                `json:"tokenCacheWrite,omitempty"`
-	TokenReasoning       *uint64                `json:"tokenReasoning,omitempty"`
-	TokenTotal           *uint64                `json:"tokenTotal,omitempty"`
-	DurationMS           *uint64                `json:"durationMs,omitempty"`
-	Success              *bool                  `json:"success,omitempty"`
-	ToolCategory         *string                `json:"toolCategory,omitempty"`
-	SkillKey             *string                `json:"skillKey,omitempty"`
-	SkillPublicName      *string                `json:"skillPublicName,omitempty"`
-	SkillInvokeType      *string                `json:"skillInvokeType,omitempty"`
-	PluginKey            *string                `json:"pluginKey,omitempty"`
-	CodeGeneratedLines   *uint64                `json:"codeGeneratedLines,omitempty"`
-	CodeAcceptedLines    *uint64                `json:"codeAcceptedLines,omitempty"`
-	CodeAddedLines       *uint64                `json:"codeAddedLines,omitempty"`
-	CodeDeletedLines     *uint64                `json:"codeDeletedLines,omitempty"`
-	CodeFileCount        *uint32                `json:"codeFileCount,omitempty"`
-	CostAmount           *string                `json:"costAmount,omitempty"`
-	CostCurrency         *string                `json:"costCurrency,omitempty"`
-	CostSource           *string                `json:"costSource,omitempty"`
-	PrivacyPolicyVersion uint16                 `json:"privacyPolicyVersion"`
-	Metadata             map[string]interface{} `json:"metadata,omitempty"`
+	EventID              string             `json:"eventId"`
+	SchemaVersion        uint16             `json:"schemaVersion"`
+	AdapterID            string             `json:"adapterId"`
+	AdapterVersion       string             `json:"adapterVersion"`
+	AgentID              string             `json:"agentId"`
+	AgentVersion         *string            `json:"agentVersion,omitempty"`
+	ProviderID           *string            `json:"providerId,omitempty"`
+	ModelID              *string            `json:"modelId,omitempty"`
+	EventType            string             `json:"eventType"`
+	Accuracy             string             `json:"accuracy"`
+	SourceKind           string             `json:"sourceKind"`
+	OccurredAt           string             `json:"occurredAt"`
+	SessionHash          *string            `json:"sessionHash,omitempty"`
+	ParentSessionHash    *string            `json:"parentSessionHash,omitempty"`
+	TurnHash             *string            `json:"turnHash,omitempty"`
+	ToolCallHash         *string            `json:"toolCallHash,omitempty"`
+	TokenInput           *uint64            `json:"tokenInput,omitempty"`
+	TokenOutput          *uint64            `json:"tokenOutput,omitempty"`
+	TokenCacheRead       *uint64            `json:"tokenCacheRead,omitempty"`
+	TokenCacheWrite      *uint64            `json:"tokenCacheWrite,omitempty"`
+	TokenReasoning       *uint64            `json:"tokenReasoning,omitempty"`
+	TokenTotal           *uint64            `json:"tokenTotal,omitempty"`
+	DurationMS           *uint64            `json:"durationMs,omitempty"`
+	Success              *bool              `json:"success,omitempty"`
+	ToolCategory         *string            `json:"toolCategory,omitempty"`
+	SkillKey             *string            `json:"skillKey,omitempty"`
+	SkillPublicName      *string            `json:"skillPublicName,omitempty"`
+	SkillInvokeType      *string            `json:"skillInvokeType,omitempty"`
+	PluginKey            *string            `json:"pluginKey,omitempty"`
+	CodeGeneratedLines   *uint64            `json:"codeGeneratedLines,omitempty"`
+	CodeAcceptedLines    *uint64            `json:"codeAcceptedLines,omitempty"`
+	CodeAddedLines       *uint64            `json:"codeAddedLines,omitempty"`
+	CodeDeletedLines     *uint64            `json:"codeDeletedLines,omitempty"`
+	CodeFileCount        *uint32            `json:"codeFileCount,omitempty"`
+	CostAmount           *string            `json:"costAmount,omitempty"`
+	CostCurrency         *string            `json:"costCurrency,omitempty"`
+	CostSource           *string            `json:"costSource,omitempty"`
+	PrivacyPolicyVersion uint16             `json:"privacyPolicyVersion"`
+	Metadata             telemetry.Metadata `json:"metadata,omitempty"`
 }
 
 type telemetryRejection struct {
@@ -1162,12 +1163,9 @@ func normalizeTelemetryEvent(in *TelemetryEventInput) (*domain.UsageEvent, strin
 			}
 		}
 	}
-	metadata, err := json.Marshal(in.Metadata)
-	if err != nil {
-		return nil, "INVALID_METADATA"
-	}
-	if len(in.Metadata) == 0 {
-		metadata = nil
+	metadata, code := telemetry.NormalizeMetadata(in.EventType, in.Metadata)
+	if code != "" {
+		return nil, code
 	}
 	return &domain.UsageEvent{
 		EventID: eventID, SchemaVersion: in.SchemaVersion, AdapterID: in.AdapterID, AdapterVersion: in.AdapterVersion,

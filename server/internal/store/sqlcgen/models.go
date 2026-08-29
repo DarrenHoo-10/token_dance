@@ -330,9 +330,13 @@ type PublicUserProfile struct {
 }
 
 type SchemaMigration struct {
-	Version        string    `json:"version"`
-	ChecksumSha256 []byte    `json:"checksum_sha256"`
-	AppliedAt      time.Time `json:"applied_at"`
+	Version        string       `json:"version"`
+	ChecksumSha256 []byte       `json:"checksum_sha256"`
+	Dirty          bool         `json:"dirty"`
+	StatementCount uint32       `json:"statement_count"`
+	LastStatement  uint32       `json:"last_statement"`
+	AppliedAt      sql.NullTime `json:"applied_at"`
+	UpdatedAt      time.Time    `json:"updated_at"`
 }
 
 type UsageEvent struct {

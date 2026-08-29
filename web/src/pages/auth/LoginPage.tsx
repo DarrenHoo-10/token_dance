@@ -89,8 +89,8 @@ export const LoginPage: React.FC = () => {
               {t('common.brandTagline')}
             </p>
             <h1 style={{ fontSize: 48, color: 'white', letterSpacing: '-0.05em', lineHeight: 1.05 }}>
-              Let Token <br />
-              <span style={{ color: 'var(--lime)' }}>Dance.</span>
+              {t('auth.loginHeroLine1')} <br />
+              <span style={{ color: 'var(--lime)' }}>{t('auth.loginHeroLine2')}</span>
             </h1>
             <p style={{ marginTop: 20, color: '#b2bbb4', fontSize: 16, lineHeight: 1.6 }}>
               {t('common.heroSub')}

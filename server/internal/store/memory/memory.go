@@ -175,6 +175,34 @@ func (m *MemoryStore) UpdateEmailChallengeAttempts(ctx context.Context, challeng
 	return nil
 }
 
+func (m *MemoryStore) RecordEmailChallengeFailure(ctx context.Context, challengeID string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	challenge, ok := m.emailChallenges[challengeID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	if challenge.ChallengeStatus == domain.ChallengeStatusLocked {
+		return domain.ErrChallengeLocked
+	}
+	if challenge.ChallengeStatus != domain.ChallengeStatusPending {
+		return domain.ErrChallengeInvalid
+	}
+	if now.After(challenge.ExpiresAt) {
+		challenge.ChallengeStatus = domain.ChallengeStatusExpired
+		challenge.UpdatedAt = now
+		return domain.ErrChallengeExpired
+	}
+	challenge.AttemptCount++
+	challenge.UpdatedAt = now
+	if challenge.AttemptCount >= challenge.MaxAttempts {
+		challenge.ChallengeStatus = domain.ChallengeStatusLocked
+		return domain.ErrChallengeLocked
+	}
+	return domain.ErrChallengeInvalid
+}
+
 func (m *MemoryStore) CompleteRegistrationTx(ctx context.Context, in store.RegistrationTxInput) (*domain.UserSession, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

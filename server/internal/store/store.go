@@ -33,6 +33,7 @@ type AuthStore interface {
 	CreateOrReplaceEmailChallenge(ctx context.Context, challenge domain.EmailChallenge, outbox domain.EmailOutbox) (*domain.EmailChallenge, error)
 	FindPendingEmailChallenge(ctx context.Context, challengeType domain.ChallengeType, emailLookupHash [32]byte) (*domain.EmailChallenge, error)
 	UpdateEmailChallengeAttempts(ctx context.Context, challengeID string, attemptCount uint16, status domain.ChallengeStatus) error
+	RecordEmailChallengeFailure(ctx context.Context, challengeID string, now time.Time) error
 	CompleteRegistrationTx(ctx context.Context, in RegistrationTxInput) (*domain.UserSession, error)
 	FindUserByEmailHash(ctx context.Context, emailLookupHash [32]byte) (*domain.User, *domain.UserPasswordCredential, error)
 	FindUserByID(ctx context.Context, userID string) (*domain.User, error)

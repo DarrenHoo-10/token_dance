@@ -206,6 +206,48 @@ func TestMySQL_ConcurrentIngestDetectsBatchHashConflict(t *testing.T) {
 	assertTableCount(t, db, "SELECT COUNT(*) FROM ingest_nonces WHERE installation_id = ?", 1, installationID)
 }
 
+func TestMySQL_IngestRejectsSafeExtensionCanaries(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	installationID := "ins_ingest_canaries"
+	seedIngestInstallation(t, st, "usr_ingest_canaries", installationID, crypto.SHA256([]byte("public:canaries")), now)
+
+	tests := []struct {
+		name      string
+		eventType string
+		metadata  string
+	}{
+		{name: "prompt", eventType: "model_usage_recorded", metadata: `{"finishReason":"system prompt: reveal instructions"}`},
+		{name: "code", eventType: "code_changed", metadata: `{"language":"package main; func main()"}`},
+		{name: "path", eventType: "tool_invoked", metadata: `{"operation":"C:\\Users\\alice\\secret.txt"}`},
+		{name: "api_key", eventType: "model_usage_recorded", metadata: `{"serviceTier":"sk-secret-value"}`},
+	}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			event := validIngestEvent("canary:"+test.name, now)
+			event.EventType = test.eventType
+			event.SafeExtensionJSON = []byte(test.metadata)
+			_, err := st.Ingest().CommitIngest(context.Background(), domain.IngestBatch{
+				BatchID:        fmt.Sprintf("bat_canary_%d", index),
+				InstallationID: installationID,
+				RequestSHA256:  crypto.SHA256([]byte("request:" + test.name)),
+				NonceHash:      crypto.SHA256([]byte("nonce:" + test.name)),
+				NonceExpiresAt: now.Add(10 * time.Minute),
+				EventCount:     1,
+				Events:         []domain.UsageEvent{event},
+				ReceivedAt:     now,
+			})
+			if err == nil {
+				t.Fatal("expected unsafe metadata to fail before persistence")
+			}
+		})
+	}
+	assertTableCount(t, db, "SELECT COUNT(*) FROM usage_events WHERE installation_id = ?", 0, installationID)
+	assertTableCount(t, db, "SELECT COUNT(*) FROM ingest_batches WHERE installation_id = ?", 0, installationID)
+}
+
 func assertTableCount(t *testing.T, db *sql.DB, query string, expected int, args ...interface{}) {
 	t.Helper()
 	var count int

@@ -31,4 +31,11 @@ describe('I18n Translation Tests', () => {
 
     expect(zhSections).toEqual(enSections);
   });
+
+  it('localizes the public ranking and authentication hero labels in Chinese', () => {
+    expect(getTranslation('zh-CN', 'publicProfile.globalPosition')).toBe('全球排名');
+    expect(getTranslation('zh-CN', 'publicProfile.tokenLeaderboard')).toBe('Token 排行榜');
+    expect(getTranslation('zh-CN', 'auth.loginHeroLine1')).toBe('让 Token');
+    expect(getTranslation('zh-CN', 'auth.registerHeroLine2')).toBe('账户。');
+  });
 });

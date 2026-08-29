@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { Button } from './Button';
+import { useLocale } from '@/context/LocaleContext';
 
 export interface ModalProps {
   isOpen: boolean;
@@ -16,6 +17,8 @@ export const Modal: React.FC<ModalProps> = ({
   children,
   footer,
 }) => {
+  const { t } = useLocale();
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
@@ -45,7 +48,7 @@ export const Modal: React.FC<ModalProps> = ({
           <h2 id="modal-title" style={{ fontSize: 18, margin: 0 }}>
             {title}
           </h2>
-          <Button variant="ghost" size="sm" onClick={onClose} aria-label="Close modal">
+          <Button variant="ghost" size="sm" onClick={onClose} aria-label={t('common.close')}>
             ✕
           </Button>
         </div>

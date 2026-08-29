@@ -46,6 +46,9 @@ export const enUS = {
     expired: 'Expired',
     unknown: 'Unknown',
     notSupported: 'Not supported',
+    languageSelector: 'Language selector',
+    mainNavigation: 'Main navigation',
+    userMenu: 'User menu',
   },
   nav: {
     tokenBoard: 'TokenBoard',
@@ -111,6 +114,10 @@ export const enUS = {
     editorialControlCopy: 'Change visibility at any time',
     editorialInsightTitle: 'Real insights',
     editorialInsightCopy: 'Every metric comes from your data',
+    loginHeroLine1: 'Let Token',
+    loginHeroLine2: 'Dance.',
+    registerHeroLine1: 'Create your',
+    registerHeroLine2: 'Account.',
   },
   onboarding: {
     stepIndicator: 'Profile setup · 2 / 3',

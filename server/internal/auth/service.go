@@ -403,16 +403,14 @@ func (s *Service) CompleteRegistration(ctx context.Context, email, code, passwor
 
 	expectedCodeHash := hashWithVersion(s.cfg.VerificationCodeKeys, challenge.CodeKeyVersion, strings.TrimSpace(code))
 	if !hmac.Equal(expectedCodeHash[:], challenge.CodeHash[:]) {
-		newAttempts := challenge.AttemptCount + 1
-		newStatus := domain.ChallengeStatusPending
-		if newAttempts >= challenge.MaxAttempts {
-			newStatus = domain.ChallengeStatusLocked
+		failureErr := s.store.RecordEmailChallengeFailure(ctx, challenge.ChallengeID, now)
+		if errors.Is(failureErr, domain.ErrChallengeLocked) {
+			return nil, domain.NewAppError(400, "AUTH_INVALID_CREDENTIALS", "auth.codeLocked", "too many failed attempts, please request a new code", nil, failureErr)
 		}
-		_ = s.store.UpdateEmailChallengeAttempts(ctx, challenge.ChallengeID, newAttempts, newStatus)
-		if newStatus == domain.ChallengeStatusLocked {
-			return nil, domain.NewAppError(400, "AUTH_INVALID_CREDENTIALS", "auth.codeLocked", "too many failed attempts, please request a new code", nil, nil)
+		if failureErr != nil && !errors.Is(failureErr, domain.ErrChallengeInvalid) {
+			return nil, domain.NewAppError(400, "AUTH_INVALID_CREDENTIALS", "auth.invalidCode", "invalid verification code", nil, failureErr)
 		}
-		return nil, domain.NewAppError(400, "AUTH_INVALID_CREDENTIALS", "auth.invalidCode", "invalid verification code", nil, nil)
+		return nil, domain.NewAppError(400, "AUTH_INVALID_CREDENTIALS", "auth.invalidCode", "invalid verification code", nil, domain.ErrChallengeInvalid)
 	}
 
 	// Check password hash

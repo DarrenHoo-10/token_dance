@@ -2,10 +2,10 @@ import React from 'react';
 import { useLocale } from '@/context/LocaleContext';
 
 export const LocaleSwitcher: React.FC = () => {
-  const { locale, setLocale } = useLocale();
+  const { locale, setLocale, t } = useLocale();
 
   return (
-    <div className="locale-switcher" aria-label="Language selector">
+    <div className="locale-switcher" aria-label={t('common.languageSelector')}>
       <button
         type="button"
         className={`locale-btn ${locale === 'zh-CN' ? 'active' : ''}`}

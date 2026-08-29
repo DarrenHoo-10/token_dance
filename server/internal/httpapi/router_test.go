@@ -29,6 +29,20 @@ import (
 
 var testStorage = provider.NewMemoryObjectStorage("")
 
+func TestAvatarUploadIntentWebContractDecodesByteSize(t *testing.T) {
+	body := []byte(`{"contentType":"image/png","byteSize":4096,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/me/avatar-upload-intents", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	var input media.CreateAvatarIntentInput
+
+	if err := decodeJSON(rec, req, 1024, &input); err != nil {
+		t.Fatalf("decode web avatar upload contract: %v", err)
+	}
+	if input.ByteSize != 4096 {
+		t.Fatalf("expected byteSize 4096 through Go decoder, got %d", input.ByteSize)
+	}
+}
+
 func setupTestRouter(t *testing.T) (http.Handler, *auth.Service, *memory.MemoryStore) {
 	st := memory.NewMemoryStore()
 	cfg := config.DefaultConfig()

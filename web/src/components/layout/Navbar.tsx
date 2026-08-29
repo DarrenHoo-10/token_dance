@@ -33,7 +33,7 @@ export const Navbar: React.FC = () => {
         <span>TokenDance</span>
       </NavLink>
 
-      <nav className="nav-links" aria-label="Main Navigation">
+      <nav className="nav-links" aria-label={t('common.mainNavigation')}>
         <NavLink
           to="/me"
           className={({ isActive }) =>
@@ -102,7 +102,7 @@ export const Navbar: React.FC = () => {
                 border: '1px solid var(--border-light)',
               }}
               onClick={() => setDropdownOpen((prev) => !prev)}
-              aria-label="User menu"
+              aria-label={t('common.userMenu')}
             >
               {user.avatarUrl ? (
                 <img src={user.avatarUrl} alt={user.displayName} />

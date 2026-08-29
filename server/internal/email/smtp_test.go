@@ -14,10 +14,11 @@ import (
 )
 
 type fakeSMTPServer struct {
-	listener net.Listener
-	wg       sync.WaitGroup
-	mu       sync.Mutex
-	messages []string
+	listener       net.Listener
+	wg             sync.WaitGroup
+	mu             sync.Mutex
+	messages       []string
+	closeAfterData bool
 }
 
 func newFakeSMTPServer(t *testing.T) *fakeSMTPServer {
@@ -51,6 +52,11 @@ func (s *fakeSMTPServer) latest() string {
 		return ""
 	}
 	return s.messages[len(s.messages)-1]
+}
+func (s *fakeSMTPServer) all() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.messages...)
 }
 
 func (s *fakeSMTPServer) serve(conn net.Conn) {
@@ -99,7 +105,12 @@ func (s *fakeSMTPServer) serve(conn net.Conn) {
 			}
 			s.mu.Lock()
 			s.messages = append(s.messages, message.String())
+			closeAfterData := s.closeAfterData
+			s.closeAfterData = false
 			s.mu.Unlock()
+			if closeAfterData {
+				return
+			}
 			writeLine("250 queued")
 		case "QUIT":
 			writeLine("221 bye")
@@ -121,13 +132,47 @@ func TestSMTPProviderIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	if !strings.HasPrefix(messageID, "smtp_em_123_") {
+	if messageID != "smtp_em_123" {
 		t.Fatalf("unexpected provider message ID: %s", messageID)
 	}
 	delivered := server.latest()
 	for _, expected := range []string{"From: \"TokenDance\" <noreply@example.com>", "To: <user@example.com>", "Subject: TokenDance: verification code", `{"code":"123456"}`} {
 		if !strings.Contains(delivered, expected) {
 			t.Fatalf("message missing %q:\n%s", expected, delivered)
+		}
+	}
+}
+
+func TestSMTPProviderCrashAfterAcceptRetryUsesSameMessageID(t *testing.T) {
+	server := newFakeSMTPServer(t)
+	defer server.close()
+	server.mu.Lock()
+	server.closeAfterData = true
+	server.mu.Unlock()
+
+	provider, err := NewSMTPProvider(SMTPOptions{Host: "localhost", Port: server.port(), Username: "smtp-user", Password: "smtp-pass", From: "TokenDance <noreply@example.com>", TLSMode: "none", Timeout: 2 * time.Second})
+	if err != nil {
+		t.Fatalf("constructor: %v", err)
+	}
+	msg := Message{EmailID: "em_crash_retry", Recipient: "user@example.com", TemplateKey: "verification_code", Locale: "en-US", PayloadJSON: `{"code":"123456"}`, CreatedAt: time.Now()}
+	if _, err := provider.Send(context.Background(), msg); err == nil {
+		t.Fatal("expected ambiguous delivery error after server accepted DATA and dropped the connection")
+	}
+	providerID, err := provider.Send(context.Background(), msg)
+	if err != nil {
+		t.Fatalf("retry send: %v", err)
+	}
+	if providerID != "smtp_em_crash_retry" {
+		t.Fatalf("unexpected deterministic provider ID: %s", providerID)
+	}
+	messages := server.all()
+	if len(messages) != 2 {
+		t.Fatalf("expected accepted original and retry, got %d messages", len(messages))
+	}
+	const expectedHeader = "Message-ID: <smtp_em_crash_retry@tokendance>"
+	for index, delivered := range messages {
+		if !strings.Contains(delivered, expectedHeader) {
+			t.Fatalf("delivery %d missing stable Message-ID:\n%s", index, delivered)
 		}
 	}
 }

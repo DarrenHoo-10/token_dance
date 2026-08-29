@@ -185,6 +185,61 @@ func (s *authStore) UpdateEmailChallengeAttempts(ctx context.Context, challengeI
 	return nil
 }
 
+func (s *authStore) RecordEmailChallengeFailure(ctx context.Context, challengeID string, now time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("failed to begin challenge failure tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var status domain.ChallengeStatus
+	var attemptCount, maxAttempts uint16
+	var expiresAt time.Time
+	if err := tx.QueryRowContext(ctx, `
+		SELECT challenge_status, attempt_count, max_attempts, expires_at
+		FROM email_challenges
+		WHERE challenge_id = ?
+		FOR UPDATE`, challengeID).Scan(&status, &attemptCount, &maxAttempts, &expiresAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		return fmt.Errorf("failed to lock email challenge: %w", err)
+	}
+	if status == domain.ChallengeStatusLocked {
+		return domain.ErrChallengeLocked
+	}
+	if status != domain.ChallengeStatusPending {
+		return domain.ErrChallengeInvalid
+	}
+	if now.After(expiresAt) {
+		if _, err := tx.ExecContext(ctx, `UPDATE email_challenges SET challenge_status = 'expired', updated_at = ? WHERE challenge_id = ?`, now, challengeID); err != nil {
+			return fmt.Errorf("failed to expire email challenge: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("failed to commit expired email challenge: %w", err)
+		}
+		return domain.ErrChallengeExpired
+	}
+
+	attemptCount++
+	status = domain.ChallengeStatusPending
+	resultErr := domain.ErrChallengeInvalid
+	if attemptCount >= maxAttempts {
+		status = domain.ChallengeStatusLocked
+		resultErr = domain.ErrChallengeLocked
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE email_challenges
+		SET attempt_count = ?, challenge_status = ?, updated_at = ?
+		WHERE challenge_id = ?`, attemptCount, status, now, challengeID); err != nil {
+		return fmt.Errorf("failed to record email challenge failure: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("failed to commit email challenge failure: %w", err)
+	}
+	return resultErr
+}
+
 func (s *authStore) CompleteRegistrationTx(ctx context.Context, in store.RegistrationTxInput) (*domain.UserSession, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

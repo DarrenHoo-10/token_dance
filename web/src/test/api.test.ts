@@ -117,6 +117,23 @@ describe('ApiHttpClient Contract Tests against OpenAPI & Backend Fixtures', () =
     expect(urls[1]).toContain('/api/v1/me/summary?range=30d');
   });
 
+  it('sends the OpenAPI byteSize field for avatar upload intents', async () => {
+    let capturedBody = '';
+    global.fetch = vi.fn().mockImplementation((_url, init) => {
+      capturedBody = String(init?.body || '');
+      return Promise.resolve({
+        ok: true,
+        status: 201,
+        headers: new Headers({ 'Content-Type': 'application/json' }),
+        json: () => Promise.resolve({ objectId: 'upl_123', uploadUrl: 'https://upload.example.test', expiresAt: '2026-08-30T12:00:00Z' }),
+      });
+    });
+
+    await api.createAvatarUploadIntent('image/png', 4096, 'a'.repeat(64));
+
+    expect(JSON.parse(capturedBody)).toEqual({ contentType: 'image/png', byteSize: 4096, sha256: 'a'.repeat(64) });
+  });
+
   it('handles 204 No Content gracefully', async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,

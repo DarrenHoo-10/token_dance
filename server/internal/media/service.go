@@ -96,14 +96,14 @@ func (s *Service) CreateAvatarIntent(ctx context.Context, userID string, in Crea
 		UpdatedAt:     now,
 	}
 
+	uploadURL, err := s.storage.PresignUploadURL(ctx, objectKey, 10*time.Minute)
+	if err != nil {
+		return nil, domain.NewAppError(503, "DEPENDENCY_UNAVAILABLE", "media.storageUnavailable", "object storage is temporarily unavailable", nil, err)
+	}
+
 	created, err := s.store.CreateAvatarUploadIntent(ctx, obj)
 	if err != nil {
 		return nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to create avatar upload intent", nil, err)
-	}
-
-	uploadURL, err := s.storage.PresignUploadURL(ctx, objectKey, 10*time.Minute)
-	if err != nil {
-		uploadURL = fmt.Sprintf("https://upload.tokendance.dev/%s?signedToken=%s", objectKey, objectID)
 	}
 
 	return &CreateAvatarIntentResult{

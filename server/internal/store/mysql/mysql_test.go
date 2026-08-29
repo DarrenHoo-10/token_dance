@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1383,5 +1384,144 @@ func TestMySQL_CompareHiddenValues(t *testing.T) {
 	}
 	if userPriv.DisplayName != nil || userPriv.AvatarURL != nil || userPriv.TokenTotal != nil || userPriv.Rank != nil {
 		t.Errorf("expected cmp_private to have no values leaked, got %+v", userPriv)
+	}
+}
+
+func seedBoundaryAnalyticsFixture(t *testing.T, db *sql.DB, st *Store, userID string, now time.Time, dailyDates []string, dailyTokens []uint64, events []struct {
+	at     time.Time
+	tokens uint64
+	agent  string
+}) {
+	t.Helper()
+	seedTestUser(t, db, st, userID, userID[4:], "Boundary User", userID+"@example.test", false, now)
+	ctx := context.Background()
+	installationID := "ins_" + userID[4:]
+	batchID := "bat_" + userID[4:]
+	publicKey := crypto.SHA256([]byte(installationID))
+	_, err := db.ExecContext(ctx, `INSERT INTO installations
+		(installation_id, user_id, device_public_key, os_type, architecture, collector_version, installation_status, status_version, registered_at, updated_at)
+		VALUES (?, ?, ?, 'windows', 'amd64', 'test', 'active', 1, ?, ?)`, installationID, userID, publicKey[:], now, now)
+	if err != nil {
+		t.Fatalf("insert boundary installation: %v", err)
+	}
+	requestHash := crypto.SHA256([]byte(batchID))
+	_, err = db.ExecContext(ctx, `INSERT INTO ingest_batches
+		(batch_id, installation_id, request_sha256, event_count, accepted_count, duplicate_count, rejected_count, batch_status, received_at, committed_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, 0, 0, 'committed', ?, ?, ?)`, batchID, installationID, requestHash[:], len(events), len(events), now, now, now)
+	if err != nil {
+		t.Fatalf("insert boundary batch: %v", err)
+	}
+	for i, event := range events {
+		eventHash := crypto.SHA256([]byte(fmt.Sprintf("%s-%d", userID, i)))
+		_, err = db.ExecContext(ctx, `INSERT INTO usage_events
+			(event_id, schema_version, batch_id, installation_id, user_id, adapter_id, adapter_version, agent_id,
+			event_type, accuracy, source_kind, occurred_at, received_at, token_input, token_output, token_total,
+			privacy_policy_version)
+			VALUES (?, 1, ?, ?, ?, 'fixture', '1', ?, 'model_usage_recorded', 'exact', 'runtime_stream', ?, ?, ?, 0, ?, 1)`,
+			eventHash[:], batchID, installationID, userID, event.agent, event.at, now, event.tokens, event.tokens)
+		if err != nil {
+			t.Fatalf("insert boundary usage event %d: %v", i, err)
+		}
+	}
+	for i, date := range dailyDates {
+		_, err = db.ExecContext(ctx, `INSERT INTO daily_user_agent_metrics
+			(metric_date, user_id, agent_id, exact_token_total, derived_token_total,
+			token_input_total, token_output_total, token_cache_read_total, token_cache_write_total, token_reasoning_total,
+			code_generated_lines, active_duration_ms, message_count, user_message_count,
+			cost_amount, cost_currency, source_max_event_pk, aggregation_version, computed_at)
+			VALUES (?, ?, 'claude-code', ?, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'USD', ?, 2, ?)`,
+			date, userID, dailyTokens[i], dailyTokens[i], i+1, now)
+		if err != nil {
+			t.Fatalf("insert boundary daily aggregate: %v", err)
+		}
+	}
+}
+
+func TestMySQL_NonUTCBoundaryCorrectionAsiaShanghai(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+	now := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
+	userID := "usr_boundary_shanghai"
+	seedBoundaryAnalyticsFixture(t, db, st, userID, now,
+		[]string{"2026-08-30", "2026-08-31"}, []uint64{100, 200},
+		[]struct {
+			at     time.Time
+			tokens uint64
+			agent  string
+		}{
+			{time.Date(2026, 8, 29, 18, 0, 0, 0, time.UTC), 10, "codex"},
+			{time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC), 100, "claude-code"},
+			{time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC), 200, "claude-code"},
+			{time.Date(2026, 9, 1, 8, 0, 0, 0, time.UTC), 20, "cursor"},
+		})
+	r := domain.TimeRange{Key: domain.TimeRangeCustom, From: time.Date(2026, 8, 29, 16, 0, 0, 0, time.UTC), To: time.Date(2026, 9, 1, 15, 59, 59, 999999999, time.UTC), Timezone: "Asia/Shanghai"}
+
+	summary, err := st.Analytics().GetPersonalSummary(context.Background(), userID, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Metrics.TotalTokens.Value == nil || *summary.Metrics.TotalTokens.Value != "330" {
+		t.Fatalf("expected boundary-corrected total 330 without full-day double count, got %+v", summary.Metrics.TotalTokens)
+	}
+	breakdown, err := st.Analytics().GetAgentBreakdown(context.Background(), userID, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(breakdown.Items) != 3 || breakdown.Items[0].TokenTotal != "300" {
+		t.Fatalf("unexpected boundary-corrected breakdown: %+v", breakdown.Items)
+	}
+	calendar, err := st.Analytics().GetActivityCalendar(context.Background(), userID, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calendarTotal uint64
+	for _, day := range calendar.Days {
+		value, _ := strconv.ParseUint(day.TokenTotal, 10, 64)
+		calendarTotal += value
+	}
+	if calendarTotal != 330 {
+		t.Fatalf("expected calendar total 330, got %d (%+v)", calendarTotal, calendar.Days)
+	}
+}
+
+func TestMySQL_NonUTCBoundaryCorrectionDSTFallback(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+	now := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
+	userID := "usr_boundary_dst"
+	seedBoundaryAnalyticsFixture(t, db, st, userID, now,
+		[]string{"2026-11-01", "2026-11-02"}, []uint64{500, 600},
+		[]struct {
+			at     time.Time
+			tokens uint64
+			agent  string
+		}{
+			{time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC), 50, "codex"},
+			{time.Date(2026, 11, 1, 6, 30, 0, 0, time.UTC), 500, "claude-code"},
+			{time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC), 600, "claude-code"},
+			{time.Date(2026, 11, 3, 3, 0, 0, 0, time.UTC), 70, "cursor"},
+		})
+	r := domain.TimeRange{Key: domain.TimeRangeCustom, From: time.Date(2026, 10, 31, 4, 0, 0, 0, time.UTC), To: time.Date(2026, 11, 3, 4, 59, 59, 999999999, time.UTC), Timezone: "America/New_York"}
+
+	summary, err := st.Analytics().GetPersonalSummary(context.Background(), userID, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Metrics.TotalTokens.Value == nil || *summary.Metrics.TotalTokens.Value != "1220" {
+		t.Fatalf("expected DST boundary-corrected total 1220, got %+v", summary.Metrics.TotalTokens)
+	}
+	trend, err := st.Analytics().GetTokenTrend(context.Background(), userID, r, "total", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var trendTotal uint64
+	for _, point := range trend.Points {
+		if point.TokenTotal != nil {
+			value, _ := strconv.ParseUint(*point.TokenTotal, 10, 64)
+			trendTotal += value
+		}
+	}
+	if trendTotal != 1220 {
+		t.Fatalf("expected DST trend total 1220, got %d (%+v)", trendTotal, trend.Points)
 	}
 }

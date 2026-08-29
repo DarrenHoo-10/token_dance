@@ -272,7 +272,7 @@ class ApiHttpClient {
   public async createAvatarUploadIntent(contentType: string, sizeBytes: number, sha256: string): Promise<AvatarUploadIntentResponse> {
     return this.request<AvatarUploadIntentResponse>('/me/avatar-upload-intents', {
       method: 'POST',
-      body: JSON.stringify({ contentType, sizeBytes, sha256 }),
+      body: JSON.stringify({ contentType, byteSize: sizeBytes, sha256 }),
     });
   }
 

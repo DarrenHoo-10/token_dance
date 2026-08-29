@@ -124,8 +124,8 @@ export const RegisterPage: React.FC = () => {
               {t('common.brandTagline')}
             </p>
             <h1 style={{ fontSize: 48, color: 'white', letterSpacing: '-0.05em', lineHeight: 1.05 }}>
-              Create your <br />
-              <span style={{ color: 'var(--lime)' }}>Account.</span>
+              {t('auth.registerHeroLine1')} <br />
+              <span style={{ color: 'var(--lime)' }}>{t('auth.registerHeroLine2')}</span>
             </h1>
             <p style={{ marginTop: 20, color: '#b2bbb4', fontSize: 16, lineHeight: 1.6 }}>
               {t('common.heroSub')}

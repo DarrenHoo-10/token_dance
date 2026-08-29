@@ -625,6 +625,8 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
+        '503':
+          $ref: '#/components/responses/ErrorResponse'
       parameters:
       - $ref: '#/components/parameters/CSRFToken'
   /api/v1/me/avatar-upload-intents/{id}/complete:
@@ -2905,6 +2907,51 @@ components:
           minimum: 1
         metadata:
           type: object
+          description: >-
+            Optional privacy-safe scalar extensions. At most 8 fields are accepted, keys are limited to 32 bytes,
+            and string values to 128 bytes. Keys are registered per event type: session_started (sessionMode, trigger),
+            session_ended (endReason), turn_started (trigger), turn_completed (finishReason), model_usage_recorded
+            (finishReason, serviceTier), tool_invoked (operation, success), skill_invoked (invocationSource),
+            code_changed (language), cost_recorded (billingCategory, estimated), and agent_spawned (spawnReason).
+            Unknown keys, non-scalar values, and prompt, response, reasoning, code body, tool argument, environment,
+            real path, credential, secret, or API-key canaries are rejected per event.
+          maxProperties: 8
+          properties:
+            sessionMode:
+              type: string
+              maxLength: 128
+            trigger:
+              type: string
+              maxLength: 128
+            endReason:
+              type: string
+              maxLength: 128
+            finishReason:
+              type: string
+              maxLength: 128
+            serviceTier:
+              type: string
+              maxLength: 128
+            operation:
+              type: string
+              maxLength: 128
+            success:
+              type: boolean
+            invocationSource:
+              type: string
+              maxLength: 128
+            language:
+              type: string
+              maxLength: 128
+            billingCategory:
+              type: string
+              maxLength: 128
+            estimated:
+              type: boolean
+            spawnReason:
+              type: string
+              maxLength: 128
+          additionalProperties: false
     TelemetryBatch:
       type: object
       additionalProperties: false

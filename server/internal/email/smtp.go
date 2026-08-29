@@ -84,7 +84,7 @@ func (p *SMTPProvider) Send(ctx context.Context, msg Message) (string, error) {
 	if err != nil {
 		return "", &ProviderError{Code: "INVALID_RECIPIENT", Message: "recipient address is invalid", Err: err}
 	}
-	if hasHeaderInjection(msg.TemplateKey) || hasHeaderInjection(msg.Locale) {
+	if strings.TrimSpace(msg.EmailID) == "" || hasHeaderInjection(msg.EmailID) || hasHeaderInjection(msg.TemplateKey) || hasHeaderInjection(msg.Locale) {
 		return "", &ProviderError{Code: "INVALID_MESSAGE", Message: "message contains invalid header data"}
 	}
 
@@ -130,7 +130,7 @@ func (p *SMTPProvider) Send(ctx context.Context, msg Message) (string, error) {
 	if err != nil {
 		return "", classifySMTPError("SMTP_DATA_REJECTED", "SMTP message rejected", err)
 	}
-	providerID := fmt.Sprintf("smtp_%s_%d", msg.EmailID, time.Now().UTC().UnixNano())
+	providerID := fmt.Sprintf("smtp_%s", msg.EmailID)
 	if err := writeSMTPMessage(writer, p.from, *recipient, msg, providerID); err != nil {
 		_ = writer.Close()
 		return "", transientSMTPError("SMTP_WRITE_FAILED", "write SMTP message", err)
