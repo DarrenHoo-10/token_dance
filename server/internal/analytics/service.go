@@ -60,6 +60,8 @@ func (s *Service) ResolveTimeRange(key, userTZ, customFrom, customTo string) (do
 		from = startOfToday.AddDate(0, 0, -6)
 	case domain.TimeRange30d:
 		from = startOfToday.AddDate(0, 0, -29)
+	case domain.TimeRange10w:
+		from = startOfToday.AddDate(0, 0, -69)
 	case domain.TimeRangeAll:
 		from = time.Date(1970, 1, 1, 0, 0, 0, 0, loc)
 	case domain.TimeRangeCustom:

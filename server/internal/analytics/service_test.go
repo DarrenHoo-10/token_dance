@@ -29,6 +29,13 @@ func TestTimeRangesDSTAllAndCustom(t *testing.T) {
 	if _, err := svc.ResolveTimeRange("custom", "UTC", "2026-04-01", "2026-03-01"); err == nil {
 		t.Fatal("expected invalid reversed custom range")
 	}
+	tenWeeks, err := svc.ResolveTimeRange("10w", "UTC", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if days := int(tenWeeks.To.Sub(tenWeeks.From).Hours()/24) + 1; days != 70 {
+		t.Fatalf("expected 70-day calendar range, got %d", days)
+	}
 }
 
 func TestActivityFiltersAndPagination(t *testing.T) {

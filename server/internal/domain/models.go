@@ -473,6 +473,7 @@ const (
 	TimeRangeToday  TimeRangeKey = "today"
 	TimeRange7d     TimeRangeKey = "7d"
 	TimeRange30d    TimeRangeKey = "30d"
+	TimeRange10w    TimeRangeKey = "10w"
 	TimeRangeAll    TimeRangeKey = "all"
 	TimeRangeCustom TimeRangeKey = "custom"
 )
