@@ -36,4 +36,23 @@ Reviewer `01a04eb7-211a-7211-aef1-bf2bb62d0602`（`sol-medium`）拒绝集成，
 | Implementer-fix | `01a04ec3-6bd3-7db3-88e4-07d0b866afd6` | `gemini-3.7` | Worker/Email/Export/Deletion/Media 真实 Provider 和 fencing | 运行中 |
 | Implementer-fix | `01a04ec3-6bda-77e1-9188-e6bb87684d5d` | `gemini-3.7` | OpenAPI lint、生成/校验客户端、Web 契约/本地化/returnTo | 运行中 |
 
+## 模型策略更新
+
+用户在实施过程中明确要求：后续所有子代理统一使用工具可用的 `sol-medium`。从该指令起，不再为新子代理选择 `gemini-3.7` 或 `grok-4.6`；已完成的历史调用保留原模型记录以供审计。
+
+## `sol-medium` 全量修复阶段
+
+在用户更新模型要求后，新增子代理全部使用 `sol-medium`：
+
+| 子代理 ID | 任务 | 结果 |
+| --- | --- | --- |
+| `01a04eeb-89c0-7e80-9200-cffaf6f68e0a` | 真实浏览器发现的隐私 payload、本地化和硬编码指标 | 完成，提交 `29089ec` |
+| `01a04ef5-c723-7fc2-b6e3-1df6b8eb6b32` | Production SMTP 与共享 S3-compatible Provider | 完成，提交 `6fb7248` |
+| `01a04ef5-c72f-78e0-9304-ffc5780761d1` | 删除任务 claim/fencing/cancellation/残留对账 | 完成，提交 `b86ef6f` |
+| `01a04ef5-c735-7162-98ab-05d522a17d1e` | 独立密钥环、稳定 CSRF、限流、OpenAPI、媒体哈希、时间范围与活动 API | 完成，提交 `3f4f313` |
+| `01a04f03-2ecc-7763-b85f-8a51b95c6db9` | sqlc 生成代码与 clean-diff 校验 | 完成，提交 `4c5790d` |
+| `01a04ef5-c729-7850-ad68-ed79d816ee83`、`01a04f03-2ec6-7a61-bdfc-df298d730026` | Ed25519 telemetry ingest | 两次均因 harness `keepalive` 序列化错误中断；其代码与测试已留在共享工作区，随后由 `3f4f313` 集成并通过 MySQL ingest 测试 |
+
+协调代理在真实 MySQL 全套测试中额外发现 `mediaStore.CreateAvatarUploadIntent` 对空 SHA 指针解引用并修复为可空参数绑定；修复后全套 Go/MySQL 测试通过。
+
 后续集成、复审、fallback 和最终 reviewer 结论继续追加到本文件。

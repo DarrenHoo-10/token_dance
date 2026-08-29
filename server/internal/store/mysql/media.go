@@ -29,7 +29,7 @@ func (s *mediaStore) CreateAvatarUploadIntent(ctx context.Context, obj domain.Us
 		obj.ObjectKey,
 		nullStringFromPtr(obj.ContentType),
 		obj.ByteSize,
-		obj.ContentSha256[:],
+		bytes32PtrSlice(obj.ContentSha256),
 		obj.UploadStatus,
 		obj.ExpiresAt,
 		obj.CreatedAt,
