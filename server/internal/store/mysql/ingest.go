@@ -194,20 +194,20 @@ func insertUsageEvent(ctx context.Context, tx *sql.Tx, batch domain.IngestBatch,
 			event_id, schema_version, batch_id, installation_id, user_id,
 			adapter_id, adapter_version, agent_id, agent_version, provider_id, model_id,
 			event_type, accuracy, source_kind, occurred_at, received_at,
-			session_hash, parent_session_hash, turn_hash, tool_call_hash,
+			session_hash, parent_session_hash, turn_hash, turn_trigger, tool_call_hash,
 			token_input, token_output, token_cache_read, token_cache_write, token_reasoning, token_total,
 			duration_ms, success, tool_category, skill_key, skill_public_name, skill_invoke_type, plugin_key,
 			code_generated_lines, code_accepted_lines, code_added_lines, code_deleted_lines, code_file_count,
 			cost_amount, cost_currency, cost_source, privacy_policy_version, safe_extension_json
 		) VALUES (
 			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+			?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		)
 		ON DUPLICATE KEY UPDATE event_id = event_id`,
 		event.EventID[:], event.SchemaVersion, batch.BatchID, batch.InstallationID, userID,
 		event.AdapterID, event.AdapterVersion, event.AgentID, event.AgentVersion, event.ProviderID, event.ModelID,
 		event.EventType, event.Accuracy, event.SourceKind, event.OccurredAt, batch.ReceivedAt,
-		bytes32PtrSlice(event.SessionHash), bytes32PtrSlice(event.ParentSessionHash), bytes32PtrSlice(event.TurnHash), bytes32PtrSlice(event.ToolCallHash),
+		bytes32PtrSlice(event.SessionHash), bytes32PtrSlice(event.ParentSessionHash), bytes32PtrSlice(event.TurnHash), event.TurnTrigger, bytes32PtrSlice(event.ToolCallHash),
 		event.TokenInput, event.TokenOutput, event.TokenCacheRead, event.TokenCacheWrite, event.TokenReasoning, event.TokenTotal,
 		event.DurationMS, event.Success, event.ToolCategory, bytes32PtrSlice(event.SkillKey), event.SkillPublicName, event.SkillInvokeType, bytes32PtrSlice(event.PluginKey),
 		event.CodeGeneratedLines, event.CodeAcceptedLines, event.CodeAddedLines, event.CodeDeletedLines, event.CodeFileCount,

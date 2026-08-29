@@ -922,6 +922,7 @@ type TelemetryEventInput struct {
 	SessionHash          *string            `json:"sessionHash,omitempty"`
 	ParentSessionHash    *string            `json:"parentSessionHash,omitempty"`
 	TurnHash             *string            `json:"turnHash,omitempty"`
+	TurnTrigger          *string            `json:"turnTrigger,omitempty"`
 	ToolCallHash         *string            `json:"toolCallHash,omitempty"`
 	TokenInput           *uint64            `json:"tokenInput,omitempty"`
 	TokenOutput          *uint64            `json:"tokenOutput,omitempty"`
@@ -1177,6 +1178,13 @@ func normalizeTelemetryEvent(in *TelemetryEventInput) (*domain.UsageEvent, strin
 	if !validTelemetryAccuracy(in.Accuracy) || !validTelemetrySourceKind(in.SourceKind) {
 		return nil, "INVALID_EVENT_CLASSIFICATION"
 	}
+	if in.TurnTrigger != nil {
+		switch *in.TurnTrigger {
+		case "user", "system", "automation", "resume", "unknown":
+		default:
+			return nil, "INVALID_EVENT_CLASSIFICATION"
+		}
+	}
 	for _, value := range []*string{in.SessionHash, in.ParentSessionHash, in.TurnHash, in.ToolCallHash, in.SkillKey, in.PluginKey} {
 		if value != nil {
 			if _, ok := decodeTelemetryHash(*value); !ok {
@@ -1193,7 +1201,7 @@ func normalizeTelemetryEvent(in *TelemetryEventInput) (*domain.UsageEvent, strin
 		AgentID: in.AgentID, AgentVersion: in.AgentVersion, ProviderID: in.ProviderID, ModelID: in.ModelID,
 		EventType: in.EventType, Accuracy: in.Accuracy, SourceKind: in.SourceKind, OccurredAt: occurredAt.UTC(),
 		SessionHash: decodeOptionalTelemetryHash(in.SessionHash), ParentSessionHash: decodeOptionalTelemetryHash(in.ParentSessionHash),
-		TurnHash: decodeOptionalTelemetryHash(in.TurnHash), ToolCallHash: decodeOptionalTelemetryHash(in.ToolCallHash),
+		TurnHash: decodeOptionalTelemetryHash(in.TurnHash), TurnTrigger: in.TurnTrigger, ToolCallHash: decodeOptionalTelemetryHash(in.ToolCallHash),
 		TokenInput: in.TokenInput, TokenOutput: in.TokenOutput, TokenCacheRead: in.TokenCacheRead, TokenCacheWrite: in.TokenCacheWrite,
 		TokenReasoning: in.TokenReasoning, TokenTotal: in.TokenTotal, DurationMS: in.DurationMS, Success: in.Success,
 		ToolCategory: in.ToolCategory, SkillKey: decodeOptionalTelemetryHash(in.SkillKey), SkillPublicName: in.SkillPublicName,

@@ -341,6 +341,7 @@ type UsageEvent struct {
 	SessionHash          *[32]byte
 	ParentSessionHash    *[32]byte
 	TurnHash             *[32]byte
+	TurnTrigger          *string
 	ToolCallHash         *[32]byte
 	TokenInput           *uint64
 	TokenOutput          *uint64

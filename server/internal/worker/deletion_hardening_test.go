@@ -11,9 +11,11 @@ import (
 	"time"
 
 	"tokendance/internal/clock"
+	"tokendance/internal/domain"
 	"tokendance/internal/email"
 	"tokendance/internal/migrate"
 	"tokendance/internal/provider"
+	mysqlstore "tokendance/internal/store/mysql"
 )
 
 func resetDeletionTestSchema(t *testing.T, db *sql.DB) {
@@ -309,7 +311,7 @@ func TestDeletionDatabaseAndObjectFailureInjectionRetainsRetryableState(t *testi
 	})
 }
 
-func TestDeletionInstallationPreservesOtherInstallationFactsAndRebuildsAggregates(t *testing.T) {
+func TestDeletionInstallationTwoInstallationGoldenMetricsAndLeaderboardMySQL8034(t *testing.T) {
 	db := getTestMySQLDB(t)
 	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
 	defer func() {
@@ -318,55 +320,164 @@ func TestDeletionInstallationPreservesOtherInstallationFactsAndRebuildsAggregate
 	}()
 	resetDeletionTestSchema(t, db)
 
+	ctx := context.Background()
 	userID := "usr_two_installations"
+	competitorID := "usr_golden_competitor"
 	targetID := "ins_delete_target"
 	survivorID := "ins_keep_survivor"
 	occurredAt := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
 	seedDeletionUser(t, db, userID, "active")
+	seedDeletionUser(t, db, competitorID, "active")
 	seedDeletionUsage(t, db, userID, targetID, occurredAt)
 	seedDeletionUsage(t, db, userID, survivorID, occurredAt)
-	if _, err := db.Exec(`UPDATE usage_events SET token_total = CASE installation_id WHEN ? THEN 300 ELSE 700 END, provider_id = 'provider', model_id = 'model' WHERE user_id = ?`, targetID, userID); err != nil {
-		t.Fatalf("seed per-installation event metrics: %v", err)
+
+	for _, publicUser := range []struct{ id, handle, name string }{
+		{userID, "golden_user", "Golden User"},
+		{competitorID, "golden_competitor", "Golden Competitor"},
+	} {
+		if _, err := db.Exec(`UPDATE users SET handle = ?, display_name = ?, onboarding_completed_at = CURRENT_TIMESTAMP(3), leaderboard_visibility = 'public' WHERE user_id = ?`, publicUser.handle, publicUser.name, publicUser.id); err != nil {
+			t.Fatalf("publish user identity: %v", err)
+		}
+		if _, err := db.Exec(`INSERT INTO user_privacy_settings (user_id, public_profile_enabled) VALUES (?, TRUE)`, publicUser.id); err != nil {
+			t.Fatalf("seed public privacy: %v", err)
+		}
+		if _, err := db.Exec(`INSERT INTO public_user_profiles (user_id, handle, display_name, profile_status, source_profile_version, source_privacy_version, published_at) VALUES (?, ?, ?, 'published', 1, 1, CURRENT_TIMESTAMP(3))`, publicUser.id, publicUser.handle, publicUser.name); err != nil {
+			t.Fatalf("seed public projection: %v", err)
+		}
 	}
-	if _, err := db.Exec(`INSERT INTO daily_user_agent_metrics (metric_date, user_id, agent_id, exact_token_total, aggregation_version, computed_at, updated_at) VALUES ('2026-08-10', ?, 'agent', 1000, 1, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3)), ('2026-08-09', ?, 'archived-agent', 900, 1, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))`, userID, userID); err != nil {
-		t.Fatalf("seed combined aggregate: %v", err)
+
+	if _, err := db.Exec(`
+		UPDATE usage_events
+		SET provider_id = 'provider', model_id = 'model', turn_hash = UNHEX(SHA2(CONCAT('turn:', installation_id), 256)),
+			token_total = CASE installation_id WHEN ? THEN 100 ELSE 200 END,
+			token_input = CASE installation_id WHEN ? THEN 60 ELSE 100 END,
+			token_output = CASE installation_id WHEN ? THEN 20 ELSE 60 END,
+			token_cache_read = CASE installation_id WHEN ? THEN 10 ELSE 20 END,
+			token_reasoning = CASE installation_id WHEN ? THEN 10 ELSE 20 END,
+			accuracy = CASE installation_id WHEN ? THEN 'exact' ELSE 'derived' END,
+			code_generated_lines = CASE installation_id WHEN ? THEN 10 ELSE 20 END,
+			cost_amount = CASE installation_id WHEN ? THEN 2.0 ELSE 0.5 END,
+			cost_currency = 'USD', cost_source = 'estimated_price_table'
+		WHERE user_id = ?`, targetID, targetID, targetID, targetID, targetID, targetID, targetID, targetID, userID); err != nil {
+		t.Fatalf("seed model usage facts: %v", err)
 	}
-	if _, err := db.Exec(`INSERT INTO daily_user_agent_model_metrics (metric_date, user_id, agent_id, provider_id, model_id, exact_token_total, aggregation_version, computed_at, updated_at) VALUES ('2026-08-10', ?, 'agent', 'provider', 'model', 1000, 1, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))`, userID); err != nil {
-		t.Fatalf("seed combined model aggregate: %v", err)
+
+	insertEvent := func(installationID, suffix, eventType, accuracy, turnKey, trigger string, duration, tokenTotal, codeLines interface{}, cost interface{}, costSource string) {
+		t.Helper()
+		batchID := "bat_" + installationID[4:]
+		_, err := db.Exec(`
+			INSERT INTO usage_events (
+				event_id, schema_version, batch_id, installation_id, user_id,
+				adapter_id, adapter_version, agent_id, provider_id, model_id,
+				event_type, accuracy, source_kind, occurred_at, session_hash, turn_hash,
+				turn_trigger, token_total, duration_ms, code_generated_lines,
+				cost_amount, cost_currency, cost_source, privacy_policy_version
+			) VALUES (
+				UNHEX(SHA2(?, 256)), 1, ?, ?, ?, 'adapter', '1.0.0', 'agent', 'provider', 'model',
+				?, ?, 'runtime_stream', ?, UNHEX(SHA2(?, 256)), UNHEX(SHA2(?, 256)),
+				NULLIF(?, ''), ?, ?, ?, ?, IF(? IS NULL, NULL, 'USD'), NULLIF(?, ''), 1
+			)`, "event:"+installationID+":"+suffix, batchID, installationID, userID,
+			eventType, accuracy, occurredAt, "session:"+installationID, turnKey, trigger, tokenTotal, duration, codeLines, cost, cost, costSource)
+		if err != nil {
+			t.Fatalf("insert %s event: %v", suffix, err)
+		}
 	}
-	seedDeletionRequest(t, db, "del_one_installation", userID, targetID, "installation", `{"installationId":"ins_delete_target"}`, nil)
+
+	insertEvent(targetID, "turn-start", "turn_started", "exact", "turn:"+targetID, "user", nil, nil, nil, nil, "")
+	insertEvent(targetID, "turn-complete", "turn_completed", "exact", "turn:"+targetID, "", 100, nil, nil, nil, "")
+	insertEvent(targetID, "provider-cost", "cost_recorded", "exact", "turn:"+targetID, "", nil, nil, nil, 1.0, "provider_reported")
+	insertEvent(targetID, "correlated-code", "code_changed", "correlated", "turn:"+targetID, "", nil, nil, 40, nil, "")
+	insertEvent(survivorID, "turn-start", "turn_started", "exact", "turn:"+survivorID, "system", nil, nil, nil, nil, "")
+	insertEvent(survivorID, "turn-complete", "turn_completed", "exact", "turn:"+survivorID, "", 200, nil, nil, nil, "")
+	insertEvent(survivorID, "estimated-token", "model_usage_recorded", "estimated", "turn:estimated", "", nil, 300, nil, nil, "")
+	insertEvent(survivorID, "correlated-token", "model_usage_recorded", "correlated", "turn:correlated", "", nil, 400, 7, nil, "")
+	insertEvent(survivorID, "session-end", "session_ended", "exact", "turn:session-end", "", 1000, nil, nil, nil, "")
 
 	worker := NewWorkerWithFull(db, clock.RealClock{}, nil, email.DefaultSink, provider.NewMemoryObjectStorage(""))
-	if processed, err := worker.ProcessDeletionRequests(context.Background()); err != nil || processed != 1 {
+	if processed, err := worker.ProcessAggregates(ctx); err != nil || processed != 1 {
+		t.Fatalf("normal canonical aggregation: processed=%d err=%v", processed, err)
+	}
+
+	assertGolden := func(stage string, exact, derived, estimated, input, output, cacheRead, reasoning, duration, messages, userMessages, generated, correlated uint64, cost string) {
+		t.Helper()
+		var gotExact, gotDerived, gotEstimated, gotInput, gotOutput, gotCacheRead, gotReasoning uint64
+		var gotDuration, gotMessages, gotUserMessages, gotGenerated, gotCorrelated uint64
+		var gotCost string
+		var version uint32
+		err := db.QueryRow(`
+			SELECT exact_token_total, derived_token_total, estimated_token_total,
+				token_input_total, token_output_total, token_cache_read_total, token_reasoning_total,
+				active_duration_ms, message_count, user_message_count,
+				code_generated_lines, correlated_code_lines, cost_amount, aggregation_version
+			FROM daily_user_agent_metrics
+			WHERE metric_date = '2026-08-10' AND user_id = ? AND agent_id = 'agent'`, userID).Scan(
+			&gotExact, &gotDerived, &gotEstimated, &gotInput, &gotOutput, &gotCacheRead, &gotReasoning,
+			&gotDuration, &gotMessages, &gotUserMessages, &gotGenerated, &gotCorrelated, &gotCost, &version)
+		if err != nil {
+			t.Fatalf("read %s golden aggregate: %v", stage, err)
+		}
+		if gotExact != exact || gotDerived != derived || gotEstimated != estimated || gotInput != input ||
+			gotOutput != output || gotCacheRead != cacheRead || gotReasoning != reasoning || gotDuration != duration ||
+			gotMessages != messages || gotUserMessages != userMessages || gotGenerated != generated ||
+			gotCorrelated != correlated || gotCost != cost || version != aggregationVersion {
+			t.Fatalf("%s golden mismatch: exact=%d derived=%d estimated=%d input=%d output=%d cache=%d reasoning=%d duration=%d messages=%d userMessages=%d generated=%d correlated=%d cost=%s version=%d",
+				stage, gotExact, gotDerived, gotEstimated, gotInput, gotOutput, gotCacheRead, gotReasoning,
+				gotDuration, gotMessages, gotUserMessages, gotGenerated, gotCorrelated, gotCost, version)
+		}
+	}
+	assertGolden("before", 100, 200, 300, 160, 80, 30, 30, 1100, 4, 1, 30, 47, "1.50000000")
+
+	store := mysqlstore.NewStore(db)
+	summary, err := store.Analytics().GetPersonalSummary(ctx, userID, domain.TimeRange{Key: domain.TimeRange30d, From: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC), To: time.Date(2026, 8, 11, 0, 0, 0, 0, time.UTC), Timezone: "UTC"})
+	if err != nil {
+		t.Fatalf("read supported metrics before deletion: %v", err)
+	}
+	if summary.AggregationVersion != aggregationVersion || !summary.Metrics.InputContextTokens.Supported || !summary.Metrics.OutputTokens.Supported || !summary.Metrics.ActiveDurationMs.Supported || !summary.Metrics.MessageCount.Supported || !summary.Metrics.UserMessageCount.Supported {
+		t.Fatalf("aggregation v2 supported flags missing: %+v", summary)
+	}
+
+	if _, err := db.Exec(`INSERT INTO daily_user_agent_metrics (metric_date, user_id, agent_id, exact_token_total, derived_token_total, aggregation_version, computed_at, updated_at) VALUES ('2026-08-10', ?, 'agent', 250, 0, 2, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))`, competitorID); err != nil {
+		t.Fatalf("seed competitor aggregate: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO leaderboard_snapshots (
+			snapshot_id, board_key, scope_type, scope_key, metric_key, window_start, window_end,
+			timezone_name, ranking_rule_version, participant_count, source_max_event_pk,
+			data_watermark_at, snapshot_status, generated_at, published_at
+		) VALUES ('snp_golden_install_delete', 'global', 'global', 'global', 'tokens',
+			'2026-07-12 12:00:00', '2026-08-11 12:00:00', 'UTC', 1, 2, 1,
+			CURRENT_TIMESTAMP(3), 'published', CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))`); err != nil {
+		t.Fatalf("seed published leaderboard: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO leaderboard_entries (snapshot_id, rank_no, user_id, metric_value, display_name_snapshot)
+		VALUES ('snp_golden_install_delete', 1, ?, 300, 'Golden User'),
+		       ('snp_golden_install_delete', 2, ?, 250, 'Golden Competitor')`, userID, competitorID); err != nil {
+		t.Fatalf("seed leaderboard entries: %v", err)
+	}
+
+	seedDeletionRequest(t, db, "del_one_installation", userID, targetID, "installation", `{"installationId":"ins_delete_target"}`, nil)
+	if processed, err := worker.ProcessDeletionRequests(ctx); err != nil || processed != 1 {
 		t.Fatalf("process installation deletion: processed=%d err=%v", processed, err)
 	}
 
-	var survivorEvents, survivorInstallations, survivorBatches int
-	var agentTokens, modelTokens, unaffectedTokens uint64
-	if err := db.QueryRow(`SELECT COUNT(*) FROM usage_events WHERE user_id = ? AND installation_id = ?`, userID, survivorID).Scan(&survivorEvents); err != nil {
-		t.Fatalf("count surviving events: %v", err)
+	assertGolden("after", 0, 200, 300, 100, 60, 20, 20, 1000, 2, 0, 20, 7, "0.50000000")
+	var firstUser, secondUser string
+	var firstValue, secondValue string
+	if err := db.QueryRow(`SELECT user_id, metric_value FROM leaderboard_entries WHERE snapshot_id = 'snp_golden_install_delete' AND rank_no = 1`).Scan(&firstUser, &firstValue); err != nil {
+		t.Fatalf("read rebuilt leaderboard winner: %v", err)
 	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM installations WHERE user_id = ? AND installation_id = ?`, userID, survivorID).Scan(&survivorInstallations); err != nil {
-		t.Fatalf("count surviving installation: %v", err)
+	if err := db.QueryRow(`SELECT user_id, metric_value FROM leaderboard_entries WHERE snapshot_id = 'snp_golden_install_delete' AND rank_no = 2`).Scan(&secondUser, &secondValue); err != nil {
+		t.Fatalf("read rebuilt leaderboard runner-up: %v", err)
 	}
-	if err := db.QueryRow(`SELECT COUNT(*) FROM ingest_batches WHERE installation_id = ?`, survivorID).Scan(&survivorBatches); err != nil {
-		t.Fatalf("count surviving batches: %v", err)
+	if firstUser != competitorID || firstValue != "250.000000" || secondUser != userID || secondValue != "200.000000" {
+		t.Fatalf("stale leaderboard exposed after deletion: first=%s/%s second=%s/%s", firstUser, firstValue, secondUser, secondValue)
 	}
-	if err := db.QueryRow(`SELECT exact_token_total FROM daily_user_agent_metrics WHERE metric_date = '2026-08-10' AND user_id = ? AND agent_id = 'agent'`, userID).Scan(&agentTokens); err != nil {
-		t.Fatalf("read rebuilt agent aggregate: %v", err)
-	}
-	if err := db.QueryRow(`SELECT exact_token_total FROM daily_user_agent_model_metrics WHERE metric_date = '2026-08-10' AND user_id = ? AND agent_id = 'agent' AND provider_id = 'provider' AND model_id = 'model'`, userID).Scan(&modelTokens); err != nil {
-		t.Fatalf("read rebuilt model aggregate: %v", err)
-	}
-	if err := db.QueryRow(`SELECT exact_token_total FROM daily_user_agent_metrics WHERE metric_date = '2026-08-09' AND user_id = ? AND agent_id = 'archived-agent'`, userID).Scan(&unaffectedTokens); err != nil {
-		t.Fatalf("read unaffected aggregate: %v", err)
-	}
-	if survivorEvents != 1 || survivorInstallations != 1 || survivorBatches != 1 || agentTokens != 700 || modelTokens != 700 || unaffectedTokens != 900 {
-		t.Fatalf("surviving installation facts changed: events=%d installations=%d batches=%d agentTokens=%d modelTokens=%d unaffectedTokens=%d", survivorEvents, survivorInstallations, survivorBatches, agentTokens, modelTokens, unaffectedTokens)
-	}
+
 	assertDeletionCount(t, db, `SELECT COUNT(*) FROM usage_events WHERE installation_id = ?`, 0, targetID)
 	assertDeletionCount(t, db, `SELECT COUNT(*) FROM installations WHERE installation_id = ?`, 0, targetID)
 	assertDeletionCount(t, db, `SELECT COUNT(*) FROM ingest_batches WHERE installation_id = ?`, 0, targetID)
+	assertDeletionCount(t, db, `SELECT COUNT(*) FROM usage_events WHERE installation_id = ?`, 6, survivorID)
 }
 
 func assertDeletionCount(t *testing.T, db *sql.DB, query string, expected int, args ...interface{}) {

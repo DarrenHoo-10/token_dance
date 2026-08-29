@@ -560,6 +560,9 @@ func (w *Worker) ProcessExpirations(ctx context.Context) error {
 
 // RunPass runs one full pass of all worker tasks
 func (w *Worker) RunPass(ctx context.Context) {
+	if _, err := w.ProcessAggregates(ctx); err != nil {
+		log.Printf("[Worker %s] Aggregate processing error: %v", w.workerID, err)
+	}
 	if _, err := w.ProcessOutbox(ctx); err != nil {
 		log.Printf("[Worker %s] Outbox processing error: %v", w.workerID, err)
 	}

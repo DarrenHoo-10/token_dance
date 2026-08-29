@@ -52,6 +52,40 @@ func validIngestEvent(seed string, occurredAt time.Time) domain.UsageEvent {
 	}
 }
 
+func TestMySQL_IngestPersistsTurnTrigger(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	installationID := "ins_turn_trigger"
+	seedIngestInstallation(t, st, "usr_turn_trigger", installationID, crypto.SHA256([]byte("public:turn-trigger")), now)
+	trigger := "user"
+	turnHash := crypto.SHA256([]byte("turn:trigger"))
+	event := validIngestEvent("turn-trigger", now)
+	event.EventType = "turn_started"
+	event.TurnHash = &turnHash
+	event.TurnTrigger = &trigger
+	if _, err := st.Ingest().CommitIngest(context.Background(), domain.IngestBatch{
+		BatchID:        "bat_turn_trigger",
+		InstallationID: installationID,
+		RequestSHA256:  crypto.SHA256([]byte("request:turn-trigger")),
+		NonceHash:      crypto.SHA256([]byte("nonce:turn-trigger")),
+		NonceExpiresAt: now.Add(time.Minute),
+		EventCount:     1,
+		Events:         []domain.UsageEvent{event},
+		ReceivedAt:     now,
+	}); err != nil {
+		t.Fatalf("commit turn trigger event: %v", err)
+	}
+	var stored string
+	if err := db.QueryRow(`SELECT turn_trigger FROM usage_events WHERE installation_id = ?`, installationID).Scan(&stored); err != nil {
+		t.Fatalf("read persisted turn trigger: %v", err)
+	}
+	if stored != trigger {
+		t.Fatalf("expected persisted turn trigger %q, got %q", trigger, stored)
+	}
+}
+
 func TestMySQL_ConcurrentIngestSameBatchIsIdempotent(t *testing.T) {
 	st, db, cleanup := getTestStore(t)
 	defer cleanup()
