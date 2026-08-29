@@ -1,0 +1,143 @@
+import React, { useState } from 'react';
+import { NavLink, useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocale } from '@/context/LocaleContext';
+import { useNotification } from '@/context/NotificationContext';
+import { Input } from '@/components/common/Input';
+import { Button } from '@/components/common/Button';
+import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
+import { api, ApiError } from '@/api/client';
+
+export const ResetPasswordPage: React.FC = () => {
+  const { t } = useLocale();
+  const { showToast } = useNotification();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  const initialEmail = searchParams.get('email') || '';
+
+  const [email, setEmail] = useState(initialEmail);
+  const [code, setCode] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !code || !newPassword) {
+      setErrorMessage(t('errors.http_400'));
+      return;
+    }
+
+    if (newPassword.length < 8) {
+      setErrorMessage(t('auth.newPasswordPlaceholder'));
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setErrorMessage(null);
+      await api.resetPassword({ email, code, newPassword });
+      showToast(t('auth.resetSuccess'), 'success');
+      navigate('/login');
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setErrorMessage(t(err.messageKey) || err.message);
+      } else if (err instanceof Error) {
+        setErrorMessage(err.message);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        minHeight: '100vh',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: '32px 16px',
+        backgroundColor: 'var(--bg-app)',
+        position: 'relative',
+      }}
+    >
+      <div style={{ position: 'absolute', top: 24, right: 32 }}>
+        <LocaleSwitcher />
+      </div>
+
+      <div className="panel" style={{ width: '100%', maxWidth: 420, padding: 36 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 24 }}>
+          <img src="/logo.png" alt="TokenDance" style={{ width: 28, height: 28 }} />
+          <strong style={{ fontSize: 18 }}>TokenDance</strong>
+        </div>
+
+        <h2 style={{ fontSize: 24, marginBottom: 6 }}>{t('auth.titleReset')}</h2>
+        <p className="text-muted" style={{ fontSize: 13, marginBottom: 24 }}>
+          {t('auth.resetSub')}
+        </p>
+
+        {errorMessage && (
+          <div
+            style={{
+              backgroundColor: 'var(--danger-bg)',
+              border: '1px solid var(--danger-border)',
+              color: 'var(--danger)',
+              padding: '10px 14px',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: 12,
+              marginBottom: 16,
+            }}
+          >
+            {errorMessage}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit}>
+          <Input
+            label={t('auth.email')}
+            type="email"
+            placeholder={t('auth.emailPlaceholder')}
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+
+          <Input
+            label={t('auth.code')}
+            type="text"
+            placeholder={t('auth.codePlaceholder')}
+            maxLength={6}
+            value={code}
+            onChange={(e) => setCode(e.target.value.trim())}
+            required
+          />
+
+          <Input
+            label={t('auth.newPassword')}
+            type="password"
+            placeholder={t('auth.newPasswordPlaceholder')}
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+            required
+          />
+
+          <Button
+            type="submit"
+            variant="dark"
+            loading={loading}
+            style={{ width: '100%', height: 44, marginTop: 8 }}
+          >
+            {t('auth.submitReset')}
+          </Button>
+        </form>
+
+        <div style={{ marginTop: 24, textAlign: 'center', fontSize: 12 }}>
+          <NavLink to="/login" style={{ color: 'var(--text-muted)' }}>
+            ← {t('auth.signInLink')}
+          </NavLink>
+        </div>
+      </div>
+    </div>
+  );
+};

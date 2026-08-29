@@ -1,0 +1,27 @@
+import { describe, it, expect } from 'vitest';
+import { getTranslation, translations } from '@/i18n';
+
+describe('I18n Translation Tests', () => {
+  it('resolves nested keys for zh-CN and en-US', () => {
+    const zhTitle = getTranslation('zh-CN', 'auth.titleLogin');
+    const enTitle = getTranslation('en-US', 'auth.titleLogin');
+
+    expect(zhTitle).toBe('使用邮箱登录');
+    expect(enTitle).toBe('Sign in with email');
+  });
+
+  it('interpolates parameters correctly', () => {
+    const zhBanner = getTranslation('zh-CN', 'settings.deletionPendingBanner', { date: '2026-09-06' });
+    const enBanner = getTranslation('en-US', 'settings.deletionPendingBanner', { date: '2026-09-06' });
+
+    expect(zhBanner).toContain('2026-09-06');
+    expect(enBanner).toContain('2026-09-06');
+  });
+
+  it('contains consistent root sections in both locales', () => {
+    const zhSections = Object.keys(translations['zh-CN']);
+    const enSections = Object.keys(translations['en-US']);
+
+    expect(zhSections).toEqual(enSections);
+  });
+});
