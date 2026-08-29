@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TokenDance User Product UI</title>
+  <style>
+    :root {
+      --ink: #111512;
+      --muted: #687069;
+      --line: #e4e9e4;
+      --surface: #ffffff;
+      --soft: #f5f7f4;
+      --lime: #b9f600;
+      --lime-soft: #efffd0;
+      --good: #4fb600;
+      --warning: #f2a600;
+      --danger: #e9573f;
+      --radius: 18px;
+      --shadow: 0 18px 60px rgba(36, 58, 41, .09);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; overflow: hidden; background: #f4f7f3; color: var(--ink); font-family: Arial, "Microsoft YaHei", sans-serif; }
+    body { min-width: 1180px; }
+    button, input, select { font: inherit; }
+    button { cursor: default; }
+    .screen { width: 1440px; height: 960px; margin: 0 auto; position: relative; overflow: hidden; background: linear-gradient(135deg, #fbfcfb 0%, #f6faf3 100%); }
+    .mock-label { position: absolute; right: 22px; bottom: 16px; color: #aab2aa; font: 11px/1 monospace; letter-spacing: .08em; z-index: 20; }
+    .nav { position: relative; z-index: 10; height: 76px; margin: 22px 44px 0; padding: 0 20px; display: flex; align-items: center; gap: 30px; border: 1px solid rgba(218,225,218,.95); border-radius: 22px; background: rgba(255,255,255,.94); box-shadow: 0 10px 35px rgba(37,60,41,.07); }
+    .brand { display: flex; align-items: center; gap: 10px; min-width: 190px; font-size: 21px; font-weight: 800; letter-spacing: -.04em; }
+    .brand img { width: 34px; height: 34px; object-fit: contain; }
+    .nav-links { display: flex; align-items: center; gap: 28px; font-size: 14px; color: #3d443e; }
+    .nav-links span.active { color: var(--ink); font-weight: 750; position: relative; }
+    .nav-links span.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -24px; height: 2px; background: var(--lime); }
+    .nav-search { margin-left: auto; width: 310px; height: 42px; padding: 0 15px; display: flex; align-items: center; border: 1px solid var(--line); border-radius: 12px; color: #9aa19a; font-size: 13px; background: #fbfcfb; }
+    .locale-switch { height: 34px; padding: 3px; display: inline-flex; gap: 2px; border: 1px solid var(--line); border-radius: 10px; background: #f4f7f3; }
+    .locale-switch button { min-width: 38px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: #747c75; font-size: 10px; font-weight: 750; }
+    .locale-switch button.active { background: #111512; color: white; }
+    .avatar { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 50%; background: #121513; color: white; font-weight: 750; font-size: 12px; }
+    .button { height: 42px; padding: 0 17px; border-radius: 11px; border: 1px solid var(--line); background: white; color: var(--ink); font-weight: 700; }
+    .button.primary { border-color: var(--lime); background: var(--lime); }
+    .button.dark { border-color: #121513; background: #121513; color: white; }
+    .button.ghost { background: transparent; }
+    .eyebrow { margin: 0 0 8px; color: #6d756e; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 10px; font-size: 38px; letter-spacing: -.045em; line-height: 1.05; }
+    h2 { margin-bottom: 6px; font-size: 19px; letter-spacing: -.02em; }
+    h3 { margin-bottom: 4px; font-size: 14px; }
+    .subtle { color: var(--muted); }
+    .tag { display: inline-flex; align-items: center; min-height: 26px; padding: 0 9px; border-radius: 8px; background: #eff2ef; color: #4e554f; font-size: 11px; font-weight: 700; }
+    .tag.lime { background: var(--lime-soft); color: #477800; }
+    .status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+    .status i { width: 8px; height: 8px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 4px rgba(79,182,0,.1); }
+    .panel { border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255,255,255,.96); box-shadow: 0 12px 38px rgba(41,63,45,.055); }
+
+    /* Auth */
+    .auth-screen { display: grid; grid-template-columns: 1.05fr .95fr; }
+    .auth-brand { min-height: 960px; padding: 54px 64px; position: relative; overflow: hidden; background: #111512; color: white; }
+    .auth-brand::before { content: ""; position: absolute; width: 640px; height: 640px; right: -160px; top: 110px; border-radius: 50%; background: radial-gradient(circle, rgba(185,246,0,.24), rgba(185,246,0,0) 68%); }
+    .auth-brand .brand { position: relative; z-index: 2; }
+    .auth-brand .brand img { width: 42px; height: 42px; }
+    .auth-copy { position: relative; z-index: 2; margin-top: 150px; max-width: 530px; }
+    .auth-copy h1 { font-size: 70px; line-height: .98; letter-spacing: -.065em; }
+    .auth-copy h1 span { color: var(--lime); }
+    .auth-copy p { margin-top: 28px; max-width: 420px; color: #c7cec8; font-size: 18px; line-height: 1.7; }
+    .auth-preview { position: absolute; z-index: 2; left: 64px; right: 64px; bottom: 66px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .auth-preview div { padding: 17px; border: 1px solid rgba(255,255,255,.14); border-radius: 14px; background: rgba(255,255,255,.06); }
+    .auth-preview small { display: block; margin-bottom: 8px; color: #a9b1aa; }
+    .auth-preview strong { font-size: 24px; }
+    .auth-form-wrap { display: grid; place-items: center; padding: 60px; background: #fbfcfb; }
+    .auth-form { width: 440px; padding: 42px; }
+    .auth-form .mini-logo { width: 54px; height: 54px; object-fit: contain; margin-bottom: 32px; }
+    .auth-form h2 { font-size: 32px; letter-spacing: -.04em; }
+    .auth-form > p { margin-bottom: 30px; color: var(--muted); line-height: 1.65; }
+    .auth-form-wrap { position: relative; }
+    .auth-locale { position: absolute; top: 36px; right: 42px; }
+    .auth-tabs { display: flex; gap: 20px; margin: 26px 0 22px; border-bottom: 1px solid var(--line); }
+    .auth-tabs span { padding: 0 2px 10px; color: var(--muted); font-size: 13px; }
+    .auth-tabs span.active { border-bottom: 2px solid #111512; color: #111512; font-weight: 750; }
+    .auth-login-field { display: grid; gap: 7px; margin-bottom: 15px; }
+    .auth-login-field label { font-size: 11px; font-weight: 750; }
+    .auth-login-input { height: 48px; padding: 0 14px; display: flex; align-items: center; border: 1px solid #dfe5df; border-radius: 11px; background: #fbfcfb; color: #343a35; font-size: 13px; }
+    .auth-link-row { margin: -2px 0 17px; display: flex; justify-content: space-between; color: #657066; font-size: 11px; }
+    .auth-submit { width: 100%; height: 50px; border: 0; border-radius: 12px; background: #111512; color: white; font-weight: 750; font-size: 14px; }
+    .auth-register { margin-top: 16px; text-align: center; color: var(--muted); font-size: 11px; }
+    .auth-register b { color: #273027; }
+    .auth-trust { margin-top: 24px; padding-top: 22px; border-top: 1px solid var(--line); color: #7b837c; font-size: 12px; line-height: 1.7; }
+    .auth-trust strong { color: #3d443e; }
+    .terms { margin-top: 20px; color: #9aa19a; font-size: 11px; line-height: 1.6; }
+
+    /* Onboarding */
+    .onboarding-bg { padding-top: 120px; background: radial-gradient(circle at 50% 0, rgba(185,246,0,.16), transparent 36%), #f5f8f4; }
+    .onboarding-header { position: absolute; top: 32px; left: 52px; right: 52px; display: flex; align-items: center; justify-content: space-between; }
+    .onboarding-header .brand { min-width: auto; }
+    .onboarding-meta { display: flex; align-items: center; gap: 14px; }
+    .step-label { color: #6d756e; font-size: 12px; font-weight: 700; }
+    .onboarding-card { width: 1040px; min-height: 740px; margin: 0 auto; display: grid; grid-template-columns: 330px 1fr; overflow: hidden; }
+    .onboarding-rail { padding: 38px 34px; background: #111512; color: white; }
+    .onboarding-rail h2 { margin-top: 10px; font-size: 27px; }
+    .onboarding-rail > p { color: #aeb6af; line-height: 1.55; }
+    .steps { margin-top: 42px; display: grid; gap: 22px; }
+    .step { display: grid; grid-template-columns: 32px 1fr; gap: 12px; align-items: start; color: #98a099; }
+    .step b { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 9px; border: 1px solid #3c453e; color: #b6bdb7; }
+    .step.active { color: white; }
+    .step.active b { border-color: var(--lime); background: var(--lime); color: #111512; }
+    .step small { display: block; margin-top: 3px; color: #7f8881; line-height: 1.4; }
+    .onboarding-main { padding: 44px 50px; }
+    .onboarding-main h1 { font-size: 34px; }
+    .form-grid { margin-top: 32px; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .field { display: grid; gap: 8px; }
+    .field.full { grid-column: 1 / -1; }
+    .field label { font-size: 12px; font-weight: 750; }
+    .input { height: 46px; padding: 0 14px; border: 1px solid #dfe5df; border-radius: 11px; background: #fbfcfb; color: #202421; }
+    .handle-input { display: flex; align-items: center; height: 46px; padding-left: 14px; border: 1px solid #dfe5df; border-radius: 11px; background: #fbfcfb; color: #929a93; }
+    .handle-input span:last-child { color: #202421; }
+    .avatar-row { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; }
+    .avatar-row .avatar { width: 54px; height: 54px; font-size: 16px; }
+    .privacy-choice { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .choice { padding: 18px; border: 1px solid var(--line); border-radius: 13px; background: #fff; }
+    .choice.selected { border-color: #87bd00; box-shadow: inset 0 0 0 1px #87bd00; background: #fbfff0; }
+    .choice p { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+    .consent { grid-column: 1 / -1; padding: 14px 16px; border-radius: 12px; background: var(--soft); color: #5b635c; font-size: 12px; line-height: 1.55; }
+    .form-actions { grid-column: 1 / -1; display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
+
+    /* Product shell */
+    .page { padding: 30px 58px 54px; }
+    .page-head { display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 22px; }
+    .page-head p { margin-bottom: 0; color: var(--muted); }
+    .head-actions { display: flex; gap: 10px; }
+    .segmented { height: 42px; padding: 4px; display: flex; gap: 3px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+    .segmented span { min-width: 66px; padding: 8px 12px; text-align: center; border-radius: 8px; color: var(--muted); font-size: 12px; }
+    .segmented .active { background: #111512; color: white; }
+    .metric-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 8px; }
+    .metric { grid-column: span 2; min-height: 82px; padding: 12px 14px; }
+    .metric small { color: var(--muted); font-size: 9px; }
+    .metric strong { display: block; margin: 6px 0 3px; font-size: 19px; letter-spacing: -.04em; white-space: nowrap; }
+    .metric em { color: var(--good); font-style: normal; font-size: 9px; font-weight: 700; }
+    .dashboard-grid { margin-top: 14px; display: grid; grid-template-columns: 1.55fr .85fr; gap: 14px; }
+    .dashboard-grid .chart-panel, .dashboard-grid .agents { min-height: 240px; }
+    .dashboard-grid .chart { height: 132px; }
+    .chart-panel { min-height: 286px; padding: 22px; }
+    .panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 15px; }
+    .panel-head p { margin-bottom: 0; color: var(--muted); font-size: 12px; }
+    .chart-filters { display: flex; align-items: center; gap: 7px; }
+    .chart-filters select { height: 31px; padding: 0 24px 0 9px; border: 1px solid var(--line); border-radius: 8px; background: #f8faf7; color: #555d56; font-size: 10px; }
+    .chart { position: relative; height: 176px; border-bottom: 1px solid var(--line); background: repeating-linear-gradient(to bottom, transparent 0, transparent 43px, #edf0ed 44px); }
+    .chart svg { position: absolute; inset: 8px 0 6px; width: 100%; height: calc(100% - 14px); }
+    .chart-axis { display: flex; justify-content: space-between; margin-top: 8px; color: #969d97; font-size: 10px; }
+    .agents { min-height: 286px; padding: 22px; }
+    .agent-row { display: grid; grid-template-columns: 1fr 48px; gap: 12px; margin-top: 15px; }
+    .agent-row header { display: flex; justify-content: space-between; margin-bottom: 7px; font-size: 12px; }
+    .bar { height: 8px; border-radius: 5px; background: #edf1ec; overflow: hidden; }
+    .bar i { display: block; height: 100%; border-radius: inherit; background: var(--lime); }
+    .agent-row small { align-self: end; color: var(--muted); text-align: right; }
+    .dashboard-lower { margin-top: 14px; display: grid; grid-template-columns: 1.1fr .9fr .9fr; gap: 14px; }
+    .heat, .skills, .sync { min-height: 188px; padding: 20px; }
+    .heat-grid { display: grid; grid-template-columns: repeat(14, 1fr); gap: 5px; margin-top: 15px; }
+    .heat-grid i { aspect-ratio: 1; border-radius: 4px; background: #edf1eb; }
+    .heat-grid i:nth-child(4n) { background: #dff69a; }
+    .heat-grid i:nth-child(7n) { background: #b9ed34; }
+    .heat-grid i:nth-child(11n) { background: #78c900; }
+    .dashboard-lower .heat-grid i { height: 19px; aspect-ratio: auto; }
+    .skill-list { display: grid; gap: 9px; margin-top: 12px; }
+    .skill-row { display: grid; grid-template-columns: 22px 1fr auto; gap: 9px; align-items: center; font-size: 11px; }
+    .skill-row > b:first-child { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 7px; background: var(--lime-soft); color: #5f9400; font-size: 9px; }
+    .skill-row small { color: var(--muted); font-size: 9px; }
+    .sync-list { display: grid; gap: 12px; margin-top: 14px; }
+    .sync-item { display: flex; justify-content: space-between; padding-bottom: 10px; border-bottom: 1px solid #edf0ed; font-size: 12px; }
+    .sync-item:last-child { border-bottom: 0; }
+    .sync-item small { color: var(--muted); }
+
+    /* Explore */
+    .explore-search { height: 62px; display: flex; align-items: center; gap: 14px; padding: 0 20px; border: 2px solid #1b201c; border-radius: 16px; background: white; box-shadow: 0 12px 35px rgba(36,58,41,.08); }
+    .explore-search b { font-size: 22px; }
+    .explore-search span { flex: 1; color: #303631; font-size: 17px; }
+    .explore-search kbd { padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: #f6f8f5; color: #7c847d; font-size: 10px; }
+    .filter-row { margin-top: 13px; display: flex; align-items: center; gap: 9px; }
+    .filter-chip { height: 34px; padding: 0 12px; display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 9px; background: white; color: #555d56; font-size: 12px; }
+    .filter-chip.active { border-color: #111512; background: #111512; color: white; }
+    .result-grid { margin-top: 18px; display: grid; grid-template-columns: 1.05fr .95fr; gap: 14px; }
+    .result-panel { padding: 22px; min-height: 570px; }
+    .result-count { color: var(--muted); font-size: 11px; }
+    .person { display: grid; grid-template-columns: 46px 1fr auto; gap: 13px; align-items: center; padding: 15px 0; border-bottom: 1px solid #edf0ed; }
+    .person .avatar { width: 44px; height: 44px; }
+    .person p { margin: 3px 0 0; color: var(--muted); font-size: 11px; }
+    .person-data { display: grid; grid-template-columns: 90px 70px; gap: 14px; text-align: right; }
+    .person-data strong { display: block; font-size: 14px; }
+    .person-data small { color: var(--muted); font-size: 9px; }
+    .facet { padding: 16px 0; border-bottom: 1px solid #edf0ed; }
+    .facet:last-child { border-bottom: 0; }
+    .facet header { display: flex; justify-content: space-between; align-items: center; }
+    .facet p { margin: 8px 0 12px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .facet-tags { display: flex; flex-wrap: wrap; gap: 7px; }
+    .compare-tray { position: absolute; left: 337px; right: 337px; bottom: 26px; height: 68px; padding: 0 14px 0 20px; display: flex; align-items: center; gap: 12px; border: 1px solid #ccd5cc; border-radius: 16px; background: #111512; color: white; box-shadow: 0 18px 55px rgba(18,26,20,.24); }
+    .compare-tray > strong { margin-right: auto; }
+    .compare-user { display: flex; align-items: center; gap: 7px; color: #dce2dd; font-size: 11px; }
+    .compare-user i { width: 26px; height: 26px; display: grid; place-items: center; border-radius: 50%; background: #323934; font-style: normal; }
+
+    /* Public profile */
+    .profile-hero { padding: 25px; display: grid; grid-template-columns: 1fr auto; align-items: center; }
+    .identity { display: flex; align-items: center; gap: 18px; }
+    .identity .avatar { width: 82px; height: 82px; font-size: 22px; background: linear-gradient(135deg, #202521, #536056); }
+    .identity h1 { margin-bottom: 4px; font-size: 32px; }
+    .identity p { margin-bottom: 10px; color: var(--muted); }
+    .hero-stats { display: flex; gap: 34px; padding-left: 34px; border-left: 1px solid var(--line); }
+    .hero-stats div { min-width: 86px; }
+    .hero-stats small { color: var(--muted); }
+    .hero-stats strong { display: block; margin-top: 7px; font-size: 23px; }
+    .profile-grid { margin-top: 14px; display: grid; grid-template-columns: 1.4fr .8fr; gap: 14px; }
+    .profile-chart { padding: 22px; min-height: 315px; }
+    .rank-card { padding: 22px; min-height: 315px; background: linear-gradient(145deg, #111512, #222a23); color: white; }
+    .rank-number { margin-top: 24px; display: flex; align-items: end; gap: 10px; }
+    .rank-number strong { font-size: 82px; letter-spacing: -.08em; line-height: .9; }
+    .rank-number span { margin-bottom: 9px; color: var(--lime); }
+    .rank-card p { margin-top: 18px; color: #aeb6af; font-size: 12px; line-height: 1.55; }
+    .rank-scale { margin-top: 28px; height: 8px; border-radius: 5px; background: #303832; overflow: hidden; }
+    .rank-scale i { display: block; width: 91%; height: 100%; background: var(--lime); }
+    .profile-lower { margin-top: 14px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+    .profile-lower > section { min-height: 192px; padding: 20px; }
+    .achievement { margin-top: 17px; display: flex; align-items: center; gap: 13px; }
+    .achievement b { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 12px; background: var(--lime-soft); color: #5e9300; }
+
+    /* Settings */
+    .settings-layout { display: grid; grid-template-columns: 235px 1fr; gap: 18px; }
+    .settings-nav { padding: 18px; align-self: start; }
+    .settings-nav strong { display: block; padding: 10px 11px; margin-bottom: 6px; font-size: 12px; }
+    .settings-nav span { display: block; padding: 11px; border-radius: 9px; color: var(--muted); font-size: 12px; }
+    .settings-nav span.active { background: #111512; color: white; }
+    .settings-main { display: grid; gap: 14px; }
+    .settings-card { padding: 22px; }
+    .setting-row { display: grid; grid-template-columns: 1fr auto; gap: 24px; align-items: center; padding: 16px 0; border-bottom: 1px solid #edf0ed; }
+    .setting-row:last-child { border-bottom: 0; }
+    .setting-row p { margin: 5px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .switch { width: 42px; height: 24px; padding: 3px; border-radius: 13px; background: #dce2dc; }
+    .switch::after { content: ""; display: block; width: 18px; height: 18px; border-radius: 50%; background: white; box-shadow: 0 1px 3px rgba(0,0,0,.18); }
+    .switch.on { background: #111512; }
+    .switch.on::after { margin-left: 18px; background: var(--lime); }
+    .device { display: grid; grid-template-columns: 44px 1fr auto; gap: 13px; align-items: center; padding: 16px 0; border-bottom: 1px solid #edf0ed; }
+    .device:last-child { border-bottom: 0; }
+    .device-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 11px; background: #f0f4ef; color: #4f584f; font-size: 11px; font-weight: 800; }
+    .device p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+    .device-action { color: #6a726b; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <main id="app"></main>
+  <script>
+    const logo = '../../logo-tokendance-v2.png';
+    const app = document.getElementById('app');
+    const params = new URLSearchParams(location.search);
+    const screen = params.get('screen') || 'dashboard';
+    const localeControl = () => `<div class="locale-switch" aria-label="Language"><button type="button" data-lang="zh">中文</button><button type="button" data-lang="en">EN</button></div>`;
+
+    const nav = (active = 'TokenBoard') => `
+      <header class="nav">
+        <div class="brand"><img src="${logo}" alt=""><span>TokenDance</span></div>
+        <div class="nav-links"><span class="${active === 'TokenBoard' ? 'active' : ''}">TokenBoard</span><span class="${active === 'Explore' ? 'active' : ''}">Explore</span><span>Community</span><span>Teams</span></div>
+        <div class="nav-search">搜索用户、Agent、Skill...</div>
+        ${localeControl()}
+        <div class="avatar">HD</div>
+      </header>`;
+
+    const metric = (label, value, hint) => `<section class="metric panel"><small>${label}</small><strong>${value}</strong><em>${hint}</em></section>`;
+    const mockLabel = `<div class="mock-label">TOKENDANCE PRODUCT MOCK · 2026</div>`;
+    const heat = Array.from({ length: 70 }, () => '<i></i>').join('');
+
+    const screens = {
+      auth: `
+        <section class="screen auth-screen">
+          <div class="auth-brand">
+            <div class="brand"><img src="${logo}" alt=""><span>TokenDance</span></div>
+            <div class="auth-copy"><p class="eyebrow" style="color:#b9f600">AI developer community</p><h1>Let Token<br><span>Dance.</span></h1><p>连接你的 AI Coding Agent，把每一次创造沉淀成可见的成长轨迹。</p></div>
+            <div class="auth-preview"><div><small>Tokens danced</small><strong>325.7M</strong></div><div><small>Global rank</small><strong>#37</strong></div><div><small>Active streak</small><strong>23 days</strong></div></div>
+          </div>
+          <div class="auth-form-wrap">
+            <div class="auth-locale">${localeControl()}</div>
+            <div class="auth-form panel"><img class="mini-logo" src="${logo}" alt=""><p class="eyebrow">Welcome to TokenDance</p><h2>使用邮箱登录</h2><p>登录后查看个人 Token、代码、费用与 Skill 数据。</p><div class="auth-tabs"><span class="active">登录</span><span>注册</span></div><div class="auth-login-field"><label>邮箱</label><div class="auth-login-input">name@example.com</div></div><div class="auth-login-field"><label>密码</label><div class="auth-login-input">••••••••••••</div></div><div class="auth-link-row"><span>保持登录</span><b>忘记密码？</b></div><button class="auth-submit">登录 TokenDance</button><div class="auth-register">还没有账户？ <b>使用邮箱注册</b></div><div class="auth-trust"><strong>数据隐私优先。</strong><br>TokenDance 只接收 Collector 上传的安全聚合指标。</div><div class="terms">登录即表示你同意服务条款与隐私政策。排行榜参与默认关闭，可随时修改。</div></div>
+          </div>${mockLabel}
+        </section>`,
+
+      onboarding: `
+        <section class="screen onboarding-bg">
+          <header class="onboarding-header"><div class="brand"><img src="${logo}" alt=""><span>TokenDance</span></div><div class="onboarding-meta"><span class="step-label">首次建档 · 2 / 3</span>${localeControl()}</div></header>
+          <section class="onboarding-card panel">
+            <aside class="onboarding-rail"><p class="eyebrow" style="color:#b9f600">Your identity</p><h2>创建你的公开身份</h2><p>你决定哪些内容进入排行榜和公开主页。</p><div class="steps"><div class="step"><b>1</b><div><strong>邮箱已验证</strong><small>账户注册完成</small></div></div><div class="step active"><b>2</b><div><strong>设置个人资料</strong><small>昵称、Handle 与时区</small></div></div><div class="step"><b>3</b><div><strong>选择公开范围</strong><small>默认仅自己可见</small></div></div></div></aside>
+            <div class="onboarding-main"><p class="eyebrow">Profile setup</p><h1>你想以什么身份出现？</h1><p class="subtle">邮箱不会公开，昵称和 Handle 可稍后修改。</p><div class="form-grid"><div class="avatar-row"><div class="avatar">HD</div><div><strong>头像</strong><p class="subtle" style="margin:5px 0 0;font-size:11px">已生成品牌色默认头像</p></div><button class="button" style="margin-left:auto">更换</button></div><div class="field"><label>公开昵称</label><div class="input" style="display:flex;align-items:center">Hoo Darren</div></div><div class="field"><label>唯一 Handle</label><div class="handle-input"><span>@</span><span>darrenhoo</span></div></div><div class="field full"><label>个人简介</label><div class="input" style="height:64px;padding-top:13px">Building with AI, one token at a time.</div></div><div class="field"><label>统计时区</label><div class="input" style="display:flex;align-items:center">Asia / Shanghai</div></div><div class="field"><label>默认语言</label><div class="input" style="display:flex;align-items:center">简体中文</div></div><div class="privacy-choice"><div class="choice selected"><strong>仅自己可见</strong><p>先完成设备连接，确认数据后再公开。</p></div><div class="choice"><strong>公开摘要</strong><p>加入排行榜并展示公开个人主页。</p></div></div><div class="consent">公开设置会在下一步逐项确认。邮箱、设备、项目和会话明细始终不会公开。</div><div class="form-actions"><button class="button ghost">返回</button><button class="button primary">保存并继续</button></div></div></div>
+          </section>${mockLabel}
+        </section>`,
+
+      dashboard: `
+        <section class="screen">${nav('TokenBoard')}
+          <div class="page">
+            <header class="page-head"><div><p class="eyebrow">Personal analytics</p><h1>你的 Token 正在起舞</h1><p>费用、代码、上下文和消息数据均为 Mock。</p></div><div class="head-actions"><div class="segmented"><span>今天</span><span>7 天</span><span class="active">30 天</span><span>全部时间</span></div><button class="button">导出</button></div></header>
+            <div class="metric-grid">
+              ${metric('预估费用', '$1,428.60', '本周期')}
+              ${metric('总 Token', '325.7M', '▲ 18.7%')}
+              ${metric('生成代码行', '864.2K', '▲ 12.4%')}
+              ${metric('单行 Token', '286.4', '平均值')}
+              ${metric('输入上下文', '184.6M', '56.7%')}
+              ${metric('输出 Token', '78.3M', '24.0%')}
+              ${metric('缓存命中率', '38.6%', '▲ 4.2%')}
+              ${metric('总时长', '482.6h', '活跃时间')}
+              ${metric('总消息数', '42.8K', '▲ 9.1%')}
+              ${metric('用户消息数', '18.6K', '43.5%')}
+            </div>
+            <div class="dashboard-grid">
+              <section class="chart-panel panel"><div class="panel-head"><div><h2>Token 趋势</h2><p>按模型与 Agent 筛选输入、输出和缓存 Token</p></div><div class="chart-filters"><select aria-label="模型"><option>全部模型</option><option>Claude Sonnet 4</option><option>GPT-5.6</option></select><select aria-label="Agent"><option>全部 Agent</option><option>Codex</option><option>Claude Code</option></select></div></div><div class="chart"><svg viewBox="0 0 700 170" preserveAspectRatio="none"><defs><linearGradient id="area" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b9f600" stop-opacity=".28"/><stop offset="1" stop-color="#b9f600" stop-opacity="0"/></linearGradient></defs><path d="M0 145 L60 132 L115 136 L170 105 L225 116 L280 78 L340 96 L395 55 L450 71 L510 36 L570 62 L630 28 L700 42 L700 170 L0 170 Z" fill="url(#area)"/><polyline points="0,145 60,132 115,136 170,105 225,116 280,78 340,96 395,55 450,71 510,36 570,62 630,28 700,42" fill="none" stroke="#72b900" stroke-width="3"/></svg></div><div class="chart-axis"><span>Jul 31</span><span>Aug 07</span><span>Aug 14</span><span>Aug 21</span><span>Aug 29</span></div></section>
+              <section class="agents panel"><div class="panel-head"><div><h2>Agent 构成</h2><p>按 Token 统计</p></div><span class="tag">6 sources</span></div><div class="agent-row"><div><header><b>Claude Code</b><span>42%</span></header><div class="bar"><i style="width:42%"></i></div></div><small>136.8M</small></div><div class="agent-row"><div><header><b>Codex</b><span>31%</span></header><div class="bar"><i style="width:31%"></i></div></div><small>101.0M</small></div><div class="agent-row"><div><header><b>Cursor</b><span>17%</span></header><div class="bar"><i style="width:17%"></i></div></div><small>55.4M</small></div><div class="agent-row"><div><header><b>Others</b><span>10%</span></header><div class="bar"><i style="width:10%"></i></div></div><small>32.5M</small></div></section>
+            </div>
+            <div class="dashboard-lower">
+              <section class="heat panel"><div class="panel-head"><div><h2>活跃日历</h2><p>近 10 周</p></div><span class="status"><i></i>23 天连续活跃</span></div><div class="heat-grid">${heat}</div></section>
+              <section class="skills panel"><div class="panel-head"><div><h2>Skill 排行榜</h2><p>按调用次数</p></div><span class="tag lime">Top skills</span></div><div class="skill-list"><div class="skill-row"><b>1</b><div><strong>codex-review</strong><br><small>18 天使用</small></div><strong>1,284</strong></div><div class="skill-row"><b>2</b><div><strong>commit-context</strong><br><small>14 天使用</small></div><strong>936</strong></div><div class="skill-row"><b>3</b><div><strong>imagegen</strong><br><small>9 天使用</small></div><strong>622</strong></div></div></section>
+              <section class="sync panel"><div class="panel-head"><div><h2>同步状态</h2><p>Collector devices</p></div><span class="tag lime">Healthy</span></div><div class="sync-list"><div class="sync-item"><b>Windows Studio</b><small>刚刚</small></div><div class="sync-item"><b>MacBook Pro</b><small>8 分钟前</small></div><div class="sync-item"><b>Pending events</b><small>0</small></div></div></section>
+            </div>
+          </div>${mockLabel}
+        </section>`,
+
+      explore: `
+        <section class="screen">${nav('Explore')}<div class="page"><header class="page-head"><div><p class="eyebrow">Search and discovery</p><h1>发现正在用 AI 创造的人</h1><p>搜索用户、Agent 与公开 Skill，并使用同一口径比较。</p></div><button class="button">保存查询</button></header><div class="explore-search"><b>⌕</b><span>codex</span><kbd>⌘ K</kbd></div><div class="filter-row"><span class="filter-chip active">全部</span><span class="filter-chip">用户 18</span><span class="filter-chip">Agent 1</span><span class="filter-chip">Skill 12</span><span class="filter-chip">最近 30 天</span><span class="filter-chip">Exact + Derived</span></div><div class="result-grid"><section class="result-panel panel"><div class="panel-head"><div><h2>用户</h2><p>公开资料与排名</p></div><span class="result-count">18 results</span></div><div class="person"><div class="avatar">MB</div><div><h3>maxbauer</h3><p>@maxbauer · Codex 25% · Claude 62%</p></div><div class="person-data"><div><strong>325.7M</strong><small>TOKENS</small></div><div><strong>#1</strong><small>RANK</small></div></div></div><div class="person"><div class="avatar" style="background:#49524b">SD</div><div><h3>sophiadev</h3><p>@sophiadev · Codex 27% · Claude 58%</p></div><div class="person-data"><div><strong>215.4M</strong><small>TOKENS</small></div><div><strong>#2</strong><small>RANK</small></div></div></div><div class="person"><div class="avatar" style="background:#788177">DW</div><div><h3>deworap</h3><p>@deworap · Codex 22% · Claude 55%</p></div><div class="person-data"><div><strong>178.9M</strong><small>TOKENS</small></div><div><strong>#3</strong><small>RANK</small></div></div></div><div class="person"><div class="avatar" style="background:#273029">BD</div><div><h3>builderdan</h3><p>@builderdan · Codex 23% · Claude 60%</p></div><div class="person-data"><div><strong>142.6M</strong><small>TOKENS</small></div><div><strong>#4</strong><small>RANK</small></div></div></div><div class="person"><div class="avatar" style="background:#5d665e">KT</div><div><h3>kaytee</h3><p>@kaytee · Codex 30% · Claude 52%</p></div><div class="person-data"><div><strong>118.3M</strong><small>TOKENS</small></div><div><strong>#5</strong><small>RANK</small></div></div></div></section><section class="result-panel panel"><div class="panel-head"><div><h2>Agent 与 Skill</h2><p>达到公开样本阈值的结果</p></div></div><div class="facet"><header><h3>Codex</h3><span class="tag lime">Agent</span></header><p>48.2K 位开发者在最近 30 天产生 4.8T Token。</p><div class="facet-tags"><span class="tag"># coding</span><span class="tag"># agentic</span><span class="tag"># cli</span></div></div><div class="facet"><header><h3>codex-review</h3><span class="tag">Skill</span></header><p>公开用户中使用 12.8K 次，近 30 天增长 24%。</p><div class="facet-tags"><span class="tag">1.6K users</span><span class="tag">Exact</span></div></div><div class="facet"><header><h3>codex-commit</h3><span class="tag">Skill</span></header><p>公开用户中使用 8.4K 次，主要与仓库工作流相关。</p><div class="facet-tags"><span class="tag">980 users</span><span class="tag">Derived</span></div></div><div class="facet"><header><h3>Advanced query</h3><span class="tag lime">Ready</span></header><p>当前筛选：Token · 最近 30 天 · Codex · Exact + Derived。</p><button class="button" style="margin-top:2px">查看筛选排行榜</button></div></section></div></div><div class="compare-tray"><strong>比较用户</strong><div class="compare-user"><i>MB</i>maxbauer</div><div class="compare-user"><i>SD</i>sophiadev</div><button class="button primary">开始比较</button></div>${mockLabel}</section>`,
+
+      profile: `
+        <section class="screen">${nav('TokenBoard')}
+          <div class="page">
+            <header class="page-head"><div><p class="eyebrow">Public profile</p><h1>公开用户主页</h1><p>只展示用户明确授权公开的字段。</p></div><div class="head-actions"><button class="button">复制链接</button><button class="button primary">加入比较</button></div></header>
+            <section class="profile-hero panel"><div class="identity"><div class="avatar">MB</div><div><h1>maxbauer</h1><p>@maxbauer · Building with AI every day.</p><span class="tag lime">Public leaderboard</span> <span class="tag">Updated 4 min ago</span></div></div><div class="hero-stats"><div><small>总 Token</small><strong>325.7M</strong></div><div><small>生成代码行</small><strong>864K</strong></div><div><small>预估费用</small><strong>$1.4K</strong></div></div></section>
+            <div class="profile-grid">
+              <section class="profile-chart panel"><div class="panel-head"><div><h2>公开 Token 趋势</h2><p>最近 30 天</p></div><div class="chart-filters"><select aria-label="模型"><option>全部模型</option><option>Claude Sonnet 4</option><option>GPT-5.6</option></select><select aria-label="Agent"><option>全部 Agent</option><option>Codex</option><option>Claude Code</option></select></div></div><div class="chart" style="height:205px"><svg viewBox="0 0 700 180" preserveAspectRatio="none"><defs><linearGradient id="area2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b9f600" stop-opacity=".3"/><stop offset="1" stop-color="#b9f600" stop-opacity="0"/></linearGradient></defs><path d="M0 150 L70 124 L125 138 L190 96 L245 110 L310 70 L365 88 L430 54 L495 67 L560 28 L625 48 L700 21 L700 180 L0 180 Z" fill="url(#area2)"/><polyline points="0,150 70,124 125,138 190,96 245,110 310,70 365,88 430,54 495,67 560,28 625,48 700,21" fill="none" stroke="#72b900" stroke-width="3"/></svg></div></section>
+              <section class="rank-card panel"><p class="eyebrow" style="color:#b9f600">Global position</p><h2>Token Leaderboard</h2><div class="rank-number"><strong>1</strong><span>Top 0.1%</span></div><p>本周期排名上升 2 位。公开排名只使用用户允许纳入榜单的数据。</p><div class="rank-scale"><i></i></div></section>
+            </div>
+            <div class="profile-lower">
+              <section class="panel"><div class="panel-head"><div><h2>Agent 构成</h2><p>公开摘要</p></div></div><div class="agent-row"><div><header><b>Claude Code</b><span>62%</span></header><div class="bar"><i style="width:62%"></i></div></div><small>201.9M</small></div><div class="agent-row"><div><header><b>Codex</b><span>25%</span></header><div class="bar"><i style="width:25%"></i></div></div><small>81.4M</small></div><div class="agent-row"><div><header><b>Pi</b><span>13%</span></header><div class="bar"><i style="width:13%"></i></div></div><small>42.4M</small></div></section>
+              <section class="panel"><div class="panel-head"><div><h2>公开活跃</h2><p>最近 10 周</p></div></div><div class="heat-grid">${heat}</div></section>
+              <section class="panel"><div class="panel-head"><div><h2>Skill 排行榜</h2><p>公开调用次数</p></div><span class="tag lime">Top 3</span></div><div class="skill-list"><div class="skill-row"><b>1</b><div><strong>codex-review</strong><br><small>18 天使用</small></div><strong>1,284</strong></div><div class="skill-row"><b>2</b><div><strong>commit-context</strong><br><small>14 天使用</small></div><strong>936</strong></div><div class="skill-row"><b>3</b><div><strong>imagegen</strong><br><small>9 天使用</small></div><strong>622</strong></div></div></section>
+            </div>
+          </div>${mockLabel}
+        </section>`,
+
+      settings: `
+        <section class="screen">${nav('TokenBoard')}<div class="page"><header class="page-head"><div><p class="eyebrow">Privacy and devices</p><h1>数据由你决定如何出现</h1><p>控制公开范围、设备连接与服务端数据。</p></div><button class="button primary">保存设置</button></header><div class="settings-layout"><aside class="settings-nav panel"><strong>设置</strong><span>个人资料</span><span class="active">隐私与公开</span><span>Collector 设备</span><span>数据导出</span><span>账户安全</span></aside><main class="settings-main"><section class="settings-card panel"><div class="panel-head"><div><h2>排行榜与公开主页</h2><p>默认仅自己可见</p></div><span class="tag lime">Private by default</span></div><div class="setting-row"><div><h3>参加公开排行榜</h3><p>开启后，公开昵称、排名和所选指标会进入排行榜。</p></div><div class="switch on"></div></div><div class="setting-row"><div><h3>公开 Token 总量与趋势</h3><p>显示当前时间范围内的聚合数据，不公开会话明细。</p></div><div class="switch on"></div></div><div class="setting-row"><div><h3>公开 Agent 构成</h3><p>显示各 Agent 百分比，不公开设备和安装信息。</p></div><div class="switch on"></div></div><div class="setting-row"><div><h3>公开活跃日历</h3><p>只展示活跃强度，不展示具体行为内容。</p></div><div class="switch"></div></div></section><section class="settings-card panel"><div class="panel-head"><div><h2>Collector 设备</h2><p>2 台设备已连接，状态正常</p></div><button class="button">连接新设备</button></div><div class="device"><div class="device-icon">WIN</div><div><h3>Windows Studio</h3><p>Windows 11 · Collector 1.2.0 · 刚刚同步</p></div><span class="status"><i></i>正常</span></div><div class="device"><div class="device-icon">MAC</div><div><h3>MacBook Pro</h3><p>macOS · Collector 1.2.0 · 8 分钟前同步</p></div><span class="device-action">管理</span></div></section><section class="settings-card panel"><div class="panel-head"><div><h2>数据操作</h2><p>仅作用于你自己的账户与聚合数据</p></div></div><div class="setting-row"><div><h3>导出我的数据</h3><p>生成不含 Prompt、回复和代码正文的 CSV 文件。</p></div><button class="button">创建导出</button></div><div class="setting-row"><div><h3>删除服务端数据</h3><p>创建删除任务，并从公开查询与排行榜立即移除。</p></div><button class="button" style="color:#c33d2e">请求删除</button></div></section></main></div></div>${mockLabel}</section>`
+    };
+
+    app.innerHTML = screens[screen] || screens.dashboard;
+
+    const translations = {
+      '搜索用户、Agent、Skill...': 'Search users, agents, and skills...',
+      '使用邮箱登录': 'Sign in with email',
+      '登录后查看个人 Token、代码、费用与 Skill 数据。': 'View your personal token, code, cost, and skill data after signing in.',
+      '登录': 'Sign in', '注册': 'Create account', '邮箱': 'Email', '密码': 'Password',
+      '保持登录': 'Keep me signed in', '忘记密码？': 'Forgot password?',
+      '登录 TokenDance': 'Sign in to TokenDance', '还没有账户？': 'New to TokenDance?',
+      '使用邮箱注册': 'Create an account with email', '数据隐私优先。': 'Privacy comes first.',
+      'TokenDance 只接收 Collector 上传的安全聚合指标。': 'TokenDance only receives privacy-safe aggregate metrics from Collector.',
+      '登录即表示你同意服务条款与隐私政策。排行榜参与默认关闭，可随时修改。': 'By signing in, you agree to the Terms and Privacy Policy. Leaderboard participation is off by default.',
+      '首次建档 · 2 / 3': 'Profile setup · 2 / 3', '创建你的公开身份': 'Create your public identity',
+      '你决定哪些内容进入排行榜和公开主页。': 'You decide what appears on leaderboards and your public profile.',
+      '邮箱已验证': 'Email verified', '账户注册完成': 'Account created', '设置个人资料': 'Set up profile',
+      '昵称、Handle 与时区': 'Name, handle, and timezone', '选择公开范围': 'Choose visibility',
+      '默认仅自己可见': 'Private by default', '你想以什么身份出现？': 'How should you appear?',
+      '邮箱不会公开，昵称和 Handle 可稍后修改。': 'Your email stays private. Name and handle can be changed later.',
+      '头像': 'Avatar', '已生成品牌色默认头像': 'Brand avatar generated', '更换': 'Change',
+      '公开昵称': 'Public name', '唯一 Handle': 'Unique handle', '个人简介': 'Bio',
+      '统计时区': 'Analytics timezone', '默认语言': 'Default language', '简体中文': 'Simplified Chinese',
+      '仅自己可见': 'Only me', '先完成设备连接，确认数据后再公开。': 'Connect a device and verify your data before going public.',
+      '公开摘要': 'Public summary', '加入排行榜并展示公开个人主页。': 'Join the leaderboard and show a public profile.',
+      '公开设置会在下一步逐项确认。邮箱、设备、项目和会话明细始终不会公开。': 'Visibility is confirmed field by field. Email, devices, projects, and session details always remain private.',
+      '返回': 'Back', '保存并继续': 'Save and continue',
+      '你的 Token 正在起舞': 'Your tokens are dancing', '费用、代码、上下文和消息数据均为 Mock。': 'Cost, code, context, and message data are mocked.',
+      '今天': 'Today', '7 天': '7 Days', '30 天': '30 Days', '全部时间': 'All Time',
+      '导出': 'Export', '预估费用': 'Estimated cost', '本周期': 'Current period', '总 Token': 'Total tokens',
+      '生成代码行': 'Generated code lines', '单行 Token': 'Tokens per line', '平均值': 'Average',
+      '输入上下文': 'Input context', '输出 Token': 'Output tokens', '缓存命中率': 'Cache hit rate',
+      '总时长': 'Total duration', '活跃时间': 'Active time', '总消息数': 'Total messages',
+      '用户消息数': 'User messages',
+      'Token 趋势': 'Token trend', '按模型与 Agent 筛选输入、输出和缓存 Token': 'Filter input, output, and cached tokens by model and agent',
+      '全部模型': 'All models', '全部 Agent': 'All agents', 'Agent 构成': 'Agent breakdown', '按 Token 统计': 'By tokens',
+      '活跃日历': 'Activity calendar', '近 10 周': 'Last 10 weeks', '23 天连续活跃': '23-day streak',
+      'Skill 排行榜': 'Skill ranking', '按调用次数': 'By calls', '18 天使用': 'Used on 18 days',
+      '14 天使用': 'Used on 14 days', '9 天使用': 'Used on 9 days', '同步状态': 'Sync status',
+      '刚刚': 'Just now', '8 分钟前': '8 min ago',
+      '发现正在用 AI 创造的人': 'Discover people building with AI',
+      '搜索用户、Agent 与公开 Skill，并使用同一口径比较。': 'Search users, agents, and public skills, then compare them with one consistent metric.',
+      '保存查询': 'Save query', '全部': 'All', '最近 30 天': 'Last 30 days', '用户': 'Users',
+      '公开资料与排名': 'Public profiles and ranks', 'Agent 与 Skill': 'Agents and skills',
+      '达到公开样本阈值的结果': 'Results meeting the public sample threshold',
+      '48.2K 位开发者在最近 30 天产生 4.8T Token。': '48.2K developers generated 4.8T tokens in the last 30 days.',
+      '公开用户中使用 12.8K 次，近 30 天增长 24%。': 'Used 12.8K times by public users, up 24% in 30 days.',
+      '公开用户中使用 8.4K 次，主要与仓库工作流相关。': 'Used 8.4K times by public users, primarily in repository workflows.',
+      '当前筛选：Token · 最近 30 天 · Codex · Exact + Derived。': 'Filters: Tokens · Last 30 days · Codex · Exact + Derived.',
+      '查看筛选排行榜': 'Open filtered leaderboard', '比较用户': 'Compare users', '开始比较': 'Compare now',
+      '公开用户主页': 'Public profile', '只展示用户明确授权公开的字段。': 'Only fields explicitly approved by the user are shown.',
+      '复制链接': 'Copy link', '加入比较': 'Add to compare', '公开 Token 趋势': 'Public token trend',
+      '最近 30 天': 'Last 30 days', '本周期排名上升 2 位。公开排名只使用用户允许纳入榜单的数据。': 'Rank is up 2 places this period. Public ranking only uses data approved by the user.',
+      '公开摘要': 'Public summary', '公开活跃': 'Public activity', '公开调用次数': 'Public call count',
+      '数据由你决定如何出现': 'You control how your data appears', '控制公开范围、设备连接与服务端数据。': 'Manage visibility, connected devices, and server-side data.',
+      '保存设置': 'Save settings', '设置': 'Settings', '个人资料': 'Profile', '隐私与公开': 'Privacy and visibility',
+      'Collector 设备': 'Collector devices', '数据导出': 'Data export', '账户安全': 'Account security',
+      '排行榜与公开主页': 'Leaderboard and public profile', '参加公开排行榜': 'Join public leaderboard',
+      '开启后，公开昵称、排名和所选指标会进入排行榜。': 'Your public name, rank, and selected metrics will appear on the leaderboard.',
+      '公开 Token 总量与趋势': 'Show token totals and trends',
+      '显示当前时间范围内的聚合数据，不公开会话明细。': 'Show aggregate metrics for the selected range without session details.',
+      '公开 Agent 构成': 'Show agent breakdown', '显示各 Agent 百分比，不公开设备和安装信息。': 'Show agent percentages without device or installation details.',
+      '公开活跃日历': 'Show activity calendar', '只展示活跃强度，不展示具体行为内容。': 'Show activity intensity without exposing activity contents.',
+      '2 台设备已连接，状态正常': '2 connected devices, all healthy', '连接新设备': 'Connect device',
+      '正常': 'Healthy', '管理': 'Manage', '数据操作': 'Data actions', '仅作用于你自己的账户与聚合数据': 'Only affects your account and aggregate data',
+      '导出我的数据': 'Export my data', '生成不含 Prompt、回复和代码正文的 CSV 文件。': 'Create a CSV without prompts, responses, or source code.',
+      '创建导出': 'Create export', '删除服务端数据': 'Delete server data',
+      '创建删除任务，并从公开查询与排行榜立即移除。': 'Create a deletion job and immediately remove the account from public search and rankings.',
+      '请求删除': 'Request deletion'
+    };
+
+    const originalText = new WeakMap();
+    function applyLanguage(language) {
+      const walker = document.createTreeWalker(app, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      nodes.forEach((node) => {
+        if (!originalText.has(node)) originalText.set(node, node.nodeValue);
+        const source = originalText.get(node);
+        const trimmed = source.trim();
+        const replacement = language === 'en' ? (translations[trimmed] || trimmed) : trimmed;
+        node.nodeValue = source.replace(trimmed, replacement);
+      });
+      document.documentElement.lang = language === 'en' ? 'en' : 'zh-CN';
+      document.querySelectorAll('[data-lang]').forEach((button) => button.classList.toggle('active', button.dataset.lang === language));
+    }
+
+    document.querySelectorAll('[data-lang]').forEach((button) => button.addEventListener('click', () => {
+      const language = button.dataset.lang;
+      params.set('lang', language);
+      history.replaceState(null, '', `?${params.toString()}`);
+      applyLanguage(language);
+    }));
+    applyLanguage(params.get('lang') === 'en' ? 'en' : 'zh');
+  </script>
+</body>
+</html>
