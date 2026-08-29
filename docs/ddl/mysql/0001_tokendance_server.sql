@@ -1,4 +1,4 @@
--- TokenShow central server schema
+-- TokenDance central server schema
 -- Target: MySQL 8.0.34+
 -- All timestamps are UTC. The application must execute SET time_zone = '+00:00'
 -- on every pooled connection.
@@ -6,11 +6,11 @@
 SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 SET time_zone = '+00:00';
 
-CREATE DATABASE IF NOT EXISTS tokenshow
+CREATE DATABASE IF NOT EXISTS tokendance
   CHARACTER SET utf8mb4
   COLLATE utf8mb4_0900_ai_ci;
 
-USE tokenshow;
+USE tokendance;
 
 CREATE TABLE schema_migrations (
   version             VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,

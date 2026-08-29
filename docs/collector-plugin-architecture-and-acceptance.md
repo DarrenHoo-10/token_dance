@@ -1,4 +1,4 @@
-# TokenShow 跨 Agent 数据采集系统技术方案与验收标准
+# TokenDance 跨 Agent 数据采集系统技术方案与验收标准
 
 > 文档版本：v1.0  
 > 文档状态：研发基线草案  
@@ -16,7 +16,7 @@
 
 ### 1.1 文档目的
 
-本文档作为 TokenShow 数据采集系统首期研发、联调、测试和发布验收的共同基线，解决以下问题：
+本文档作为 TokenDance 数据采集系统首期研发、联调、测试和发布验收的共同基线，解决以下问题：
 
 1. 如何在 Windows 和 macOS 上自动发现用户已安装的 AI Coding Agent。
 2. 如何在 Collector Core 不依赖具体 Agent 的前提下持续接入新 Agent。
@@ -30,13 +30,13 @@
 
 首期产品应实现以下用户体验：
 
-1. 用户安装 TokenShow Collector。
+1. 用户安装 TokenDance Collector。
 2. Collector 在首次运行时自动检测已安装的首期 Agent。
 3. 用户在统一授权页面查看数据范围并完成一次授权。
 4. Collector 对支持原生遥测的 Agent 生成配置变更计划，备份后安全应用。
 5. Collector 自动导入历史数据并持续接收实时数据。
-6. 数据在本地完成标准化、去重、脱敏后批量上报 TokenShow Server。
-7. 用户在 TokenShow 网站看到 token、Skill、AI 代码量、轮次、会话数等统计和排行榜。
+6. 数据在本地完成标准化、去重、脱敏后批量上报 TokenDance Server。
+7. 用户在 TokenDance 网站看到 token、Skill、AI 代码量、轮次、会话数等统计和排行榜。
 8. 后续增加 Agent 时，仅增加 Adapter，不修改 Collector Core 和服务端标准事件协议。
 
 ### 1.3 非目标
@@ -48,7 +48,7 @@
 - 不承诺所有 Agent 都能提供相同精度的 Skill 和 AI 代码量数据。
 - 不绕过 Cursor Team/Enterprise、API Key 或管理员权限限制。
 - 不注入或代理模型请求，不成为 LLM Gateway。
-- 不把 Agent 凭据复制到 TokenShow Server。
+- 不把 Agent 凭据复制到 TokenDance Server。
 - 不支持未经签名的第三方原生插件自动执行。
 - 不在首期支持 Linux、远程 SSH 主机或容器内 Agent 自动发现。
 
@@ -56,12 +56,12 @@
 
 | 术语 | 定义 |
 | --- | --- |
-| Collector | 安装在用户设备上的 TokenShow 后台采集程序 |
+| Collector | 安装在用户设备上的 TokenDance 后台采集程序 |
 | Collector Core | 不感知具体 Agent 的采集、存储、隐私和上报核心 |
-| Adapter | 把某个 Agent 的数据源转换为 TokenShow 标准事件的插件 |
+| Adapter | 把某个 Agent 的数据源转换为 TokenDance 标准事件的插件 |
 | Source | OTLP、文件、SQLite、运行时流、API 等原始数据入口 |
 | RawFrame | Core 从 Source 读取后交给 Adapter 的最小原始数据单元 |
-| NormalizedEvent | Adapter 输出的 TokenShow 标准事件 |
+| NormalizedEvent | Adapter 输出的 TokenDance 标准事件 |
 | Checkpoint | 某个 Source 已消费位置的持久化游标 |
 | Outbox | 已标准化、等待可靠上报的逻辑队列；实现为加密 WAL/spool 文件，不是数据库表 |
 | Accuracy | 数据准确度：原生精确、派生、关联、估算或不可用 |
@@ -75,14 +75,14 @@
 
 ### 2.2 飞书画板绘制提示词
 
-绘制 TokenShow 数据采集系统分层架构图，不画节点间连线，按以下层级从上到下排列：
+绘制 TokenDance 数据采集系统分层架构图，不画节点间连线，按以下层级从上到下排列：
 
-- 用户界面层：`TokenShow Web (React 19 + TypeScript)`、`TokenShow Desktop Settings (Tauri 2)`。
+- 用户界面层：`TokenDance Web (React 19 + TypeScript)`、`TokenDance Desktop Settings (Tauri 2)`。
 - Agent 层：`Codex`、`Claude Code`、`Grok Build`、`Cursor`、`ZCode`、`DeepSeek Harness`。
 - 本地采集层：`collector-core`、`adapter-host`、`acquisition`、`normalization`、`privacy`、`wal-spool`、`uploader`。
 - Adapter 层：`adapter-codex`、`adapter-claude`、`adapter-grok-build`、`adapter-cursor`、`adapter-zcode`、`adapter-deepseek-harness`。
 - 本地运行状态层：`collector.wal`、`checkpoint snapshots`、`OS Keychain/Credential Manager`、加密的 `config-backups/` 文件；不创建 SQLite/MySQL 等本地数据库。
-- 服务端层：`TokenShow Go API`、`Go Aggregation Worker`、`Leaderboard API`、`Adapter Registry`。
+- 服务端层：`TokenDance Go API`、`Go Aggregation Worker`、`Leaderboard API`、`Adapter Registry`。
 - 服务端存储层：`MySQL 8.0`、后续可选 `ClickHouse`、对象存储中的脱敏诊断包。
 - 外部依赖层：`Cursor Admin/Analytics API`、各 Agent 原生 OTLP、操作系统启动项和代码签名服务。
 
@@ -97,9 +97,9 @@
 | `privacy` | 本地 | 字段白名单、路径哈希、内容阻断、诊断审计 | 业务聚合 |
 | `wal-spool` | 本地 | 文件型 checkpoint、未 ACK spool、备份索引、dead letter 索引 | 长期业务数据存储 |
 | `uploader` | 本地 | 批处理、压缩、签名、重试、ACK | 直接读取 Agent 文件 |
-| `TokenShow Go API` | 服务端 | 身份验证、批次幂等、schema 校验、MySQL 入库 | 解析 Agent 私有格式 |
+| `TokenDance Go API` | 服务端 | 身份验证、批次幂等、schema 校验、MySQL 入库 | 解析 Agent 私有格式 |
 | `Go Aggregation Worker` | 服务端 | 日/周/月聚合、排行榜口径计算 | 接收客户端原始文件 |
-| `TokenShow Web` | 云端 | 个人统计、能力覆盖说明、排行榜展示 | 本地扫描 |
+| `TokenDance Web` | 云端 | 个人统计、能力覆盖说明、排行榜展示 | 本地扫描 |
 
 ### 2.4 技术栈
 
@@ -124,14 +124,14 @@
 ```mermaid
 sequenceDiagram
     participant U as 用户
-    participant D as TokenShow Desktop
+    participant D as TokenDance Desktop
     participant C as collector-core
     participant H as adapter-host
     participant A as Agent Adapter
     participant K as OS Keychain
-    participant S as TokenShow Server
+    participant S as TokenDance Server
 
-    U->>D: 启动安装后的 TokenShow
+    U->>D: 启动安装后的 TokenDance
     D->>C: 请求自动发现 Agent
     C->>H: probe_all()
     H->>A: probe(只读路径与进程信息)
@@ -158,7 +158,7 @@ sequenceDiagram
 1. **Core 无 Agent 分支**：`collector-core` 中禁止出现 `if agent == "codex"` 等具体产品判断。
 2. **采集与解析分离**：Core 负责安全读取和调度，Adapter 负责格式和语义。
 3. **配置修改计划化**：Adapter 只能返回变更计划，不能直接写用户配置。
-4. **上传路径唯一**：只有 `uploader` 可以访问 TokenShow Server 的上报凭据。
+4. **上传路径唯一**：只有 `uploader` 可以访问 TokenDance Server 的上报凭据。
 5. **能力可降级**：同一 Adapter 在不同 Agent 版本、账号类型下可返回不同 Capability。
 6. **失败隔离**：一个 Adapter 失败不能阻塞其他 Adapter 和整个 Collector。
 7. **可追溯**：每条事件保存 `adapter_id`、`adapter_version`、`source_kind`、`source_cursor` 和 `accuracy`。
@@ -226,8 +226,8 @@ pub trait AgentAdapter: Send + Sync {
 
 ```json
 {
-  "$schema": "https://schemas.tokenshow.dev/adapter-manifest/v1.json",
-  "id": "dev.tokenshow.adapter.codex",
+  "$schema": "https://schemas.tokendance.dev/adapter-manifest/v1.json",
+  "id": "dev.tokendance.adapter.codex",
   "name": "Codex",
   "version": "1.0.0",
   "protocolVersion": "1.0",
@@ -323,7 +323,7 @@ pub enum ConfigMutation {
 5. 使用原子替换提交。
 6. 执行 `VerifyStep`。
 7. 验证失败时自动恢复备份。
-8. 用户卸载或禁用集成时，可以选择恢复 TokenShow 引入的配置项，而不是覆盖整个文件。
+8. 用户卸载或禁用集成时，可以选择恢复 TokenDance 引入的配置项，而不是覆盖整个文件。
 
 ### 3.7 插件包结构
 
@@ -421,7 +421,7 @@ stateDiagram-v2
 {
   "schemaVersion": "1.0",
   "eventId": "<base64url-32-byte-hmac>",
-  "adapterId": "dev.tokenshow.adapter.claude",
+  "adapterId": "dev.tokendance.adapter.claude",
   "adapterVersion": "1.0.0",
   "agentId": "claude-code",
   "agentVersion": "x.y.z",
@@ -540,7 +540,7 @@ sequenceDiagram
     participant P as privacy
     participant L as wal-spool
     participant U as uploader
-    participant I as TokenShow Ingest API
+    participant I as TokenDance Ingest API
     participant W as Aggregation Worker
 
     G-->>Q: OTLP/文件变化/SQLite/API 数据
@@ -595,7 +595,7 @@ Collector 不创建本地数据库。RawFrame 转换结果和 checkpoint 推进�
 
 ### 6.4 Agent 自有 SQLite 的安全读取
 
-这里的 SQLite 仅指 Cursor、ZCode 等 Agent 自己创建的数据源。TokenShow 只做受限只读采集，Collector 自身不创建、不写入 SQLite。
+这里的 SQLite 仅指 Cursor、ZCode 等 Agent 自己创建的数据源。TokenDance 只做受限只读采集，Collector 自身不创建、不写入 SQLite。
 
 - 使用只读连接 URI。
 - 优先使用 SQLite Online Backup API 或只读 snapshot，避免长时间锁住 Agent 数据库。
@@ -609,7 +609,7 @@ Collector 不创建本地数据库。RawFrame 转换结果和 checkpoint 推进�
 - 默认监听 `127.0.0.1` 随机可用端口，或用户固定配置的 loopback 端口。
 - 同时支持 OTLP/HTTP protobuf；gRPC 作为兼容能力按 Adapter 需求启用。
 - 不绑定 `0.0.0.0`，除非未来企业策略显式启用且存在 mTLS。
-- Agent 配置只指向本地 Receiver，不直接持有 TokenShow Server 的上报密钥。
+- Agent 配置只指向本地 Receiver，不直接持有 TokenDance Server 的上报密钥。
 - Receiver 按 `service.name`、resource attributes 和 Adapter 声明路由。
 - 未知 service 不进入上报队列，只记录计数型诊断。
 - 对 attribute 数量、字符串长度、单请求大小和并发数设置上限。
@@ -719,7 +719,7 @@ Idempotency-Key: <batch-id>
 
 #### 指标映射
 
-| TokenShow 指标 | Codex 数据 | Accuracy |
+| TokenDance 指标 | Codex 数据 | Accuracy |
 | --- | --- | --- |
 | token | response/token count 事件 | `exact` |
 | session | conversation/thread start | `exact` |
@@ -765,7 +765,7 @@ Idempotency-Key: <batch-id>
 
 Claude Code 原生提供 token、session、代码行、成本和工具活动，并可按 `skill.name`、`plugin.name`、`agent.name` 归因。首期优先采用原生指标，不重复从日志计算相同事件。
 
-| TokenShow 指标 | Claude 数据 | Accuracy |
+| TokenDance 指标 | Claude 数据 | Accuracy |
 | --- | --- | --- |
 | token | `claude_code.token.usage` | `exact` |
 | session | `claude_code.session.count` + session attributes | `exact` |
@@ -797,7 +797,7 @@ Claude Code 原生提供 token、session、代码行、成本和工具活动，�
 
 - 使用 Grok Build 的 `OTEL_*`/telemetry 配置能力指向本地 Collector。
 - 若存在产品 telemetry 和外部 OTLP 两种通道，只接收对外定义的无内容 schema。
-- 禁止开启 trace/codebase 内容上传作为 TokenShow 采集依赖。
+- 禁止开启 trace/codebase 内容上传作为 TokenDance 采集依赖。
 
 #### 指标映射
 
@@ -809,7 +809,7 @@ Grok Build 当前外部 schema 已定义：
 - `grok_code.tool.decision`
 - `grok_code.tool.usage`
 
-| TokenShow 指标 | Grok Build 数据 | Accuracy |
+| TokenDance 指标 | Grok Build 数据 | Accuracy |
 | --- | --- | --- |
 | token | `grok_code.token.usage` | `exact` |
 | session | `grok_code.session.count` | `exact` |
@@ -831,7 +831,7 @@ Cursor Adapter 必须区分：
 
 1. `enterprise_api`：有 Analytics API 和管理员权限。
 2. `team_admin_api`：有使用事件 API，但部分分析能力受套餐限制。
-3. `personal_local`：只有 Cursor 自有的本地数据库/缓存，能力有限且版本相关；TokenShow 只读，不创建本地库。
+3. `personal_local`：只有 Cursor 自有的本地数据库/缓存，能力有限且版本相关；TokenDance 只读，不创建本地库。
 
 不能把企业能力显示为个人版必然支持。
 
@@ -850,7 +850,7 @@ Cursor Adapter 必须区分：
 
 #### 指标映射
 
-| TokenShow 指标 | Cursor 数据 | Accuracy |
+| TokenDance 指标 | Cursor 数据 | Accuracy |
 | --- | --- | --- |
 | token | `/teams/filtered-usage-events` | `exact`，仅授权账号 |
 | session | `conversationId` | `exact`/`derived` |
@@ -908,7 +908,7 @@ ZCode Adapter 每个受支持版本必须记录：
 
 #### 指标映射
 
-| TokenShow 指标 | 数据来源 | Accuracy |
+| TokenDance 指标 | 数据来源 | Accuracy |
 | --- | --- | --- |
 | token | step-finish/session usage | `exact`/`derived` |
 | session | session store | `exact` |
@@ -938,15 +938,15 @@ ZCode Adapter 每个受支持版本必须记录：
 
 #### 配置计划
 
-- 向 Harness composition 加入 TokenShow 本地 OTLP endpoint，或复用已有 OTel provider 的安全转发。
+- 向 Harness composition 加入 TokenDance 本地 OTLP endpoint，或复用已有 OTel provider 的安全转发。
 - 不开启会话正文、reasoning、tool argument 等内容采集。
-- 使用 Harness 的 redaction waterfall 后，TokenShow privacy 模块再次执行白名单过滤。
+- 使用 Harness 的 redaction waterfall 后，TokenDance privacy 模块再次执行白名单过滤。
 
 #### 指标映射
 
 Harness 的 session log 包含 turn、step、user/message、assistant、tool/call、tool/result 等事件，SessionTelemetryBackend 提供可插拔上报边界。
 
-| TokenShow 指标 | Harness 数据 | Accuracy |
+| TokenDance 指标 | Harness 数据 | Accuracy |
 | --- | --- | --- |
 | token | telemetry/model usage | `exact` |
 | session | session lifecycle | `exact` |
@@ -998,7 +998,7 @@ Core 解析后执行以下校验：
 | 平台 | 存储 | ACL |
 | --- | --- | --- |
 | Windows | Credential Manager | 当前 Windows 用户 |
-| macOS | Keychain | 当前登录用户，TokenShow 签名应用访问 |
+| macOS | Keychain | 当前登录用户，TokenDance 签名应用访问 |
 
 禁止 fallback 到明文 JSON。密钥库不可用时暂停远程 API 和上传，并进入需要用户处理的状态。
 
@@ -1021,7 +1021,7 @@ Core 解析后执行以下校验：
 
 ### 9.1 边界
 
-TokenShow 的用户、会话、使用明细、聚合结果和排行榜全部保存在中心 MySQL。Collector 不创建 SQLite、MySQL 或其他本地业务数据库。
+TokenDance 的用户、会话、使用明细、聚合结果和排行榜全部保存在中心 MySQL。Collector 不创建 SQLite、MySQL 或其他本地业务数据库。
 
 为了满足断网续传和崩溃后不丢 checkpoint，本地仅保留短期运行文件：
 
@@ -1130,7 +1130,7 @@ WAL 不保存 RawFrame、prompt、response、源代码、工具参数或真实�
 | Object storage | S3 兼容对象存储 | 仅放签名 Adapter 包和用户授权上传的脱敏诊断包 |
 | Analytics | ClickHouse，达到容量阈值后引入 | 长周期明细分析；首期不作为写入必需依赖 |
 
-选择 MySQL 而不是 SQLite 的原因是：TokenShow 是多用户在线服务，存在多实例并发写入、事务幂等、在线索引、权限隔离、备份恢复、只读副本和高可用需求。SQLite 适合单进程嵌入式状态，不应承担中心服务的共享业务数据。Collector 端也不使用 SQLite；断网和崩溃恢复由第 9 章的加密 WAL/spool 完成。
+选择 MySQL 而不是 SQLite 的原因是：TokenDance 是多用户在线服务，存在多实例并发写入、事务幂等、在线索引、权限隔离、备份恢复、只读副本和高可用需求。SQLite 适合单进程嵌入式状态，不应承担中心服务的共享业务数据。Collector 端也不使用 SQLite；断网和崩溃恢复由第 9 章的加密 WAL/spool 完成。
 
 ### 10.2 Go 服务模块
 
@@ -1187,7 +1187,7 @@ erDiagram
 
 `usage_events.safe_extension_json` 不是任意 payload 存储：只允许当前 schema 注册且通过隐私白名单的标量扩展字段，禁止 prompt、response、reasoning、代码正文、工具参数、环境变量、真实路径和原始 Agent 对象。核心排行字段必须落入强类型列，不能长期藏在 JSON 中。
 
-完整可执行 DDL 见 [`ddl/mysql/0001_tokenshow_server.sql`](ddl/mysql/0001_tokenshow_server.sql)。DDL 显式使用 InnoDB、`utf8mb4`、外键、唯一键、CHECK 和查询索引。首期不对 `usage_events` 做 MySQL 原生分区，因为分区表与外键的运维约束会增加复杂度；单表达到 5 亿行、在线索引窗口不可接受或 90 天明细超过约定存储预算时，再通过归档任务迁移冷数据至 ClickHouse/对象存储。
+完整可执行 DDL 见 [`ddl/mysql/0001_tokendance_server.sql`](ddl/mysql/0001_tokendance_server.sql)。DDL 显式使用 InnoDB、`utf8mb4`、外键、唯一键、CHECK 和查询索引。首期不对 `usage_events` 做 MySQL 原生分区，因为分区表与外键的运维约束会增加复杂度；单表达到 5 亿行、在线索引窗口不可接受或 90 天明细超过约定存储预算时，再通过归档任务迁移冷数据至 ClickHouse/对象存储。
 
 ### 10.4 Ingest 事务与幂等
 
@@ -1315,7 +1315,7 @@ Redis 只缓存已经发布的结果：
 - 清空本地队列。
 - 请求删除服务端数据。
 - 撤销当前设备。
-- 恢复 TokenShow 对 Agent 配置所做的修改。
+- 恢复 TokenDance 对 Agent 配置所做的修改。
 
 ## 12、可靠性与可观测性
 
@@ -1332,20 +1332,20 @@ Redis 只缓存已经发布的结果：
 Collector 至少产生以下本地诊断指标：
 
 ```text
-tokenshow.adapter.detected
-tokenshow.adapter.status
-tokenshow.source.frames_read
-tokenshow.source.decode_errors
-tokenshow.events.normalized
-tokenshow.events.privacy_rejected
-tokenshow.events.deduplicated
-tokenshow.outbox.events
-tokenshow.outbox.bytes
-tokenshow.upload.batch_duration_ms
-tokenshow.upload.events_acked
-tokenshow.upload.retry_count
-tokenshow.checkpoint.lag_seconds
-tokenshow.config.rollback_count
+tokendance.adapter.detected
+tokendance.adapter.status
+tokendance.source.frames_read
+tokendance.source.decode_errors
+tokendance.events.normalized
+tokendance.events.privacy_rejected
+tokendance.events.deduplicated
+tokendance.outbox.events
+tokendance.outbox.bytes
+tokendance.upload.batch_duration_ms
+tokendance.upload.events_acked
+tokendance.upload.retry_count
+tokendance.checkpoint.lag_seconds
+tokendance.config.rollback_count
 ```
 
 这些指标默认仅保存在本地诊断日志；若需上传 Collector 自身运行指标，应使用独立授权和独立 schema。
@@ -1414,7 +1414,7 @@ tokenshow.config.rollback_count
 ## 14、代码结构与依赖方向
 
 ```text
-TokenShow/
+TokenDance/
   web/                              # 现有 React 19 排行榜
   collector/
     apps/
@@ -1647,7 +1647,7 @@ TOKSHOW_TEST_API_KEY_SECRET
 | CFG-004 | P0 | 原子写入 | 在写入中模拟进程中断 | 原文件或新文件完整存在，不出现半写文件 |
 | CFG-005 | P0 | 语法失败回滚 | Adapter 返回非法 TOML/JSON patch | Verify 失败，原文件恢复，状态 `ROLLED_BACK`/`FAILED` |
 | CFG-006 | P0 | 路径越界 | 构造符号链接、junction 和 `..` | Core 拒绝变更，不写授权根外文件 |
-| CFG-007 | P1 | 卸载恢复 | 选择恢复 TokenShow 配置 | 只删除/还原 TokenShow 引入项，用户之后的无关修改保留 |
+| CFG-007 | P1 | 卸载恢复 | 选择恢复 TokenDance 配置 | 只删除/还原 TokenDance 引入项，用户之后的无关修改保留 |
 | CFG-008 | P1 | 已有 OTLP 冲突 | Agent 已配置其他 endpoint | UI 展示冲突和方案，不静默覆盖 |
 | CFG-009 | P1 | 权限拒绝 | 用户拒绝某 Adapter 权限 | 该 Adapter `NEEDS_PERMISSION`/`DEGRADED`，不重复骚扰，其他正常 |
 | CFG-010 | P1 | 备份限制 | 连续执行 5 次配置变更 | 按策略保留最近 3 版且可恢复指定版本 |
@@ -1661,7 +1661,7 @@ TOKSHOW_TEST_API_KEY_SECRET
 | SRC-003 | P0 | 文件截断 | 消费后清空并写入新内容 | 建立新 generation，重读并依靠 event id 去重 |
 | SRC-004 | P0 | 文件替换 | 原子替换同名 session 文件 | 识别新 identity，不遗漏新记录 |
 | SRC-005 | P0 | Checkpoint 事务 | 在 WAL TXN frame 刷盘前后分别强杀 | 重启只接受完整 frame；不丢可重建事件，服务端最终只聚合一次 |
-| SRC-006 | P0 | Agent SQLite 只读 | Agent 自有 DB 正在写入时扫描 | 不修改 DB，不长期阻塞 Agent，不出现 corruption；TokenShow 不创建 SQLite |
+| SRC-006 | P0 | Agent SQLite 只读 | Agent 自有 DB 正在写入时扫描 | 不修改 DB，不长期阻塞 Agent，不出现 corruption；TokenDance 不创建 SQLite |
 | SRC-007 | P0 | Agent SQLite schema 变化 | 移除/修改已知字段 | Adapter 降级并停止未知查询，不猜测映射 |
 | SRC-008 | P0 | OTLP loopback | 检查监听地址 | 仅绑定 loopback，不对 LAN 暴露 |
 | SRC-009 | P1 | 历史与实时优先级 | 导入 10 万历史事件同时产生实时事件 | 实时事件延迟满足目标，历史任务受背压调节 |
@@ -1731,7 +1731,7 @@ TOKSHOW_TEST_API_KEY_SECRET
 
 | ID | 优先级 | 验收项 | 操作/输入 | 预期结果 |
 | --- | --- | --- | --- | --- |
-| SRV-001 | P0 | 干净建库 | 对 MySQL 8.0.34+ 空实例执行 `0001_tokenshow_server.sql` | DDL 全部成功，14 张表、外键、唯一键和 CHECK 生效，连接时区为 UTC |
+| SRV-001 | P0 | 干净建库 | 对 MySQL 8.0.34+ 空实例执行 `0001_tokendance_server.sql` | DDL 全部成功，14 张表、外键、唯一键和 CHECK 生效，连接时区为 UTC |
 | SRV-002 | P0 | Go 服务启动 | 仅配置 MySQL DSN 启动 `cmd/api` 和 `cmd/worker` | 健康检查成功；日志不包含 DSN、密码或用户邮箱 |
 | SRV-003 | P0 | 批次 hash 冲突 | 同 installation/batch id 上传不同 body | 第二次返回 `409 BATCH_HASH_CONFLICT`，原批次和事件不被覆盖 |
 | SRV-004 | P0 | 事件唯一约束 | 同 event id 跨批并发写入 20 次 | `(installation_id,event_id)` 只保留一条，duplicate 计数正确，无 500 |

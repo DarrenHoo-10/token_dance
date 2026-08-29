@@ -87,11 +87,11 @@ TokenDance 当前已经具备公开 Token 排行榜和数据上报能力。用�
 支持筛选：
 
 - 时间范围与自定义日期。
-- Agent、模型、设备、Accuracy、事件类型。
+- Agent、模型、设备、事件类型。
 - 会话、轮次、工具、Skill、代码量等指标。
-- 仅异常数据：缺失、估算、重复修复、延迟同步。
+- 同步状态：正常或延迟同步。
 
-结果字段建议：发生时间、Agent、模型、Token、会话数、轮次、Accuracy、来源设备。支持导出自己的 CSV。
+结果字段建议：发生时间、Agent、模型、Token、会话数、轮次、来源设备。支持导出自己的 CSV。
 
 ### 4.3 数据构成 `/me/breakdown`
 
@@ -144,7 +144,6 @@ TokenDance 当前已经具备公开 Token 排行榜和数据上报能力。用�
 - 时间：今天、7 天、30 天、全部、自定义周期。
 - 指标：Token、会话、轮次、工具调用、Skill 使用、AI 代码量。
 - Agent：全部或单个 Agent。
-- Accuracy：仅精确、精确 + 派生、全部可用数据。
 - 范围：全球、我关注的、团队（后续）。
 - 搜索：昵称或 Handle。
 
@@ -154,7 +153,7 @@ TokenDance 当前已经具备公开 Token 排行榜和数据上报能力。用�
 
 - 最多选择 3 个公开用户。
 - 同一时间范围和同一指标口径下比较。
-- 对比 Token 趋势、Agent 构成、活跃天数和 Accuracy。
+- 对比 Token 趋势、Agent 构成和活跃天数。
 - 隐藏项直接显示“该用户未公开”，不能用零值代替。
 
 ### 6.4 我的数据查询
@@ -193,7 +192,7 @@ TokenDance 当前已经具备公开 Token 排行榜和数据上报能力。用�
 | Privacy | 排行榜参与、字段可见性、公开主页投影 |
 | Personal Analytics | 读取聚合数据，生成个人总览、趋势和构成 |
 | Search | 公开用户、Agent、Skill 的索引和分组搜索 |
-| Leaderboard Query | 时间、指标、Agent、Accuracy 等筛选 |
+| Leaderboard Query | 时间、指标、Agent 和用户范围筛选 |
 | Comparison | 在同一口径下比较多个公开用户 |
 | Device Binding | Collector 设备绑定、撤销、状态和最后同步 |
 | Export | 导出当前用户自己的聚合数据 |
@@ -243,7 +242,7 @@ Mock 阶段至少定义以下对象，不提前绑定数据库表：
 - `SearchGroup`
 - `LeaderboardQuery`
 
-Mock Repository 与未来真实 Repository 使用同一接口，后续接 Go 服务端与中心 MySQL 8.0 时替换数据实现，不改页面契约。数据库设计以 [`ddl/mysql/0001_tokenshow_server.sql`](ddl/mysql/0001_tokenshow_server.sql) 为准。
+Mock Repository 与未来真实 Repository 使用同一接口，后续接 Go 服务端与中心 MySQL 8.0 时替换数据实现，不改页面契约。数据库以 [`ddl/mysql/0001_tokendance_server.sql`](ddl/mysql/0001_tokendance_server.sql) 为采集基线，以 [`tokendance-user-system-technical-design.md`](tokendance-user-system-technical-design.md) 为用户系统详细设计；用户与分析扩展分别落在 `0002_tokendance_user_system.sql`、`0003_tokendance_analytics_extensions.sql`，不重复创建 0001 已有表。
 
 ## 9. 隐私与安全规则
 
@@ -274,7 +273,6 @@ Mock Repository 与未来真实 Repository 使用同一接口，后续接 Go 服
 - 个人活动明细筛选与导出。
 - 用户比较、里程碑、分享卡。
 - Skill 搜索与最小样本量保护。
-- 数据质量与 Accuracy 解释页。
 
 ### P2：团队与社交
 
