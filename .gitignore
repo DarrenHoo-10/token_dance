@@ -1,0 +1,31 @@
+# Rust
+/collector/target/
+**/*.rs.bk
+
+# Go
+/server/bin/
+/server/coverage.out
+
+# JavaScript
+/node_modules/
+/web/node_modules/
+/web/dist/
+/collector/apps/desktop/node_modules/
+/collector/apps/desktop/dist/
+/web/coverage/
+
+# Desktop
+/collector/apps/desktop/src-tauri/target/
+
+# Environment and local state
+.env
+.env.*
+!.env.example
+collector-state/
+*.log
+
+# Editors and operating systems
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

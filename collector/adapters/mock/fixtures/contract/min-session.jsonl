@@ -1,0 +1,5 @@
+{"type":"session_started","occurredAt":"2026-08-29T12:00:00.000Z","sessionId":"sess-1"}
+{"type":"turn_started","occurredAt":"2026-08-29T12:00:01.000Z","sessionId":"sess-1","turnId":"turn-1","trigger":"user"}
+{"type":"model_usage_recorded","occurredAt":"2026-08-29T12:00:02.000Z","sessionId":"sess-1","turnId":"turn-1","providerId":"mock","modelId":"mock-1","tokens":{"inputTokens":10,"outputTokens":20,"cacheReadTokens":null,"totalTokens":30}}
+{"type":"turn_completed","occurredAt":"2026-08-29T12:00:03.000Z","sessionId":"sess-1","turnId":"turn-1","success":true,"durationMs":2000}
+{"type":"session_ended","occurredAt":"2026-08-29T12:00:04.000Z","sessionId":"sess-1","reason":"completed"}

@@ -1,0 +1,3 @@
+{"type":"session_started","occurredAt":"2026-08-29T12:00:00.000Z","sessionId":"sess-2","unknownField":"ignore-me","prompt":"TOKSHOW_TEST_PROMPT_SECRET","nested":{"x":1}}
+{"type":"future_event_v2","occurredAt":"2026-08-29T12:00:01.000Z","sessionId":"sess-2","payload":{"raw":"drop-me"}}
+{"type":"skill_invoked","occurredAt":"2026-08-29T12:00:02.000Z","sessionId":"sess-2","skillKey":"skill.demo","skillInvokeType":"native","success":true,"skillMarkdown":"TOKSHOW_TEST_PROMPT_SECRET"}
