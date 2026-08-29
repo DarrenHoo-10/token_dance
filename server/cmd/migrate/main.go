@@ -15,7 +15,7 @@ import (
 func main() {
 	dsnFlag := flag.String("dsn", "", "MySQL connection DSN (overrides TOKENDANCE_MYSQL_DSN)")
 	checkFlag := flag.Bool("check", false, "Validate migration state and schema compatibility without executing migrations")
-	repairFlag := flag.Bool("repair", false, "Resume a dirty migration from durable statement progress")
+	repairFlag := flag.Bool("repair", false, "Reconcile MySQL schema state and resume a dirty migration from durable statement progress")
 	flag.Parse()
 
 	cfg, _ := config.LoadFromEnv()
@@ -66,7 +66,7 @@ func main() {
 		return
 	}
 	if *repairFlag {
-		log.Println("Repairing dirty migration from durable statement progress...")
+		log.Println("Reconciling information_schema and repairing dirty migration progress...")
 		if err := runner.RepairMigrations(ctx); err != nil {
 			log.Fatalf("Migration repair failed: %v", err)
 		}

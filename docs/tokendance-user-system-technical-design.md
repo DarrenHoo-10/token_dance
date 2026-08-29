@@ -2480,9 +2480,9 @@ ALTER TABLE daily_user_agent_model_metrics
 - dirty-baseline fixture 为同一用户预置两个 pending/failed account deletion，0002 的临时唯一 guard 返回 duplicate key，且验证 `users.handle` 尚未创建，证明迁移在任何持久 DDL 前停止；
 - 临时容器验证完毕后已移除。
 
-MySQL 8.4 校验覆盖本文使用的外键、CHECK、临时表、ALTER 和升级回填语法；生产目标仍是 MySQL 8.0.34+，CI 必须对实际生产小版本重复 clean install、upgrade-from-0001 和 dirty-baseline guard 三条测试。
+MySQL DDL 会隐式提交，因此 `schema_migrations.last_statement` 不能单独证明下一条 DDL 尚未执行。Runner 在执行持久 DDL 前先持久化 statement number 与 SHA-256 fingerprint；重启或 `migrate -repair` 时，先通过 `information_schema` 核对 `CREATE TABLE` 以及 `ALTER TABLE` 的 ADD COLUMN/INDEX/CHECK/FK 和 DROP CHECK 目标状态。若目标对象已存在且类型匹配，则只推进 durable progress，不重放 DDL；若状态不满足才执行原语句。Migration 文件内容及 migration checksum 不因 repair 改写。
 
-MySQL 8.4 校验能覆盖本文使用的外键、CHECK、生成列和 ALTER 语法，但生产目标仍是 MySQL 8.0.34+；CI 必须再对实际生产小版本执行 clean install 和 upgrade-from-0001 两条 migration 测试。
+`migrate -repair` 会持有同一 advisory lock，核对 pending DDL 的 fingerprint 与实际 schema，恢复剩余语句，清除 pending marker，再执行完整 embedded migration checksum 校验。普通 migration job 重启也走同一 reconciliation 路径。仓库集成测试固定要求真实 MySQL 8.0.34，并在 0002 与 0004 的持久 DDL 已成功、progress update 尚未执行的精确窗口注入故障；restart 与 `-repair` 都必须完成且不得出现 duplicate column/index/constraint/table 错误。
 
 ## 19、核心边界、证据与架构决策
 

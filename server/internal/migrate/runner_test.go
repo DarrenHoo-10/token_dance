@@ -1,7 +1,9 @@
 package migrate
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"os"
@@ -9,10 +11,9 @@ import (
 	"testing"
 	"time"
 
-	_ "github.com/go-sql-driver/mysql"
+	mysqldriver "github.com/go-sql-driver/mysql"
 
 	"tokendance/internal/domain"
-	"tokendance/internal/store/mysql"
 )
 
 func TestMigrationEmbedLoading(t *testing.T) {
@@ -81,8 +82,12 @@ func getTestMySQLDB(t *testing.T) *sql.DB {
 		t.Skip("skipping MySQL test: TOKENDANCE_TEST_MYSQL_DSN not set")
 	}
 
-	normDSN := mysql.NormalizeDSN(dsn)
-	db, err := sql.Open("mysql", normDSN)
+	cfg, err := mysqldriver.ParseDSN(dsn)
+	if err != nil {
+		t.Fatalf("failed to parse MySQL test DSN: %v", err)
+	}
+	cfg.ParseTime = true
+	db, err := sql.Open("mysql", cfg.FormatDSN())
 	if err != nil {
 		t.Fatalf("failed to open MySQL test connection: %v", err)
 	}
@@ -239,8 +244,9 @@ func TestMigrationRunnerIntegration_RejectDirtyBaseline(t *testing.T) {
 	}
 }
 
-func TestMigrationRunnerIntegration_RepairsPartialDDL0002And0004(t *testing.T) {
+func TestMigrationRunnerIntegration_RepairsImplicitDDLCommitWindow0002And0004(t *testing.T) {
 	db := getTestMySQLDB(t)
+	assertMySQL8034(t, db)
 	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
 	defer func() {
 		_, _ = db.Exec("SELECT RELEASE_LOCK('tokendance_global_test_lock')")
@@ -261,7 +267,7 @@ func TestMigrationRunnerIntegration_RepairsPartialDDL0002And0004(t *testing.T) {
 			t.Fatalf("apply 0001: %v", err)
 		}
 		partial := &Runner{db: db, migrations: []MigrationInfo{runner.migrations[1]}}
-		partial.afterStatement = func(version string, statement int) error {
+		partial.afterDDL = func(version string, statement int) error {
 			if version == "0002" && statement == 6 {
 				return fmt.Errorf("injected process exit")
 			}
@@ -270,15 +276,18 @@ func TestMigrationRunnerIntegration_RepairsPartialDDL0002And0004(t *testing.T) {
 		if err := partial.RunMigrations(ctx); err == nil {
 			t.Fatal("expected injected 0002 interruption")
 		}
-		assertDirtyMigrationProgress(t, db, "0002", 6)
+		assertDirtyMigrationProgress(t, db, "0002", 5, 6)
+		assertColumnExists(t, db, "users", "handle")
+		assertMigrationChecksum(t, db, runner.migrations[1])
 		if err := partial.CheckMigrationState(ctx); err == nil || !strings.Contains(err.Error(), "0002") {
 			t.Fatalf("check did not report dirty 0002: %v", err)
 		}
-		partial.afterStatement = nil
-		if err := partial.RepairMigrations(ctx); err != nil {
-			t.Fatalf("repair 0002: %v", err)
+		restarted := &Runner{db: db, migrations: []MigrationInfo{runner.migrations[1]}}
+		if err := restarted.RunMigrations(ctx); err != nil {
+			t.Fatalf("restart 0002: %v", err)
 		}
 		assertCleanMigration(t, db, "0002")
+		assertMigrationChecksum(t, db, runner.migrations[1])
 		assertColumnExists(t, db, "data_export_jobs", "idempotency_key")
 	})
 
@@ -295,7 +304,7 @@ func TestMigrationRunnerIntegration_RepairsPartialDDL0002And0004(t *testing.T) {
 			t.Fatalf("apply through 0003: %v", err)
 		}
 		partial := &Runner{db: db, migrations: []MigrationInfo{runner.migrations[3]}}
-		partial.afterStatement = func(version string, statement int) error {
+		partial.afterDDL = func(version string, statement int) error {
 			if version == "0004" && statement == 3 {
 				return fmt.Errorf("injected process exit")
 			}
@@ -304,38 +313,64 @@ func TestMigrationRunnerIntegration_RepairsPartialDDL0002And0004(t *testing.T) {
 		if err := partial.RunMigrations(ctx); err == nil {
 			t.Fatal("expected injected 0004 interruption")
 		}
-		assertDirtyMigrationProgress(t, db, "0004", 3)
+		assertDirtyMigrationProgress(t, db, "0004", 2, 3)
 		assertColumnExists(t, db, "data_deletion_requests", "claim_token")
-		partial.afterStatement = nil
+		assertMigrationChecksum(t, db, runner.migrations[3])
+		partial.afterDDL = nil
 		if err := partial.RepairMigrations(ctx); err != nil {
 			t.Fatalf("repair 0004: %v", err)
 		}
 		assertCleanMigration(t, db, "0004")
+		assertMigrationChecksum(t, db, runner.migrations[3])
 		assertColumnExists(t, db, "deletion_object_keys", "request_id")
 	})
 }
 
-func assertDirtyMigrationProgress(t *testing.T, db *sql.DB, version string, expected int) {
+func assertDirtyMigrationProgress(t *testing.T, db *sql.DB, version string, expectedLast, expectedPending int) {
 	t.Helper()
 	var dirty bool
-	var last int
-	if err := db.QueryRow(`SELECT dirty, last_statement FROM schema_migrations WHERE version = ?`, version).Scan(&dirty, &last); err != nil {
+	var last, pending int
+	var pendingChecksum []byte
+	if err := db.QueryRow(`SELECT dirty, last_statement, pending_statement, pending_statement_sha256 FROM schema_migrations WHERE version = ?`, version).Scan(&dirty, &last, &pending, &pendingChecksum); err != nil {
 		t.Fatalf("read migration progress: %v", err)
 	}
-	if !dirty || last != expected {
-		t.Fatalf("unexpected migration progress for %s: dirty=%v last=%d", version, dirty, last)
+	if !dirty || last != expectedLast || pending != expectedPending || len(pendingChecksum) != sha256.Size {
+		t.Fatalf("unexpected migration progress for %s: dirty=%v last=%d pending=%d fingerprint_bytes=%d", version, dirty, last, pending, len(pendingChecksum))
+	}
+}
+
+func assertMigrationChecksum(t *testing.T, db *sql.DB, migration MigrationInfo) {
+	t.Helper()
+	var checksum []byte
+	if err := db.QueryRow(`SELECT checksum_sha256 FROM schema_migrations WHERE version = ?`, migration.Version).Scan(&checksum); err != nil {
+		t.Fatalf("read migration %s checksum: %v", migration.Version, err)
+	}
+	if !bytes.Equal(checksum, migration.Checksum[:]) {
+		t.Fatalf("migration %s checksum changed: got %x want %x", migration.Version, checksum, migration.Checksum)
+	}
+}
+
+func assertMySQL8034(t *testing.T, db *sql.DB) {
+	t.Helper()
+	var version string
+	if err := db.QueryRow("SELECT VERSION()").Scan(&version); err != nil {
+		t.Fatalf("read MySQL version: %v", err)
+	}
+	if !strings.HasPrefix(version, "8.0.34") {
+		t.Fatalf("implicit DDL recovery tests require MySQL 8.0.34, got %s", version)
 	}
 }
 
 func assertCleanMigration(t *testing.T, db *sql.DB, version string) {
 	t.Helper()
 	var dirty bool
-	var count, last int
-	if err := db.QueryRow(`SELECT dirty, statement_count, last_statement FROM schema_migrations WHERE version = ?`, version).Scan(&dirty, &count, &last); err != nil {
+	var count, last, pending int
+	var pendingChecksum []byte
+	if err := db.QueryRow(`SELECT dirty, statement_count, last_statement, pending_statement, pending_statement_sha256 FROM schema_migrations WHERE version = ?`, version).Scan(&dirty, &count, &last, &pending, &pendingChecksum); err != nil {
 		t.Fatalf("read clean migration: %v", err)
 	}
-	if dirty || count != last {
-		t.Fatalf("migration %s was not repaired: dirty=%v progress=%d/%d", version, dirty, last, count)
+	if dirty || count != last || pending != 0 || pendingChecksum != nil {
+		t.Fatalf("migration %s was not repaired: dirty=%v progress=%d/%d pending=%d fingerprint_bytes=%d", version, dirty, last, count, pending, len(pendingChecksum))
 	}
 }
 

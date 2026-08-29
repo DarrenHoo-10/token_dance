@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -32,17 +33,19 @@ type MigrationInfo struct {
 }
 
 type Runner struct {
-	db             *sql.DB
-	migrations     []MigrationInfo
-	afterStatement func(version string, statement int) error
+	db         *sql.DB
+	migrations []MigrationInfo
+	afterDDL   func(version string, statement int) error
 }
 
 type migrationState struct {
-	checksum       [32]byte
-	dirty          bool
-	statementCount int
-	lastStatement  int
-	appliedAt      *time.Time
+	checksum                 [32]byte
+	dirty                    bool
+	statementCount           int
+	lastStatement            int
+	pendingStatement         int
+	pendingStatementChecksum [32]byte
+	appliedAt                *time.Time
 }
 
 func NewRunner(db *sql.DB) *Runner {
@@ -266,20 +269,42 @@ func (r *Runner) RunMigrations(ctx context.Context) error {
 
 		for index := state.lastStatement; index < len(statements); index++ {
 			stmt := strings.TrimSpace(statements[index])
-			if _, err := conn.ExecContext(ctx, stmt); err != nil {
-				return fmt.Errorf("failed executing migration %s statement %d/%d [%s]: %w", m.Filename, index+1, len(statements), stmt, err)
-			}
-			if _, err := conn.ExecContext(ctx, `
-				UPDATE schema_migrations
-				SET last_statement = ?, updated_at = CURRENT_TIMESTAMP(3)
-				WHERE version = ? AND dirty = TRUE AND last_statement = ?`, index+1, m.Version, index); err != nil {
-				return fmt.Errorf("failed to persist migration %s statement %d progress: %w", m.Version, index+1, err)
-			}
-			if r.afterStatement != nil {
-				if err := r.afterStatement(m.Version, index+1); err != nil {
-					return fmt.Errorf("migration %s interrupted after statement %d: %w", m.Version, index+1, err)
+			statementNumber := index + 1
+			statementChecksum := sha256.Sum256([]byte(stmt))
+			isDDL := isPersistentDDL(stmt)
+
+			if isDDL {
+				if state.pendingStatement != 0 && (state.pendingStatement != statementNumber || state.pendingStatementChecksum != statementChecksum) {
+					return fmt.Errorf("dirty migration %s pending statement fingerprint mismatch at statement %d", m.Version, statementNumber)
+				}
+				if err := markPendingStatement(ctx, conn, m.Version, index, statementNumber, statementChecksum); err != nil {
+					return err
+				}
+				applied, err := ddlAlreadyApplied(ctx, conn, stmt)
+				if err != nil {
+					return fmt.Errorf("failed reconciling migration %s statement %d schema state: %w", m.Version, statementNumber, err)
+				}
+				if !applied {
+					if _, err := conn.ExecContext(ctx, stmt); err != nil {
+						return fmt.Errorf("failed executing migration %s statement %d/%d [%s]: %w", m.Filename, statementNumber, len(statements), stmt, err)
+					}
+					if r.afterDDL != nil {
+						if err := r.afterDDL(m.Version, statementNumber); err != nil {
+							return fmt.Errorf("migration %s interrupted after DDL statement %d before progress update: %w", m.Version, statementNumber, err)
+						}
+					}
+				}
+			} else {
+				if _, err := conn.ExecContext(ctx, stmt); err != nil {
+					return fmt.Errorf("failed executing migration %s statement %d/%d [%s]: %w", m.Filename, statementNumber, len(statements), stmt, err)
 				}
 			}
+			if err := persistStatementProgress(ctx, conn, m.Version, index, statementNumber); err != nil {
+				return err
+			}
+			state.lastStatement = statementNumber
+			state.pendingStatement = 0
+			state.pendingStatementChecksum = [32]byte{}
 		}
 		if _, err := conn.ExecContext(ctx, `
 			UPDATE schema_migrations
@@ -291,6 +316,163 @@ func (r *Runner) RunMigrations(ctx context.Context) error {
 	return nil
 }
 
+func markPendingStatement(ctx context.Context, conn *sql.Conn, version string, lastStatement, statementNumber int, checksum [32]byte) error {
+	result, err := conn.ExecContext(ctx, `
+		UPDATE schema_migrations
+		SET pending_statement = ?, pending_statement_sha256 = ?, updated_at = CURRENT_TIMESTAMP(3)
+		WHERE version = ? AND dirty = TRUE AND last_statement = ?
+		  AND (pending_statement = 0 OR (pending_statement = ? AND pending_statement_sha256 = ?))`,
+		statementNumber, checksum[:], version, lastStatement, statementNumber, checksum[:])
+	if err != nil {
+		return fmt.Errorf("failed to persist migration %s statement %d fingerprint: %w", version, statementNumber, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to verify migration %s statement %d fingerprint: %w", version, statementNumber, err)
+	}
+	if rows == 1 {
+		return nil
+	}
+	var recordedStatement, recordedLast int
+	var recordedChecksum []byte
+	if err := conn.QueryRowContext(ctx, `SELECT last_statement, pending_statement, pending_statement_sha256 FROM schema_migrations WHERE version = ? AND dirty = TRUE`, version).Scan(&recordedLast, &recordedStatement, &recordedChecksum); err != nil {
+		return fmt.Errorf("failed to verify migration %s statement %d fingerprint state: %w", version, statementNumber, err)
+	}
+	var recorded [32]byte
+	copy(recorded[:], recordedChecksum)
+	if recordedLast != lastStatement || recordedStatement != statementNumber || recorded != checksum {
+		return fmt.Errorf("migration %s statement %d fingerprint was not persisted", version, statementNumber)
+	}
+	return nil
+}
+
+func persistStatementProgress(ctx context.Context, conn *sql.Conn, version string, lastStatement, statementNumber int) error {
+	result, err := conn.ExecContext(ctx, `
+		UPDATE schema_migrations
+		SET last_statement = ?, pending_statement = 0, pending_statement_sha256 = NULL,
+		    updated_at = CURRENT_TIMESTAMP(3)
+		WHERE version = ? AND dirty = TRUE AND last_statement = ?`, statementNumber, version, lastStatement)
+	if err != nil {
+		return fmt.Errorf("failed to persist migration %s statement %d progress: %w", version, statementNumber, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("failed to verify migration %s statement %d progress: %w", version, statementNumber, err)
+	}
+	if rows != 1 {
+		return fmt.Errorf("migration %s statement %d progress was not persisted", version, statementNumber)
+	}
+	return nil
+}
+
+func isPersistentDDL(stmt string) bool {
+	upper := strings.ToUpper(strings.TrimSpace(stmt))
+	return strings.HasPrefix(upper, "ALTER TABLE") ||
+		strings.HasPrefix(upper, "CREATE TABLE") ||
+		strings.HasPrefix(upper, "CREATE DATABASE")
+}
+
+var (
+	createTablePattern   = regexp.MustCompile(`(?is)^CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+((?:` + "`[^`]+`" + `|[a-zA-Z0-9_]+)(?:\.(?:` + "`[^`]+`" + `|[a-zA-Z0-9_]+))?)`)
+	alterTablePattern    = regexp.MustCompile(`(?is)^ALTER\s+TABLE\s+((?:` + "`[^`]+`" + `|[a-zA-Z0-9_]+)(?:\.(?:` + "`[^`]+`" + `|[a-zA-Z0-9_]+))?)`)
+	addColumnPattern     = regexp.MustCompile(`(?is)\bADD\s+COLUMN\s+(` + "`[^`]+`" + `|[a-zA-Z0-9_]+)`)
+	addIndexPattern      = regexp.MustCompile(`(?is)\bADD\s+(UNIQUE\s+)?(?:KEY|INDEX)\s+(` + "`[^`]+`" + `|[a-zA-Z0-9_]+)`)
+	addConstraintPattern = regexp.MustCompile(`(?is)\bADD\s+CONSTRAINT\s+(` + "`[^`]+`" + `|[a-zA-Z0-9_]+)\s+(CHECK|FOREIGN\s+KEY)`)
+	dropCheckPattern     = regexp.MustCompile(`(?is)\bDROP\s+CHECK\s+(` + "`[^`]+`" + `|[a-zA-Z0-9_]+)`)
+)
+
+func ddlAlreadyApplied(ctx context.Context, conn *sql.Conn, stmt string) (bool, error) {
+	upper := strings.ToUpper(strings.TrimSpace(stmt))
+	if strings.HasPrefix(upper, "CREATE DATABASE") {
+		return false, nil
+	}
+	if match := createTablePattern.FindStringSubmatch(stmt); match != nil {
+		schema, table := schemaAndObject(match[1])
+		var count int
+		if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = COALESCE(NULLIF(?, ''), DATABASE()) AND table_name = ?`, schema, table).Scan(&count); err != nil {
+			return false, err
+		}
+		return count == 1, nil
+	}
+	match := alterTablePattern.FindStringSubmatch(stmt)
+	if match == nil {
+		return false, nil
+	}
+	schema, table := schemaAndObject(match[1])
+	checks := 0
+	for _, columnMatch := range addColumnPattern.FindAllStringSubmatch(stmt, -1) {
+		checks++
+		exists, err := informationSchemaObjectExists(ctx, conn, `SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = COALESCE(NULLIF(?, ''), DATABASE()) AND table_name = ? AND column_name = ?`, schema, table, unquoteIdentifier(columnMatch[1]))
+		if err != nil || !exists {
+			return false, err
+		}
+	}
+	for _, indexMatch := range addIndexPattern.FindAllStringSubmatch(stmt, -1) {
+		checks++
+		indexName := unquoteIdentifier(indexMatch[2])
+		var nonUnique sql.NullInt64
+		if err := conn.QueryRowContext(ctx, `SELECT MIN(non_unique) FROM information_schema.statistics WHERE table_schema = COALESCE(NULLIF(?, ''), DATABASE()) AND table_name = ? AND index_name = ?`, schema, table, indexName).Scan(&nonUnique); err != nil {
+			return false, err
+		}
+		if !nonUnique.Valid {
+			return false, nil
+		}
+		expectsUnique := strings.TrimSpace(indexMatch[1]) != ""
+		if expectsUnique == (nonUnique.Int64 != 0) {
+			return false, nil
+		}
+	}
+	addedConstraints := make(map[string]struct{})
+	for _, constraintMatch := range addConstraintPattern.FindAllStringSubmatch(stmt, -1) {
+		checks++
+		name := unquoteIdentifier(constraintMatch[1])
+		addedConstraints[name] = struct{}{}
+		constraintType := "CHECK"
+		if strings.HasPrefix(strings.ToUpper(constraintMatch[2]), "FOREIGN") {
+			constraintType = "FOREIGN KEY"
+		}
+		exists, err := informationSchemaObjectExists(ctx, conn, `SELECT COUNT(*) FROM information_schema.table_constraints WHERE constraint_schema = COALESCE(NULLIF(?, ''), DATABASE()) AND table_name = ? AND constraint_name = ? AND constraint_type = ?`, schema, table, name, constraintType)
+		if err != nil || !exists {
+			return false, err
+		}
+	}
+	for _, dropMatch := range dropCheckPattern.FindAllStringSubmatch(stmt, -1) {
+		name := unquoteIdentifier(dropMatch[1])
+		if _, replaced := addedConstraints[name]; replaced {
+			continue
+		}
+		checks++
+		exists, err := informationSchemaObjectExists(ctx, conn, `SELECT COUNT(*) FROM information_schema.table_constraints WHERE constraint_schema = COALESCE(NULLIF(?, ''), DATABASE()) AND table_name = ? AND constraint_name = ? AND constraint_type = 'CHECK'`, schema, table, name)
+		if err != nil {
+			return false, err
+		}
+		if exists {
+			return false, nil
+		}
+	}
+	return checks > 0, nil
+}
+
+func informationSchemaObjectExists(ctx context.Context, conn *sql.Conn, query string, args ...any) (bool, error) {
+	var count int
+	if err := conn.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
+}
+
+func schemaAndObject(identifier string) (string, string) {
+	parts := strings.Split(identifier, ".")
+	if len(parts) == 2 {
+		return unquoteIdentifier(parts[0]), unquoteIdentifier(parts[1])
+	}
+	return "", unquoteIdentifier(identifier)
+}
+
+func unquoteIdentifier(identifier string) string {
+	return strings.Trim(strings.TrimSpace(identifier), "`")
+}
+
 func ensureMigrationStateTable(ctx context.Context, conn *sql.Conn) error {
 	if _, err := conn.ExecContext(ctx, `
 		CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -299,6 +481,8 @@ func ensureMigrationStateTable(ctx context.Context, conn *sql.Conn) error {
 		  dirty BOOLEAN NOT NULL DEFAULT TRUE,
 		  statement_count INT UNSIGNED NOT NULL DEFAULT 0,
 		  last_statement INT UNSIGNED NOT NULL DEFAULT 0,
+		  pending_statement INT UNSIGNED NOT NULL DEFAULT 0,
+		  pending_statement_sha256 BINARY(32) NULL,
 		  applied_at DATETIME(3) NULL,
 		  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
 		  PRIMARY KEY (version)
@@ -312,6 +496,8 @@ func ensureMigrationStateTable(ctx context.Context, conn *sql.Conn) error {
 		{"dirty", "ALTER TABLE schema_migrations ADD COLUMN dirty BOOLEAN NOT NULL DEFAULT FALSE AFTER checksum_sha256"},
 		{"statement_count", "ALTER TABLE schema_migrations ADD COLUMN statement_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER dirty"},
 		{"last_statement", "ALTER TABLE schema_migrations ADD COLUMN last_statement INT UNSIGNED NOT NULL DEFAULT 0 AFTER statement_count"},
+		{"pending_statement", "ALTER TABLE schema_migrations ADD COLUMN pending_statement INT UNSIGNED NOT NULL DEFAULT 0 AFTER last_statement"},
+		{"pending_statement_sha256", "ALTER TABLE schema_migrations ADD COLUMN pending_statement_sha256 BINARY(32) NULL AFTER pending_statement"},
 		{"updated_at", "ALTER TABLE schema_migrations ADD COLUMN updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) AFTER applied_at"},
 	}
 	for _, column := range columns {
@@ -329,7 +515,7 @@ func ensureMigrationStateTable(ctx context.Context, conn *sql.Conn) error {
 }
 
 func loadMigrationStates(ctx context.Context, conn *sql.Conn) (map[string]migrationState, error) {
-	rows, err := conn.QueryContext(ctx, `SELECT version, checksum_sha256, dirty, statement_count, last_statement, applied_at FROM schema_migrations ORDER BY version`)
+	rows, err := conn.QueryContext(ctx, `SELECT version, checksum_sha256, dirty, statement_count, last_statement, pending_statement, pending_statement_sha256, applied_at FROM schema_migrations ORDER BY version`)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query schema_migrations: %w", err)
 	}
@@ -338,12 +524,14 @@ func loadMigrationStates(ctx context.Context, conn *sql.Conn) (map[string]migrat
 	for rows.Next() {
 		var version string
 		var checksum []byte
+		var pendingChecksum []byte
 		var state migrationState
 		var appliedAt sql.NullTime
-		if err := rows.Scan(&version, &checksum, &state.dirty, &state.statementCount, &state.lastStatement, &appliedAt); err != nil {
+		if err := rows.Scan(&version, &checksum, &state.dirty, &state.statementCount, &state.lastStatement, &state.pendingStatement, &pendingChecksum, &appliedAt); err != nil {
 			return nil, fmt.Errorf("failed to scan migration state: %w", err)
 		}
 		copy(state.checksum[:], checksum)
+		copy(state.pendingStatementChecksum[:], pendingChecksum)
 		if appliedAt.Valid {
 			state.appliedAt = &appliedAt.Time
 		}
@@ -371,15 +559,21 @@ func (r *Runner) CheckMigrationState(ctx context.Context) error {
 	}
 	for version, state := range states {
 		if state.dirty {
+			if state.pendingStatement != 0 {
+				return fmt.Errorf("migration %s is dirty at statement %d/%d with pending DDL statement %d; run migrate -repair to reconcile information_schema", version, state.lastStatement, state.statementCount, state.pendingStatement)
+			}
 			return fmt.Errorf("migration %s is dirty at statement %d/%d; run migrate -repair", version, state.lastStatement, state.statementCount)
 		}
 	}
 	return nil
 }
 
-// RepairMigrations resumes a migration from its last durably recorded statement.
+// RepairMigrations reconciles pending DDL, resumes progress, and verifies checksums.
 func (r *Runner) RepairMigrations(ctx context.Context) error {
-	return r.RunMigrations(ctx)
+	if err := r.RunMigrations(ctx); err != nil {
+		return err
+	}
+	return r.ValidateSchemaCompatibility(ctx)
 }
 
 // ValidateSchemaCompatibility verifies all embedded migrations have been applied with matching checksums
