@@ -22,7 +22,7 @@
 
 ## 预审结论纳入实施
 
-后端实现采用 OpenAPI 作为前后端契约事实源；未登录 Session 固定为 `204`。公共缓存不得脱离 MySQL 当前投影状态直接返回。设备 revoke/pause 与 ingest 使用相同 installation 行锁顺序。Worker 使用数据库时间、租约和条件更新 fencing。Migration runner 不声称 MySQL DDL 可事务回滚，提供 advisory lock、checksum 和部分失败阻断。Collector 浏览器授权补充短期、installation-scoped grant，禁止复用 Web Session Cookie 作为 bearer。
+后端实现采用 OpenAPI 作为前后端契约事实源；未登录 Session 固定为 `204`。公共缓存不得脱离 MySQL 当前投影状态直接返回。设备 revoke/pause 与 ingest 使用相同 installation 行锁顺序。Worker 使用数据库时间、租约和条件更新 fencing。Migration runner 不声称 MySQL DDL 可事务回滚，提供 advisory lock、checksum、durable dirty/statement progress；`migrate -check` 报告部分 DDL，`migrate -repair` 从最后持久 checkpoint 恢复。Collector 浏览器授权补充短期、installation-scoped grant，禁止复用 Web Session Cookie 作为 bearer。
 
 ## 独立 reviewer 第一轮结论
 

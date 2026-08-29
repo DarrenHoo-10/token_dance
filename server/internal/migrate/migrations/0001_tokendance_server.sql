@@ -15,7 +15,12 @@ USE tokendance;
 CREATE TABLE schema_migrations (
   version             VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   checksum_sha256     BINARY(32) NOT NULL,
-  applied_at          DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  dirty               BOOLEAN NOT NULL DEFAULT TRUE,
+  statement_count     INT UNSIGNED NOT NULL DEFAULT 0,
+  last_statement      INT UNSIGNED NOT NULL DEFAULT 0,
+  applied_at          DATETIME(3) NULL,
+  updated_at          DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+                      ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (version)
 ) ENGINE = InnoDB;
 

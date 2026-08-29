@@ -229,6 +229,52 @@ func TestMySQL_AuthStoreLifecycle(t *testing.T) {
 	}
 }
 
+func TestMySQL_ExportServiceIdempotencySurvivesKeyRotation(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	userID := "usr_export_rotation"
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO users (user_id, auth_subject_hash, display_name, account_status, leaderboard_visibility, timezone_name, locale, created_at, updated_at)
+		VALUES (?, UNHEX(SHA2('export-rotation', 256)), 'Export Rotation', 'active', 'private', 'UTC', 'en-US', ?, ?)`, userID, now, now); err != nil {
+		t.Fatalf("seed export rotation user: %v", err)
+	}
+
+	oldKey := []byte("old-idempotency-key-material-00001")
+	newKey := []byte("new-idempotency-key-material-00002")
+	cfgV1 := config.DefaultConfig()
+	cfgV1.IdempotencyKeys = config.VersionedKeyring{CurrentVersion: 1, Keys: map[uint16][]byte{1: oldKey}}
+	cfgV2 := config.DefaultConfig()
+	cfgV2.IdempotencyKeys = config.VersionedKeyring{CurrentVersion: 2, Keys: map[uint16][]byte{1: oldKey, 2: newKey}}
+	clk := clock.NewMockClock(now)
+	storage := provider.NewMemoryObjectStorage("")
+	beforeRotation := export.NewServiceWithConfig(st, cfgV1, clk, storage)
+	afterRotation := export.NewServiceWithConfig(st, cfgV2, clk, storage)
+	input := export.CreateExportInput{IdempotencyKey: "rotation-retry", Scope: "summary", Format: "csv", Filter: map[string]interface{}{"range": "30d"}}
+
+	first, err := beforeRotation.CreateJob(ctx, userID, input)
+	if err != nil {
+		t.Fatalf("create export before rotation: %v", err)
+	}
+	retried, err := afterRotation.CreateJob(ctx, userID, input)
+	if err != nil {
+		t.Fatalf("retry export after rotation: %v", err)
+	}
+	if retried.ExportID != first.ExportID {
+		t.Fatalf("rotation retry created a different job: first=%s retried=%s", first.ExportID, retried.ExportID)
+	}
+	var count, storedLength int
+	var storedKey string
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*), MAX(CHAR_LENGTH(idempotency_key)), MAX(idempotency_key) FROM data_export_jobs WHERE user_id = ?`, userID).Scan(&count, &storedLength, &storedKey); err != nil {
+		t.Fatalf("inspect rotated export job: %v", err)
+	}
+	if count != 1 || storedLength > 64 || !strings.HasPrefix(storedKey, "v1:") {
+		t.Fatalf("unexpected compact idempotency storage: count=%d length=%d key=%s", count, storedLength, storedKey)
+	}
+}
+
 func TestMySQL_ProfileAndPrivacyLifecycle(t *testing.T) {
 	st, _, cleanup := getTestStore(t)
 	defer cleanup()
@@ -562,7 +608,7 @@ func TestMySQL_DeviceAndExportLifecycle(t *testing.T) {
 		UpdatedAt:      now,
 	}
 
-	createdJob, err := exp.CreateJob(ctx, expJob)
+	createdJob, err := exp.CreateJob(ctx, expJob, []string{expJob.IdempotencyKey})
 	if err != nil {
 		t.Fatalf("failed to create export job: %v", err)
 	}

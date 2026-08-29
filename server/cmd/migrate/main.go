@@ -14,7 +14,8 @@ import (
 
 func main() {
 	dsnFlag := flag.String("dsn", "", "MySQL connection DSN (overrides TOKENDANCE_MYSQL_DSN)")
-	checkFlag := flag.Bool("check", false, "Validate schema compatibility without executing migrations")
+	checkFlag := flag.Bool("check", false, "Validate migration state and schema compatibility without executing migrations")
+	repairFlag := flag.Bool("repair", false, "Resume a dirty migration from durable statement progress")
 	flag.Parse()
 
 	cfg, _ := config.LoadFromEnv()
@@ -50,16 +51,30 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
+	if *checkFlag && *repairFlag {
+		log.Fatalf("Fatal: -check and -repair cannot be used together")
+	}
 	if *checkFlag {
-		log.Println("Checking database schema compatibility...")
+		log.Println("Checking migration state and database schema compatibility...")
+		if err := runner.CheckMigrationState(ctx); err != nil {
+			log.Fatalf("Migration state check failed: %v", err)
+		}
 		if err := runner.ValidateSchemaCompatibility(ctx); err != nil {
 			log.Fatalf("Schema compatibility check failed: %v", err)
 		}
-		log.Println("Schema compatibility check passed.")
+		log.Println("Migration state and schema compatibility checks passed.")
+		return
+	}
+	if *repairFlag {
+		log.Println("Repairing dirty migration from durable statement progress...")
+		if err := runner.RepairMigrations(ctx); err != nil {
+			log.Fatalf("Migration repair failed: %v", err)
+		}
+		log.Println("Database migration repair completed and verified.")
 		return
 	}
 
-	log.Println("Applying database migrations with advisory lock and checksum validation...")
+	log.Println("Applying database migrations with advisory lock, checksum validation, and durable statement progress...")
 	if err := runner.RunMigrations(ctx); err != nil {
 		log.Fatalf("Migration execution failed: %v", err)
 	}

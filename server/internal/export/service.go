@@ -60,8 +60,12 @@ func (s *Service) CreateJob(ctx context.Context, userID string, in CreateExportI
 			return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "export.idempotencyInvalid", "Idempotency-Key contains invalid characters", nil, domain.ErrInvalidArgument)
 		}
 	}
-	idempotencyHash := crypto.HMACSHA256(s.idempotencyKeys.Current(), []byte(in.IdempotencyKey))
-	hashedIdempotencyKey := fmt.Sprintf("v%d:%s", s.idempotencyKeys.CurrentVersion, base64.RawURLEncoding.EncodeToString(idempotencyHash[:]))
+	idempotencyKeys := make([]string, 0, len(s.idempotencyKeys.Keys))
+	for _, version := range s.idempotencyKeys.Versions() {
+		hash := crypto.HMACSHA256(s.idempotencyKeys.Keys[version], []byte(in.IdempotencyKey))
+		idempotencyKeys = append(idempotencyKeys, fmt.Sprintf("v%d:%s", version, base64.RawURLEncoding.EncodeToString(hash[:])))
+	}
+	hashedIdempotencyKey := idempotencyKeys[0]
 
 	if in.Scope != "summary" && in.Scope != "activity" && in.Scope != "all_aggregates" {
 		in.Scope = "summary"
@@ -93,7 +97,7 @@ func (s *Service) CreateJob(ctx context.Context, userID string, in CreateExportI
 		UpdatedAt:      now,
 	}
 
-	created, err := s.store.CreateJob(ctx, job)
+	created, err := s.store.CreateJob(ctx, job, idempotencyKeys)
 	if err != nil {
 		if errors.Is(err, domain.ErrIdempotencyReused) {
 			return nil, domain.NewAppError(409, "IDEMPOTENCY_KEY_REUSED", "export.idempotencyReused", "idempotency key reused with different request payload", nil, err)

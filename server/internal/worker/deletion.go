@@ -288,8 +288,27 @@ func (w *Worker) deletionDeleteEvents(ctx context.Context, claim *deletionClaim)
 			if err != nil {
 				return err
 			}
+			rows, err := tx.QueryContext(ctx, "SELECT DISTINCT occurred_date FROM usage_events WHERE user_id = ? AND installation_id = ? ORDER BY occurred_date", claim.userID.String, installationID)
+			if err != nil {
+				return fmt.Errorf("query installation aggregate dates: %w", err)
+			}
+			var affectedDates []string
+			for rows.Next() {
+				var date string
+				if err := rows.Scan(&date); err != nil {
+					rows.Close()
+					return fmt.Errorf("scan installation aggregate date: %w", err)
+				}
+				affectedDates = append(affectedDates, date)
+			}
+			if err := rows.Close(); err != nil {
+				return fmt.Errorf("close installation aggregate dates: %w", err)
+			}
 			if _, err := tx.ExecContext(ctx, "DELETE FROM usage_events WHERE user_id = ? AND installation_id = ?", claim.userID.String, installationID); err != nil {
 				return fmt.Errorf("delete installation usage events: %w", err)
+			}
+			if err := rebuildUserAggregates(ctx, tx, claim.userID.String, affectedDates); err != nil {
+				return err
 			}
 		case "time_range":
 			from, to, err := claimTimeRange(claim)
@@ -312,7 +331,10 @@ func (w *Worker) deletionDeleteAggregates(ctx context.Context, claim *deletionCl
 			return fmt.Errorf("deletion request has no user")
 		}
 		userID := claim.userID.String
-		if claim.scope == "time_range" {
+		switch claim.scope {
+		case "installation":
+			return nil
+		case "time_range":
 			from, to, err := claimTimeRange(claim)
 			if err != nil {
 				return err
@@ -324,7 +346,7 @@ func (w *Worker) deletionDeleteAggregates(ctx context.Context, claim *deletionCl
 					return fmt.Errorf("delete %s time range: %w", table, err)
 				}
 			}
-		} else {
+		default:
 			for _, table := range []string{"daily_user_agent_metrics", "daily_user_agent_model_metrics", "daily_skill_metrics"} {
 				if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE user_id = ?", userID); err != nil {
 					return fmt.Errorf("delete %s: %w", table, err)
@@ -336,6 +358,92 @@ func (w *Worker) deletionDeleteAggregates(ctx context.Context, claim *deletionCl
 		}
 		return nil
 	})
+}
+
+func rebuildUserAggregates(ctx context.Context, tx *sql.Tx, userID string, affectedDates []string) error {
+	if len(affectedDates) == 0 {
+		return nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(affectedDates)), ",")
+	args := make([]interface{}, 0, len(affectedDates)+1)
+	args = append(args, userID)
+	for _, date := range affectedDates {
+		args = append(args, date)
+	}
+	for _, table := range []string{"daily_user_agent_metrics", "daily_user_agent_model_metrics", "daily_skill_metrics"} {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE user_id = ? AND metric_date IN ("+placeholders+")", args...); err != nil {
+			return fmt.Errorf("clear %s before rebuild: %w", table, err)
+		}
+	}
+
+	statements := []string{
+		`INSERT INTO daily_user_agent_metrics (
+			metric_date, user_id, agent_id, exact_token_total, derived_token_total,
+			estimated_token_total, session_count, child_session_count,
+			interaction_turn_count, model_request_count, tool_call_count, skill_use_count,
+			code_generated_lines, code_accepted_lines, correlated_code_lines,
+			cost_amount, cost_currency, source_max_event_pk, aggregation_version,
+			computed_at, updated_at, token_input_total, token_output_total,
+			token_cache_read_total, token_cache_write_total, token_reasoning_total,
+			active_duration_ms, message_count, user_message_count
+		)
+		SELECT occurred_date, user_id, agent_id,
+			SUM(CASE WHEN accuracy = 'exact' THEN COALESCE(token_total, COALESCE(token_input, 0) + COALESCE(token_output, 0) + COALESCE(token_cache_read, 0) + COALESCE(token_cache_write, 0) + COALESCE(token_reasoning, 0)) ELSE 0 END),
+			SUM(CASE WHEN accuracy IN ('derived', 'correlated') THEN COALESCE(token_total, COALESCE(token_input, 0) + COALESCE(token_output, 0) + COALESCE(token_cache_read, 0) + COALESCE(token_cache_write, 0) + COALESCE(token_reasoning, 0)) ELSE 0 END),
+			SUM(CASE WHEN accuracy = 'estimated' THEN COALESCE(token_total, COALESCE(token_input, 0) + COALESCE(token_output, 0) + COALESCE(token_cache_read, 0) + COALESCE(token_cache_write, 0) + COALESCE(token_reasoning, 0)) ELSE 0 END),
+			COUNT(DISTINCT session_hash), COUNT(DISTINCT CASE WHEN parent_session_hash IS NOT NULL THEN session_hash END),
+			COUNT(DISTINCT turn_hash), SUM(event_type = 'model_usage_recorded'),
+			SUM(event_type = 'tool_invoked'), SUM(event_type = 'skill_invoked'),
+			COALESCE(SUM(code_generated_lines), 0), COALESCE(SUM(code_accepted_lines), 0),
+			COALESCE(SUM(CASE WHEN accuracy = 'correlated' THEN COALESCE(code_generated_lines, 0) ELSE 0 END), 0),
+			COALESCE(SUM(cost_amount), 0), COALESCE(MAX(cost_currency), 'USD'), MAX(event_pk), 1,
+			CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3), SUM(token_input), SUM(token_output),
+			SUM(token_cache_read), SUM(token_cache_write), SUM(token_reasoning), SUM(duration_ms),
+			SUM(event_type IN ('turn_started', 'turn_completed', 'model_usage_recorded')),
+			SUM(event_type IN ('turn_started', 'turn_completed'))
+		FROM usage_events WHERE user_id = ? AND occurred_date IN (` + placeholders + `)
+		GROUP BY occurred_date, user_id, agent_id`,
+		`INSERT INTO daily_user_agent_model_metrics (
+			metric_date, user_id, agent_id, provider_id, model_id,
+			exact_token_total, derived_token_total, estimated_token_total,
+			model_request_count, cost_amount, cost_currency, source_max_event_pk,
+			aggregation_version, computed_at, updated_at, token_input_total,
+			token_output_total, token_cache_read_total, token_cache_write_total,
+			token_reasoning_total
+		)
+		SELECT occurred_date, user_id, agent_id, provider_id, model_id,
+			SUM(CASE WHEN accuracy = 'exact' THEN COALESCE(token_total, COALESCE(token_input, 0) + COALESCE(token_output, 0) + COALESCE(token_cache_read, 0) + COALESCE(token_cache_write, 0) + COALESCE(token_reasoning, 0)) ELSE 0 END),
+			SUM(CASE WHEN accuracy IN ('derived', 'correlated') THEN COALESCE(token_total, COALESCE(token_input, 0) + COALESCE(token_output, 0) + COALESCE(token_cache_read, 0) + COALESCE(token_cache_write, 0) + COALESCE(token_reasoning, 0)) ELSE 0 END),
+			SUM(CASE WHEN accuracy = 'estimated' THEN COALESCE(token_total, COALESCE(token_input, 0) + COALESCE(token_output, 0) + COALESCE(token_cache_read, 0) + COALESCE(token_cache_write, 0) + COALESCE(token_reasoning, 0)) ELSE 0 END),
+			SUM(event_type = 'model_usage_recorded'), COALESCE(SUM(cost_amount), 0),
+			COALESCE(MAX(cost_currency), 'USD'), MAX(event_pk), 1, CURRENT_TIMESTAMP(3),
+			CURRENT_TIMESTAMP(3), SUM(token_input), SUM(token_output), SUM(token_cache_read),
+			SUM(token_cache_write), SUM(token_reasoning)
+		FROM usage_events
+		WHERE user_id = ? AND occurred_date IN (` + placeholders + `)
+		  AND provider_id IS NOT NULL AND model_id IS NOT NULL
+		GROUP BY occurred_date, user_id, agent_id, provider_id, model_id`,
+		`INSERT INTO daily_skill_metrics (
+			metric_date, user_id, agent_id, skill_key, skill_public_name, use_count,
+			exact_use_count, derived_use_count, correlated_use_count, estimated_use_count,
+			success_count, failure_count, duration_ms, source_max_event_pk,
+			aggregation_version, computed_at, updated_at
+		)
+		SELECT occurred_date, user_id, agent_id, skill_key, MAX(skill_public_name), COUNT(*),
+			SUM(accuracy = 'exact'), SUM(accuracy = 'derived'), SUM(accuracy = 'correlated'),
+			SUM(accuracy = 'estimated'), SUM(success = TRUE), SUM(success = FALSE),
+			COALESCE(SUM(duration_ms), 0), MAX(event_pk), 1, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3)
+		FROM usage_events
+		WHERE user_id = ? AND occurred_date IN (` + placeholders + `)
+		  AND event_type = 'skill_invoked' AND skill_key IS NOT NULL
+		GROUP BY occurred_date, user_id, agent_id, skill_key`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement, args...); err != nil {
+			return fmt.Errorf("rebuild user aggregates: %w", err)
+		}
+	}
+	return nil
 }
 
 func (w *Worker) deletionDeleteObjects(ctx context.Context, claim *deletionClaim) error {
@@ -572,7 +680,7 @@ func reconcileDeletionResiduals(ctx context.Context, tx *sql.Tx, claim *deletion
 				args  []interface{}
 			}{"user PII", "SELECT COUNT(*) FROM users WHERE user_id = ? AND (account_status <> 'deleted' OR email_lookup_hash IS NOT NULL OR email_ciphertext IS NOT NULL OR handle IS NOT NULL OR avatar_url IS NOT NULL OR avatar_object_id IS NOT NULL OR bio IS NOT NULL OR display_name <> 'Deleted User')", []interface{}{userID}},
 		)
-	case "all_usage", "installation":
+	case "all_usage":
 		for _, table := range []string{"usage_events", "daily_user_agent_metrics", "daily_user_agent_model_metrics", "daily_skill_metrics"} {
 			checks = append(checks, struct {
 				name  string
@@ -580,16 +688,23 @@ func reconcileDeletionResiduals(ctx context.Context, tx *sql.Tx, claim *deletion
 				args  []interface{}
 			}{table, "SELECT COUNT(*) FROM " + table + " WHERE user_id = ?", []interface{}{userID}})
 		}
-		if claim.scope == "installation" {
-			installationID, err := claimInstallationID(claim)
-			if err != nil {
-				return err
-			}
-			checks = append(checks, struct {
-				name  string
-				query string
-				args  []interface{}
-			}{"installation", "SELECT COUNT(*) FROM installations WHERE installation_id = ?", []interface{}{installationID}})
+	case "installation":
+		installationID, err := claimInstallationID(claim)
+		if err != nil {
+			return err
+		}
+		for _, residue := range []struct {
+			name  string
+			query string
+			args  []interface{}
+		}{
+			{"usage events", "SELECT COUNT(*) FROM usage_events WHERE user_id = ? AND installation_id = ?", []interface{}{userID, installationID}},
+			{"installation", "SELECT COUNT(*) FROM installations WHERE user_id = ? AND installation_id = ?", []interface{}{userID, installationID}},
+			{"ingest batches", "SELECT COUNT(*) FROM ingest_batches WHERE installation_id = ?", []interface{}{installationID}},
+			{"ingest nonces", "SELECT COUNT(*) FROM ingest_nonces WHERE installation_id = ?", []interface{}{installationID}},
+			{"adapter status", "SELECT COUNT(*) FROM installation_adapter_status WHERE installation_id = ?", []interface{}{installationID}},
+		} {
+			checks = append(checks, residue)
 		}
 	case "time_range":
 		from, to, err := claimTimeRange(claim)

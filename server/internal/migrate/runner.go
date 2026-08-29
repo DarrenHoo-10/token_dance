@@ -32,8 +32,17 @@ type MigrationInfo struct {
 }
 
 type Runner struct {
-	db         *sql.DB
-	migrations []MigrationInfo
+	db             *sql.DB
+	migrations     []MigrationInfo
+	afterStatement func(version string, statement int) error
+}
+
+type migrationState struct {
+	checksum       [32]byte
+	dirty          bool
+	statementCount int
+	lastStatement  int
+	appliedAt      *time.Time
 }
 
 func NewRunner(db *sql.DB) *Runner {
@@ -195,12 +204,11 @@ func (r *Runner) releaseAdvisoryLock(ctx context.Context, conn *sql.Conn) error 
 	return nil
 }
 
-// RunMigrations applies migrations in order to the database with advisory lock and checksum guard
+// RunMigrations applies or resumes migrations with durable statement progress.
 func (r *Runner) RunMigrations(ctx context.Context) error {
 	if r.db == nil {
 		return fmt.Errorf("database connection is nil")
 	}
-
 	if len(r.migrations) == 0 {
 		if err := r.LoadFromEmbed(); err != nil {
 			return err
@@ -212,8 +220,6 @@ func (r *Runner) RunMigrations(ctx context.Context) error {
 		return fmt.Errorf("failed to acquire migration connection: %w", err)
 	}
 	defer conn.Close()
-
-	// 1. Acquire MySQL advisory lock to prevent concurrent migration executions
 	locked, err := r.acquireAdvisoryLock(ctx, conn, 30)
 	if err != nil {
 		return fmt.Errorf("error acquiring migration advisory lock: %w", err)
@@ -221,108 +227,159 @@ func (r *Runner) RunMigrations(ctx context.Context) error {
 	if !locked {
 		return fmt.Errorf("failed to acquire migration advisory lock within timeout")
 	}
-	defer func() {
-		_ = r.releaseAdvisoryLock(context.Background(), conn)
-	}()
+	defer func() { _ = r.releaseAdvisoryLock(context.Background(), conn) }()
 
-	// 2. Ensure schema_migrations table exists
-	createTableSQL := `
-	CREATE TABLE IF NOT EXISTS schema_migrations (
-	  version             VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
-	  checksum_sha256     BINARY(32) NOT NULL,
-	  applied_at          DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-	  PRIMARY KEY (version)
-	) ENGINE = InnoDB;`
-
-	if _, err := conn.ExecContext(ctx, createTableSQL); err != nil {
-		return fmt.Errorf("failed to ensure schema_migrations table: %w", err)
+	if err := ensureMigrationStateTable(ctx, conn); err != nil {
+		return err
 	}
-
-	// 3. Query applied migrations
-	rows, err := conn.QueryContext(ctx, "SELECT version, checksum_sha256, applied_at FROM schema_migrations ORDER BY version ASC")
+	states, err := loadMigrationStates(ctx, conn)
 	if err != nil {
-		return fmt.Errorf("failed to query schema_migrations: %w", err)
-	}
-	defer rows.Close()
-
-	applied := make(map[string]MigrationInfo)
-	for rows.Next() {
-		var ver string
-		var chk []byte
-		var appliedRaw interface{}
-		if err := rows.Scan(&ver, &chk, &appliedRaw); err != nil {
-			return fmt.Errorf("failed to scan migration row: %w", err)
-		}
-		var sum [32]byte
-		copy(sum[:], chk)
-
-		var appliedAt time.Time
-		switch v := appliedRaw.(type) {
-		case time.Time:
-			appliedAt = v
-		case []byte:
-			str := string(v)
-			appliedAt, _ = time.Parse("2006-01-02 15:04:05.999999", str)
-			if appliedAt.IsZero() {
-				appliedAt, _ = time.Parse(time.RFC3339Nano, str)
-			}
-			if appliedAt.IsZero() {
-				appliedAt, _ = time.Parse("2006-01-02 15:04:05", str)
-			}
-		case string:
-			appliedAt, _ = time.Parse("2006-01-02 15:04:05.999999", v)
-			if appliedAt.IsZero() {
-				appliedAt, _ = time.Parse(time.RFC3339Nano, v)
-			}
-			if appliedAt.IsZero() {
-				appliedAt, _ = time.Parse("2006-01-02 15:04:05", v)
-			}
-		}
-
-		applied[ver] = MigrationInfo{
-			Version:   ver,
-			Checksum:  sum,
-			AppliedAt: &appliedAt,
-		}
+		return err
 	}
 
-	// 4. Process each migration
 	for _, m := range r.migrations {
-		if prev, ok := applied[m.Version]; ok {
-			// Verify checksum
-			if prev.Checksum != m.Checksum {
-				return fmt.Errorf("checksum mismatch for migration %s: applied %x != current %x", m.Version, prev.Checksum, m.Checksum)
-			}
+		statements := splitSQLStatements(m.Content)
+		state, exists := states[m.Version]
+		if exists && state.checksum != m.Checksum {
+			return fmt.Errorf("checksum mismatch for migration %s: applied %x != current %x", m.Version, state.checksum, m.Checksum)
+		}
+		if exists && !state.dirty {
 			continue
 		}
-
-		// Preflight check if 0002
-		if m.Version == "0002" {
-			if err := r.CheckBaselineGuard(ctx); err != nil {
-				return fmt.Errorf("migration %s dirty baseline preflight failed: %w", m.Version, err)
+		if !exists {
+			if m.Version == "0002" {
+				if err := r.CheckBaselineGuard(ctx); err != nil {
+					return fmt.Errorf("migration %s dirty baseline preflight failed: %w", m.Version, err)
+				}
 			}
+			if _, err := conn.ExecContext(ctx, `
+				INSERT INTO schema_migrations
+					(version, checksum_sha256, dirty, statement_count, last_statement, applied_at, updated_at)
+				VALUES (?, ?, TRUE, ?, 0, NULL, CURRENT_TIMESTAMP(3))`,
+				m.Version, m.Checksum[:], len(statements)); err != nil {
+				return fmt.Errorf("failed to mark migration %s dirty: %w", m.Version, err)
+			}
+			state = migrationState{checksum: m.Checksum, dirty: true, statementCount: len(statements)}
+		} else if state.statementCount != len(statements) {
+			return fmt.Errorf("dirty migration %s statement count changed: recorded %d != current %d", m.Version, state.statementCount, len(statements))
 		}
 
-		// Execute migration statements
-		statements := splitSQLStatements(m.Content)
-		for _, stmt := range statements {
-			stmt = strings.TrimSpace(stmt)
-			if stmt == "" {
-				continue
-			}
+		for index := state.lastStatement; index < len(statements); index++ {
+			stmt := strings.TrimSpace(statements[index])
 			if _, err := conn.ExecContext(ctx, stmt); err != nil {
-				return fmt.Errorf("failed executing migration %s statement [%s]: %w", m.Filename, stmt, err)
+				return fmt.Errorf("failed executing migration %s statement %d/%d [%s]: %w", m.Filename, index+1, len(statements), stmt, err)
+			}
+			if _, err := conn.ExecContext(ctx, `
+				UPDATE schema_migrations
+				SET last_statement = ?, updated_at = CURRENT_TIMESTAMP(3)
+				WHERE version = ? AND dirty = TRUE AND last_statement = ?`, index+1, m.Version, index); err != nil {
+				return fmt.Errorf("failed to persist migration %s statement %d progress: %w", m.Version, index+1, err)
+			}
+			if r.afterStatement != nil {
+				if err := r.afterStatement(m.Version, index+1); err != nil {
+					return fmt.Errorf("migration %s interrupted after statement %d: %w", m.Version, index+1, err)
+				}
 			}
 		}
-
-		// Record in schema_migrations
-		insertSQL := "INSERT INTO schema_migrations (version, checksum_sha256, applied_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE checksum_sha256 = VALUES(checksum_sha256), applied_at = VALUES(applied_at)"
-		if _, err := conn.ExecContext(ctx, insertSQL, m.Version, m.Checksum[:], time.Now().UTC()); err != nil {
-			return fmt.Errorf("failed to record applied migration %s: %w", m.Version, err)
+		if _, err := conn.ExecContext(ctx, `
+			UPDATE schema_migrations
+			SET dirty = FALSE, applied_at = CURRENT_TIMESTAMP(3), updated_at = CURRENT_TIMESTAMP(3)
+			WHERE version = ? AND dirty = TRUE AND last_statement = statement_count`, m.Version); err != nil {
+			return fmt.Errorf("failed to mark migration %s applied: %w", m.Version, err)
 		}
 	}
-
 	return nil
+}
+
+func ensureMigrationStateTable(ctx context.Context, conn *sql.Conn) error {
+	if _, err := conn.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS schema_migrations (
+		  version VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+		  checksum_sha256 BINARY(32) NOT NULL,
+		  dirty BOOLEAN NOT NULL DEFAULT TRUE,
+		  statement_count INT UNSIGNED NOT NULL DEFAULT 0,
+		  last_statement INT UNSIGNED NOT NULL DEFAULT 0,
+		  applied_at DATETIME(3) NULL,
+		  updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
+		  PRIMARY KEY (version)
+		) ENGINE = InnoDB`); err != nil {
+		return fmt.Errorf("failed to ensure schema_migrations table: %w", err)
+	}
+	columns := []struct {
+		name string
+		ddl  string
+	}{
+		{"dirty", "ALTER TABLE schema_migrations ADD COLUMN dirty BOOLEAN NOT NULL DEFAULT FALSE AFTER checksum_sha256"},
+		{"statement_count", "ALTER TABLE schema_migrations ADD COLUMN statement_count INT UNSIGNED NOT NULL DEFAULT 0 AFTER dirty"},
+		{"last_statement", "ALTER TABLE schema_migrations ADD COLUMN last_statement INT UNSIGNED NOT NULL DEFAULT 0 AFTER statement_count"},
+		{"updated_at", "ALTER TABLE schema_migrations ADD COLUMN updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3) AFTER applied_at"},
+	}
+	for _, column := range columns {
+		var count int
+		if err := conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'schema_migrations' AND column_name = ?`, column.name).Scan(&count); err != nil {
+			return fmt.Errorf("failed to inspect schema_migrations.%s: %w", column.name, err)
+		}
+		if count == 0 {
+			if _, err := conn.ExecContext(ctx, column.ddl); err != nil {
+				return fmt.Errorf("failed to add schema_migrations.%s: %w", column.name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func loadMigrationStates(ctx context.Context, conn *sql.Conn) (map[string]migrationState, error) {
+	rows, err := conn.QueryContext(ctx, `SELECT version, checksum_sha256, dirty, statement_count, last_statement, applied_at FROM schema_migrations ORDER BY version`)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query schema_migrations: %w", err)
+	}
+	defer rows.Close()
+	states := make(map[string]migrationState)
+	for rows.Next() {
+		var version string
+		var checksum []byte
+		var state migrationState
+		var appliedAt sql.NullTime
+		if err := rows.Scan(&version, &checksum, &state.dirty, &state.statementCount, &state.lastStatement, &appliedAt); err != nil {
+			return nil, fmt.Errorf("failed to scan migration state: %w", err)
+		}
+		copy(state.checksum[:], checksum)
+		if appliedAt.Valid {
+			state.appliedAt = &appliedAt.Time
+		}
+		states[version] = state
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed reading migration states: %w", err)
+	}
+	return states, nil
+}
+
+// CheckMigrationState reports partial migrations without changing database state.
+func (r *Runner) CheckMigrationState(ctx context.Context) error {
+	if r.db == nil {
+		return fmt.Errorf("database connection is nil")
+	}
+	conn, err := r.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire migration connection: %w", err)
+	}
+	defer conn.Close()
+	states, err := loadMigrationStates(ctx, conn)
+	if err != nil {
+		return err
+	}
+	for version, state := range states {
+		if state.dirty {
+			return fmt.Errorf("migration %s is dirty at statement %d/%d; run migrate -repair", version, state.lastStatement, state.statementCount)
+		}
+	}
+	return nil
+}
+
+// RepairMigrations resumes a migration from its last durably recorded statement.
+func (r *Runner) RepairMigrations(ctx context.Context) error {
+	return r.RunMigrations(ctx)
 }
 
 // ValidateSchemaCompatibility verifies all embedded migrations have been applied with matching checksums
@@ -342,7 +399,7 @@ func (r *Runner) ValidateSchemaCompatibility(ctx context.Context) error {
 		return fmt.Errorf("database ping failed: %w", err)
 	}
 
-	rows, err := r.db.QueryContext(ctx, "SELECT version, checksum_sha256 FROM schema_migrations ORDER BY version ASC")
+	rows, err := r.db.QueryContext(ctx, "SELECT version, checksum_sha256, dirty, statement_count, last_statement FROM schema_migrations ORDER BY version ASC")
 	if err != nil {
 		return fmt.Errorf("schema_migrations table does not exist or database is not migrated: %w", err)
 	}
@@ -352,8 +409,13 @@ func (r *Runner) ValidateSchemaCompatibility(ctx context.Context) error {
 	for rows.Next() {
 		var ver string
 		var chk []byte
-		if err := rows.Scan(&ver, &chk); err != nil {
+		var dirty bool
+		var statementCount, lastStatement int
+		if err := rows.Scan(&ver, &chk, &dirty, &statementCount, &lastStatement); err != nil {
 			return fmt.Errorf("failed scanning schema_migrations row: %w", err)
+		}
+		if dirty {
+			return fmt.Errorf("database has dirty migration %s at statement %d/%d; run migrate -repair", ver, lastStatement, statementCount)
 		}
 		var sum [32]byte
 		copy(sum[:], chk)

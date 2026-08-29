@@ -15,21 +15,33 @@ type exportStore struct {
 	db *sql.DB
 }
 
-func (s *exportStore) CreateJob(ctx context.Context, job domain.DataExportJob) (*domain.DataExportJob, error) {
+func (s *exportStore) CreateJob(ctx context.Context, job domain.DataExportJob, idempotencyKeys []string) (*domain.DataExportJob, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin export job tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Check idempotency
+	var lockedUser string
+	if err := tx.QueryRowContext(ctx, "SELECT user_id FROM users WHERE user_id = ? FOR UPDATE", job.UserID).Scan(&lockedUser); err != nil {
+		return nil, fmt.Errorf("failed to lock export job user: %w", err)
+	}
+	candidateJSON, err := json.Marshal(idempotencyKeys)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode export idempotency candidates: %w", err)
+	}
+
 	queryExisting := `
 		SELECT export_id, user_id, idempotency_key, request_hash, export_scope,
 		       export_format, filter_json, job_status, attempt_count, next_attempt_at,
 		       locked_at, locked_by, object_key, file_sha256, file_size,
 		       last_error_code, started_at, completed_at, expires_at, created_at, updated_at
 		FROM data_export_jobs
-		WHERE user_id = ? AND idempotency_key = ?
+		WHERE user_id = ?
+		  AND idempotency_key IN (
+		    SELECT candidate_key
+		    FROM JSON_TABLE(?, '$[*]' COLUMNS(candidate_key VARCHAR(64) PATH '$')) candidates
+		  )
 		LIMIT 1`
 
 	var existing domain.DataExportJob
@@ -39,7 +51,7 @@ func (s *exportStore) CreateJob(ctx context.Context, job domain.DataExportJob) (
 	var fileSize sql.NullInt64
 	var lockedAt, startedAt, completedAt, expiresAt sql.NullTime
 
-	err = tx.QueryRowContext(ctx, queryExisting, job.UserID, job.IdempotencyKey).Scan(
+	err = tx.QueryRowContext(ctx, queryExisting, job.UserID, candidateJSON).Scan(
 		&existing.ExportID,
 		&existing.UserID,
 		&existing.IdempotencyKey,

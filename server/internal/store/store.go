@@ -96,7 +96,7 @@ type IngestStore interface {
 }
 
 type ExportStore interface {
-	CreateJob(ctx context.Context, job domain.DataExportJob) (*domain.DataExportJob, error)
+	CreateJob(ctx context.Context, job domain.DataExportJob, idempotencyKeys []string) (*domain.DataExportJob, error)
 	ListJobs(ctx context.Context, userID string) ([]domain.DataExportJob, error)
 	GetJob(ctx context.Context, exportID, userID string) (*domain.DataExportJob, error)
 	ClaimPendingJob(ctx context.Context, workerID string, leaseDuration time.Duration, now time.Time) (*domain.DataExportJob, error)

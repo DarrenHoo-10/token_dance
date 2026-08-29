@@ -1787,12 +1787,17 @@ func (m *MemoryStore) CommitIngest(ctx context.Context, batch domain.IngestBatch
 
 // --- ExportStore Implementation ---
 
-func (m *MemoryStore) CreateJob(ctx context.Context, job domain.DataExportJob) (*domain.DataExportJob, error) {
+func (m *MemoryStore) CreateJob(ctx context.Context, job domain.DataExportJob, idempotencyKeys []string) (*domain.DataExportJob, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	candidateKeys := make(map[string]struct{}, len(idempotencyKeys))
+	for _, key := range idempotencyKeys {
+		candidateKeys[key] = struct{}{}
+	}
 	for _, j := range m.exportJobs {
-		if j.UserID == job.UserID && j.IdempotencyKey == job.IdempotencyKey {
+		_, matches := candidateKeys[j.IdempotencyKey]
+		if j.UserID == job.UserID && matches {
 			if j.RequestHash == job.RequestHash {
 				jCopy := *j
 				return &jCopy, nil

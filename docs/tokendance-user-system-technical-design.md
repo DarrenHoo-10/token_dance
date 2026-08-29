@@ -1098,7 +1098,7 @@ sequenceDiagram
 - 恢复：`POST /api/v1/me/devices/{id}/resume` 只允许 `disabled + disabled_reason=user_paused` 且账户 active，执行 `disabled -> active` 并清空 disabled 字段；策略禁用必须由策略 owner 解除。
 - 撤销：`DELETE /api/v1/me/devices/{id}` 在事务内设置 `installation_status=revoked` 和 `revoked_at`，并清理 Redis nonce/session cache。
 - Ingest 验签后、写 batch 前必须重新校验 installation active 和 user active；已撤销设备返回 403 `DEVICE_REVOKED`。
-- 撤销不自动删除历史事件。用户需要删除设备历史时另建 `deletion_scope=installation` 的既有删除请求。
+- 撤销不自动删除历史事件。用户需要删除设备历史时另建 `deletion_scope=installation` 的既有删除请求；Worker 只删除目标 installation 的事件与 ingest/device 残留，并从其他 installation 的存活事件确定性重建该用户聚合，不得删除其他 installation 的事实或聚合贡献。
 
 设备状态语义固定如下，Web 不再用“离线”代替暂停：
 
@@ -1125,7 +1125,7 @@ sequenceDiagram
 
 `POST /api/v1/me/exports` 必须带 `Idempotency-Key`，请求体包含 scope、range、filters、format。API 规范化请求后写 `request_hash`；同一用户和 idempotency key：
 
-- hash 相同：返回原任务。
+- hash 相同：返回原任务。服务端在插入前用当前 idempotency keyring 的全部 active 版本计算紧凑 `v<version>:<base64url-hmac>` 候选，并在同一用户行锁内比较，因此跨密钥轮换的重试仍返回原任务；数据库只保存命中的单个紧凑值。
 - hash 不同：返回 409 `IDEMPOTENCY_KEY_REUSED`。
 
 ### 9.2 导出泳道

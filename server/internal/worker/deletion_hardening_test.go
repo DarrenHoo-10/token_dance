@@ -309,6 +309,77 @@ func TestDeletionDatabaseAndObjectFailureInjectionRetainsRetryableState(t *testi
 	})
 }
 
+func TestDeletionInstallationPreservesOtherInstallationFactsAndRebuildsAggregates(t *testing.T) {
+	db := getTestMySQLDB(t)
+	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
+	defer func() {
+		_, _ = db.Exec("SELECT RELEASE_LOCK('tokendance_global_test_lock')")
+		db.Close()
+	}()
+	resetDeletionTestSchema(t, db)
+
+	userID := "usr_two_installations"
+	targetID := "ins_delete_target"
+	survivorID := "ins_keep_survivor"
+	occurredAt := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	seedDeletionUser(t, db, userID, "active")
+	seedDeletionUsage(t, db, userID, targetID, occurredAt)
+	seedDeletionUsage(t, db, userID, survivorID, occurredAt)
+	if _, err := db.Exec(`UPDATE usage_events SET token_total = CASE installation_id WHEN ? THEN 300 ELSE 700 END, provider_id = 'provider', model_id = 'model' WHERE user_id = ?`, targetID, userID); err != nil {
+		t.Fatalf("seed per-installation event metrics: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO daily_user_agent_metrics (metric_date, user_id, agent_id, exact_token_total, aggregation_version, computed_at, updated_at) VALUES ('2026-08-10', ?, 'agent', 1000, 1, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3)), ('2026-08-09', ?, 'archived-agent', 900, 1, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))`, userID, userID); err != nil {
+		t.Fatalf("seed combined aggregate: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO daily_user_agent_model_metrics (metric_date, user_id, agent_id, provider_id, model_id, exact_token_total, aggregation_version, computed_at, updated_at) VALUES ('2026-08-10', ?, 'agent', 'provider', 'model', 1000, 1, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))`, userID); err != nil {
+		t.Fatalf("seed combined model aggregate: %v", err)
+	}
+	seedDeletionRequest(t, db, "del_one_installation", userID, targetID, "installation", `{"installationId":"ins_delete_target"}`, nil)
+
+	worker := NewWorkerWithFull(db, clock.RealClock{}, nil, email.DefaultSink, provider.NewMemoryObjectStorage(""))
+	if processed, err := worker.ProcessDeletionRequests(context.Background()); err != nil || processed != 1 {
+		t.Fatalf("process installation deletion: processed=%d err=%v", processed, err)
+	}
+
+	var survivorEvents, survivorInstallations, survivorBatches int
+	var agentTokens, modelTokens, unaffectedTokens uint64
+	if err := db.QueryRow(`SELECT COUNT(*) FROM usage_events WHERE user_id = ? AND installation_id = ?`, userID, survivorID).Scan(&survivorEvents); err != nil {
+		t.Fatalf("count surviving events: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM installations WHERE user_id = ? AND installation_id = ?`, userID, survivorID).Scan(&survivorInstallations); err != nil {
+		t.Fatalf("count surviving installation: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM ingest_batches WHERE installation_id = ?`, survivorID).Scan(&survivorBatches); err != nil {
+		t.Fatalf("count surviving batches: %v", err)
+	}
+	if err := db.QueryRow(`SELECT exact_token_total FROM daily_user_agent_metrics WHERE metric_date = '2026-08-10' AND user_id = ? AND agent_id = 'agent'`, userID).Scan(&agentTokens); err != nil {
+		t.Fatalf("read rebuilt agent aggregate: %v", err)
+	}
+	if err := db.QueryRow(`SELECT exact_token_total FROM daily_user_agent_model_metrics WHERE metric_date = '2026-08-10' AND user_id = ? AND agent_id = 'agent' AND provider_id = 'provider' AND model_id = 'model'`, userID).Scan(&modelTokens); err != nil {
+		t.Fatalf("read rebuilt model aggregate: %v", err)
+	}
+	if err := db.QueryRow(`SELECT exact_token_total FROM daily_user_agent_metrics WHERE metric_date = '2026-08-09' AND user_id = ? AND agent_id = 'archived-agent'`, userID).Scan(&unaffectedTokens); err != nil {
+		t.Fatalf("read unaffected aggregate: %v", err)
+	}
+	if survivorEvents != 1 || survivorInstallations != 1 || survivorBatches != 1 || agentTokens != 700 || modelTokens != 700 || unaffectedTokens != 900 {
+		t.Fatalf("surviving installation facts changed: events=%d installations=%d batches=%d agentTokens=%d modelTokens=%d unaffectedTokens=%d", survivorEvents, survivorInstallations, survivorBatches, agentTokens, modelTokens, unaffectedTokens)
+	}
+	assertDeletionCount(t, db, `SELECT COUNT(*) FROM usage_events WHERE installation_id = ?`, 0, targetID)
+	assertDeletionCount(t, db, `SELECT COUNT(*) FROM installations WHERE installation_id = ?`, 0, targetID)
+	assertDeletionCount(t, db, `SELECT COUNT(*) FROM ingest_batches WHERE installation_id = ?`, 0, targetID)
+}
+
+func assertDeletionCount(t *testing.T, db *sql.DB, query string, expected int, args ...interface{}) {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(query, args...).Scan(&count); err != nil {
+		t.Fatalf("count deletion residue: %v", err)
+	}
+	if count != expected {
+		t.Fatalf("expected %d rows for %s, got %d", expected, query, count)
+	}
+}
+
 func TestDeletionAllNonAccountScopesMySQL8034(t *testing.T) {
 	db := getTestMySQLDB(t)
 	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")

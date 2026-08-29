@@ -3,6 +3,7 @@ package migrate
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -235,6 +236,117 @@ func TestMigrationRunnerIntegration_RejectDirtyBaseline(t *testing.T) {
 	_ = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations WHERE version = '0002'").Scan(&count0002)
 	if count0002 != 0 {
 		t.Fatalf("expected 0002 to not be recorded when dirty baseline fails")
+	}
+}
+
+func TestMigrationRunnerIntegration_RepairsPartialDDL0002And0004(t *testing.T) {
+	db := getTestMySQLDB(t)
+	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
+	defer func() {
+		_, _ = db.Exec("SELECT RELEASE_LOCK('tokendance_global_test_lock')")
+		db.Close()
+	}()
+	ctx := context.Background()
+
+	t.Run("0002", func(t *testing.T) {
+		runner := NewRunner(db)
+		if err := runner.ResetCleanSchema(ctx); err != nil {
+			t.Fatalf("reset schema: %v", err)
+		}
+		if err := runner.LoadFromEmbed(); err != nil {
+			t.Fatalf("load migrations: %v", err)
+		}
+		baseline := &Runner{db: db, migrations: []MigrationInfo{runner.migrations[0]}}
+		if err := baseline.RunMigrations(ctx); err != nil {
+			t.Fatalf("apply 0001: %v", err)
+		}
+		partial := &Runner{db: db, migrations: []MigrationInfo{runner.migrations[1]}}
+		partial.afterStatement = func(version string, statement int) error {
+			if version == "0002" && statement == 6 {
+				return fmt.Errorf("injected process exit")
+			}
+			return nil
+		}
+		if err := partial.RunMigrations(ctx); err == nil {
+			t.Fatal("expected injected 0002 interruption")
+		}
+		assertDirtyMigrationProgress(t, db, "0002", 6)
+		if err := partial.CheckMigrationState(ctx); err == nil || !strings.Contains(err.Error(), "0002") {
+			t.Fatalf("check did not report dirty 0002: %v", err)
+		}
+		partial.afterStatement = nil
+		if err := partial.RepairMigrations(ctx); err != nil {
+			t.Fatalf("repair 0002: %v", err)
+		}
+		assertCleanMigration(t, db, "0002")
+		assertColumnExists(t, db, "data_export_jobs", "idempotency_key")
+	})
+
+	t.Run("0004", func(t *testing.T) {
+		runner := NewRunner(db)
+		if err := runner.ResetCleanSchema(ctx); err != nil {
+			t.Fatalf("reset schema: %v", err)
+		}
+		if err := runner.LoadFromEmbed(); err != nil {
+			t.Fatalf("load migrations: %v", err)
+		}
+		through0003 := &Runner{db: db, migrations: runner.migrations[:3]}
+		if err := through0003.RunMigrations(ctx); err != nil {
+			t.Fatalf("apply through 0003: %v", err)
+		}
+		partial := &Runner{db: db, migrations: []MigrationInfo{runner.migrations[3]}}
+		partial.afterStatement = func(version string, statement int) error {
+			if version == "0004" && statement == 3 {
+				return fmt.Errorf("injected process exit")
+			}
+			return nil
+		}
+		if err := partial.RunMigrations(ctx); err == nil {
+			t.Fatal("expected injected 0004 interruption")
+		}
+		assertDirtyMigrationProgress(t, db, "0004", 3)
+		assertColumnExists(t, db, "data_deletion_requests", "claim_token")
+		partial.afterStatement = nil
+		if err := partial.RepairMigrations(ctx); err != nil {
+			t.Fatalf("repair 0004: %v", err)
+		}
+		assertCleanMigration(t, db, "0004")
+		assertColumnExists(t, db, "deletion_object_keys", "request_id")
+	})
+}
+
+func assertDirtyMigrationProgress(t *testing.T, db *sql.DB, version string, expected int) {
+	t.Helper()
+	var dirty bool
+	var last int
+	if err := db.QueryRow(`SELECT dirty, last_statement FROM schema_migrations WHERE version = ?`, version).Scan(&dirty, &last); err != nil {
+		t.Fatalf("read migration progress: %v", err)
+	}
+	if !dirty || last != expected {
+		t.Fatalf("unexpected migration progress for %s: dirty=%v last=%d", version, dirty, last)
+	}
+}
+
+func assertCleanMigration(t *testing.T, db *sql.DB, version string) {
+	t.Helper()
+	var dirty bool
+	var count, last int
+	if err := db.QueryRow(`SELECT dirty, statement_count, last_statement FROM schema_migrations WHERE version = ?`, version).Scan(&dirty, &count, &last); err != nil {
+		t.Fatalf("read clean migration: %v", err)
+	}
+	if dirty || count != last {
+		t.Fatalf("migration %s was not repaired: dirty=%v progress=%d/%d", version, dirty, last, count)
+	}
+}
+
+func assertColumnExists(t *testing.T, db *sql.DB, table, column string) {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?`, table, column).Scan(&count); err != nil {
+		t.Fatalf("inspect %s.%s: %v", table, column, err)
+	}
+	if count != 1 {
+		t.Fatalf("expected %s.%s to exist", table, column)
 	}
 }
 
