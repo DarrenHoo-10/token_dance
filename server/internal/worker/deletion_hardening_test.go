@@ -390,7 +390,7 @@ func TestRebuildPublishedLeaderboardsCreatesImmutableScopedMetricRevisionsMySQL8
 		if _, err := db.Exec(`
 			INSERT INTO leaderboard_entries (
 				snapshot_id, rank_no, user_id, metric_value, previous_rank_no, display_name_snapshot
-			) VALUES (?, 1, ?, 10, 1, 'metric_b'), (?, 2, ?, 20, 3, 'metric_a')`,
+			) VALUES (?, 1, ?, 10, 1, 'metric_b'), (?, 2, ?, 20, 10, 'metric_a')`,
 			oldID, publicB, oldID, publicA); err != nil {
 			t.Fatalf("seed %s entries: %v", metric, err)
 		}
@@ -411,7 +411,11 @@ func TestRebuildPublishedLeaderboardsCreatesImmutableScopedMetricRevisionsMySQL8
 			scoped.id, scoped.board, scoped.scopeType, scoped.scopeKey, windowStart, windowEnd, now.Add(-time.Hour), now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
 			t.Fatalf("seed %s snapshot: %v", scoped.scopeType, err)
 		}
-		if _, err := db.Exec(`INSERT INTO leaderboard_entries (snapshot_id, rank_no, user_id, metric_value, previous_rank_no, display_name_snapshot) VALUES (?, 1, ?, 1, 2, ?)`, scoped.id, scoped.userID, scoped.scopeType+" user"); err != nil {
+		var historicalPrevious interface{} = 2
+		if scoped.scopeType == "team" {
+			historicalPrevious = nil
+		}
+		if _, err := db.Exec(`INSERT INTO leaderboard_entries (snapshot_id, rank_no, user_id, metric_value, previous_rank_no, display_name_snapshot) VALUES (?, 1, ?, 1, ?, ?)`, scoped.id, scoped.userID, historicalPrevious, scoped.scopeType+" user"); err != nil {
 			t.Fatalf("seed %s entry: %v", scoped.scopeType, err)
 		}
 	}
@@ -489,11 +493,15 @@ func TestRebuildPublishedLeaderboardsCreatesImmutableScopedMetricRevisionsMySQL8
 		}
 		var count int
 		var onlyUser string
-		if err := db.QueryRow(`SELECT COUNT(*), MIN(user_id) FROM leaderboard_entries WHERE snapshot_id = ?`, newID).Scan(&count, &onlyUser); err != nil {
+		var previousRank sql.NullInt32
+		if err := db.QueryRow(`SELECT COUNT(*), MIN(user_id), MAX(previous_rank_no) FROM leaderboard_entries WHERE snapshot_id = ?`, newID).Scan(&count, &onlyUser, &previousRank); err != nil {
 			t.Fatalf("read rebuilt %s entries: %v", scoped.scopeType, err)
 		}
 		if gotScope != scoped.scopeType || gotKey != scoped.scopeKey || count != 1 || onlyUser != scoped.expectedUser {
 			t.Fatalf("%s scope leaked participants: scope=%s/%s count=%d user=%s", scoped.scopeType, gotScope, gotKey, count, onlyUser)
+		}
+		if !previousRank.Valid || previousRank.Int32 != 1 {
+			t.Fatalf("%s snapshot should use immediate old rank 1 even when older previous rank is null/different: %v", scoped.scopeType, previousRank)
 		}
 	}
 }

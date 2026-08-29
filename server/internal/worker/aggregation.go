@@ -406,15 +406,14 @@ func rebuildPublishedLeaderboards(ctx context.Context, tx *sql.Tx, affectedDates
 				display_name_snapshot, avatar_url_snapshot
 			)
 			SELECT ?, rebuilt.rank_no, rebuilt.user_id, rebuilt.metric_value,
-				CASE WHEN rebuilt.previous_rank_no IS NULL THEN NULL ELSE GREATEST(1,
-					CAST(rebuilt.rank_no AS SIGNED) + CAST(rebuilt.previous_rank_no AS SIGNED) - CAST(rebuilt.old_rank_no AS SIGNED)) END,
+				rebuilt.old_rank_no,
 				rebuilt.display_name, rebuilt.avatar_url
 			FROM (
 				SELECT ranked.*, ROW_NUMBER() OVER (ORDER BY ranked.metric_value DESC, ranked.user_id ASC) rank_no
 				FROM (
 					SELECT m.user_id, ` + expression + ` metric_value,
 						` + displayExpr + ` display_name, ` + avatarExpr + ` avatar_url,
-						MAX(old_entry.rank_no) old_rank_no, MAX(old_entry.previous_rank_no) previous_rank_no
+						MAX(old_entry.rank_no) old_rank_no
 					FROM daily_user_agent_metrics m
 					JOIN users u ON u.user_id = m.user_id
 					` + oldEntryJoin + ` leaderboard_entries old_entry ON old_entry.snapshot_id = ? AND old_entry.user_id = m.user_id
