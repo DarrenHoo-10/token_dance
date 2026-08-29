@@ -1150,6 +1150,27 @@ func normalizeTelemetryEvent(in *TelemetryEventInput) (*domain.UsageEvent, strin
 	if in.AdapterID == "" || in.AdapterVersion == "" || in.AgentID == "" {
 		return nil, "MISSING_EVENT_SOURCE"
 	}
+	if !telemetry.ValidIdentifier(in.AdapterID, 64) || !telemetry.ValidVersion(in.AdapterVersion) || !telemetry.ValidIdentifier(in.AgentID, 64) {
+		return nil, "INVALID_EVENT_SOURCE"
+	}
+	if !validOptionalTelemetryVersion(in.AgentVersion) || !validOptionalTelemetryIdentifier(in.ProviderID, 64) || !validOptionalTelemetryIdentifier(in.ModelID, 128) {
+		return nil, "INVALID_EVENT_SOURCE"
+	}
+	if !validOptionalTelemetryIdentifier(in.ToolCategory, 64) || !validOptionalTelemetryIdentifier(in.SkillPublicName, 120) {
+		return nil, "INVALID_EVENT_CLASSIFICATION"
+	}
+	if in.SkillInvokeType != nil && !telemetry.ValidSkillInvokeType(*in.SkillInvokeType) {
+		return nil, "INVALID_EVENT_CLASSIFICATION"
+	}
+	if in.CostAmount != nil && !telemetry.ValidCostAmount(*in.CostAmount) {
+		return nil, "INVALID_COST"
+	}
+	if in.CostCurrency != nil && !telemetry.ValidCurrency(*in.CostCurrency) {
+		return nil, "INVALID_COST"
+	}
+	if in.CostSource != nil && !telemetry.ValidCostSource(*in.CostSource) {
+		return nil, "INVALID_COST"
+	}
 	if !validTelemetryEventType(in.EventType) {
 		return nil, "INVALID_EVENT_TYPE"
 	}
@@ -1206,6 +1227,14 @@ func decodeOptionalTelemetryHash(value *string) *[32]byte {
 		return nil
 	}
 	return &decoded
+}
+
+func validOptionalTelemetryIdentifier(value *string, maxBytes int) bool {
+	return value == nil || telemetry.ValidIdentifier(*value, maxBytes)
+}
+
+func validOptionalTelemetryVersion(value *string) bool {
+	return value == nil || telemetry.ValidVersion(*value)
 }
 
 func validTelemetryID(value, prefix string) bool {

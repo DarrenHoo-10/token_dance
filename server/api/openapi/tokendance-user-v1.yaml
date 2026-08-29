@@ -2800,16 +2800,28 @@ components:
           minimum: 1
         adapterId:
           type: string
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$'
         adapterVersion:
           type: string
+          maxLength: 32
+          pattern: '^[0-9]+(?:\.[0-9]+){0,3}(?:-[a-z0-9]+(?:[.-][a-z0-9]+)*)?$'
         agentId:
           type: string
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$'
         agentVersion:
           type: string
+          maxLength: 32
+          pattern: '^[0-9]+(?:\.[0-9]+){0,3}(?:-[a-z0-9]+(?:[.-][a-z0-9]+)*)?$'
         providerId:
           type: string
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$'
         modelId:
           type: string
+          maxLength: 128
+          pattern: '^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$'
         eventType:
           type: string
           enum:
@@ -2873,11 +2885,20 @@ components:
           type: boolean
         toolCategory:
           type: string
+          maxLength: 64
+          pattern: '^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$'
         skillKey: *id001
         skillPublicName:
           type: string
+          maxLength: 120
+          pattern: '^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$'
         skillInvokeType:
           type: string
+          enum:
+          - explicit
+          - implicit
+          - automatic
+          - unknown
         pluginKey: *id001
         codeGeneratedLines:
           type: integer
@@ -2896,12 +2917,18 @@ components:
           minimum: 0
         costAmount:
           type: string
+          maxLength: 29
+          pattern: '^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,8})?$'
         costCurrency:
           type: string
           minLength: 3
           maxLength: 3
+          pattern: '^[A-Z]{3}$'
         costSource:
           type: string
+          enum:
+          - provider_reported
+          - estimated_price_table
         privacyPolicyVersion:
           type: integer
           minimum: 1
@@ -2909,48 +2936,96 @@ components:
           type: object
           description: >-
             Optional privacy-safe scalar extensions. At most 8 fields are accepted, keys are limited to 32 bytes,
-            and string values to 128 bytes. Keys are registered per event type: session_started (sessionMode, trigger),
-            session_ended (endReason), turn_started (trigger), turn_completed (finishReason), model_usage_recorded
-            (finishReason, serviceTier), tool_invoked (operation, success), skill_invoked (invocationSource),
-            code_changed (language), cost_recorded (billingCategory, estimated), and agent_spawned (spawnReason).
-            Unknown keys, non-scalar values, and prompt, response, reasoning, code body, tool argument, environment,
-            real path, credential, secret, or API-key canaries are rejected per event.
+            and every string is restricted to the enum or normalized identifier pattern declared for that field.
+            Keys are registered per event type: session_started (sessionMode, trigger), session_ended (endReason),
+            turn_started (trigger), turn_completed (finishReason), model_usage_recorded (finishReason, serviceTier),
+            tool_invoked (operation, success), skill_invoked (invocationSource), code_changed (language),
+            cost_recorded (billingCategory, estimated), and agent_spawned (spawnReason). Unknown keys, non-scalar
+            values, arbitrary text, and prompt, response, reasoning, code body, tool argument, environment, real path,
+            credential, secret, or API-key content are rejected per event.
           maxProperties: 8
           properties:
             sessionMode:
               type: string
-              maxLength: 128
+              enum:
+              - interactive
+              - batch
+              - background
+              - daemon
+              - unknown
             trigger:
               type: string
-              maxLength: 128
+              enum:
+              - user
+              - system
+              - automation
+              - resume
+              - unknown
             endReason:
               type: string
-              maxLength: 128
+              enum:
+              - completed
+              - cancelled
+              - error
+              - timeout
+              - shutdown
+              - unknown
             finishReason:
               type: string
-              maxLength: 128
+              enum:
+              - stop
+              - length
+              - tool_call
+              - content_filter
+              - error
+              - cancelled
+              - unknown
             serviceTier:
               type: string
-              maxLength: 128
+              enum:
+              - default
+              - standard
+              - priority
+              - flex
+              - scale
+              - unknown
             operation:
               type: string
               maxLength: 128
+              pattern: '^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$'
             success:
               type: boolean
             invocationSource:
               type: string
-              maxLength: 128
+              enum:
+              - user
+              - model
+              - system
+              - automation
+              - unknown
             language:
               type: string
               maxLength: 128
+              pattern: '^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$'
             billingCategory:
               type: string
-              maxLength: 128
+              enum:
+              - token_usage
+              - tool_usage
+              - subscription
+              - credit
+              - other
             estimated:
               type: boolean
             spawnReason:
               type: string
-              maxLength: 128
+              enum:
+              - user_request
+              - delegation
+              - parallelism
+              - retry
+              - specialization
+              - unknown
           additionalProperties: false
     TelemetryBatch:
       type: object

@@ -15,8 +15,19 @@ func TestNormalizeMetadataRegisteredScalarWhitelist(t *testing.T) {
 		metadata  Metadata
 		wantCode  string
 	}{
-		{name: "registered strings", eventType: "model_usage_recorded", metadata: Metadata{"finishReason": raw(`"stop"`), "serviceTier": raw(`"standard"`)}},
-		{name: "registered boolean", eventType: "tool_invoked", metadata: Metadata{"operation": raw(`"search"`), "success": raw(`true`)}},
+		{name: "model enums", eventType: "model_usage_recorded", metadata: Metadata{"finishReason": raw(`"stop"`), "serviceTier": raw(`"standard"`)}},
+		{name: "session enums", eventType: "session_started", metadata: Metadata{"sessionMode": raw(`"interactive"`), "trigger": raw(`"user"`)}},
+		{name: "session end enum", eventType: "session_ended", metadata: Metadata{"endReason": raw(`"completed"`)}},
+		{name: "tool identifier and boolean", eventType: "tool_invoked", metadata: Metadata{"operation": raw(`"filesystem.read"`), "success": raw(`true`)}},
+		{name: "skill invoke source enum", eventType: "skill_invoked", metadata: Metadata{"invocationSource": raw(`"model"`)}},
+		{name: "language identifier", eventType: "code_changed", metadata: Metadata{"language": raw(`"typescript"`)}},
+		{name: "billing enum and boolean", eventType: "cost_recorded", metadata: Metadata{"billingCategory": raw(`"token_usage"`), "estimated": raw(`false`)}},
+		{name: "spawn reason enum", eventType: "agent_spawned", metadata: Metadata{"spawnReason": raw(`"delegation"`)}},
+		{name: "arbitrary prompt-like text", eventType: "model_usage_recorded", metadata: Metadata{"finishReason": raw(`"What is the production database password?"`)}, wantCode: "INVALID_METADATA_VALUE"},
+		{name: "arbitrary code fragment", eventType: "code_changed", metadata: Metadata{"language": raw(`"if err != nil { return err }"`)}, wantCode: "INVALID_METADATA_VALUE"},
+		{name: "invalid finish reason enum", eventType: "turn_completed", metadata: Metadata{"finishReason": raw(`"finished normally"`)}, wantCode: "INVALID_METADATA_VALUE"},
+		{name: "invalid service tier enum", eventType: "model_usage_recorded", metadata: Metadata{"serviceTier": raw(`"customer secret tier"`)}, wantCode: "INVALID_METADATA_VALUE"},
+		{name: "invalid operation identifier", eventType: "tool_invoked", metadata: Metadata{"operation": raw(`"read production secrets"`)}, wantCode: "INVALID_METADATA_VALUE"},
 		{name: "unknown key", eventType: "model_usage_recorded", metadata: Metadata{"region": raw(`"us"`)}, wantCode: "UNREGISTERED_METADATA_KEY"},
 		{name: "forbidden key", eventType: "tool_invoked", metadata: Metadata{"toolArgs": raw(`"safe"`)}, wantCode: "FORBIDDEN_METADATA"},
 		{name: "object value", eventType: "model_usage_recorded", metadata: Metadata{"finishReason": raw(`{"value":"stop"}`)}, wantCode: "INVALID_METADATA_TYPE"},

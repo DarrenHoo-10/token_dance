@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -22,20 +23,97 @@ type scalarKind uint8
 const (
 	scalarString scalarKind = iota + 1
 	scalarBool
-	scalarNumber
 )
 
-var metadataRegistry = map[string]map[string]scalarKind{
-	"session_started":      {"sessionMode": scalarString, "trigger": scalarString},
-	"session_ended":        {"endReason": scalarString},
-	"turn_started":         {"trigger": scalarString},
-	"turn_completed":       {"finishReason": scalarString},
-	"model_usage_recorded": {"finishReason": scalarString, "serviceTier": scalarString},
-	"tool_invoked":         {"operation": scalarString, "success": scalarBool},
-	"skill_invoked":        {"invocationSource": scalarString},
-	"code_changed":         {"language": scalarString},
-	"cost_recorded":        {"billingCategory": scalarString, "estimated": scalarBool},
-	"agent_spawned":        {"spawnReason": scalarString},
+type fieldSpec struct {
+	kind    scalarKind
+	allowed map[string]struct{}
+	pattern *regexp.Regexp
+}
+
+var (
+	normalizedIdentifierPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$`)
+	versionPattern              = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,3}(?:-[a-z0-9]+(?:[.-][a-z0-9]+)*)?$`)
+	decimalAmountPattern        = regexp.MustCompile(`^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,8})?$`)
+	currencyPattern             = regexp.MustCompile(`^[A-Z]{3}$`)
+)
+
+func ValidIdentifier(value string, maxBytes int) bool {
+	return value != "" && len(value) <= maxBytes && utf8.ValidString(value) && normalizedIdentifierPattern.MatchString(value)
+}
+
+func ValidVersion(value string) bool {
+	return len(value) <= 32 && versionPattern.MatchString(value)
+}
+
+func ValidSkillInvokeType(value string) bool {
+	switch value {
+	case "explicit", "implicit", "automatic", "unknown":
+		return true
+	default:
+		return false
+	}
+}
+
+func ValidCostAmount(value string) bool {
+	return len(value) <= 29 && decimalAmountPattern.MatchString(value)
+}
+
+func ValidCurrency(value string) bool {
+	return currencyPattern.MatchString(value)
+}
+
+func ValidCostSource(value string) bool {
+	return value == "provider_reported" || value == "estimated_price_table"
+}
+
+func enumSpec(values ...string) fieldSpec {
+	allowed := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		allowed[value] = struct{}{}
+	}
+	return fieldSpec{kind: scalarString, allowed: allowed}
+}
+
+func identifierSpec() fieldSpec {
+	return fieldSpec{kind: scalarString, pattern: normalizedIdentifierPattern}
+}
+
+var metadataRegistry = map[string]map[string]fieldSpec{
+	"session_started": {
+		"sessionMode": enumSpec("interactive", "batch", "background", "daemon", "unknown"),
+		"trigger":     enumSpec("user", "system", "automation", "resume", "unknown"),
+	},
+	"session_ended": {
+		"endReason": enumSpec("completed", "cancelled", "error", "timeout", "shutdown", "unknown"),
+	},
+	"turn_started": {
+		"trigger": enumSpec("user", "system", "automation", "resume", "unknown"),
+	},
+	"turn_completed": {
+		"finishReason": enumSpec("stop", "length", "tool_call", "content_filter", "error", "cancelled", "unknown"),
+	},
+	"model_usage_recorded": {
+		"finishReason": enumSpec("stop", "length", "tool_call", "content_filter", "error", "cancelled", "unknown"),
+		"serviceTier":  enumSpec("default", "standard", "priority", "flex", "scale", "unknown"),
+	},
+	"tool_invoked": {
+		"operation": identifierSpec(),
+		"success":   {kind: scalarBool},
+	},
+	"skill_invoked": {
+		"invocationSource": enumSpec("user", "model", "system", "automation", "unknown"),
+	},
+	"code_changed": {
+		"language": identifierSpec(),
+	},
+	"cost_recorded": {
+		"billingCategory": enumSpec("token_usage", "tool_usage", "subscription", "credit", "other"),
+		"estimated":       {kind: scalarBool},
+	},
+	"agent_spawned": {
+		"spawnReason": enumSpec("user_request", "delegation", "parallelism", "retry", "specialization", "unknown"),
+	},
 }
 
 var forbiddenKeyCanaries = []string{
@@ -68,11 +146,11 @@ func NormalizeMetadata(eventType string, metadata Metadata) ([]byte, string) {
 				return nil, "FORBIDDEN_METADATA"
 			}
 		}
-		kind, ok := registered[key]
+		spec, ok := registered[key]
 		if !ok {
 			return nil, "UNREGISTERED_METADATA_KEY"
 		}
-		if code := validateScalar(raw, kind); code != "" {
+		if code := validateScalar(raw, spec); code != "" {
 			return nil, code
 		}
 	}
@@ -105,19 +183,18 @@ func ValidateSafeExtensionJSON(eventType string, encoded []byte) error {
 	return nil
 }
 
-func validateScalar(raw json.RawMessage, expected scalarKind) string {
+func validateScalar(raw json.RawMessage, spec fieldSpec) string {
 	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
 	var value interface{}
 	if err := dec.Decode(&value); err != nil {
 		return "INVALID_METADATA"
 	}
-	if dec.More() {
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
 		return "INVALID_METADATA"
 	}
 	switch typed := value.(type) {
 	case string:
-		if expected != scalarString {
+		if spec.kind != scalarString {
 			return "INVALID_METADATA_TYPE"
 		}
 		if len(typed) > MaxMetadataStringBytes || !utf8.ValidString(typed) {
@@ -132,12 +209,16 @@ func validateScalar(raw json.RawMessage, expected scalarKind) string {
 		if strings.HasPrefix(lower, "sk-") || strings.HasPrefix(lower, "ghp_") || strings.HasPrefix(lower, "xoxb-") {
 			return "FORBIDDEN_METADATA"
 		}
-	case bool:
-		if expected != scalarBool {
-			return "INVALID_METADATA_TYPE"
+		if spec.allowed != nil {
+			if _, ok := spec.allowed[typed]; !ok {
+				return "INVALID_METADATA_VALUE"
+			}
 		}
-	case json.Number:
-		if expected != scalarNumber {
+		if spec.pattern != nil && !spec.pattern.MatchString(typed) {
+			return "INVALID_METADATA_VALUE"
+		}
+	case bool:
+		if spec.kind != scalarBool {
 			return "INVALID_METADATA_TYPE"
 		}
 	default:

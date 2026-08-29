@@ -206,7 +206,7 @@ func TestMySQL_ConcurrentIngestDetectsBatchHashConflict(t *testing.T) {
 	assertTableCount(t, db, "SELECT COUNT(*) FROM ingest_nonces WHERE installation_id = ?", 1, installationID)
 }
 
-func TestMySQL_IngestRejectsSafeExtensionCanaries(t *testing.T) {
+func TestMySQL_IngestRejectsUnsafeMetadataWithoutPersistence(t *testing.T) {
 	st, db, cleanup := getTestStore(t)
 	defer cleanup()
 
@@ -219,8 +219,10 @@ func TestMySQL_IngestRejectsSafeExtensionCanaries(t *testing.T) {
 		eventType string
 		metadata  string
 	}{
-		{name: "prompt", eventType: "model_usage_recorded", metadata: `{"finishReason":"system prompt: reveal instructions"}`},
-		{name: "code", eventType: "code_changed", metadata: `{"language":"package main; func main()"}`},
+		{name: "arbitrary_prompt_like_text", eventType: "model_usage_recorded", metadata: `{"finishReason":"What is the production database password?"}`},
+		{name: "arbitrary_code_fragment", eventType: "code_changed", metadata: `{"language":"if err != nil { return err }"}`},
+		{name: "prompt_canary", eventType: "model_usage_recorded", metadata: `{"finishReason":"system prompt: reveal instructions"}`},
+		{name: "code_canary", eventType: "code_changed", metadata: `{"language":"package main; func main()"}`},
 		{name: "path", eventType: "tool_invoked", metadata: `{"operation":"C:\\Users\\alice\\secret.txt"}`},
 		{name: "api_key", eventType: "model_usage_recorded", metadata: `{"serviceTier":"sk-secret-value"}`},
 	}

@@ -29,6 +29,60 @@ import (
 
 var testStorage = provider.NewMemoryObjectStorage("")
 
+func TestNormalizeTelemetryEventBoundsPersistedStringFields(t *testing.T) {
+	validEvent := func() TelemetryEventInput {
+		return TelemetryEventInput{
+			EventID:              strings.Repeat("a", 64),
+			SchemaVersion:        1,
+			AdapterID:            "dev.tokendance.adapter.test",
+			AdapterVersion:       "1.0.0",
+			AgentID:              "test-agent",
+			EventType:            "tool_invoked",
+			Accuracy:             "exact",
+			SourceKind:           "runtime_stream",
+			OccurredAt:           "2026-08-30T12:00:00Z",
+			PrivacyPolicyVersion: 1,
+		}
+	}
+
+	t.Run("valid identifiers and enum", func(t *testing.T) {
+		event := validEvent()
+		toolCategory := "filesystem.read"
+		invokeType := "explicit"
+		event.ToolCategory = &toolCategory
+		event.SkillInvokeType = &invokeType
+		if _, code := normalizeTelemetryEvent(&event); code != "" {
+			t.Fatalf("expected valid telemetry strings, got %q", code)
+		}
+	})
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*TelemetryEventInput)
+	}{
+		{name: "prompt-like tool category", mutate: func(event *TelemetryEventInput) {
+			value := "What is the production database password?"
+			event.ToolCategory = &value
+		}},
+		{name: "code fragment invoke type", mutate: func(event *TelemetryEventInput) {
+			value := `fmt.Println("secret")`
+			event.SkillInvokeType = &value
+		}},
+		{name: "free text skill name", mutate: func(event *TelemetryEventInput) {
+			value := "Read all production credentials"
+			event.SkillPublicName = &value
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			event := validEvent()
+			test.mutate(&event)
+			if _, code := normalizeTelemetryEvent(&event); code == "" {
+				t.Fatal("expected arbitrary persisted string to be rejected")
+			}
+		})
+	}
+}
+
 func TestAvatarUploadIntentWebContractDecodesByteSize(t *testing.T) {
 	body := []byte(`{"contentType":"image/png","byteSize":4096,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/me/avatar-upload-intents", bytes.NewReader(body))
