@@ -41,7 +41,7 @@
 
 ### 1.3 用户中途模型策略更新
 
-用户在实施过程中明确要求：**后续所有子代理都使用 `sol-medium`**。从该指令之后，新启动和恢复的实现代理与 reviewer 全部使用 `sol-medium`；之前已完成的 `gemini-3.7` 历史调用保留原始记录。没有单独启动名为 Verifier/Verification 的专用子代理；门禁命令、MySQL、race、API smoke 和浏览器验证由协调代理直接执行，独立正确性复核由下表中的 reviewer 子代理完成。
+用户在实施过程中明确要求：**后续所有子代理都使用 `sol-medium`**。这是时间上更晚的用户指令，取代了其最初为后续调用设置的 Gemini→Grok→Sol 优先级；从该指令之后，新启动和恢复的实现代理与 reviewer 全部使用 `sol-medium`。之前已完成的 `gemini-3.7` 历史调用保留原始记录。没有单独启动名为 Verifier/Verification 的专用子代理；门禁命令、MySQL、race、API smoke 和浏览器验证由协调代理直接执行，独立正确性复核由下表中的 reviewer 子代理完成。
 
 ## 2. Explorer 与初始编排
 
