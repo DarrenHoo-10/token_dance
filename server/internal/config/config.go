@@ -1,0 +1,199 @@
+package config
+
+import (
+	"fmt"
+	"net"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+)
+
+type Config struct {
+	HTTPAddr             string        `json:"httpAddr"`
+	Environment          string        `json:"environment"`
+	MySQLDSN             string        `json:"-"`
+	MySQLDSNFile         string        `json:"mysqlDsnFile,omitempty"`
+	RedisAddr            string        `json:"redisAddr,omitempty"`
+	SessionIdleTTL       time.Duration `json:"sessionIdleTTL"`
+	SessionAbsoluteTTL   time.Duration `json:"sessionAbsoluteTTL"`
+	AuthCodeTTL          time.Duration `json:"authCodeTTL"`
+	AuthBindCodeTTL      time.Duration `json:"authBindCodeTTL"`
+	Argon2MemoryKiB      uint32        `json:"argon2MemoryKiB"`
+	Argon2Time           uint32        `json:"argon2Time"`
+	Argon2Parallelism    uint8         `json:"argon2Parallelism"`
+	DeletionCancelWindow time.Duration `json:"deletionCancelWindow"`
+	ExportObjectTTL      time.Duration `json:"exportObjectTTL"`
+	PublicSkillMinUsers  int           `json:"publicSkillMinUsers"`
+	MediaAvatarMaxBytes  int64         `json:"mediaAvatarMaxBytes"`
+	MediaAvatarMaxPixels int64         `json:"mediaAvatarMaxPixels"`
+	ObjectBucket         string        `json:"objectBucket,omitempty"`
+	HMACSecret           string        `json:"-"`
+}
+
+func DefaultConfig() *Config {
+	return &Config{
+		HTTPAddr:             ":8080",
+		Environment:          "development",
+		SessionIdleTTL:       14 * 24 * time.Hour, // 336h
+		SessionAbsoluteTTL:   30 * 24 * time.Hour, // 720h
+		AuthCodeTTL:          10 * time.Minute,    // 10m
+		AuthBindCodeTTL:      5 * time.Minute,     // 5m
+		Argon2MemoryKiB:      65536,               // 64 MiB
+		Argon2Time:           3,
+		Argon2Parallelism:    2,
+		DeletionCancelWindow: 7 * 24 * time.Hour, // 168h
+		ExportObjectTTL:      24 * time.Hour,     // 24h
+		PublicSkillMinUsers:  5,
+		MediaAvatarMaxBytes:  5 * 1024 * 1024, // 5 MiB
+		MediaAvatarMaxPixels: 16000000,        // 16M pixels
+		HMACSecret:           "tokendance-dev-hmac-secret-at-least-32-bytes-long",
+	}
+}
+
+func LoadFromEnv() (*Config, error) {
+	cfg := DefaultConfig()
+
+	if v := os.Getenv("TOKENDANCE_HTTP_ADDR"); v != "" {
+		cfg.HTTPAddr = v
+	}
+	if v := os.Getenv("TOKENDANCE_ENVIRONMENT"); v != "" {
+		cfg.Environment = v
+	}
+	if v := os.Getenv("TOKENDANCE_MYSQL_DSN"); v != "" {
+		cfg.MySQLDSN = v
+	}
+	if v := os.Getenv("TOKENDANCE_MYSQL_DSN_FILE"); v != "" {
+		cfg.MySQLDSNFile = v
+		if data, err := os.ReadFile(v); err == nil {
+			cfg.MySQLDSN = strings.TrimSpace(string(data))
+		}
+	}
+	if v := os.Getenv("TOKENDANCE_REDIS_ADDR"); v != "" {
+		cfg.RedisAddr = v
+	}
+	if v := os.Getenv("TOKENDANCE_AUTH_SESSION_IDLE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.SessionIdleTTL = d
+		}
+	}
+	if v := os.Getenv("TOKENDANCE_AUTH_SESSION_ABSOLUTE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.SessionAbsoluteTTL = d
+		}
+	}
+	if v := os.Getenv("TOKENDANCE_AUTH_CODE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.AuthCodeTTL = d
+		}
+	}
+	if v := os.Getenv("TOKENDANCE_AUTH_BIND_CODE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.AuthBindCodeTTL = d
+		}
+	}
+	if v := os.Getenv("TOKENDANCE_AUTH_ARGON2_MEMORY_KIB"); v != "" {
+		if val, err := strconv.ParseUint(v, 10, 32); err == nil {
+			cfg.Argon2MemoryKiB = uint32(val)
+		}
+	}
+	if v := os.Getenv("TOKENDANCE_AUTH_ARGON2_TIME"); v != "" {
+		if val, err := strconv.ParseUint(v, 10, 32); err == nil {
+			cfg.Argon2Time = uint32(val)
+		}
+	}
+	if v := os.Getenv("TOKENDANCE_AUTH_ARGON2_PARALLELISM"); v != "" {
+		if val, err := strconv.ParseUint(v, 10, 8); err == nil {
+			cfg.Argon2Parallelism = uint8(val)
+		}
+	}
+	if v := os.Getenv("TOKENDANCE_DELETION_CANCEL_WINDOW"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.DeletionCancelWindow = d
+		}
+	}
+	if v := os.Getenv("TOKENDANCE_EXPORT_OBJECT_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			cfg.ExportObjectTTL = d
+		}
+	}
+	if v := os.Getenv("TOKENDANCE_PUBLIC_SKILL_MIN_USERS"); v != "" {
+		if val, err := strconv.Atoi(v); err == nil {
+			cfg.PublicSkillMinUsers = val
+		}
+	}
+	if v := os.Getenv("TOKENDANCE_MEDIA_AVATAR_MAX_BYTES"); v != "" {
+		if val, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cfg.MediaAvatarMaxBytes = val
+		}
+	}
+	if v := os.Getenv("TOKENDANCE_MEDIA_AVATAR_MAX_PIXELS"); v != "" {
+		if val, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cfg.MediaAvatarMaxPixels = val
+		}
+	}
+	if v := os.Getenv("TOKENDANCE_OBJECT_BUCKET"); v != "" {
+		cfg.ObjectBucket = v
+	}
+	if v := os.Getenv("TOKENDANCE_HMAC_SECRET"); v != "" {
+		cfg.HMACSecret = v
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("config validation failed: %w", err)
+	}
+
+	return cfg, nil
+}
+
+func (c *Config) Validate() error {
+	if c.HTTPAddr == "" {
+		return fmt.Errorf("HTTPAddr cannot be empty")
+	}
+
+	// Validate HTTPAddr host:port or :port
+	if _, _, err := net.SplitHostPort(c.HTTPAddr); err != nil {
+		if !strings.HasPrefix(c.HTTPAddr, ":") {
+			return fmt.Errorf("invalid HTTPAddr format: %s", c.HTTPAddr)
+		}
+	}
+
+	if c.SessionIdleTTL <= 0 {
+		return fmt.Errorf("SessionIdleTTL must be positive")
+	}
+	if c.SessionAbsoluteTTL < c.SessionIdleTTL {
+		return fmt.Errorf("SessionAbsoluteTTL must be greater than or equal to SessionIdleTTL")
+	}
+	if c.AuthCodeTTL <= 0 {
+		return fmt.Errorf("AuthCodeTTL must be positive")
+	}
+	if c.AuthBindCodeTTL <= 0 {
+		return fmt.Errorf("AuthBindCodeTTL must be positive")
+	}
+	if c.Argon2MemoryKiB < 1024 {
+		return fmt.Errorf("Argon2MemoryKiB must be at least 1024")
+	}
+	if c.Argon2Time < 1 {
+		return fmt.Errorf("Argon2Time must be at least 1")
+	}
+	if c.Argon2Parallelism < 1 {
+		return fmt.Errorf("Argon2Parallelism must be at least 1")
+	}
+	if c.DeletionCancelWindow <= 0 {
+		return fmt.Errorf("DeletionCancelWindow must be positive")
+	}
+	if c.ExportObjectTTL <= 0 {
+		return fmt.Errorf("ExportObjectTTL must be positive")
+	}
+	if c.MediaAvatarMaxBytes <= 0 {
+		return fmt.Errorf("MediaAvatarMaxBytes must be positive")
+	}
+	if c.MediaAvatarMaxPixels <= 0 {
+		return fmt.Errorf("MediaAvatarMaxPixels must be positive")
+	}
+	if len(c.HMACSecret) < 16 {
+		return fmt.Errorf("HMACSecret must be at least 16 bytes")
+	}
+
+	return nil
+}

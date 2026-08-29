@@ -1,0 +1,90 @@
+package analytics
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"tokendance/internal/clock"
+	"tokendance/internal/store/memory"
+)
+
+func TestAnalyticsService(t *testing.T) {
+	ctx := context.Background()
+	st := memory.NewMemoryStore()
+	clk := clock.NewMockClock(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
+	svc := NewService(st, clk)
+
+	userID := "usr_analytictest"
+	now := clk.Now()
+	_, _, _ = st.SeedUserForTest(userID, "anuser", "an@tokendance.dev", now)
+
+	// 1. Personal Summary (10 core metrics)
+	summary, err := svc.GetPersonalSummary(ctx, userID, "30d")
+	if err != nil {
+		t.Fatalf("failed to get personal summary: %v", err)
+	}
+	if summary.Metrics.EstimatedCost.Amount == nil || *summary.Metrics.EstimatedCost.Amount != "1428.60000000" {
+		t.Errorf("expected cost 1428.60000000")
+	}
+	if summary.Metrics.TotalTokens.Value == nil || *summary.Metrics.TotalTokens.Value != "325700000" {
+		t.Errorf("expected total tokens 325700000")
+	}
+	if summary.Metrics.GeneratedCodeLines.Value == nil || *summary.Metrics.GeneratedCodeLines.Value != "864200" {
+		t.Errorf("expected generated code lines 864200")
+	}
+	if summary.Metrics.TokensPerCodeLine.Value == nil || *summary.Metrics.TokensPerCodeLine.Value != "376.88" {
+		t.Errorf("expected tokens per code line 376.88")
+	}
+
+	// 2. Token Trends
+	trendTotal, err := svc.GetTokenTrend(ctx, userID, "7d", "total", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to get token trends: %v", err)
+	}
+	if len(trendTotal.Points) != 7 {
+		t.Errorf("expected 7 points for 7d range, got %d", len(trendTotal.Points))
+	}
+
+	trendStruct, err := svc.GetTokenTrend(ctx, userID, "7d", "structure", nil, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to get structure trend: %v", err)
+	}
+	if trendStruct.Points[0].InputTokens == nil {
+		t.Errorf("expected inputTokens to be present in structure mode")
+	}
+
+	// 3. Agent & Model Breakdowns
+	agentBd, err := svc.GetAgentBreakdown(ctx, userID, "30d")
+	if err != nil {
+		t.Fatalf("failed to get agent breakdown: %v", err)
+	}
+	if len(agentBd.Items) == 0 {
+		t.Errorf("expected agent breakdown items")
+	}
+
+	modelBd, err := svc.GetModelBreakdown(ctx, userID, "30d")
+	if err != nil {
+		t.Fatalf("failed to get model breakdown: %v", err)
+	}
+	if len(modelBd.Items) == 0 {
+		t.Errorf("expected model breakdown items")
+	}
+
+	// 4. Skills & Calendar
+	skills, err := svc.GetSkillRanking(ctx, userID, "30d")
+	if err != nil {
+		t.Fatalf("failed to get skills: %v", err)
+	}
+	if len(skills.Skills) == 0 {
+		t.Errorf("expected skills to be populated")
+	}
+
+	cal, err := svc.GetActivityCalendar(ctx, userID, "30d")
+	if err != nil {
+		t.Fatalf("failed to get calendar: %v", err)
+	}
+	if len(cal.Days) != 30 {
+		t.Errorf("expected 30 days in calendar, got %d", len(cal.Days))
+	}
+}

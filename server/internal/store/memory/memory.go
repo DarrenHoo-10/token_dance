@@ -1,0 +1,1350 @@
+package memory
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"tokendance/internal/domain"
+	"tokendance/internal/store"
+)
+
+type MemoryStore struct {
+	mu sync.RWMutex
+
+	users             map[string]*domain.User
+	userCredentials   map[string]*domain.UserPasswordCredential
+	sessions          map[string]*domain.UserSession
+	emailChallenges   map[string]*domain.EmailChallenge
+	emailOutbox       map[string]*domain.EmailOutbox
+	privacySettings   map[string]*domain.UserPrivacySettings
+	publicProfiles    map[string]*domain.PublicUserProfile
+	handleHistory     map[string]*domain.UserHandleHistory
+	uploadObjects     map[string]*domain.UserUploadObject
+	bindingChallenges map[string]*domain.DeviceBindingChallenge
+	installations     map[string]*domain.Installation
+	securityEvents    []domain.UserSecurityEvent
+	exportJobs        map[string]*domain.DataExportJob
+	deletionRequests  map[string]*domain.DataDeletionRequest
+}
+
+func NewMemoryStore() *MemoryStore {
+	return &MemoryStore{
+		users:             make(map[string]*domain.User),
+		userCredentials:   make(map[string]*domain.UserPasswordCredential),
+		sessions:          make(map[string]*domain.UserSession),
+		emailChallenges:   make(map[string]*domain.EmailChallenge),
+		emailOutbox:       make(map[string]*domain.EmailOutbox),
+		privacySettings:   make(map[string]*domain.UserPrivacySettings),
+		publicProfiles:    make(map[string]*domain.PublicUserProfile),
+		handleHistory:     make(map[string]*domain.UserHandleHistory),
+		uploadObjects:     make(map[string]*domain.UserUploadObject),
+		bindingChallenges: make(map[string]*domain.DeviceBindingChallenge),
+		installations:     make(map[string]*domain.Installation),
+		securityEvents:    make([]domain.UserSecurityEvent, 0),
+		exportJobs:        make(map[string]*domain.DataExportJob),
+		deletionRequests:  make(map[string]*domain.DataDeletionRequest),
+	}
+}
+
+func (m *MemoryStore) Auth() store.AuthStore               { return m }
+func (m *MemoryStore) Profile() store.ProfileStore         { return m }
+func (m *MemoryStore) Privacy() store.PrivacyStore         { return m }
+func (m *MemoryStore) Analytics() store.AnalyticsStore     { return m }
+func (m *MemoryStore) Device() store.DeviceStore           { return m }
+func (m *MemoryStore) Export() store.ExportStore           { return m }
+func (m *MemoryStore) Search() store.SearchStore           { return &memorySearchStore{m: m} }
+func (m *MemoryStore) Leaderboard() store.LeaderboardStore { return m }
+func (m *MemoryStore) Media() store.MediaStore             { return m }
+
+// --- AuthStore Implementation ---
+
+func (m *MemoryStore) CreateOrReplaceEmailChallenge(ctx context.Context, challenge domain.EmailChallenge, outbox domain.EmailOutbox) (*domain.EmailChallenge, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Cancel any active pending challenges for the same type + email
+	for _, c := range m.emailChallenges {
+		if c.ChallengeType == challenge.ChallengeType && c.EmailLookupHash == challenge.EmailLookupHash && c.ChallengeStatus == domain.ChallengeStatusPending {
+			c.ChallengeStatus = domain.ChallengeStatusCancelled
+		}
+	}
+
+	cCopy := challenge
+	m.emailChallenges[challenge.ChallengeID] = &cCopy
+
+	oCopy := outbox
+	m.emailOutbox[outbox.EmailID] = &oCopy
+
+	return &cCopy, nil
+}
+
+func (m *MemoryStore) FindPendingEmailChallenge(ctx context.Context, challengeType domain.ChallengeType, emailLookupHash [32]byte) (*domain.EmailChallenge, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, c := range m.emailChallenges {
+		if c.ChallengeType == challengeType && c.EmailLookupHash == emailLookupHash && c.ChallengeStatus == domain.ChallengeStatusPending {
+			cCopy := *c
+			return &cCopy, nil
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (m *MemoryStore) UpdateEmailChallengeAttempts(ctx context.Context, challengeID string, attemptCount uint16, status domain.ChallengeStatus) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	c, ok := m.emailChallenges[challengeID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	c.AttemptCount = attemptCount
+	c.ChallengeStatus = status
+	c.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+func (m *MemoryStore) CompleteRegistrationTx(ctx context.Context, in store.RegistrationTxInput) (*domain.UserSession, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Verify email uniqueness
+	if in.User.EmailLookupHash != nil {
+		for _, u := range m.users {
+			if u.EmailLookupHash != nil && *u.EmailLookupHash == *in.User.EmailLookupHash {
+				return nil, domain.ErrAccountExists
+			}
+		}
+	}
+
+	// Update challenge
+	if ch, ok := m.emailChallenges[in.ChallengeID]; ok {
+		if ch.ChallengeStatus != domain.ChallengeStatusPending {
+			return nil, domain.ErrChallengeInvalid
+		}
+		ch.ChallengeStatus = domain.ChallengeStatusConsumed
+		now := time.Now().UTC()
+		ch.ConsumedAt = &now
+		ch.UserID = &in.User.UserID
+	}
+
+	u := in.User
+	m.users[u.UserID] = &u
+
+	cred := in.Credential
+	m.userCredentials[cred.UserID] = &cred
+
+	priv := in.Privacy
+	m.privacySettings[priv.UserID] = &priv
+
+	sess := in.Session
+	m.sessions[sess.SessionID] = &sess
+
+	m.securityEvents = append(m.securityEvents, in.SecurityEvent)
+
+	return &sess, nil
+}
+
+func (m *MemoryStore) FindUserByEmailHash(ctx context.Context, emailLookupHash [32]byte) (*domain.User, *domain.UserPasswordCredential, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, u := range m.users {
+		if u.EmailLookupHash != nil && *u.EmailLookupHash == emailLookupHash {
+			cred, ok := m.userCredentials[u.UserID]
+			if !ok {
+				return nil, nil, domain.ErrNotFound
+			}
+			uCopy := *u
+			credCopy := *cred
+			return &uCopy, &credCopy, nil
+		}
+	}
+	return nil, nil, domain.ErrNotFound
+}
+
+func (m *MemoryStore) FindUserByID(ctx context.Context, userID string) (*domain.User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	u, ok := m.users[userID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	uCopy := *u
+	return &uCopy, nil
+}
+
+func (m *MemoryStore) RecordLoginFailure(ctx context.Context, userID string, failedCount uint16, lockedUntil *time.Time, event domain.UserSecurityEvent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if cred, ok := m.userCredentials[userID]; ok {
+		cred.FailedLoginCount = failedCount
+		cred.LockedUntil = lockedUntil
+		now := time.Now().UTC()
+		cred.LastFailedLoginAt = &now
+		cred.UpdatedAt = now
+	}
+	m.securityEvents = append(m.securityEvents, event)
+	return nil
+}
+
+func (m *MemoryStore) CreateSessionTx(ctx context.Context, session domain.UserSession, event domain.UserSecurityEvent) (*domain.UserSession, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Clear failed login count on successful login
+	if cred, ok := m.userCredentials[session.UserID]; ok {
+		cred.FailedLoginCount = 0
+		cred.LockedUntil = nil
+		cred.UpdatedAt = time.Now().UTC()
+	}
+
+	// Check max 20 active sessions limit - revoke oldest if > 20
+	var userSessions []*domain.UserSession
+	for _, s := range m.sessions {
+		if s.UserID == session.UserID && s.SessionStatus == domain.SessionStatusActive {
+			userSessions = append(userSessions, s)
+		}
+	}
+	if len(userSessions) >= 20 {
+		sort.Slice(userSessions, func(i, j int) bool {
+			return userSessions[i].LastSeenAt.Before(userSessions[j].LastSeenAt)
+		})
+		toRevoke := len(userSessions) - 19
+		now := time.Now().UTC()
+		reason := "session_limit"
+		for i := 0; i < toRevoke; i++ {
+			userSessions[i].SessionStatus = domain.SessionStatusRevoked
+			userSessions[i].RevokedAt = &now
+			userSessions[i].RevokeReason = &reason
+		}
+	}
+
+	sCopy := session
+	m.sessions[session.SessionID] = &sCopy
+	m.securityEvents = append(m.securityEvents, event)
+
+	return &sCopy, nil
+}
+
+func (m *MemoryStore) ResolveSession(ctx context.Context, tokenHash [32]byte, now time.Time) (*domain.UserSession, *domain.User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	for _, s := range m.sessions {
+		if s.SessionTokenHash == tokenHash {
+			if s.SessionStatus != domain.SessionStatusActive {
+				return nil, nil, domain.ErrUnauthorized
+			}
+			if now.After(s.AbsoluteExpiresAt) || now.After(s.IdleExpiresAt) {
+				return nil, nil, domain.ErrUnauthorized
+			}
+
+			u, ok := m.users[s.UserID]
+			if !ok {
+				return nil, nil, domain.ErrUnauthorized
+			}
+
+			cred, ok := m.userCredentials[s.UserID]
+			if !ok || cred.CredentialVersion != s.CredentialVersion {
+				return nil, nil, domain.ErrUnauthorized
+			}
+
+			sCopy := *s
+			uCopy := *u
+			return &sCopy, &uCopy, nil
+		}
+	}
+	return nil, nil, domain.ErrUnauthorized
+}
+
+func (m *MemoryStore) RevokeSession(ctx context.Context, sessionID string, reason string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[sessionID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	s.SessionStatus = domain.SessionStatusRevoked
+	s.RevokedAt = &now
+	s.RevokeReason = &reason
+	s.UpdatedAt = now
+	return nil
+}
+
+func (m *MemoryStore) RevokeOtherSessions(ctx context.Context, userID, currentSessionID string, reason string, now time.Time, event domain.UserSecurityEvent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, s := range m.sessions {
+		if s.UserID == userID && s.SessionID != currentSessionID && s.SessionStatus == domain.SessionStatusActive {
+			s.SessionStatus = domain.SessionStatusRevoked
+			s.RevokedAt = &now
+			s.RevokeReason = &reason
+			s.UpdatedAt = now
+		}
+	}
+	m.securityEvents = append(m.securityEvents, event)
+	return nil
+}
+
+func (m *MemoryStore) ListUserSessions(ctx context.Context, userID string) ([]domain.UserSession, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []domain.UserSession
+	for _, s := range m.sessions {
+		if s.UserID == userID {
+			result = append(result, *s)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.After(result[j].CreatedAt)
+	})
+	return result, nil
+}
+
+func (m *MemoryStore) ResetPasswordTx(ctx context.Context, userID string, challengeID string, newHash string, newVersion uint32, event domain.UserSecurityEvent, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cred, ok := m.userCredentials[userID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+
+	if ch, ok := m.emailChallenges[challengeID]; ok {
+		ch.ChallengeStatus = domain.ChallengeStatusConsumed
+		ch.ConsumedAt = &now
+	}
+
+	cred.PasswordHash = newHash
+	cred.CredentialVersion = newVersion
+	cred.PasswordChangedAt = now
+	cred.FailedLoginCount = 0
+	cred.LockedUntil = nil
+	cred.UpdatedAt = now
+
+	// Revoke all active sessions
+	reason := "password_reset"
+	for _, s := range m.sessions {
+		if s.UserID == userID && s.SessionStatus == domain.SessionStatusActive {
+			s.SessionStatus = domain.SessionStatusRevoked
+			s.RevokedAt = &now
+			s.RevokeReason = &reason
+			s.UpdatedAt = now
+		}
+	}
+
+	m.securityEvents = append(m.securityEvents, event)
+	return nil
+}
+
+func (m *MemoryStore) TouchSessionLastSeen(ctx context.Context, sessionID string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if s, ok := m.sessions[sessionID]; ok {
+		s.LastSeenAt = now
+	}
+	return nil
+}
+
+// --- ProfileStore Implementation ---
+
+func (m *MemoryStore) GetUserProfile(ctx context.Context, userID string) (*domain.User, error) {
+	return m.FindUserByID(ctx, userID)
+}
+
+func (m *MemoryStore) CompleteOnboardingTx(ctx context.Context, userID string, handle string, displayName string, timezone string, locale string, privacy domain.UserPrivacySettings, event domain.UserSecurityEvent, now time.Time) (*domain.User, *domain.UserPrivacySettings, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	u, ok := m.users[userID]
+	if !ok {
+		return nil, nil, domain.ErrNotFound
+	}
+
+	handle = strings.ToLower(strings.TrimSpace(handle))
+	// Check handle availability
+	for id, other := range m.users {
+		if id != userID && other.Handle != nil && *other.Handle == handle {
+			return nil, nil, domain.ErrHandleTaken
+		}
+	}
+	if hist, ok := m.handleHistory[handle]; ok && hist.UserID != userID && now.Before(hist.ReservedUntil) {
+		return nil, nil, domain.ErrHandleTaken
+	}
+
+	u.Handle = &handle
+	u.DisplayName = displayName
+	u.TimezoneName = timezone
+	u.Locale = locale
+	u.OnboardingCompletedAt = &now
+	u.ProfileVersion++
+	u.UpdatedAt = now
+
+	priv := privacy
+	priv.UserID = userID
+	priv.PrivacyVersion++
+	priv.UpdatedAt = now
+	m.privacySettings[userID] = &priv
+
+	// Update public profile projection
+	profileStatus := domain.ProfileStatusHidden
+	if priv.PublicProfileEnabled {
+		profileStatus = domain.ProfileStatusPublished
+	}
+
+	var bio *string
+	if priv.ShowBio {
+		bio = u.Bio
+	}
+
+	pubProf := domain.PublicUserProfile{
+		UserID:               userID,
+		Handle:               handle,
+		DisplayName:          displayName,
+		AvatarURL:            u.AvatarURL,
+		Bio:                  bio,
+		ProfileStatus:        profileStatus,
+		ShowBio:              priv.ShowBio,
+		ShowTokenTotal:       priv.ShowTokenTotal,
+		ShowTrends:           priv.ShowTrends,
+		ShowActivityCalendar: priv.ShowActivityCalendar,
+		ShowAgentBreakdown:   priv.ShowAgentBreakdown,
+		ShowSkillRanking:     priv.ShowSkillRanking,
+		ShowAchievements:     priv.ShowAchievements,
+		SourceProfileVersion: u.ProfileVersion,
+		SourcePrivacyVersion: priv.PrivacyVersion,
+		ProjectionVersion:    1,
+		PublishedAt:          &now,
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	m.publicProfiles[userID] = &pubProf
+	m.securityEvents = append(m.securityEvents, event)
+
+	uCopy := *u
+	pCopy := priv
+	return &uCopy, &pCopy, nil
+}
+
+func (m *MemoryStore) UpdateProfileTx(ctx context.Context, userID string, displayName *string, handle *string, bio *string, timezone *string, locale *string, expectedVersion uint64, event domain.UserSecurityEvent, now time.Time) (*domain.User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	u, ok := m.users[userID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+
+	if expectedVersion > 0 && u.ProfileVersion != expectedVersion {
+		return nil, domain.ErrPreconditionFailed
+	}
+
+	if handle != nil {
+		newHandle := strings.ToLower(strings.TrimSpace(*handle))
+		if u.Handle == nil || *u.Handle != newHandle {
+			// Check collisions
+			for id, other := range m.users {
+				if id != userID && other.Handle != nil && *other.Handle == newHandle {
+					return nil, domain.ErrHandleTaken
+				}
+			}
+			if hist, ok := m.handleHistory[newHandle]; ok && hist.UserID != userID && now.Before(hist.ReservedUntil) {
+				return nil, domain.ErrHandleTaken
+			}
+
+			// Store old handle in history
+			if u.Handle != nil && *u.Handle != "" {
+				m.handleHistory[*u.Handle] = &domain.UserHandleHistory{
+					Handle:        *u.Handle,
+					UserID:        userID,
+					RedirectUntil: now.Add(7 * 24 * time.Hour),
+					ReservedUntil: now.Add(30 * 24 * time.Hour),
+					CreatedAt:     now,
+				}
+			}
+			u.Handle = &newHandle
+		}
+	}
+
+	if displayName != nil {
+		u.DisplayName = *displayName
+	}
+	if bio != nil {
+		u.Bio = bio
+	}
+	if timezone != nil {
+		u.TimezoneName = *timezone
+	}
+	if locale != nil {
+		u.Locale = *locale
+	}
+
+	u.ProfileVersion++
+	u.UpdatedAt = now
+
+	// Update public profile projection
+	if pub, ok := m.publicProfiles[userID]; ok {
+		if u.Handle != nil {
+			pub.Handle = *u.Handle
+		}
+		pub.DisplayName = u.DisplayName
+		pub.AvatarURL = u.AvatarURL
+		if pub.ShowBio {
+			pub.Bio = u.Bio
+		} else {
+			pub.Bio = nil
+		}
+		pub.SourceProfileVersion = u.ProfileVersion
+		pub.ProjectionVersion++
+		pub.UpdatedAt = now
+	}
+
+	m.securityEvents = append(m.securityEvents, event)
+	uCopy := *u
+	return &uCopy, nil
+}
+
+func (m *MemoryStore) IsHandleAvailable(ctx context.Context, handle string, excludeUserID string, now time.Time) (bool, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	handle = strings.ToLower(strings.TrimSpace(handle))
+	for id, u := range m.users {
+		if id != excludeUserID && u.Handle != nil && *u.Handle == handle {
+			return false, nil
+		}
+	}
+	if hist, ok := m.handleHistory[handle]; ok && hist.UserID != excludeUserID && now.Before(hist.ReservedUntil) {
+		return false, nil
+	}
+	return true, nil
+}
+
+func (m *MemoryStore) GetRedirectHandle(ctx context.Context, oldHandle string, now time.Time) (string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	oldHandle = strings.ToLower(strings.TrimSpace(oldHandle))
+	hist, ok := m.handleHistory[oldHandle]
+	if !ok || now.After(hist.RedirectUntil) {
+		return "", domain.ErrNotFound
+	}
+	u, ok := m.users[hist.UserID]
+	if !ok || u.Handle == nil {
+		return "", domain.ErrNotFound
+	}
+	return *u.Handle, nil
+}
+
+// --- PrivacyStore Implementation ---
+
+func (m *MemoryStore) GetPrivacy(ctx context.Context, userID string) (*domain.UserPrivacySettings, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	p, ok := m.privacySettings[userID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	pCopy := *p
+	return &pCopy, nil
+}
+
+func (m *MemoryStore) UpdatePrivacyTx(ctx context.Context, userID string, in domain.UserPrivacySettings, expectedVersion uint64, event domain.UserSecurityEvent, now time.Time) (*domain.UserPrivacySettings, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	p, ok := m.privacySettings[userID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+
+	if expectedVersion > 0 && p.PrivacyVersion != expectedVersion {
+		return nil, domain.ErrPreconditionFailed
+	}
+
+	u, ok := m.users[userID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+
+	p.PublicProfileEnabled = in.PublicProfileEnabled
+	p.ShowBio = in.ShowBio
+	p.ShowTokenTotal = in.ShowTokenTotal
+	p.ShowTrends = in.ShowTrends
+	p.ShowActivityCalendar = in.ShowActivityCalendar
+	p.ShowAgentBreakdown = in.ShowAgentBreakdown
+	p.ShowSkillRanking = in.ShowSkillRanking
+	p.ShowAchievements = in.ShowAchievements
+	p.PrivacyVersion++
+	p.UpdatedAt = now
+
+	// Update user visibility
+	if in.PublicProfileEnabled {
+		u.LeaderboardVisibility = domain.LeaderboardVisibilityPublic
+	} else {
+		u.LeaderboardVisibility = domain.LeaderboardVisibilityPrivate
+	}
+	u.PublicProfileUpdatedAt = &now
+	u.UpdatedAt = now
+
+	// Sync public profile projection immediately
+	pub, ok := m.publicProfiles[userID]
+	if !ok && u.Handle != nil {
+		pub = &domain.PublicUserProfile{
+			UserID:      userID,
+			Handle:      *u.Handle,
+			DisplayName: u.DisplayName,
+			AvatarURL:   u.AvatarURL,
+			CreatedAt:   now,
+		}
+		m.publicProfiles[userID] = pub
+	}
+	if pub != nil {
+		if in.PublicProfileEnabled && u.AccountStatus == domain.AccountStatusActive && u.OnboardingCompletedAt != nil {
+			pub.ProfileStatus = domain.ProfileStatusPublished
+			pub.PublishedAt = &now
+		} else {
+			pub.ProfileStatus = domain.ProfileStatusHidden
+		}
+		pub.ShowBio = in.ShowBio
+		if in.ShowBio {
+			pub.Bio = u.Bio
+		} else {
+			pub.Bio = nil
+		}
+		pub.ShowTokenTotal = in.ShowTokenTotal
+		pub.ShowTrends = in.ShowTrends
+		pub.ShowActivityCalendar = in.ShowActivityCalendar
+		pub.ShowAgentBreakdown = in.ShowAgentBreakdown
+		pub.ShowSkillRanking = in.ShowSkillRanking
+		pub.ShowAchievements = in.ShowAchievements
+		pub.SourcePrivacyVersion = p.PrivacyVersion
+		pub.SourceProfileVersion = u.ProfileVersion
+		pub.ProjectionVersion++
+		pub.UpdatedAt = now
+	}
+
+	m.securityEvents = append(m.securityEvents, event)
+	pCopy := *p
+	return &pCopy, nil
+}
+
+func (m *MemoryStore) GetPublicProfileByHandle(ctx context.Context, handle string, now time.Time) (*domain.PublicUserProfile, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	handle = strings.ToLower(strings.TrimSpace(handle))
+	for _, pub := range m.publicProfiles {
+		if strings.EqualFold(pub.Handle, handle) {
+			if pub.ProfileStatus != domain.ProfileStatusPublished {
+				return nil, domain.ErrNotFound
+			}
+			u, ok := m.users[pub.UserID]
+			if !ok || u.AccountStatus != domain.AccountStatusActive {
+				return nil, domain.ErrNotFound
+			}
+			pubCopy := *pub
+			return &pubCopy, nil
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (m *MemoryStore) RequestDeletionTx(ctx context.Context, req domain.DataDeletionRequest, event domain.UserSecurityEvent, now time.Time) (*domain.DataDeletionRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rCopy := req
+	m.deletionRequests[req.RequestID] = &rCopy
+
+	if req.UserID != nil {
+		if req.DeletionScope == "account" {
+			if u, ok := m.users[*req.UserID]; ok {
+				u.AccountStatus = domain.AccountStatusDeletionPending
+				u.LeaderboardVisibility = domain.LeaderboardVisibilityPrivate
+				u.UpdatedAt = now
+			}
+			if pub, ok := m.publicProfiles[*req.UserID]; ok {
+				pub.ProfileStatus = domain.ProfileStatusHidden
+				pub.ProjectionVersion++
+				pub.UpdatedAt = now
+			}
+		}
+	}
+
+	m.securityEvents = append(m.securityEvents, event)
+	return &rCopy, nil
+}
+
+func (m *MemoryStore) CancelDeletionTx(ctx context.Context, requestID string, userID string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	req, ok := m.deletionRequests[requestID]
+	if !ok || req.UserID == nil || *req.UserID != userID {
+		return domain.ErrNotFound
+	}
+	if req.RequestStatus != domain.DeletionStatusPending {
+		return domain.ErrConflict
+	}
+	if req.CancelBefore != nil && now.After(*req.CancelBefore) {
+		return domain.ErrConflict
+	}
+
+	req.RequestStatus = domain.DeletionStatusCancelled
+	req.CancelledAt = &now
+	req.Phase = "cancelled"
+
+	if req.DeletionScope == "account" {
+		if u, ok := m.users[userID]; ok {
+			u.AccountStatus = domain.AccountStatusActive
+			u.LeaderboardVisibility = domain.LeaderboardVisibilityPrivate
+			u.UpdatedAt = now
+		}
+	}
+	return nil
+}
+
+func (m *MemoryStore) GetDeletionRequest(ctx context.Context, requestID string, userID string) (*domain.DataDeletionRequest, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	req, ok := m.deletionRequests[requestID]
+	if !ok || req.UserID == nil || *req.UserID != userID {
+		return nil, domain.ErrNotFound
+	}
+	reqCopy := *req
+	return &reqCopy, nil
+}
+
+// --- AnalyticsStore Implementation ---
+
+func (m *MemoryStore) GetPersonalSummary(ctx context.Context, userID string, r domain.TimeRange) (*domain.PersonalSummary, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	u, ok := m.users[userID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+
+	// Deterministic mock values suitable for tests and UI
+	costAmount := "1428.60000000"
+	costCurrency := "USD"
+	totalTokens := "325700000"
+	codeLines := "864200"
+	tokensPerCodeLine := "376.88"
+	inputTokens := "184600000"
+	outputTokens := "78300000"
+	cacheHitRate := "0.386"
+	activeDurationMs := "1737360000"
+	messageCount := "42800"
+	userMessageCount := "18400"
+
+	now := time.Now().UTC()
+	var rank *int
+	var delta *int
+	var percentile *float64
+	if u.LeaderboardVisibility == domain.LeaderboardVisibilityPublic {
+		rVal := 42
+		dVal := 3
+		pVal := 98.5
+		rank = &rVal
+		delta = &dVal
+		percentile = &pVal
+	}
+
+	return &domain.PersonalSummary{
+		Range: r,
+		Metrics: domain.PersonalSummaryMetrics{
+			EstimatedCost:      domain.MetricCost{Amount: &costAmount, Currency: &costCurrency, Supported: true},
+			TotalTokens:        domain.MetricBigInt{Value: &totalTokens, Supported: true},
+			GeneratedCodeLines: domain.MetricBigInt{Value: &codeLines, Supported: true},
+			TokensPerCodeLine:  domain.MetricDecimal{Value: &tokensPerCodeLine, Supported: true},
+			InputContextTokens: domain.MetricBigInt{Value: &inputTokens, Supported: true},
+			OutputTokens:       domain.MetricBigInt{Value: &outputTokens, Supported: true},
+			CacheHitRate:       domain.MetricDecimal{Value: &cacheHitRate, Supported: true},
+			ActiveDurationMs:   domain.MetricBigInt{Value: &activeDurationMs, Supported: true},
+			MessageCount:       domain.MetricBigInt{Value: &messageCount, Supported: true},
+			UserMessageCount:   domain.MetricBigInt{Value: &userMessageCount, Supported: true},
+		},
+		Ranking: domain.PersonalSummaryRanking{
+			Visibility: u.LeaderboardVisibility,
+			Rank:       rank,
+			Delta:      delta,
+			Percentile: percentile,
+		},
+		Sync: domain.PersonalSummarySync{
+			LastCommittedAt:   &now,
+			PendingLocalCount: nil,
+		},
+		DataWatermarkAt:    &now,
+		AggregationVersion: 2,
+	}, nil
+}
+
+func (m *MemoryStore) GetTokenTrend(ctx context.Context, userID string, r domain.TimeRange, mode string, agentID, providerID, modelID *string) (*domain.TrendResponse, error) {
+	now := time.Now().UTC()
+	var points []domain.TrendPoint
+
+	days := 7
+	if r.Key == domain.TimeRange30d {
+		days = 30
+	} else if r.Key == domain.TimeRangeToday {
+		days = 1
+	}
+
+	for i := days - 1; i >= 0; i-- {
+		d := now.AddDate(0, 0, -i).Format("2006-01-02")
+		tot := fmt.Sprintf("%d", 10000000+i*500000)
+		inp := fmt.Sprintf("%d", 6000000+i*300000)
+		out := fmt.Sprintf("%d", 2500000+i*100000)
+		cr := fmt.Sprintf("%d", 1500000+i*100000)
+		cw := "0"
+		rsn := fmt.Sprintf("%d", 500000+i*20000)
+
+		if mode == "structure" {
+			points = append(points, domain.TrendPoint{
+				Date:             d,
+				InputTokens:      &inp,
+				OutputTokens:     &out,
+				CacheReadTokens:  &cr,
+				CacheWriteTokens: &cw,
+				ReasoningTokens:  &rsn,
+			})
+		} else {
+			points = append(points, domain.TrendPoint{
+				Date:       d,
+				TokenTotal: &tot,
+			})
+		}
+	}
+
+	return &domain.TrendResponse{
+		Range:              r,
+		Mode:               mode,
+		AgentID:            agentID,
+		ProviderID:         providerID,
+		ModelID:            modelID,
+		Granularity:        "day",
+		Points:             points,
+		DataWatermarkAt:    &now,
+		AggregationVersion: 2,
+	}, nil
+}
+
+func (m *MemoryStore) GetAgentBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error) {
+	now := time.Now().UTC()
+	return &domain.BreakdownResponse{
+		Range: r,
+		Items: []domain.BreakdownItem{
+			{Key: "claude-code", Label: "Claude Code", TokenTotal: "185000000", Percentage: 56.8},
+			{Key: "cursor", Label: "Cursor", TokenTotal: "98000000", Percentage: 30.1},
+			{Key: "codex", Label: "Codex CLI", TokenTotal: "42700000", Percentage: 13.1},
+		},
+		DataWatermarkAt:    &now,
+		AggregationVersion: 2,
+	}, nil
+}
+
+func (m *MemoryStore) GetModelBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error) {
+	now := time.Now().UTC()
+	return &domain.BreakdownResponse{
+		Range: r,
+		Items: []domain.BreakdownItem{
+			{Key: "claude-3-7-sonnet", Label: "Claude 3.7 Sonnet", TokenTotal: "190000000", Percentage: 58.3},
+			{Key: "gpt-4o", Label: "GPT-4o", TokenTotal: "85000000", Percentage: 26.1},
+			{Key: "o3-mini", Label: "o3-mini", TokenTotal: "50700000", Percentage: 15.6},
+		},
+		DataWatermarkAt:    &now,
+		AggregationVersion: 2,
+	}, nil
+}
+
+func (m *MemoryStore) GetSkillRanking(ctx context.Context, userID string, r domain.TimeRange) (*domain.SkillsResponse, error) {
+	now := time.Now().UTC()
+	sr1 := 0.98
+	d1 := 12.5
+	sr2 := 0.94
+	d2 := -4.2
+	return &domain.SkillsResponse{
+		Range: r,
+		Skills: []domain.SkillItem{
+			{SkillID: "skl_git_diff", SkillPublicName: "Git Smart Diff", UseCount: "1420", ActiveDays: 24, SuccessRate: &sr1, PreviousDeltaPct: &d1},
+			{SkillID: "skl_ast_search", SkillPublicName: "AST Code Search", UseCount: "890", ActiveDays: 18, SuccessRate: &sr2, PreviousDeltaPct: &d2},
+			{SkillID: "skl_test_gen", SkillPublicName: "Unit Test Synthesizer", UseCount: "630", ActiveDays: 15},
+		},
+		DataWatermarkAt:    &now,
+		AggregationVersion: 2,
+	}, nil
+}
+
+func (m *MemoryStore) GetActivityCalendar(ctx context.Context, userID string, r domain.TimeRange) (*domain.CalendarResponse, error) {
+	now := time.Now().UTC()
+	var days []domain.CalendarDay
+	for i := 29; i >= 0; i-- {
+		d := now.AddDate(0, 0, -i).Format("2006-01-02")
+		active := (i%7 != 0)
+		lvl := 0
+		tokens := "0"
+		if active {
+			lvl = (i % 4) + 1
+			tokens = fmt.Sprintf("%d", lvl*2500000)
+		}
+		days = append(days, domain.CalendarDay{
+			Date:       d,
+			Active:     active,
+			Level:      lvl,
+			TokenTotal: tokens,
+		})
+	}
+	return &domain.CalendarResponse{
+		Days:               days,
+		CurrentStreak:      6,
+		LongestStreak:      14,
+		TotalActiveDays:    25,
+		DataWatermarkAt:    &now,
+		AggregationVersion: 2,
+	}, nil
+}
+
+func (m *MemoryStore) GetFilterOptions(ctx context.Context, userID string) (*domain.FilterOptions, error) {
+	return &domain.FilterOptions{
+		Agents:    []string{"claude-code", "cursor", "codex"},
+		Providers: []string{"anthropic", "openai", "bedrock"},
+		Models:    []string{"claude-3-7-sonnet", "gpt-4o", "o3-mini"},
+	}, nil
+}
+
+// --- DeviceStore Implementation ---
+
+func (m *MemoryStore) ListInstallations(ctx context.Context, userID string) ([]domain.Installation, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []domain.Installation
+	for _, inst := range m.installations {
+		if inst.UserID == userID {
+			result = append(result, *inst)
+		}
+	}
+	return result, nil
+}
+
+func (m *MemoryStore) GetInstallation(ctx context.Context, installationID string, userID string) (*domain.Installation, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	inst, ok := m.installations[installationID]
+	if !ok || inst.UserID != userID {
+		return nil, domain.ErrNotFound
+	}
+	instCopy := *inst
+	return &instCopy, nil
+}
+
+func (m *MemoryStore) CreateBindingChallenge(ctx context.Context, challenge domain.DeviceBindingChallenge) (*domain.DeviceBindingChallenge, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Cancel any active binding challenge for this session
+	for _, c := range m.bindingChallenges {
+		if c.SessionID == challenge.SessionID && c.ChallengeStatus == domain.ChallengeStatusPending {
+			c.ChallengeStatus = domain.ChallengeStatusCancelled
+			c.ActiveSessionKey = nil
+		}
+	}
+
+	cCopy := challenge
+	m.bindingChallenges[challenge.ChallengeID] = &cCopy
+	return &cCopy, nil
+}
+
+func (m *MemoryStore) CancelBindingChallenge(ctx context.Context, challengeID, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	c, ok := m.bindingChallenges[challengeID]
+	if !ok || c.UserID != userID {
+		return domain.ErrNotFound
+	}
+	c.ChallengeStatus = domain.ChallengeStatusCancelled
+	c.ActiveSessionKey = nil
+	c.UpdatedAt = time.Now().UTC()
+	return nil
+}
+
+func (m *MemoryStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte, inst domain.Installation, now time.Time) (*domain.Installation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var challenge *domain.DeviceBindingChallenge
+	for _, c := range m.bindingChallenges {
+		if c.CodeLookupHash == codeHash && c.ChallengeStatus == domain.ChallengeStatusPending {
+			challenge = c
+			break
+		}
+	}
+	if challenge == nil {
+		return nil, domain.ErrChallengeInvalid
+	}
+	if now.After(challenge.ExpiresAt) {
+		challenge.ChallengeStatus = domain.ChallengeStatusExpired
+		challenge.ActiveSessionKey = nil
+		return nil, domain.ErrChallengeExpired
+	}
+
+	// Verify user is active
+	u, ok := m.users[challenge.UserID]
+	if !ok || u.AccountStatus != domain.AccountStatusActive {
+		return nil, domain.ErrForbidden
+	}
+
+	// Check if public key is already used
+	for _, existing := range m.installations {
+		if existing.DevicePublicKey == inst.DevicePublicKey {
+			if existing.UserID == challenge.UserID && existing.InstallationStatus == domain.InstallationStatusActive {
+				// Idempotent return
+				challenge.ChallengeStatus = domain.ChallengeStatusConsumed
+				challenge.ConsumedInstallationID = &existing.InstallationID
+				challenge.ConsumedAt = &now
+				challenge.ActiveSessionKey = nil
+				eCopy := *existing
+				return &eCopy, nil
+			}
+			return nil, domain.ErrPublicKeyConflict
+		}
+	}
+
+	instCopy := inst
+	instCopy.UserID = challenge.UserID
+	m.installations[inst.InstallationID] = &instCopy
+
+	challenge.ChallengeStatus = domain.ChallengeStatusConsumed
+	challenge.ConsumedInstallationID = &inst.InstallationID
+	challenge.ConsumedAt = &now
+	challenge.ActiveSessionKey = nil
+
+	return &instCopy, nil
+}
+
+func (m *MemoryStore) RegisterInstallationTx(ctx context.Context, inst domain.Installation, now time.Time) (*domain.Installation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	u, ok := m.users[inst.UserID]
+	if !ok || u.AccountStatus != domain.AccountStatusActive {
+		return nil, domain.ErrForbidden
+	}
+
+	for _, existing := range m.installations {
+		if existing.DevicePublicKey == inst.DevicePublicKey {
+			if existing.UserID == inst.UserID && existing.InstallationStatus == domain.InstallationStatusActive {
+				eCopy := *existing
+				return &eCopy, nil
+			}
+			return nil, domain.ErrPublicKeyConflict
+		}
+	}
+
+	instCopy := inst
+	m.installations[inst.InstallationID] = &instCopy
+	return &instCopy, nil
+}
+
+func (m *MemoryStore) UpdateInstallationName(ctx context.Context, installationID, userID string, name string, now time.Time) (*domain.Installation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	inst, ok := m.installations[installationID]
+	if !ok || inst.UserID != userID {
+		return nil, domain.ErrNotFound
+	}
+	inst.DeviceName = &name
+	inst.UpdatedAt = now
+	instCopy := *inst
+	return &instCopy, nil
+}
+
+func (m *MemoryStore) PauseInstallation(ctx context.Context, installationID, userID string, reason string, now time.Time) (*domain.Installation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	inst, ok := m.installations[installationID]
+	if !ok || inst.UserID != userID {
+		return nil, domain.ErrNotFound
+	}
+	if inst.InstallationStatus == domain.InstallationStatusRevoked {
+		return nil, domain.ErrDeviceRevoked
+	}
+	if inst.InstallationStatus == domain.InstallationStatusDisabled {
+		instCopy := *inst
+		return &instCopy, nil
+	}
+
+	inst.InstallationStatus = domain.InstallationStatusDisabled
+	inst.DisabledAt = &now
+	inst.DisabledReason = &reason
+	inst.StatusVersion++
+	inst.UpdatedAt = now
+	instCopy := *inst
+	return &instCopy, nil
+}
+
+func (m *MemoryStore) ResumeInstallation(ctx context.Context, installationID, userID string, now time.Time) (*domain.Installation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	inst, ok := m.installations[installationID]
+	if !ok || inst.UserID != userID {
+		return nil, domain.ErrNotFound
+	}
+	if inst.InstallationStatus == domain.InstallationStatusRevoked {
+		return nil, domain.ErrDeviceRevoked
+	}
+	if inst.InstallationStatus == domain.InstallationStatusActive {
+		instCopy := *inst
+		return &instCopy, nil
+	}
+	if inst.DisabledReason != nil && *inst.DisabledReason != "user_paused" {
+		return nil, domain.ErrForbidden
+	}
+
+	inst.InstallationStatus = domain.InstallationStatusActive
+	inst.DisabledAt = nil
+	inst.DisabledReason = nil
+	inst.StatusVersion++
+	inst.UpdatedAt = now
+	instCopy := *inst
+	return &instCopy, nil
+}
+
+func (m *MemoryStore) RevokeInstallation(ctx context.Context, installationID, userID string, now time.Time) (*domain.Installation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	inst, ok := m.installations[installationID]
+	if !ok || inst.UserID != userID {
+		return nil, domain.ErrNotFound
+	}
+	if inst.InstallationStatus == domain.InstallationStatusRevoked {
+		instCopy := *inst
+		return &instCopy, nil
+	}
+
+	inst.InstallationStatus = domain.InstallationStatusRevoked
+	inst.RevokedAt = &now
+	inst.StatusVersion++
+	inst.UpdatedAt = now
+	instCopy := *inst
+	return &instCopy, nil
+}
+
+// --- ExportStore Implementation ---
+
+func (m *MemoryStore) CreateJob(ctx context.Context, job domain.DataExportJob) (*domain.DataExportJob, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Check idempotency
+	for _, j := range m.exportJobs {
+		if j.UserID == job.UserID && j.IdempotencyKey == job.IdempotencyKey {
+			if j.RequestHash == job.RequestHash {
+				jCopy := *j
+				return &jCopy, nil
+			}
+			return nil, domain.ErrIdempotencyReused
+		}
+	}
+
+	jCopy := job
+	m.exportJobs[job.ExportID] = &jCopy
+	return &jCopy, nil
+}
+
+func (m *MemoryStore) ListJobs(ctx context.Context, userID string) ([]domain.DataExportJob, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var result []domain.DataExportJob
+	for _, j := range m.exportJobs {
+		if j.UserID == userID {
+			result = append(result, *j)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].CreatedAt.After(result[j].CreatedAt)
+	})
+	return result, nil
+}
+
+func (m *MemoryStore) GetJob(ctx context.Context, exportID, userID string) (*domain.DataExportJob, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	j, ok := m.exportJobs[exportID]
+	if !ok || j.UserID != userID {
+		return nil, domain.ErrNotFound
+	}
+	jCopy := *j
+	return &jCopy, nil
+}
+
+// --- SearchStore Implementation ---
+
+type memorySearchStore struct {
+	m *MemoryStore
+}
+
+func (s *memorySearchStore) Search(ctx context.Context, query string, limit int, now time.Time) (*domain.SearchResponse, error) {
+	s.m.mu.RLock()
+	defer s.m.mu.RUnlock()
+
+	query = strings.ToLower(strings.TrimSpace(query))
+	var users []domain.SearchUserResult
+
+	for _, pub := range s.m.publicProfiles {
+		if pub.ProfileStatus == domain.ProfileStatusPublished {
+			if strings.Contains(strings.ToLower(pub.Handle), query) || strings.Contains(strings.ToLower(pub.DisplayName), query) {
+				rVal := 1
+				users = append(users, domain.SearchUserResult{
+					Handle:      pub.Handle,
+					DisplayName: pub.DisplayName,
+					AvatarURL:   pub.AvatarURL,
+					Bio:         pub.Bio,
+					Rank:        &rVal,
+				})
+			}
+		}
+	}
+
+	// Agents catalog
+	agentCatalog := []domain.SearchAgentResult{
+		{AgentID: "claude-code", Name: "Claude Code", Description: "Anthropic's terminal coding agent"},
+		{AgentID: "cursor", Name: "Cursor", Description: "AI-first code editor"},
+		{AgentID: "codex", Name: "Codex CLI", Description: "OpenAI terminal agent"},
+	}
+
+	var agents []domain.SearchAgentResult
+	for _, a := range agentCatalog {
+		if strings.Contains(strings.ToLower(a.AgentID), query) || strings.Contains(strings.ToLower(a.Name), query) {
+			agents = append(agents, a)
+		}
+	}
+
+	return &domain.SearchResponse{
+		Users:  users,
+		Agents: agents,
+	}, nil
+}
+
+// --- LeaderboardStore Implementation ---
+
+func (m *MemoryStore) GetLeaderboard(ctx context.Context, boardKey, window, metric string, cursor *string, limit int) (*domain.LeaderboardResponse, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	now := time.Now().UTC()
+	var entries []domain.LeaderboardEntry
+
+	rank := 1
+	for _, pub := range m.publicProfiles {
+		if pub.ProfileStatus == domain.ProfileStatusPublished {
+			delta := 0
+			entries = append(entries, domain.LeaderboardEntry{
+				RankNo:      rank,
+				Handle:      pub.Handle,
+				DisplayName: pub.DisplayName,
+				AvatarURL:   pub.AvatarURL,
+				MetricValue: "325700000",
+				RankDelta:   &delta,
+			})
+			rank++
+		}
+	}
+
+	return &domain.LeaderboardResponse{
+		SnapshotID:      "snp_01default",
+		BoardKey:        boardKey,
+		Window:          window,
+		Metric:          metric,
+		Entries:         entries,
+		DataWatermarkAt: &now,
+	}, nil
+}
+
+// --- MediaStore Implementation ---
+
+func (m *MemoryStore) CreateAvatarUploadIntent(ctx context.Context, obj domain.UserUploadObject) (*domain.UserUploadObject, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	oCopy := obj
+	m.uploadObjects[obj.ObjectID] = &oCopy
+	return &oCopy, nil
+}
+
+func (m *MemoryStore) CompleteAvatarUploadIntent(ctx context.Context, objectID, userID string, now time.Time) (*domain.UserUploadObject, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	obj, ok := m.uploadObjects[objectID]
+	if !ok || obj.UserID != userID {
+		return nil, domain.ErrNotFound
+	}
+	obj.UploadStatus = domain.UploadStatusReady
+	obj.ReadyAt = &now
+	obj.UpdatedAt = now
+
+	// Update user's avatar object pointer
+	if u, ok := m.users[userID]; ok {
+		u.AvatarObjectID = &objectID
+		avatarURL := fmt.Sprintf("https://cdn.tokendance.dev/%s", obj.ObjectKey)
+		u.AvatarURL = &avatarURL
+		u.ProfileVersion++
+		u.UpdatedAt = now
+
+		if pub, ok := m.publicProfiles[userID]; ok {
+			pub.AvatarURL = u.AvatarURL
+			pub.SourceProfileVersion = u.ProfileVersion
+			pub.ProjectionVersion++
+			pub.UpdatedAt = now
+		}
+	}
+
+	objCopy := *obj
+	return &objCopy, nil
+}
+
+func (m *MemoryStore) ClearAvatar(ctx context.Context, userID string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if u, ok := m.users[userID]; ok {
+		u.AvatarObjectID = nil
+		u.AvatarURL = nil
+		u.ProfileVersion++
+		u.UpdatedAt = now
+
+		if pub, ok := m.publicProfiles[userID]; ok {
+			pub.AvatarURL = nil
+			pub.SourceProfileVersion = u.ProfileVersion
+			pub.ProjectionVersion++
+			pub.UpdatedAt = now
+		}
+	}
+	return nil
+}

@@ -1,0 +1,1561 @@
+openapi: 3.0.3
+info:
+  title: TokenDance User & Device API
+  version: 1.0.0
+  description: Official OpenAPI contract for TokenDance User System, Personal Analytics, Public Profiles, and Collector Device Management.
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+paths:
+  /healthz:
+    get:
+      summary: Liveness check
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /readyz:
+    get:
+      summary: Readiness check
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ready
+                  timestamp:
+                    type: string
+                    format: date-time
+
+  /api/v1/auth/register/code:
+    post:
+      summary: Request registration verification code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                locale:
+                  type: string
+                  enum: [zh-CN, en-US]
+                  default: en-US
+      responses:
+        '202':
+          description: Verification code requested
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: pending
+                  cooldownSeconds:
+                    type: integer
+                    example: 60
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/v1/auth/register:
+    post:
+      summary: Complete email registration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - code
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                code:
+                  type: string
+                  example: '123456'
+                password:
+                  type: string
+                  minLength: 8
+                  maxLength: 128
+                returnTo:
+                  type: string
+      responses:
+        '201':
+          description: Registration completed and session created
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/SessionUser'
+                  csrfToken:
+                    type: string
+                  returnTo:
+                    type: string
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/v1/auth/login:
+    post:
+      summary: Login with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                returnTo:
+                  type: string
+                deviceLabel:
+                  type: string
+      responses:
+        '200':
+          description: Login successful
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/SessionUser'
+                  csrfToken:
+                    type: string
+                  returnTo:
+                    type: string
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/v1/auth/session:
+    get:
+      summary: Get current authenticated session
+      security:
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Active session
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  authenticated:
+                    type: boolean
+                  user:
+                    $ref: '#/components/schemas/SessionUser'
+                  idleExpiresAt:
+                    type: string
+                    format: date-time
+                  absoluteExpiresAt:
+                    type: string
+                    format: date-time
+        '204':
+          description: No active session
+
+  /api/v1/auth/logout:
+    post:
+      summary: Logout current session
+      security:
+        - CookieAuth: []
+      responses:
+        '204':
+          description: Logged out successfully
+
+  /api/v1/auth/sessions:
+    get:
+      summary: List user active sessions
+      security:
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Session list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SessionItem'
+
+  /api/v1/auth/sessions/{id}:
+    delete:
+      summary: Revoke a specific session
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Session revoked
+
+  /api/v1/auth/sessions/revoke-others:
+    post:
+      summary: Revoke all other active sessions
+      security:
+        - CookieAuth: []
+      responses:
+        '204':
+          description: Other sessions revoked
+
+  /api/v1/auth/password/code:
+    post:
+      summary: Request password reset code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '202':
+          description: Reset code requested
+
+  /api/v1/auth/password/reset:
+    post:
+      summary: Reset password with code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - code
+                - newPassword
+              properties:
+                email:
+                  type: string
+                code:
+                  type: string
+                newPassword:
+                  type: string
+                  minLength: 8
+      responses:
+        '204':
+          description: Password reset successfully
+
+  /api/v1/me/onboarding:
+    post:
+      summary: Complete user onboarding
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - displayName
+                - handle
+              properties:
+                displayName:
+                  type: string
+                handle:
+                  type: string
+                timezone:
+                  type: string
+                  default: UTC
+                locale:
+                  type: string
+                  enum: [zh-CN, en-US]
+                privacy:
+                  $ref: '#/components/schemas/PrivacySettings'
+      responses:
+        '200':
+          description: Onboarding completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    $ref: '#/components/schemas/UserProfile'
+                  privacy:
+                    $ref: '#/components/schemas/PrivacySettings'
+        '409':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/v1/me/profile:
+    get:
+      summary: Get current user profile
+      security:
+        - CookieAuth: []
+      responses:
+        '200':
+          description: User profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+    patch:
+      summary: Update user profile
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: If-Match
+          in: header
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                displayName:
+                  type: string
+                handle:
+                  type: string
+                bio:
+                  type: string
+                timezone:
+                  type: string
+                locale:
+                  type: string
+      responses:
+        '200':
+          description: Profile updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '412':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/v1/me/privacy:
+    get:
+      summary: Get user privacy settings
+      security:
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Privacy settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacySettings'
+    patch:
+      summary: Update user privacy settings
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: If-Match
+          in: header
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrivacySettings'
+      responses:
+        '200':
+          description: Privacy settings updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PrivacySettings'
+
+  /api/v1/me/public-preview:
+    get:
+      summary: Preview own public profile
+      security:
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Public profile preview
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicUserProfile'
+
+  /api/v1/me/avatar-upload-intents:
+    post:
+      summary: Create avatar upload intent
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - contentType
+                - byteSize
+                - sha256
+              properties:
+                contentType:
+                  type: string
+                  enum: [image/png, image/jpeg, image/webp]
+                byteSize:
+                  type: integer
+                sha256:
+                  type: string
+      responses:
+        '201':
+          description: Upload intent created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  objectId:
+                    type: string
+                  uploadUrl:
+                    type: string
+                  expiresAt:
+                    type: string
+
+  /api/v1/me/avatar-upload-intents/{id}/complete:
+    post:
+      summary: Mark avatar upload intent complete
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Avatar upload processed
+
+  /api/v1/me/avatar:
+    delete:
+      summary: Clear current avatar
+      security:
+        - CookieAuth: []
+      responses:
+        '204':
+          description: Avatar cleared
+
+  /api/v1/me/summary:
+    get:
+      summary: Get personal analytics summary (10 core metrics)
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: range
+          in: query
+          schema:
+            type: string
+            enum: [today, 7d, 30d, all, custom]
+            default: 30d
+      responses:
+        '200':
+          description: Personal summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PersonalSummary'
+
+  /api/v1/me/trends/tokens:
+    get:
+      summary: Get token trends over time
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: range
+          in: query
+          schema:
+            type: string
+        - name: mode
+          in: query
+          schema:
+            type: string
+            enum: [total, structure]
+        - name: agent
+          in: query
+          schema:
+            type: string
+        - name: provider
+          in: query
+          schema:
+            type: string
+        - name: model
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Token trends response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrendResponse'
+
+  /api/v1/me/breakdowns/agents:
+    get:
+      summary: Get agent usage breakdown
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: range
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Agent breakdown
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BreakdownResponse'
+
+  /api/v1/me/breakdowns/models:
+    get:
+      summary: Get model usage breakdown
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: range
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Model breakdown
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BreakdownResponse'
+
+  /api/v1/me/skills:
+    get:
+      summary: Get personal skill rankings
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: range
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Skill rankings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillsResponse'
+
+  /api/v1/me/calendar:
+    get:
+      summary: Get activity calendar
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: range
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Activity calendar
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CalendarResponse'
+
+  /api/v1/me/activity:
+    get:
+      summary: Get safe activity log (P1)
+      security:
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Activity items
+
+  /api/v1/me/filter-options:
+    get:
+      summary: Get available filter options for user
+      security:
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Filter options
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FilterOptions'
+
+  /api/v1/me/devices:
+    get:
+      summary: List user registered devices
+      security:
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Device list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/DeviceItem'
+
+  /api/v1/me/device-bindings:
+    post:
+      summary: Create 8-character Crockford Base32 device binding challenge
+      security:
+        - CookieAuth: []
+      responses:
+        '201':
+          description: Binding code created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  challengeId:
+                    type: string
+                  code:
+                    type: string
+                    example: 7K9M2P4X
+                  expiresAt:
+                    type: string
+
+  /api/v1/me/device-bindings/{id}:
+    delete:
+      summary: Cancel binding code
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Binding code cancelled
+
+  /api/v1/me/devices/{id}:
+    patch:
+      summary: Rename device
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - deviceName
+              properties:
+                deviceName:
+                  type: string
+      responses:
+        '200':
+          description: Device renamed
+    delete:
+      summary: Revoke device
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Device revoked
+
+  /api/v1/me/devices/{id}/pause:
+    post:
+      summary: Pause device synchronization
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Device paused
+
+  /api/v1/me/devices/{id}/resume:
+    post:
+      summary: Resume paused device
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Device resumed
+
+  /api/v1/me/exports:
+    post:
+      summary: Create data export job (P1)
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scope:
+                  type: string
+                  enum: [summary, activity, all_aggregates]
+                format:
+                  type: string
+                  enum: [csv, json]
+                filter:
+                  type: object
+      responses:
+        '202':
+          description: Export job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportJob'
+    get:
+      summary: List export jobs
+      security:
+        - CookieAuth: []
+      responses:
+        '200':
+          description: Export job list
+
+  /api/v1/me/exports/{id}:
+    get:
+      summary: Get export job status
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Export job details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportJob'
+
+  /api/v1/me/exports/{id}/download:
+    get:
+      summary: Get short-lived download URL for export
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Signed download URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  downloadUrl:
+                    type: string
+                  expiresAt:
+                    type: string
+
+  /api/v1/me/deletion-requests:
+    post:
+      summary: Request data or account deletion
+      security:
+        - CookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - scope
+                - confirmation
+              properties:
+                scope:
+                  type: string
+                  enum: [account, installation, time_range, all_usage]
+                confirmation:
+                  type: boolean
+      responses:
+        '202':
+          description: Deletion request submitted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletionRequest'
+
+  /api/v1/me/deletion-requests/{id}:
+    get:
+      summary: Get deletion request status
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deletion request status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeletionRequest'
+
+  /api/v1/me/deletion-requests/{id}/cancel:
+    post:
+      summary: Cancel pending account deletion
+      security:
+        - CookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deletion request cancelled
+
+  /api/v1/public/users/{handle}:
+    get:
+      summary: Get public user profile
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Public profile
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicUserProfile'
+        '308':
+          description: Permanent redirect to new handle
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /api/v1/public/users/{handle}/trends:
+    get:
+      summary: Get public token trends
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: range
+          in: query
+          schema:
+            type: string
+        - name: mode
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Trends if allowed
+
+  /api/v1/public/users/{handle}/skills:
+    get:
+      summary: Get public skill rankings
+      parameters:
+        - name: handle
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Skills if allowed
+
+  /api/v1/public/search:
+    get:
+      summary: Search published public users and agents
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SearchUserResult'
+                  agents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SearchAgentResult'
+
+  /api/v1/public/leaderboards:
+    get:
+      summary: Get published leaderboard snapshot & entries
+      parameters:
+        - name: board
+          in: query
+          schema:
+            type: string
+            default: global
+        - name: window
+          in: query
+          schema:
+            type: string
+            enum: [today, 7d, 30d, all, custom]
+            default: 30d
+        - name: metric
+          in: query
+          schema:
+            type: string
+            enum: [tokens, sessions, turns, tools, skills, code_lines]
+            default: tokens
+        - name: cursor
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        '200':
+          description: Leaderboard snapshot entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeaderboardResponse'
+
+  /api/v1/public/compare:
+    get:
+      summary: Compare up to 3 public users (P1)
+      parameters:
+        - name: handles
+          in: query
+          required: true
+          schema:
+            type: string
+            example: maxbauer,alice,bob
+      responses:
+        '200':
+          description: User comparison results
+
+  /v1/installations/claim:
+    post:
+      summary: Collector claims installation using 8-character binding code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - code
+                - publicKey
+                - osType
+                - architecture
+                - collectorVersion
+              properties:
+                code:
+                  type: string
+                  example: 7K9M2P4X
+                publicKey:
+                  type: string
+                  description: 32-byte hex encoded Ed25519 public key
+                deviceName:
+                  type: string
+                osType:
+                  type: string
+                  enum: [windows, macos, linux]
+                osVersion:
+                  type: string
+                architecture:
+                  type: string
+                collectorVersion:
+                  type: string
+      responses:
+        '200':
+          description: Device claimed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  installationId:
+                    type: string
+                  status:
+                    type: string
+                  uploadPolicy:
+                    type: object
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/ErrorResponse'
+
+  /v1/installations/register:
+    post:
+      summary: Collector registers installation using short-lived user auth
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - publicKey
+                - osType
+                - architecture
+                - collectorVersion
+              properties:
+                publicKey:
+                  type: string
+                deviceName:
+                  type: string
+                osType:
+                  type: string
+                osVersion:
+                  type: string
+                architecture:
+                  type: string
+                collectorVersion:
+                  type: string
+      responses:
+        '200':
+          description: Device registered successfully
+
+components:
+  securitySchemes:
+    CookieAuth:
+      type: apiKey
+      in: cookie
+      name: __Host-tokendance_session
+    BearerAuth:
+      type: http
+      scheme: bearer
+    CsrfToken:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+
+  responses:
+    ErrorResponse:
+      description: Standard API Error
+      content:
+        application/json:
+          schema:
+            type: object
+            required:
+              - error
+            properties:
+              error:
+                type: object
+                required:
+                  - code
+                  - messageKey
+                  - requestId
+                properties:
+                  code:
+                    type: string
+                  messageKey:
+                    type: string
+                  requestId:
+                    type: string
+                  details:
+                    type: object
+
+  schemas:
+    SessionUser:
+      type: object
+      properties:
+        userId:
+          type: string
+        handle:
+          type: string
+          nullable: true
+        displayName:
+          type: string
+        avatarUrl:
+          type: string
+          nullable: true
+        locale:
+          type: string
+        onboardingRequired:
+          type: boolean
+        productState:
+          type: string
+          enum: [email_unverified, new, active_private, active_public, suspended, deletion_pending, deleted]
+
+    SessionItem:
+      type: object
+      properties:
+        sessionId:
+          type: string
+        deviceLabel:
+          type: string
+          nullable: true
+        sessionStatus:
+          type: string
+        lastSeenAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        absoluteExpiresAt:
+          type: string
+          format: date-time
+
+    UserProfile:
+      type: object
+      properties:
+        userId:
+          type: string
+        handle:
+          type: string
+          nullable: true
+        displayName:
+          type: string
+        avatarUrl:
+          type: string
+          nullable: true
+        bio:
+          type: string
+          nullable: true
+        timezoneName:
+          type: string
+        locale:
+          type: string
+        accountStatus:
+          type: string
+        leaderboardVisibility:
+          type: string
+        profileVersion:
+          type: integer
+
+    PrivacySettings:
+      type: object
+      properties:
+        userId:
+          type: string
+        publicProfileEnabled:
+          type: boolean
+        showBio:
+          type: boolean
+        showTokenTotal:
+          type: boolean
+        showTrends:
+          type: boolean
+        showActivityCalendar:
+          type: boolean
+        showAgentBreakdown:
+          type: boolean
+        showSkillRanking:
+          type: boolean
+        showAchievements:
+          type: boolean
+        privacyVersion:
+          type: integer
+
+    PublicUserProfile:
+      type: object
+      properties:
+        userId:
+          type: string
+        handle:
+          type: string
+        displayName:
+          type: string
+        avatarUrl:
+          type: string
+          nullable: true
+        bio:
+          type: string
+          nullable: true
+        profileStatus:
+          type: string
+        showBio:
+          type: boolean
+        showTokenTotal:
+          type: boolean
+        showTrends:
+          type: boolean
+        showActivityCalendar:
+          type: boolean
+        showAgentBreakdown:
+          type: boolean
+        showSkillRanking:
+          type: boolean
+        showAchievements:
+          type: boolean
+        projectionVersion:
+          type: integer
+
+    PersonalSummary:
+      type: object
+      properties:
+        range:
+          type: object
+        metrics:
+          type: object
+          properties:
+            estimatedCost:
+              type: object
+              properties:
+                amount:
+                  type: string
+                currency:
+                  type: string
+                supported:
+                  type: boolean
+            totalTokens:
+              type: object
+              properties:
+                value:
+                  type: string
+                supported:
+                  type: boolean
+            generatedCodeLines:
+              type: object
+              properties:
+                value:
+                  type: string
+                supported:
+                  type: boolean
+            tokensPerCodeLine:
+              type: object
+              properties:
+                value:
+                  type: string
+                supported:
+                  type: boolean
+            inputContextTokens:
+              type: object
+              properties:
+                value:
+                  type: string
+                supported:
+                  type: boolean
+            outputTokens:
+              type: object
+              properties:
+                value:
+                  type: string
+                supported:
+                  type: boolean
+            cacheHitRate:
+              type: object
+              properties:
+                value:
+                  type: string
+                supported:
+                  type: boolean
+            activeDurationMs:
+              type: object
+              properties:
+                value:
+                  type: string
+                supported:
+                  type: boolean
+            messageCount:
+              type: object
+              properties:
+                value:
+                  type: string
+                supported:
+                  type: boolean
+            userMessageCount:
+              type: object
+              properties:
+                value:
+                  type: string
+                supported:
+                  type: boolean
+        ranking:
+          type: object
+        sync:
+          type: object
+        dataWatermarkAt:
+          type: string
+        aggregationVersion:
+          type: integer
+
+    TrendResponse:
+      type: object
+      properties:
+        range:
+          type: object
+        mode:
+          type: string
+        granularity:
+          type: string
+        points:
+          type: array
+          items:
+            type: object
+
+    BreakdownResponse:
+      type: object
+      properties:
+        range:
+          type: object
+        items:
+          type: array
+          items:
+            type: object
+
+    SkillsResponse:
+      type: object
+      properties:
+        range:
+          type: object
+        skills:
+          type: array
+          items:
+            type: object
+
+    CalendarResponse:
+      type: object
+      properties:
+        days:
+          type: array
+          items:
+            type: object
+        currentStreak:
+          type: integer
+        longestStreak:
+          type: integer
+        totalActiveDays:
+          type: integer
+
+    FilterOptions:
+      type: object
+      properties:
+        agents:
+          type: array
+          items:
+            type: string
+        providers:
+          type: array
+          items:
+            type: string
+        models:
+          type: array
+          items:
+            type: string
+
+    DeviceItem:
+      type: object
+      properties:
+        installationId:
+          type: string
+        deviceName:
+          type: string
+          nullable: true
+        osType:
+          type: string
+        osVersion:
+          type: string
+          nullable: true
+        architecture:
+          type: string
+        collectorVersion:
+          type: string
+        installationStatus:
+          type: string
+        disabledAt:
+          type: string
+          nullable: true
+        disabledReason:
+          type: string
+          nullable: true
+        registeredAt:
+          type: string
+        lastSeenAt:
+          type: string
+          nullable: true
+
+    ExportJob:
+      type: object
+      properties:
+        exportId:
+          type: string
+        userId:
+          type: string
+        idempotencyKey:
+          type: string
+        exportScope:
+          type: string
+        exportFormat:
+          type: string
+        jobStatus:
+          type: string
+
+    DeletionRequest:
+      type: object
+      properties:
+        requestId:
+          type: string
+        userId:
+          type: string
+        deletionScope:
+          type: string
+        requestStatus:
+          type: string
+        phase:
+          type: string
+        cancelBefore:
+          type: string
+          nullable: true
+
+    SearchUserResult:
+      type: object
+      properties:
+        handle:
+          type: string
+        displayName:
+          type: string
+        avatarUrl:
+          type: string
+          nullable: true
+        bio:
+          type: string
+          nullable: true
+        rank:
+          type: integer
+          nullable: true
+
+    SearchAgentResult:
+      type: object
+      properties:
+        agentId:
+          type: string
+        name:
+          type: string
+        description:
+          type: string
+
+    LeaderboardResponse:
+      type: object
+      properties:
+        snapshotId:
+          type: string
+        boardKey:
+          type: string
+        window:
+          type: string
+        metric:
+          type: string
+        entries:
+          type: array
+          items:
+            type: object
