@@ -8,118 +8,79 @@ import (
 	"time"
 
 	"tokendance/internal/domain"
+	"tokendance/internal/store/sqlcgen"
 )
 
 type deviceStore struct {
 	db *sql.DB
 }
 
-func (s *deviceStore) ListInstallations(ctx context.Context, userID string) ([]domain.Installation, error) {
-	query := `
-		SELECT installation_id, user_id, device_public_key, device_name,
-		       os_type, os_version, architecture, collector_version,
-		       installation_status, disabled_at, disabled_reason,
-		       status_version, registered_at, last_seen_at, revoked_at, updated_at
-		FROM installations
-		WHERE user_id = ?
-		ORDER BY registered_at DESC`
+func installationFromListRow(row sqlcgen.ListInstallationsByUserRow) domain.Installation {
+	return domain.Installation{
+		InstallationID:     row.InstallationID,
+		UserID:             row.UserID,
+		DevicePublicKey:    scanBytes32(row.DevicePublicKey),
+		DeviceName:         ptrFromNullString(row.DeviceName),
+		OSType:             row.OsType,
+		OSVersion:          ptrFromNullString(row.OsVersion),
+		Architecture:       row.Architecture,
+		CollectorVersion:   row.CollectorVersion,
+		InstallationStatus: domain.InstallationStatus(row.InstallationStatus),
+		DisabledAt:         ptrFromNullTime(row.DisabledAt),
+		DisabledReason:     ptrFromNullString(row.DisabledReason),
+		StatusVersion:      row.StatusVersion,
+		RegisteredAt:       row.RegisteredAt,
+		LastSeenAt:         ptrFromNullTime(row.LastSeenAt),
+		RevokedAt:          ptrFromNullTime(row.RevokedAt),
+		UpdatedAt:          row.UpdatedAt,
+	}
+}
 
-	rows, err := s.db.QueryContext(ctx, query, userID)
+func installationFromOwnerRow(row sqlcgen.GetInstallationByOwnerRow) domain.Installation {
+	return domain.Installation{
+		InstallationID:     row.InstallationID,
+		UserID:             row.UserID,
+		DevicePublicKey:    scanBytes32(row.DevicePublicKey),
+		DeviceName:         ptrFromNullString(row.DeviceName),
+		OSType:             row.OsType,
+		OSVersion:          ptrFromNullString(row.OsVersion),
+		Architecture:       row.Architecture,
+		CollectorVersion:   row.CollectorVersion,
+		InstallationStatus: domain.InstallationStatus(row.InstallationStatus),
+		DisabledAt:         ptrFromNullTime(row.DisabledAt),
+		DisabledReason:     ptrFromNullString(row.DisabledReason),
+		StatusVersion:      row.StatusVersion,
+		RegisteredAt:       row.RegisteredAt,
+		LastSeenAt:         ptrFromNullTime(row.LastSeenAt),
+		RevokedAt:          ptrFromNullTime(row.RevokedAt),
+		UpdatedAt:          row.UpdatedAt,
+	}
+}
+
+func (s *deviceStore) ListInstallations(ctx context.Context, userID string) ([]domain.Installation, error) {
+	rows, err := sqlcgen.New(s.db).ListInstallationsByUser(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list installations: %w", err)
 	}
-	defer rows.Close()
-
-	var list []domain.Installation
-	for rows.Next() {
-		var inst domain.Installation
-		var pubKey []byte
-		var devName, osVer, disReason sql.NullString
-		var disAt, lastSeen, revokedAt sql.NullTime
-
-		if err := rows.Scan(
-			&inst.InstallationID,
-			&inst.UserID,
-			&pubKey,
-			&devName,
-			&inst.OSType,
-			&osVer,
-			&inst.Architecture,
-			&inst.CollectorVersion,
-			&inst.InstallationStatus,
-			&disAt,
-			&disReason,
-			&inst.StatusVersion,
-			&inst.RegisteredAt,
-			&lastSeen,
-			&revokedAt,
-			&inst.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan installation: %w", err)
-		}
-
-		inst.DevicePublicKey = scanBytes32(pubKey)
-		inst.DeviceName = ptrFromNullString(devName)
-		inst.OSVersion = ptrFromNullString(osVer)
-		inst.DisabledReason = ptrFromNullString(disReason)
-		inst.DisabledAt = ptrFromNullTime(disAt)
-		inst.LastSeenAt = ptrFromNullTime(lastSeen)
-		inst.RevokedAt = ptrFromNullTime(revokedAt)
-
-		list = append(list, inst)
+	list := make([]domain.Installation, 0, len(rows))
+	for _, row := range rows {
+		list = append(list, installationFromListRow(row))
 	}
-
 	return list, nil
 }
 
 func (s *deviceStore) GetInstallation(ctx context.Context, installationID string, userID string) (*domain.Installation, error) {
-	query := `
-		SELECT installation_id, user_id, device_public_key, device_name,
-		       os_type, os_version, architecture, collector_version,
-		       installation_status, disabled_at, disabled_reason,
-		       status_version, registered_at, last_seen_at, revoked_at, updated_at
-		FROM installations
-		WHERE installation_id = ? AND user_id = ?
-		LIMIT 1`
-
-	var inst domain.Installation
-	var pubKey []byte
-	var devName, osVer, disReason sql.NullString
-	var disAt, lastSeen, revokedAt sql.NullTime
-
-	err := s.db.QueryRowContext(ctx, query, installationID, userID).Scan(
-		&inst.InstallationID,
-		&inst.UserID,
-		&pubKey,
-		&devName,
-		&inst.OSType,
-		&osVer,
-		&inst.Architecture,
-		&inst.CollectorVersion,
-		&inst.InstallationStatus,
-		&disAt,
-		&disReason,
-		&inst.StatusVersion,
-		&inst.RegisteredAt,
-		&lastSeen,
-		&revokedAt,
-		&inst.UpdatedAt,
-	)
+	row, err := sqlcgen.New(s.db).GetInstallationByOwner(ctx, sqlcgen.GetInstallationByOwnerParams{
+		InstallationID: installationID,
+		UserID:         userID,
+	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to get installation: %w", err)
 	}
-
-	inst.DevicePublicKey = scanBytes32(pubKey)
-	inst.DeviceName = ptrFromNullString(devName)
-	inst.OSVersion = ptrFromNullString(osVer)
-	inst.DisabledReason = ptrFromNullString(disReason)
-	inst.DisabledAt = ptrFromNullTime(disAt)
-	inst.LastSeenAt = ptrFromNullTime(lastSeen)
-	inst.RevokedAt = ptrFromNullTime(revokedAt)
-
+	inst := installationFromOwnerRow(row)
 	return &inst, nil
 }
 
@@ -171,19 +132,13 @@ func (s *deviceStore) CreateBindingChallenge(ctx context.Context, challenge doma
 }
 
 func (s *deviceStore) CancelBindingChallenge(ctx context.Context, challengeID, userID string) error {
-	now := time.Now().UTC()
-	query := `
-		UPDATE device_binding_challenges
-		SET challenge_status = 'cancelled', active_session_key = NULL, updated_at = ?
-		WHERE challenge_id = ? AND user_id = ?`
-
-	res, err := s.db.ExecContext(ctx, query, now, challengeID, userID)
+	rows, err := sqlcgen.New(s.db).CancelBindingChallengeByOwner(ctx, sqlcgen.CancelBindingChallengeByOwnerParams{
+		UpdatedAt:   time.Now().UTC(),
+		ChallengeID: challengeID,
+		UserID:      userID,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to cancel binding challenge: %w", err)
-	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return err
 	}
 	if rows == 0 {
 		return domain.ErrNotFound

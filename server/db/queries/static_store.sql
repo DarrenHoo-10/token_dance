@@ -120,6 +120,13 @@ WHERE board_key = ? AND metric_key = ? AND snapshot_status = 'published'
 ORDER BY published_at DESC
 LIMIT 1;
 
+-- name: GetLatestPublishedSnapshotByBoard :one
+SELECT snapshot_id, data_watermark_at
+FROM leaderboard_snapshots
+WHERE board_key = ? AND snapshot_status = 'published'
+ORDER BY published_at DESC
+LIMIT 1;
+
 -- name: ListVisibleLeaderboardEntries :many
 SELECT e.rank_no, p.handle, p.display_name, p.avatar_url, e.metric_value, e.previous_rank_no
 FROM leaderboard_entries e

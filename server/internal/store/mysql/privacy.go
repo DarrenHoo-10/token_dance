@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"tokendance/internal/domain"
+	"tokendance/internal/store/sqlcgen"
 )
 
 type privacyStore struct {
@@ -17,41 +18,28 @@ type privacyStore struct {
 }
 
 func (s *privacyStore) GetPrivacy(ctx context.Context, userID string) (*domain.UserPrivacySettings, error) {
-	query := `
-		SELECT p.user_id, p.public_profile_enabled, u.leaderboard_visibility,
-		       p.show_bio, p.show_token_total, p.show_trends,
-		       p.show_activity_calendar, p.show_agent_breakdown,
-		       p.show_skill_ranking, p.show_achievements, p.privacy_version,
-		       p.created_at, p.updated_at
-		FROM user_privacy_settings p
-		JOIN users u ON u.user_id = p.user_id
-		WHERE p.user_id = ?
-		LIMIT 1`
-
-	var p domain.UserPrivacySettings
-	err := s.db.QueryRowContext(ctx, query, userID).Scan(
-		&p.UserID,
-		&p.PublicProfileEnabled,
-		&p.LeaderboardVisibility,
-		&p.ShowBio,
-		&p.ShowTokenTotal,
-		&p.ShowTrends,
-		&p.ShowActivityCalendar,
-		&p.ShowAgentBreakdown,
-		&p.ShowSkillRanking,
-		&p.ShowAchievements,
-		&p.PrivacyVersion,
-		&p.CreatedAt,
-		&p.UpdatedAt,
-	)
+	row, err := sqlcgen.New(s.db).GetPrivacyByUser(ctx, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to get privacy settings: %w", err)
 	}
-
-	return &p, nil
+	return &domain.UserPrivacySettings{
+		UserID:                row.UserID,
+		PublicProfileEnabled:  row.PublicProfileEnabled,
+		LeaderboardVisibility: domain.LeaderboardVisibility(row.LeaderboardVisibility),
+		ShowBio:               row.ShowBio,
+		ShowTokenTotal:        row.ShowTokenTotal,
+		ShowTrends:            row.ShowTrends,
+		ShowActivityCalendar:  row.ShowActivityCalendar,
+		ShowAgentBreakdown:    row.ShowAgentBreakdown,
+		ShowSkillRanking:      row.ShowSkillRanking,
+		ShowAchievements:      row.ShowAchievements,
+		PrivacyVersion:        row.PrivacyVersion,
+		CreatedAt:             row.CreatedAt,
+		UpdatedAt:             row.UpdatedAt,
+	}, nil
 }
 
 func (s *privacyStore) UpdatePrivacyTx(ctx context.Context, userID string, in domain.UserPrivacySettings, expectedVersion uint64, event domain.UserSecurityEvent, now time.Time) (*domain.UserPrivacySettings, error) {
@@ -61,8 +49,7 @@ func (s *privacyStore) UpdatePrivacyTx(ctx context.Context, userID string, in do
 	}
 	defer tx.Rollback()
 
-	var currentVersion uint64
-	err = tx.QueryRowContext(ctx, "SELECT privacy_version FROM user_privacy_settings WHERE user_id = ? FOR UPDATE", userID).Scan(&currentVersion)
+	currentVersion, err := sqlcgen.New(tx).LockPrivacyVersion(ctx, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, domain.ErrNotFound
@@ -216,56 +203,34 @@ func (s *privacyStore) UpdatePrivacyTx(ctx context.Context, userID string, in do
 
 func (s *privacyStore) GetPublicProfileByHandle(ctx context.Context, handle string, now time.Time) (*domain.PublicUserProfile, error) {
 	handle = strings.ToLower(strings.TrimSpace(handle))
-	query := `
-		SELECT p.user_id, p.handle, p.display_name, p.avatar_url, p.bio,
-		       p.profile_status, p.show_bio, p.show_token_total, p.show_trends,
-		       p.show_activity_calendar, p.show_agent_breakdown, p.show_skill_ranking,
-		       p.show_achievements, p.source_profile_version, p.source_privacy_version,
-		       p.projection_version, p.published_at, p.created_at, p.updated_at
-		FROM public_user_profiles p
-		JOIN users u ON p.user_id = u.user_id
-		WHERE p.handle = ?
-		  AND p.profile_status = 'published'
-		  AND u.account_status = 'active'
-		LIMIT 1`
-
-	var pub domain.PublicUserProfile
-	var avatarURL, bio sql.NullString
-	var publishedAt sql.NullTime
-
-	err := s.db.QueryRowContext(ctx, query, handle).Scan(
-		&pub.UserID,
-		&pub.Handle,
-		&pub.DisplayName,
-		&avatarURL,
-		&bio,
-		&pub.ProfileStatus,
-		&pub.ShowBio,
-		&pub.ShowTokenTotal,
-		&pub.ShowTrends,
-		&pub.ShowActivityCalendar,
-		&pub.ShowAgentBreakdown,
-		&pub.ShowSkillRanking,
-		&pub.ShowAchievements,
-		&pub.SourceProfileVersion,
-		&pub.SourcePrivacyVersion,
-		&pub.ProjectionVersion,
-		&publishedAt,
-		&pub.CreatedAt,
-		&pub.UpdatedAt,
-	)
+	row, err := sqlcgen.New(s.db).GetPublishedProfileByHandle(ctx, handle)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to query public profile by handle: %w", err)
 	}
-
-	pub.AvatarURL = ptrFromNullString(avatarURL)
-	pub.Bio = ptrFromNullString(bio)
-	pub.PublishedAt = ptrFromNullTime(publishedAt)
-
-	return &pub, nil
+	return &domain.PublicUserProfile{
+		UserID:               row.UserID,
+		Handle:               row.Handle,
+		DisplayName:          row.DisplayName,
+		AvatarURL:            ptrFromNullString(row.AvatarUrl),
+		Bio:                  ptrFromNullString(row.Bio),
+		ProfileStatus:        domain.ProfileStatus(row.ProfileStatus),
+		ShowBio:              row.ShowBio,
+		ShowTokenTotal:       row.ShowTokenTotal,
+		ShowTrends:           row.ShowTrends,
+		ShowActivityCalendar: row.ShowActivityCalendar,
+		ShowAgentBreakdown:   row.ShowAgentBreakdown,
+		ShowSkillRanking:     row.ShowSkillRanking,
+		ShowAchievements:     row.ShowAchievements,
+		SourceProfileVersion: row.SourceProfileVersion,
+		SourcePrivacyVersion: row.SourcePrivacyVersion,
+		ProjectionVersion:    row.ProjectionVersion,
+		PublishedAt:          ptrFromNullTime(row.PublishedAt),
+		CreatedAt:            row.CreatedAt,
+		UpdatedAt:            row.UpdatedAt,
+	}, nil
 }
 
 func (s *privacyStore) RequestDeletionTx(ctx context.Context, req domain.DataDeletionRequest, event domain.UserSecurityEvent, now time.Time) (*domain.DataDeletionRequest, error) {
@@ -361,12 +326,10 @@ func (s *privacyStore) RequestDeletionTx(ctx context.Context, req domain.DataDel
 			return nil, fmt.Errorf("failed to update user status to deletion_pending: %w", err)
 		}
 
-		// Update public profile
-		updatePubSQL := `
-			UPDATE public_user_profiles
-			SET profile_status = 'hidden', projection_version = projection_version + 1, updated_at = ?
-			WHERE user_id = ?`
-		if _, err := tx.ExecContext(ctx, updatePubSQL, now, *req.UserID); err != nil {
+		if err := sqlcgen.New(tx).HidePublicProfileForDeletion(ctx, sqlcgen.HidePublicProfileForDeletionParams{
+			UpdatedAt: now,
+			UserID:    *req.UserID,
+		}); err != nil {
 			return nil, fmt.Errorf("failed to hide public user profile: %w", err)
 		}
 	}
@@ -390,16 +353,10 @@ func (s *privacyStore) CancelDeletionTx(ctx context.Context, requestID string, u
 	}
 	defer tx.Rollback()
 
-	query := `
-		SELECT request_status, deletion_scope,
-		       cancel_before IS NOT NULL AND cancel_before > CURRENT_TIMESTAMP(3)
-		FROM data_deletion_requests
-		WHERE request_id = ? AND user_id = ?
-		FOR UPDATE`
-
-	var status, scope string
-	var cancelWindowOpen bool
-	err = tx.QueryRowContext(ctx, query, requestID, userID).Scan(&status, &scope, &cancelWindowOpen)
+	row, err := sqlcgen.New(tx).LockDeletionRequestForCancel(ctx, sqlcgen.LockDeletionRequestForCancelParams{
+		RequestID: requestID,
+		UserID:    sql.NullString{String: userID, Valid: true},
+	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.ErrNotFound
@@ -407,7 +364,7 @@ func (s *privacyStore) CancelDeletionTx(ctx context.Context, requestID string, u
 		return fmt.Errorf("failed to lock deletion request: %w", err)
 	}
 
-	if status != string(domain.DeletionStatusPending) || scope != "account" || !cancelWindowOpen {
+	if row.RequestStatus != string(domain.DeletionStatusPending) || row.DeletionScope != "account" || !row.CancelWindowOpen.Valid || !row.CancelWindowOpen.Bool {
 		return domain.ErrConflict
 	}
 
@@ -426,7 +383,7 @@ func (s *privacyStore) CancelDeletionTx(ctx context.Context, requestID string, u
 		return domain.ErrConflict
 	}
 
-	if scope == "account" {
+	if row.DeletionScope == "account" {
 		updateUserSQL := `
 			UPDATE users
 			SET account_status = 'active', leaderboard_visibility = 'private', updated_at = ?
@@ -440,48 +397,31 @@ func (s *privacyStore) CancelDeletionTx(ctx context.Context, requestID string, u
 }
 
 func (s *privacyStore) GetDeletionRequest(ctx context.Context, requestID string, userID string) (*domain.DataDeletionRequest, error) {
-	query := `
-		SELECT request_id, user_id, deletion_scope, scope_filter_json,
-		       request_status, phase, progress_cursor, cancel_before,
-		       cancelled_at, requested_at, completed_at, audit_reference
-		FROM data_deletion_requests
-		WHERE request_id = ? AND user_id = ?
-		LIMIT 1`
-
-	var req domain.DataDeletionRequest
-	var uid, auditRef sql.NullString
-	var filterJSON []byte
-	var cancelBefore, cancelledAt, completedAt sql.NullTime
-
-	err := s.db.QueryRowContext(ctx, query, requestID, userID).Scan(
-		&req.RequestID,
-		&uid,
-		&req.DeletionScope,
-		&filterJSON,
-		&req.RequestStatus,
-		&req.Phase,
-		&req.ProgressCursor,
-		&cancelBefore,
-		&cancelledAt,
-		&req.RequestedAt,
-		&completedAt,
-		&auditRef,
-	)
+	row, err := sqlcgen.New(s.db).GetDeletionRequestByOwner(ctx, sqlcgen.GetDeletionRequestByOwnerParams{
+		RequestID: requestID,
+		UserID:    sql.NullString{String: userID, Valid: true},
+	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to get deletion request: %w", err)
 	}
-
-	req.UserID = ptrFromNullString(uid)
-	req.AuditReference = ptrFromNullString(auditRef)
-	req.CancelBefore = ptrFromNullTime(cancelBefore)
-	req.CancelledAt = ptrFromNullTime(cancelledAt)
-	req.CompletedAt = ptrFromNullTime(completedAt)
-	if len(filterJSON) > 0 {
-		_ = json.Unmarshal(filterJSON, &req.ScopeFilterJSON)
+	req := &domain.DataDeletionRequest{
+		RequestID:      row.RequestID,
+		UserID:         ptrFromNullString(row.UserID),
+		DeletionScope:  row.DeletionScope,
+		RequestStatus:  domain.DeletionRequestStatus(row.RequestStatus),
+		Phase:          row.Phase,
+		ProgressCursor: row.ProgressCursor,
+		CancelBefore:   ptrFromNullTime(row.CancelBefore),
+		CancelledAt:    ptrFromNullTime(row.CancelledAt),
+		RequestedAt:    row.RequestedAt,
+		CompletedAt:    ptrFromNullTime(row.CompletedAt),
+		AuditReference: ptrFromNullString(row.AuditReference),
 	}
-
-	return &req, nil
+	if len(row.ScopeFilterJson) > 0 {
+		_ = json.Unmarshal(row.ScopeFilterJson, &req.ScopeFilterJSON)
+	}
+	return req, nil
 }

@@ -9,10 +9,45 @@ import (
 	"time"
 
 	"tokendance/internal/domain"
+	"tokendance/internal/store/sqlcgen"
 )
 
 type exportStore struct {
 	db *sql.DB
+}
+
+func exportJobFromSQLC(row sqlcgen.DataExportJob) domain.DataExportJob {
+	job := domain.DataExportJob{
+		ExportID:       row.ExportID,
+		UserID:         row.UserID,
+		IdempotencyKey: row.IdempotencyKey,
+		RequestHash:    scanBytes32(row.RequestHash),
+		ExportScope:    row.ExportScope,
+		ExportFormat:   row.ExportFormat,
+		JobStatus:      domain.ExportJobStatus(row.JobStatus),
+		AttemptCount:   row.AttemptCount,
+		NextAttemptAt:  row.NextAttemptAt,
+		LockedAt:       ptrFromNullTime(row.LockedAt),
+		LockedBy:       ptrFromNullString(row.LockedBy),
+		ObjectKey:      ptrFromNullString(row.ObjectKey),
+		LastErrorCode:  ptrFromNullString(row.LastErrorCode),
+		StartedAt:      ptrFromNullTime(row.StartedAt),
+		CompletedAt:    ptrFromNullTime(row.CompletedAt),
+		ExpiresAt:      ptrFromNullTime(row.ExpiresAt),
+		CreatedAt:      row.CreatedAt,
+		UpdatedAt:      row.UpdatedAt,
+	}
+	if len(row.FilterJson) > 0 {
+		_ = json.Unmarshal(row.FilterJson, &job.FilterJSON)
+	}
+	if row.FileSha256.Valid {
+		job.FileSha256 = scanBytes32Ptr([]byte(row.FileSha256.String))
+	}
+	if row.FileSize.Valid {
+		size := uint64(row.FileSize.Int64)
+		job.FileSize = &size
+	}
+	return job
 }
 
 func (s *exportStore) CreateJob(ctx context.Context, job domain.DataExportJob, idempotencyKeys []string) (*domain.DataExportJob, error) {
@@ -155,144 +190,30 @@ func (s *exportStore) CreateJob(ctx context.Context, job domain.DataExportJob, i
 }
 
 func (s *exportStore) ListJobs(ctx context.Context, userID string) ([]domain.DataExportJob, error) {
-	query := `
-		SELECT export_id, user_id, idempotency_key, request_hash, export_scope,
-		       export_format, filter_json, job_status, attempt_count, next_attempt_at,
-		       locked_at, locked_by, object_key, file_sha256, file_size,
-		       last_error_code, started_at, completed_at, expires_at, created_at, updated_at
-		FROM data_export_jobs
-		WHERE user_id = ?
-		ORDER BY created_at DESC`
-
-	rows, err := s.db.QueryContext(ctx, query, userID)
+	rows, err := sqlcgen.New(s.db).ListExportJobsByUser(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list export jobs: %w", err)
 	}
-	defer rows.Close()
-
-	var list []domain.DataExportJob
-	for rows.Next() {
-		var j domain.DataExportJob
-		var reqHash, fileSha []byte
-		var filterJSON []byte
-		var lockedBy, objKey, lastErrCode sql.NullString
-		var fileSize sql.NullInt64
-		var lockedAt, startedAt, completedAt, expiresAt sql.NullTime
-
-		if err := rows.Scan(
-			&j.ExportID,
-			&j.UserID,
-			&j.IdempotencyKey,
-			&reqHash,
-			&j.ExportScope,
-			&j.ExportFormat,
-			&filterJSON,
-			&j.JobStatus,
-			&j.AttemptCount,
-			&j.NextAttemptAt,
-			&lockedAt,
-			&lockedBy,
-			&objKey,
-			&fileSha,
-			&fileSize,
-			&lastErrCode,
-			&startedAt,
-			&completedAt,
-			&expiresAt,
-			&j.CreatedAt,
-			&j.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan export job: %w", err)
-		}
-
-		j.RequestHash = scanBytes32(reqHash)
-		j.FileSha256 = scanBytes32Ptr(fileSha)
-		j.LockedBy = ptrFromNullString(lockedBy)
-		j.ObjectKey = ptrFromNullString(objKey)
-		j.LastErrorCode = ptrFromNullString(lastErrCode)
-		j.LockedAt = ptrFromNullTime(lockedAt)
-		j.StartedAt = ptrFromNullTime(startedAt)
-		j.CompletedAt = ptrFromNullTime(completedAt)
-		j.ExpiresAt = ptrFromNullTime(expiresAt)
-		if fileSize.Valid {
-			sz := uint64(fileSize.Int64)
-			j.FileSize = &sz
-		}
-		if len(filterJSON) > 0 {
-			_ = json.Unmarshal(filterJSON, &j.FilterJSON)
-		}
-
-		list = append(list, j)
+	list := make([]domain.DataExportJob, 0, len(rows))
+	for _, row := range rows {
+		list = append(list, exportJobFromSQLC(row))
 	}
-
 	return list, nil
 }
 
 func (s *exportStore) GetJob(ctx context.Context, exportID, userID string) (*domain.DataExportJob, error) {
-	query := `
-		SELECT export_id, user_id, idempotency_key, request_hash, export_scope,
-		       export_format, filter_json, job_status, attempt_count, next_attempt_at,
-		       locked_at, locked_by, object_key, file_sha256, file_size,
-		       last_error_code, started_at, completed_at, expires_at, created_at, updated_at
-		FROM data_export_jobs
-		WHERE export_id = ? AND user_id = ?
-		LIMIT 1`
-
-	var j domain.DataExportJob
-	var reqHash, fileSha []byte
-	var filterJSON []byte
-	var lockedBy, objKey, lastErrCode sql.NullString
-	var fileSize sql.NullInt64
-	var lockedAt, startedAt, completedAt, expiresAt sql.NullTime
-
-	err := s.db.QueryRowContext(ctx, query, exportID, userID).Scan(
-		&j.ExportID,
-		&j.UserID,
-		&j.IdempotencyKey,
-		&reqHash,
-		&j.ExportScope,
-		&j.ExportFormat,
-		&filterJSON,
-		&j.JobStatus,
-		&j.AttemptCount,
-		&j.NextAttemptAt,
-		&lockedAt,
-		&lockedBy,
-		&objKey,
-		&fileSha,
-		&fileSize,
-		&lastErrCode,
-		&startedAt,
-		&completedAt,
-		&expiresAt,
-		&j.CreatedAt,
-		&j.UpdatedAt,
-	)
+	row, err := sqlcgen.New(s.db).GetExportJobByOwner(ctx, sqlcgen.GetExportJobByOwnerParams{
+		ExportID: exportID,
+		UserID:   userID,
+	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to get export job: %w", err)
 	}
-
-	j.RequestHash = scanBytes32(reqHash)
-	j.FileSha256 = scanBytes32Ptr(fileSha)
-	j.LockedBy = ptrFromNullString(lockedBy)
-	j.ObjectKey = ptrFromNullString(objKey)
-	j.LastErrorCode = ptrFromNullString(lastErrCode)
-	j.LockedAt = ptrFromNullTime(lockedAt)
-	j.StartedAt = ptrFromNullTime(startedAt)
-	j.CompletedAt = ptrFromNullTime(completedAt)
-	j.ExpiresAt = ptrFromNullTime(expiresAt)
-	if fileSize.Valid {
-		sz := uint64(fileSize.Int64)
-		j.FileSize = &sz
-	}
-	if len(filterJSON) > 0 {
-		_ = json.Unmarshal(filterJSON, &j.FilterJSON)
-	}
-
-	return &j, nil
+	job := exportJobFromSQLC(row)
+	return &job, nil
 }
 
 func (s *exportStore) ClaimPendingJob(ctx context.Context, workerID string, leaseDuration time.Duration, now time.Time) (*domain.DataExportJob, error) {
@@ -386,27 +307,18 @@ func (s *exportStore) ClaimPendingJob(ctx context.Context, workerID string, leas
 }
 
 func (s *exportStore) CompleteJob(ctx context.Context, exportID string, workerID string, objectKey string, fileSha256 [32]byte, fileSize uint64, now time.Time) error {
-	expiresAt := now.Add(24 * time.Hour)
-	query := `
-		UPDATE data_export_jobs
-		SET job_status = 'completed',
-		    object_key = ?,
-		    file_sha256 = ?,
-		    file_size = ?,
-		    completed_at = ?,
-		    expires_at = ?,
-		    locked_at = NULL,
-		    locked_by = NULL,
-		    updated_at = ?
-		WHERE export_id = ? AND (locked_by = ? OR locked_by IS NULL)`
-
-	res, err := s.db.ExecContext(ctx, query, objectKey, bytes32Slice(fileSha256), fileSize, now, expiresAt, now, exportID, workerID)
+	rows, err := sqlcgen.New(s.db).CompleteExportJob(ctx, sqlcgen.CompleteExportJobParams{
+		ObjectKey:   sql.NullString{String: objectKey, Valid: true},
+		FileSha256:  sql.NullString{String: string(fileSha256[:]), Valid: true},
+		FileSize:    sql.NullInt64{Int64: int64(fileSize), Valid: true},
+		CompletedAt: sql.NullTime{Time: now, Valid: true},
+		ExpiresAt:   sql.NullTime{Time: now.Add(24 * time.Hour), Valid: true},
+		UpdatedAt:   now,
+		ExportID:    exportID,
+		LockedBy:    sql.NullString{String: workerID, Valid: true},
+	})
 	if err != nil {
 		return fmt.Errorf("failed to complete export job: %w", err)
-	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return err
 	}
 	if rows == 0 {
 		return domain.ErrNotFound

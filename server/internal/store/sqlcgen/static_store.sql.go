@@ -340,6 +340,26 @@ func (q *Queries) GetLatestPublishedSnapshot(ctx context.Context, arg GetLatestP
 	return i, err
 }
 
+const getLatestPublishedSnapshotByBoard = `-- name: GetLatestPublishedSnapshotByBoard :one
+SELECT snapshot_id, data_watermark_at
+FROM leaderboard_snapshots
+WHERE board_key = ? AND snapshot_status = 'published'
+ORDER BY published_at DESC
+LIMIT 1
+`
+
+type GetLatestPublishedSnapshotByBoardRow struct {
+	SnapshotID      string    `json:"snapshot_id"`
+	DataWatermarkAt time.Time `json:"data_watermark_at"`
+}
+
+func (q *Queries) GetLatestPublishedSnapshotByBoard(ctx context.Context, boardKey string) (GetLatestPublishedSnapshotByBoardRow, error) {
+	row := q.db.QueryRowContext(ctx, getLatestPublishedSnapshotByBoard, boardKey)
+	var i GetLatestPublishedSnapshotByBoardRow
+	err := row.Scan(&i.SnapshotID, &i.DataWatermarkAt)
+	return i, err
+}
+
 const getPendingEmailChallenge = `-- name: GetPendingEmailChallenge :one
 
 SELECT challenge_id, user_id, email_lookup_hash, email_ciphertext, email_key_version,

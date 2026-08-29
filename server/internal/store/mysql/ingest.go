@@ -9,6 +9,7 @@ import (
 	mysqlerr "github.com/go-sql-driver/mysql"
 
 	"tokendance/internal/domain"
+	"tokendance/internal/store/sqlcgen"
 	"tokendance/internal/telemetry"
 )
 
@@ -17,21 +18,31 @@ type ingestStore struct {
 }
 
 func (s *ingestStore) GetIngestInstallation(ctx context.Context, installationID string) (*domain.Installation, error) {
-	const query = `
-		SELECT installation_id, user_id, device_public_key, device_name,
-		       os_type, os_version, architecture, collector_version,
-		       installation_status, disabled_at, disabled_reason,
-		       status_version, registered_at, last_seen_at, revoked_at, updated_at
-		FROM installations
-		WHERE installation_id = ?`
-	inst, err := (&deviceStore{db: s.db}).scanInstallationRow(s.db.QueryRowContext(ctx, query, installationID))
+	row, err := sqlcgen.New(s.db).GetIngestInstallationByID(ctx, installationID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get ingest installation: %w", err)
 	}
-	return inst, nil
+	return &domain.Installation{
+		InstallationID:     row.InstallationID,
+		UserID:             row.UserID,
+		DevicePublicKey:    scanBytes32(row.DevicePublicKey),
+		DeviceName:         ptrFromNullString(row.DeviceName),
+		OSType:             row.OsType,
+		OSVersion:          ptrFromNullString(row.OsVersion),
+		Architecture:       row.Architecture,
+		CollectorVersion:   row.CollectorVersion,
+		InstallationStatus: domain.InstallationStatus(row.InstallationStatus),
+		DisabledAt:         ptrFromNullTime(row.DisabledAt),
+		DisabledReason:     ptrFromNullString(row.DisabledReason),
+		StatusVersion:      row.StatusVersion,
+		RegisteredAt:       row.RegisteredAt,
+		LastSeenAt:         ptrFromNullTime(row.LastSeenAt),
+		RevokedAt:          ptrFromNullTime(row.RevokedAt),
+		UpdatedAt:          row.UpdatedAt,
+	}, nil
 }
 
 func (s *ingestStore) CommitIngest(ctx context.Context, batch domain.IngestBatch) (*domain.IngestResult, error) {
@@ -84,29 +95,18 @@ func (s *ingestStore) CommitIngest(ctx context.Context, batch domain.IngestBatch
 		return nil, fmt.Errorf("reserve ingest nonce: %w", err)
 	}
 
-	var existingInstallationID string
-	var existingHash []byte
 	var result domain.IngestResult
-	var committedAt sql.NullTime
-	err = tx.QueryRowContext(ctx, `
-		SELECT installation_id, request_sha256, accepted_count, duplicate_count, rejected_count, committed_at
-		FROM ingest_batches
-		WHERE batch_id = ?
-		FOR UPDATE`, batch.BatchID).Scan(
-		&existingInstallationID,
-		&existingHash,
-		&result.AcceptedCount,
-		&result.DuplicateCount,
-		&result.RejectedCount,
-		&committedAt,
-	)
+	existing, err := sqlcgen.New(tx).LockIngestBatch(ctx, batch.BatchID)
 	if err == nil {
-		if existingInstallationID != batch.InstallationID || scanBytes32(existingHash) != batch.RequestSHA256 {
+		if existing.InstallationID != batch.InstallationID || scanBytes32(existing.RequestSha256) != batch.RequestSHA256 {
 			return nil, domain.ErrBatchHashConflict
 		}
 		result.BatchID = batch.BatchID
-		if committedAt.Valid {
-			result.CommittedAt = committedAt.Time
+		result.AcceptedCount = existing.AcceptedCount
+		result.DuplicateCount = existing.DuplicateCount
+		result.RejectedCount = existing.RejectedCount
+		if existing.CommittedAt.Valid {
+			result.CommittedAt = existing.CommittedAt.Time
 		}
 		if err := tx.Commit(); err != nil {
 			return nil, fmt.Errorf("commit idempotent ingest: %w", err)
@@ -171,10 +171,11 @@ func (s *ingestStore) CommitIngest(ctx context.Context, batch domain.IngestBatch
 	); err != nil {
 		return nil, fmt.Errorf("finalize ingest batch: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE installations
-		SET last_seen_at = ?, updated_at = ?
-		WHERE installation_id = ?`, batch.ReceivedAt, batch.ReceivedAt, batch.InstallationID); err != nil {
+	if err := sqlcgen.New(tx).UpdateInstallationLastSeen(ctx, sqlcgen.UpdateInstallationLastSeenParams{
+		LastSeenAt:     sql.NullTime{Time: batch.ReceivedAt, Valid: true},
+		UpdatedAt:      batch.ReceivedAt,
+		InstallationID: batch.InstallationID,
+	}); err != nil {
 		return nil, fmt.Errorf("update installation last seen: %w", err)
 	}
 

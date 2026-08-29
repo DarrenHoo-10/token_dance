@@ -9,6 +9,7 @@ import (
 
 	"tokendance/internal/domain"
 	"tokendance/internal/store"
+	"tokendance/internal/store/sqlcgen"
 )
 
 type mediaStore struct {
@@ -16,110 +17,88 @@ type mediaStore struct {
 }
 
 func (s *mediaStore) CreateAvatarUploadIntent(ctx context.Context, obj domain.UserUploadObject) (*domain.UserUploadObject, error) {
-	insertSQL := `
-		INSERT INTO user_upload_objects (
-			object_id, user_id, object_type, object_key, content_type,
-			byte_size, content_sha256, upload_status, expires_at, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-
-	_, err := s.db.ExecContext(ctx, insertSQL,
-		obj.ObjectID,
-		obj.UserID,
-		obj.ObjectType,
-		obj.ObjectKey,
-		nullStringFromPtr(obj.ContentType),
-		obj.ByteSize,
-		bytes32PtrSlice(obj.ContentSha256),
-		obj.UploadStatus,
-		obj.ExpiresAt,
-		obj.CreatedAt,
-		obj.UpdatedAt,
-	)
-	if err != nil {
+	var byteSize sql.NullInt64
+	if obj.ByteSize != nil {
+		byteSize = sql.NullInt64{Int64: int64(*obj.ByteSize), Valid: true}
+	}
+	var contentSHA256 sql.NullString
+	if obj.ContentSha256 != nil {
+		contentSHA256 = sql.NullString{String: string(obj.ContentSha256[:]), Valid: true}
+	}
+	if err := sqlcgen.New(s.db).CreateUploadObject(ctx, sqlcgen.CreateUploadObjectParams{
+		ObjectID:      obj.ObjectID,
+		UserID:        obj.UserID,
+		ObjectType:    string(obj.ObjectType),
+		ObjectKey:     obj.ObjectKey,
+		ContentType:   nullStringFromPtr(obj.ContentType),
+		ByteSize:      byteSize,
+		ContentSha256: contentSHA256,
+		UploadStatus:  string(obj.UploadStatus),
+		ExpiresAt:     obj.ExpiresAt,
+		CreatedAt:     obj.CreatedAt,
+		UpdatedAt:     obj.UpdatedAt,
+	}); err != nil {
 		return nil, fmt.Errorf("failed to insert upload object: %w", err)
 	}
-
 	oCopy := obj
 	return &oCopy, nil
 }
 
 func (s *mediaStore) GetUploadObject(ctx context.Context, objectID, userID string) (*domain.UserUploadObject, error) {
-	query := `
-		SELECT object_id, user_id, object_type, object_key, content_type,
-		       byte_size, content_sha256, image_width, image_height,
-		       upload_status, expires_at, last_error_code, uploaded_at,
-		       ready_at, deleted_at, created_at, updated_at
-		FROM user_upload_objects
-		WHERE object_id = ? AND user_id = ?
-		LIMIT 1`
-
-	var obj domain.UserUploadObject
-	var cType, lastErr sql.NullString
-	var byteSz sql.NullInt64
-	var width, height sql.NullInt64
-	var sha []byte
-	var uploadedAt, readyAt, deletedAt sql.NullTime
-
-	err := s.db.QueryRowContext(ctx, query, objectID, userID).Scan(
-		&obj.ObjectID,
-		&obj.UserID,
-		&obj.ObjectType,
-		&obj.ObjectKey,
-		&cType,
-		&byteSz,
-		&sha,
-		&width,
-		&height,
-		&obj.UploadStatus,
-		&obj.ExpiresAt,
-		&lastErr,
-		&uploadedAt,
-		&readyAt,
-		&deletedAt,
-		&obj.CreatedAt,
-		&obj.UpdatedAt,
-	)
+	row, err := sqlcgen.New(s.db).GetUploadObjectByOwner(ctx, sqlcgen.GetUploadObjectByOwnerParams{
+		ObjectID: objectID,
+		UserID:   userID,
+	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, domain.ErrNotFound
 		}
 		return nil, fmt.Errorf("failed to query upload object: %w", err)
 	}
-
-	obj.ContentType = ptrFromNullString(cType)
-	obj.LastErrorCode = ptrFromNullString(lastErr)
-	obj.ContentSha256 = scanBytes32Ptr(sha)
-	obj.UploadedAt = ptrFromNullTime(uploadedAt)
-	obj.ReadyAt = ptrFromNullTime(readyAt)
-	obj.DeletedAt = ptrFromNullTime(deletedAt)
-	if byteSz.Valid {
-		sz := uint64(byteSz.Int64)
+	obj := &domain.UserUploadObject{
+		ObjectID:      row.ObjectID,
+		UserID:        row.UserID,
+		ObjectType:    row.ObjectType,
+		ObjectKey:     row.ObjectKey,
+		ContentType:   ptrFromNullString(row.ContentType),
+		UploadStatus:  domain.UploadStatus(row.UploadStatus),
+		ExpiresAt:     row.ExpiresAt,
+		LastErrorCode: ptrFromNullString(row.LastErrorCode),
+		UploadedAt:    ptrFromNullTime(row.UploadedAt),
+		ReadyAt:       ptrFromNullTime(row.ReadyAt),
+		DeletedAt:     ptrFromNullTime(row.DeletedAt),
+		CreatedAt:     row.CreatedAt,
+		UpdatedAt:     row.UpdatedAt,
+	}
+	if row.ContentSha256.Valid {
+		obj.ContentSha256 = scanBytes32Ptr([]byte(row.ContentSha256.String))
+	}
+	if row.ByteSize.Valid {
+		sz := uint64(row.ByteSize.Int64)
 		obj.ByteSize = &sz
 	}
-	if width.Valid {
-		w := uint32(width.Int64)
-		obj.ImageWidth = &w
+	if row.ImageWidth.Valid {
+		width := uint32(row.ImageWidth.Int32)
+		obj.ImageWidth = &width
 	}
-	if height.Valid {
-		h := uint32(height.Int64)
-		obj.ImageHeight = &h
+	if row.ImageHeight.Valid {
+		height := uint32(row.ImageHeight.Int32)
+		obj.ImageHeight = &height
 	}
-
-	return &obj, nil
+	return obj, nil
 }
 
 func (s *mediaStore) UpdateUploadObjectStatus(ctx context.Context, objectID string, status domain.UploadStatus, errorCode *string, now time.Time) error {
-	query := `
-		UPDATE user_upload_objects
-		SET upload_status = ?, last_error_code = ?, updated_at = ?
-		WHERE object_id = ?`
-
-	res, err := s.db.ExecContext(ctx, query, string(status), nullStringFromPtr(errorCode), now, objectID)
+	rows, err := sqlcgen.New(s.db).UpdateUploadObjectStatus(ctx, sqlcgen.UpdateUploadObjectStatusParams{
+		UploadStatus:  string(status),
+		LastErrorCode: nullStringFromPtr(errorCode),
+		UpdatedAt:     now,
+		ObjectID:      objectID,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to update upload object status: %w", err)
 	}
-	aff, _ := res.RowsAffected()
-	if aff == 0 {
+	if rows == 0 {
 		return domain.ErrNotFound
 	}
 	return nil

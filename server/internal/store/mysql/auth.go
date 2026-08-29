@@ -113,42 +113,10 @@ func (s *authStore) CreateOrReplaceEmailChallenge(ctx context.Context, challenge
 }
 
 func (s *authStore) FindPendingEmailChallenge(ctx context.Context, challengeType domain.ChallengeType, emailLookupHash [32]byte) (*domain.EmailChallenge, error) {
-	query := `
-		SELECT challenge_id, user_id, email_lookup_hash, email_ciphertext, email_key_version,
-		       challenge_type, code_hash, code_key_version, challenge_status, attempt_count,
-		       max_attempts, send_count, requested_ip_prefix_hash, expires_at, consumed_at,
-		       created_at, updated_at
-		FROM email_challenges
-		WHERE challenge_type = ?
-		  AND email_lookup_hash = ?
-		  AND challenge_status = 'pending'
-		LIMIT 1`
-
-	var c domain.EmailChallenge
-	var uid sql.NullString
-	var emailHash, codeHash []byte
-	var ipHash []byte
-	var consumedAt sql.NullTime
-
-	err := s.db.QueryRowContext(ctx, query, challengeType, bytes32Slice(emailLookupHash)).Scan(
-		&c.ChallengeID,
-		&uid,
-		&emailHash,
-		&c.EmailCiphertext,
-		&c.EmailKeyVersion,
-		&c.ChallengeType,
-		&codeHash,
-		&c.CodeKeyVersion,
-		&c.ChallengeStatus,
-		&c.AttemptCount,
-		&c.MaxAttempts,
-		&c.SendCount,
-		&ipHash,
-		&c.ExpiresAt,
-		&consumedAt,
-		&c.CreatedAt,
-		&c.UpdatedAt,
-	)
+	row, err := sqlcgen.New(s.db).GetPendingEmailChallenge(ctx, sqlcgen.GetPendingEmailChallengeParams{
+		ChallengeType:   string(challengeType),
+		EmailLookupHash: bytes32Slice(emailLookupHash),
+	})
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, domain.ErrNotFound
@@ -156,28 +124,40 @@ func (s *authStore) FindPendingEmailChallenge(ctx context.Context, challengeType
 		return nil, fmt.Errorf("failed to query pending email challenge: %w", err)
 	}
 
-	c.UserID = ptrFromNullString(uid)
-	c.EmailLookupHash = scanBytes32(emailHash)
-	c.CodeHash = scanBytes32(codeHash)
-	c.RequestedIPPrefixHash = scanBytes32Ptr(ipHash)
-	c.ConsumedAt = ptrFromNullTime(consumedAt)
-
-	return &c, nil
+	var requestedIPPrefixHash []byte
+	if row.RequestedIpPrefixHash.Valid {
+		requestedIPPrefixHash = []byte(row.RequestedIpPrefixHash.String)
+	}
+	return &domain.EmailChallenge{
+		ChallengeID:           row.ChallengeID,
+		UserID:                ptrFromNullString(row.UserID),
+		EmailLookupHash:       scanBytes32(row.EmailLookupHash),
+		EmailCiphertext:       row.EmailCiphertext,
+		EmailKeyVersion:       row.EmailKeyVersion,
+		ChallengeType:         domain.ChallengeType(row.ChallengeType),
+		CodeHash:              scanBytes32(row.CodeHash),
+		CodeKeyVersion:        row.CodeKeyVersion,
+		ChallengeStatus:       domain.ChallengeStatus(row.ChallengeStatus),
+		AttemptCount:          row.AttemptCount,
+		MaxAttempts:           row.MaxAttempts,
+		SendCount:             row.SendCount,
+		RequestedIPPrefixHash: scanBytes32Ptr(requestedIPPrefixHash),
+		ExpiresAt:             row.ExpiresAt,
+		ConsumedAt:            ptrFromNullTime(row.ConsumedAt),
+		CreatedAt:             row.CreatedAt,
+		UpdatedAt:             row.UpdatedAt,
+	}, nil
 }
 
 func (s *authStore) UpdateEmailChallengeAttempts(ctx context.Context, challengeID string, attemptCount uint16, status domain.ChallengeStatus) error {
-	query := `
-		UPDATE email_challenges
-		SET attempt_count = ?, challenge_status = ?, updated_at = ?
-		WHERE challenge_id = ?`
-
-	res, err := s.db.ExecContext(ctx, query, attemptCount, status, time.Now().UTC(), challengeID)
+	rows, err := sqlcgen.New(s.db).UpdateEmailChallengeAttempt(ctx, sqlcgen.UpdateEmailChallengeAttemptParams{
+		AttemptCount:    attemptCount,
+		ChallengeStatus: string(status),
+		UpdatedAt:       time.Now().UTC(),
+		ChallengeID:     challengeID,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to update email challenge attempts: %w", err)
-	}
-	rows, err := res.RowsAffected()
-	if err != nil {
-		return err
 	}
 	if rows == 0 {
 		return domain.ErrNotFound
@@ -878,61 +858,39 @@ func (s *authStore) RevokeOtherSessions(ctx context.Context, userID, currentSess
 }
 
 func (s *authStore) ListUserSessions(ctx context.Context, userID string) ([]domain.UserSession, error) {
-	query := `
-		SELECT session_id, user_id, session_token_hash, csrf_token_hash,
-		       credential_version, session_status, device_label,
-		       user_agent_hash, ip_prefix_hash, last_seen_at,
-		       idle_expires_at, absolute_expires_at, revoked_at, revoke_reason,
-		       created_at, updated_at
-		FROM user_sessions
-		WHERE user_id = ?
-		ORDER BY created_at DESC`
-
-	rows, err := s.db.QueryContext(ctx, query, userID)
+	rows, err := sqlcgen.New(s.db).ListSessionsByUser(ctx, userID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list user sessions: %w", err)
 	}
-	defer rows.Close()
 
-	var list []domain.UserSession
-	for rows.Next() {
-		var sess domain.UserSession
-		var sessTokenHash, csrfTokenHash, uaHash, ipHash []byte
-		var devLabel, revokeReason sql.NullString
-		var revokedAt sql.NullTime
-
-		if err := rows.Scan(
-			&sess.SessionID,
-			&sess.UserID,
-			&sessTokenHash,
-			&csrfTokenHash,
-			&sess.CredentialVersion,
-			&sess.SessionStatus,
-			&devLabel,
-			&uaHash,
-			&ipHash,
-			&sess.LastSeenAt,
-			&sess.IdleExpiresAt,
-			&sess.AbsoluteExpiresAt,
-			&revokedAt,
-			&revokeReason,
-			&sess.CreatedAt,
-			&sess.UpdatedAt,
-		); err != nil {
-			return nil, fmt.Errorf("failed to scan session row: %w", err)
+	list := make([]domain.UserSession, 0, len(rows))
+	for _, row := range rows {
+		var userAgentHash, ipPrefixHash []byte
+		if row.UserAgentHash.Valid {
+			userAgentHash = []byte(row.UserAgentHash.String)
 		}
-
-		sess.SessionTokenHash = scanBytes32(sessTokenHash)
-		sess.CSRFTokenHash = scanBytes32(csrfTokenHash)
-		sess.DeviceLabel = ptrFromNullString(devLabel)
-		sess.UserAgentHash = scanBytes32Ptr(uaHash)
-		sess.IPPrefixHash = scanBytes32Ptr(ipHash)
-		sess.RevokedAt = ptrFromNullTime(revokedAt)
-		sess.RevokeReason = ptrFromNullString(revokeReason)
-
-		list = append(list, sess)
+		if row.IpPrefixHash.Valid {
+			ipPrefixHash = []byte(row.IpPrefixHash.String)
+		}
+		list = append(list, domain.UserSession{
+			SessionID:         row.SessionID,
+			UserID:            row.UserID,
+			SessionTokenHash:  scanBytes32(row.SessionTokenHash),
+			CSRFTokenHash:     scanBytes32(row.CsrfTokenHash),
+			CredentialVersion: row.CredentialVersion,
+			SessionStatus:     domain.SessionStatus(row.SessionStatus),
+			DeviceLabel:       ptrFromNullString(row.DeviceLabel),
+			UserAgentHash:     scanBytes32Ptr(userAgentHash),
+			IPPrefixHash:      scanBytes32Ptr(ipPrefixHash),
+			LastSeenAt:        row.LastSeenAt,
+			IdleExpiresAt:     row.IdleExpiresAt,
+			AbsoluteExpiresAt: row.AbsoluteExpiresAt,
+			RevokedAt:         ptrFromNullTime(row.RevokedAt),
+			RevokeReason:      ptrFromNullString(row.RevokeReason),
+			CreatedAt:         row.CreatedAt,
+			UpdatedAt:         row.UpdatedAt,
+		})
 	}
-
 	return list, nil
 }
 

@@ -25,10 +25,34 @@ try {
         throw "sqlc coverage regression: expected at least 25 named queries, found $($NamedQueries.Count)"
     }
 
-    $RequiredStaticAreas = @('EmailChallenge', 'Privacy', 'Installation', 'UploadObject', 'ExportJob', 'Leaderboard', 'Ingest', 'Deletion')
-    foreach ($Area in $RequiredStaticAreas) {
-        if (-not ($NamedQueries.Line -match $Area)) {
-            throw "sqlc coverage regression: missing static $Area queries"
+    $RequiredProductionReferences = @{
+        "internal/store/mysql/auth.go"        = @('GetUserByID', 'GetPendingEmailChallenge', 'UpdateEmailChallengeAttempt', 'ListSessionsByUser')
+        "internal/store/mysql/privacy.go"     = @('GetPrivacyByUser', 'LockPrivacyVersion', 'GetPublishedProfileByHandle', 'GetDeletionRequestByOwner', 'LockDeletionRequestForCancel', 'HidePublicProfileForDeletion')
+        "internal/store/mysql/device.go"      = @('ListInstallationsByUser', 'GetInstallationByOwner', 'CancelBindingChallengeByOwner')
+        "internal/store/mysql/media.go"       = @('CreateUploadObject', 'GetUploadObjectByOwner', 'UpdateUploadObjectStatus')
+        "internal/store/mysql/export.go"      = @('GetExportJobByOwner', 'ListExportJobsByUser', 'CompleteExportJob')
+        "internal/store/mysql/leaderboard.go" = @('GetLatestPublishedSnapshot', 'GetLatestPublishedSnapshotByBoard', 'ListVisibleLeaderboardEntries', 'DeleteSnapshotEntries')
+        "internal/store/mysql/ingest.go"      = @('GetIngestInstallationByID', 'LockIngestBatch', 'UpdateInstallationLastSeen')
+        "internal/store/mysql/search.go"      = @('SearchPublicUsers', 'SearchPublicSkills')
+    }
+    foreach ($Entry in $RequiredProductionReferences.GetEnumerator()) {
+        $Source = Get-Content $Entry.Key -Raw
+        if ($Source -notmatch 'tokendance/internal/store/sqlcgen') {
+            throw "sqlc production wiring regression: $($Entry.Key) does not import sqlcgen"
+        }
+        foreach ($Symbol in $Entry.Value) {
+            if ($Source -notmatch "\.${Symbol}\(") {
+                throw "sqlc production wiring regression: $($Entry.Key) does not call $Symbol"
+            }
+        }
+    }
+
+    $ProductionSources = @(Get-ChildItem "internal/store/mysql/*.go", "internal/worker/*.go" -File | Where-Object { $_.Name -notlike '*_test.go' })
+    $ProductionText = ($ProductionSources | ForEach-Object { Get-Content $_.FullName -Raw }) -join "`n"
+    foreach ($NamedQuery in $NamedQueries) {
+        $Symbol = [regex]::Match($NamedQuery.Line, '^-- name: (\w+)').Groups[1].Value
+        if ($ProductionText -notmatch "\.${Symbol}\(") {
+            throw "sqlc dead query regression: generated symbol $Symbol has no production reference"
         }
     }
 
