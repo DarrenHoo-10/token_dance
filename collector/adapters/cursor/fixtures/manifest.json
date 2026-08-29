@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schemas.tokenshow.dev/adapter-manifest/v1.json",
+  "manifestVersion": "1.0",
+  "id": "dev.tokenshow.adapter.cursor",
+  "name": "Cursor",
+  "version": "1.0.0",
+  "protocolVersion": "1.0",
+  "agent": { "id": "cursor", "versionRange": ">=1.0.0" },
+  "platforms": ["windows-x64", "windows-arm64", "macos-x64", "macos-arm64"],
+  "sources": ["remote_api", "sqlite_snapshot"],
+  "permissions": {
+    "readPaths": [{ "template": "AGENT_CONFIG_HOME", "relativeGlob": "User/globalStorage/state.vscdb", "access": "read" }],
+    "writePaths": [],
+    "commands": [],
+    "networkDomains": ["api.cursor.com", "cursor.com"]
+  },
+  "capabilities": ["tokens", "sessions", "turns", "code", "cost"]
+}

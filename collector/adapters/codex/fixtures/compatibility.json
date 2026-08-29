@@ -1,0 +1,6 @@
+[
+  {"versionRange": ">=0.100.0 <0.120.0", "modes": ["interactive", "exec"], "otel": true, "jsonl": true, "skills": false, "result": "supported"},
+  {"versionRange": ">=0.120.0 <0.200.0", "modes": ["interactive", "exec", "app-server"], "otel": true, "jsonl": true, "skills": true, "result": "supported"},
+  {"versionRange": "<0.100.0", "otel": false, "jsonl": true, "skills": false, "result": "degraded"},
+  {"versionRange": ">=0.200.0", "otel": false, "jsonl": true, "skills": false, "result": "degraded"}
+]

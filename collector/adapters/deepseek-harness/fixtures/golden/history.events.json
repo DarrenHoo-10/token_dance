@@ -1,0 +1,99 @@
+[
+  {
+    "schemaVersion": "1.0",
+    "eventId": "P7ivJF5XMtRK5MZPjsEFm9Uke5VVXWNo_X2oQqus5_s",
+    "adapterId": "dev.tokenshow.adapter.deepseek-harness",
+    "adapterVersion": "0.1.0",
+    "agentId": "deepseek-harness",
+    "agentVersion": "1.0.0",
+    "installationId": "ins_00000000000000000000000000",
+    "occurredAt": "2026-08-30T10:00:00.000Z",
+    "sessionHash": "hmac-sha256:UjZRRF5PNt29CELFwlUQwluZONTInjQFctouCDybLFM",
+    "source": {
+      "kind": "jsonl_tail",
+      "cursorHmac": "hmac-sha256:qDb5GCZeOZqg97sKud032eJV_CuFI3nlx0_TD2Oi4sU",
+      "rawFingerprintHmac": "hmac-sha256:Wvg9r6zUwphnOVMAH_HPYAn1MQuMqlrYtAmNGkCHJxI"
+    },
+    "accuracy": "exact",
+    "payload": {
+      "type": "session_started",
+      "modelId": "deepseek-chat"
+    }
+  },
+  {
+    "schemaVersion": "1.0",
+    "eventId": "d1_KFvttKAuvS9V54gsUfcwkOYckqYYX6KeAKER6kkY",
+    "adapterId": "dev.tokenshow.adapter.deepseek-harness",
+    "adapterVersion": "0.1.0",
+    "agentId": "deepseek-harness",
+    "agentVersion": "1.0.0",
+    "installationId": "ins_00000000000000000000000000",
+    "occurredAt": "2026-08-30T10:00:01.000Z",
+    "sessionHash": "hmac-sha256:UjZRRF5PNt29CELFwlUQwluZONTInjQFctouCDybLFM",
+    "turnHash": "hmac-sha256:4AZhYdYT_lagn37fPvtwJCkbCIGnVPjxpYbCxTsRHrM",
+    "source": {
+      "kind": "jsonl_tail",
+      "cursorHmac": "hmac-sha256:pAXczwTBL6L6RvnHR3zaa0n6P0E4stHHqt576vzMFng",
+      "rawFingerprintHmac": "hmac-sha256:lL62oXV3XkH2KELpfGF_o0fqxaVfVultxqmr7ttaHsA"
+    },
+    "accuracy": "exact",
+    "payload": {
+      "type": "model_usage_recorded",
+      "providerId": "deepseek",
+      "modelId": "deepseek-chat",
+      "tokens": {
+        "inputTokens": "10",
+        "outputTokens": "20",
+        "cacheReadTokens": "5",
+        "totalTokens": "35"
+      }
+    }
+  },
+  {
+    "schemaVersion": "1.0",
+    "eventId": "NuCOh0DF38eYPH5vpZC5Vzqrg0AsBewxWQhLSHB23ME",
+    "adapterId": "dev.tokenshow.adapter.deepseek-harness",
+    "adapterVersion": "0.1.0",
+    "agentId": "deepseek-harness",
+    "agentVersion": "1.0.0",
+    "installationId": "ins_00000000000000000000000000",
+    "occurredAt": "2026-08-30T10:00:03.000Z",
+    "sessionHash": "hmac-sha256:UjZRRF5PNt29CELFwlUQwluZONTInjQFctouCDybLFM",
+    "toolCallHash": "hmac-sha256:gMt68oTbkF4Fcx6G-tT5CtzonDyC9j2uKgUgHnBiUWs",
+    "source": {
+      "kind": "jsonl_tail",
+      "cursorHmac": "hmac-sha256:Q2hGtTqQBmjymHBKlifYc6qS5a0Fv9_mIvUlNP4uBnY",
+      "rawFingerprintHmac": "hmac-sha256:6pc_2ErvdBXKGAzrzxqhuSZA6jsdXEK9xMz6u40RLJk"
+    },
+    "accuracy": "exact",
+    "payload": {
+      "type": "skill_invoked",
+      "skillKey": "hmac-sha256:RUanxw3R6B8YdjJt2QhWlKJhLfZDswjEtF3_-LCWzXs",
+      "invokeType": "native",
+      "success": true,
+      "pluginKey": "hmac-sha256:aHASDe92AdD_gjmwO-EGo2r7vhRsoTHKGf2F33QL1EQ"
+    }
+  },
+  {
+    "schemaVersion": "1.0",
+    "eventId": "xfk1JELMUeZ7yqaZD6UtpD0V5BhJmOKPJyCxEYGlrRQ",
+    "adapterId": "dev.tokenshow.adapter.deepseek-harness",
+    "adapterVersion": "0.1.0",
+    "agentId": "deepseek-harness",
+    "agentVersion": "1.0.0",
+    "installationId": "ins_00000000000000000000000000",
+    "occurredAt": "2026-08-30T10:00:04.000Z",
+    "sessionHash": "hmac-sha256:UjZRRF5PNt29CELFwlUQwluZONTInjQFctouCDybLFM",
+    "source": {
+      "kind": "jsonl_tail",
+      "cursorHmac": "hmac-sha256:EHgp43I2aM1CeOAOWbGkTtJkdhabBEO5pp7BuRnUD0Y",
+      "rawFingerprintHmac": "hmac-sha256:JVyT0TsecGGX2Gnfd46xT2ZdielNvvjY7DwHJVOBgGU"
+    },
+    "accuracy": "exact",
+    "payload": {
+      "type": "agent_spawned",
+      "childSessionHash": "hmac-sha256:-XBM8QTss83oEMk107sq7L9qFVEGPMzQeug82rWh0aM",
+      "spawnedAgentType": "worker"
+    }
+  }
+]

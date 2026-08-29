@@ -1,5 +1,7 @@
 # Rust
 /collector/target/
+/collector/**/target/
+/collector/adapters/*/Cargo.lock
 **/*.rs.bk
 
 # Go

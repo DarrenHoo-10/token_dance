@@ -9,7 +9,15 @@ members = [
     "crates/wal-spool",
     "crates/uploader",
     "crates/acquisition",
+    "crates/config-executor",
     "adapters/mock",
+    "adapters/codex",
+    "adapters/claude",
+    "adapters/grok-build",
+    "adapters/cursor",
+    "adapters/zcode",
+    "adapters/deepseek-harness",
+    "apps/service",
 ]
 
 [workspace.package]
@@ -27,13 +35,22 @@ privacy = { path = "crates/privacy" }
 wal-spool = { path = "crates/wal-spool" }
 uploader = { path = "crates/uploader" }
 acquisition = { path = "crates/acquisition" }
+config-executor = { path = "crates/config-executor" }
 adapter-mock = { path = "adapters/mock" }
+adapter-codex = { path = "adapters/codex" }
+adapter-claude = { path = "adapters/claude" }
+adapter-grok-build = { path = "adapters/grok-build" }
+adapter-cursor = { path = "adapters/cursor" }
+adapter-zcode = { path = "adapters/zcode" }
+adapter-deepseek-harness = { path = "adapters/deepseek-harness" }
+collector-service = { path = "apps/service" }
 
 aes-gcm = "0.10"
 async-trait = "0.1"
 base64 = "0.22"
 ciborium = "0.2"
 crc32c = "0.6"
+ed25519-dalek = "2"
 flate2 = "1"
 futures = "0.3"
 hmac = "0.12"
@@ -45,5 +62,6 @@ serde_json = "1"
 sha2 = "0.10"
 tempfile = "3"
 thiserror = "1"
+time = { version = "0.3", features = ["formatting", "parsing"] }
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time", "sync"] }
 zeroize = { version = "1", features = ["zeroize_derive"] }

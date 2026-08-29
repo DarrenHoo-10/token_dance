@@ -1,0 +1,1 @@
+{"schema":"cursor-local-v1","events":[{"eventId":"cursor-conversation-event-1","type":"conversation","timestamp":"2026-08-30T12:30:00Z","conversationId":"local-conversation-secret","model":"unknown","text":"CURSOR_LOCAL_PROMPT_CANARY"},{"type":"future_private_record","apiKey":"CURSOR_LOCAL_KEY_CANARY"}]}

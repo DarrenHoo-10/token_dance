@@ -216,6 +216,23 @@ impl Collector {
         frame: RawFrame,
     ) -> Result<Vec<PrivacyCheckedEvent>, AdapterError> {
         self.ensure_enabled(adapter_id)?;
+        if frame.installation_id != self.installation_id {
+            return Err(AdapterError::decode_failed(
+                "RawFrame installation_id does not match Collector installation",
+            ));
+        }
+        let runtime = self.runtimes.get(adapter_id).ok_or_else(|| {
+            AdapterError::adapter_not_found(format!("adapter `{adapter_id}` is not registered"))
+        })?;
+        if !runtime
+            .sources
+            .iter()
+            .any(|source| source.id() == frame.source_id && source.kind() == frame.source_kind)
+        {
+            return Err(AdapterError::decode_failed(
+                "RawFrame source is not an authorized discovered source",
+            ));
+        }
         let events = self.host.decode(adapter_id, frame).await?;
         self.privacy
             .filter_all(events)

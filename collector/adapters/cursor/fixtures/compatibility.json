@@ -1,0 +1,5 @@
+[
+  {"mode":"enterprise_api","sources":["analytics_api","admin_api"],"capabilities":{"tokens":"exact","sessions":"exact","turns":"exact","code":"exact","cost":"exact"}},
+  {"mode":"team_admin_api","sources":["admin_api"],"capabilities":{"tokens":"exact","sessions":"derived","turns":"derived","code":"unavailable","cost":"exact"}},
+  {"mode":"personal_local","sources":["verified_local_sqlite"],"capabilities":{"tokens":"unavailable","sessions":"derived","turns":"derived","code":"unavailable","cost":"unavailable"}}
+]

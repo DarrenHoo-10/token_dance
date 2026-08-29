@@ -6,17 +6,24 @@ use std::time::Duration;
 use adapter_mock::MockAdapter;
 use adapter_sdk::{
     AdapterError, AdapterHealth, AdapterManifest, AgentAdapter, ProbeContext, ProbeReport,
-    RawFrame, SetupContext, SetupPlan, SourceContext, SourceSpec,
+    RawFrame, SetupContext, SetupPlan, SourceContext, SourceKind, SourceSpec,
 };
 use async_trait::async_trait;
 use collector_core::Collector;
 use protocol::SourceCheckpointStatus;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 use tokio::sync::Notify;
 use tokio::time::sleep;
 use uploader::{body_contains_canary, MemoryIngest, RetryPolicy, Uploader};
 use wal_spool::{contains_bytes, InjectedKeyProvider, SpoolLimits, WalStore};
 
+use crate::drivers::{
+    DriverBatch, RemoteApiDriver, RemotePollError, RuntimeStreamDriver, SecretResolver,
+    SqliteAdapterPlan, SqliteSnapshotDriver,
+};
 use crate::jsonl::JsonlTailer;
+use crate::otlp::{OtlpReceiverDriver, OtlpSignal, DEFAULT_OTLP_PAYLOAD_LIMIT};
 use crate::pipeline::IngestPipeline;
 
 const INSTALL: &str = "ins_00000000000000000000000001";
@@ -51,6 +58,10 @@ async fn mock_collector() -> Collector {
         .register_adapter(Arc::new(MockAdapter::new()))
         .unwrap();
     collector.probe_all().await;
+    collector
+        .discover_sources("dev.tokenshow.adapter.mock")
+        .await
+        .unwrap();
     collector
 }
 
@@ -263,6 +274,39 @@ async fn disabled_adapter_stops_source_before_checkpoint_advances() {
 }
 
 #[tokio::test]
+async fn bound_batch_rejects_source_spoof_without_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wal = open_wal(dir.path());
+    let collector = mock_collector().await;
+    let pipeline = IngestPipeline::new(&collector, "dev.tokenshow.adapter.mock");
+    let batch = DriverBatch {
+        frames: vec![RawFrame::jsonl(
+            INSTALL,
+            "spoofed-source",
+            "0",
+            br#"{"type":"session_started","occurredAt":"2026-08-29T12:00:00.000Z","sessionId":"s"}"#,
+        )],
+        cursor: "1".into(),
+        driver_checkpoint: None,
+    };
+
+    let error = pipeline
+        .ingest_bound_batch(
+            "mock-sessions",
+            SourceKind::JsonlTail,
+            batch,
+            &mut wal,
+            false,
+        )
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.to_string(), "source_mismatch");
+    assert!(wal.latest_checkpoint("mock-sessions").is_none());
+    assert_eq!(wal.unacked_count(), 0);
+}
+
+#[tokio::test]
 async fn disabling_during_decode_prevents_wal_commit() {
     let dir = tempfile::tempdir().unwrap();
     let mut wal = open_wal(dir.path());
@@ -278,6 +322,10 @@ async fn disabling_during_decode_prevents_wal_commit() {
         }))
         .unwrap();
     collector.probe_all().await;
+    collector
+        .discover_sources("dev.tokenshow.adapter.mock")
+        .await
+        .unwrap();
     let control = collector.control("dev.tokenshow.adapter.mock").unwrap();
     let pipeline = IngestPipeline::new(&collector, "dev.tokenshow.adapter.mock");
 
@@ -309,4 +357,281 @@ async fn hard_backpressure_skips_historical_scan() {
     tailer.reset_for_rescan();
     let poll = pipeline.ingest(&mut tailer, &mut wal, true).await.unwrap();
     assert!(poll.skipped);
+}
+
+struct TestSecrets;
+
+impl SecretResolver for TestSecrets {
+    fn resolve(&self, secret_ref: &str) -> Result<Vec<u8>, String> {
+        assert_eq!(secret_ref, "secret://cursor/test");
+        Ok(b"mock-api-key".to_vec())
+    }
+}
+
+async fn mock_http(response: &'static str) -> (String, tokio::task::JoinHandle<String>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let task = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = vec![0_u8; 8192];
+        let read = socket.read(&mut request).await.unwrap();
+        socket.write_all(response.as_bytes()).await.unwrap();
+        String::from_utf8_lossy(&request[..read]).into_owned()
+    });
+    (format!("http://{address}/events"), task)
+}
+
+#[tokio::test]
+async fn remote_api_uses_secret_cursor_overlap_and_retry_after() {
+    let body = r#"{"events":[],"next_cursor":"cursor-2"}"#;
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nX-Next-Cursor: cursor-2\r\n\r\n{}",
+        body.len(), body
+    );
+    let leaked: &'static str = Box::leak(response.into_boxed_str());
+    let (endpoint, request) = mock_http(leaked).await;
+    let mut driver = RemoteApiDriver::new(
+        INSTALL,
+        "cursor-admin-api",
+        &endpoint,
+        "127.0.0.1",
+        "secret://cursor/test",
+        Arc::new(TestSecrets),
+        1024,
+    )
+    .unwrap();
+    driver.restore_cursor("cursor-1", 1_000);
+    let batch = driver.poll(1_600).await.unwrap();
+    assert_eq!(batch.cursor, "cursor-2");
+    let request = request.await.unwrap();
+    assert!(request.contains("from=700"));
+    assert!(request.contains("until=1600"));
+    assert!(request.contains("cursor=cursor-1"));
+    assert!(
+        request.contains("authorization: Bearer mock-api-key")
+            || request.contains("Authorization: Bearer mock-api-key")
+    );
+
+    let (endpoint, _) =
+        mock_http("HTTP/1.1 429 Too Many Requests\r\nRetry-After: 17\r\nContent-Length: 0\r\n\r\n")
+            .await;
+    let mut limited = RemoteApiDriver::new(
+        INSTALL,
+        "cursor-admin-api",
+        &endpoint,
+        "127.0.0.1",
+        "secret://cursor/test",
+        Arc::new(TestSecrets),
+        1024,
+    )
+    .unwrap();
+    assert_eq!(
+        limited.poll(2_000).await,
+        Err(RemotePollError::RateLimited(Duration::from_secs(17)))
+    );
+}
+
+#[test]
+fn sqlite_snapshot_executes_only_fixed_plan_for_trusted_fingerprint() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("zcode.sqlite");
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "PRAGMA user_version = 9;\
+             CREATE TABLE sessions(id INTEGER PRIMARY KEY, created_at TEXT, model TEXT);\
+             CREATE TABLE step_metrics(id INTEGER PRIMARY KEY, session_id INTEGER, finished_at TEXT, input_tokens INTEGER, output_tokens INTEGER, total_tokens INTEGER, tool_count INTEGER, skill_name TEXT);\
+             INSERT INTO sessions VALUES(1, '2026-08-30T13:00:00Z', 'glm-4.5');\
+             INSERT INTO step_metrics VALUES(2, 1, '2026-08-30T13:00:01Z', 90, 30, 120, 2, 'review');",
+        )
+        .unwrap();
+    drop(connection);
+    assert!(SqliteSnapshotDriver::new(
+        INSTALL,
+        "zcode-sqlite",
+        &path,
+        SqliteAdapterPlan::ZcodeV2,
+        "attacker-selected-schema",
+    )
+    .is_err());
+    let mut driver = SqliteSnapshotDriver::new(
+        INSTALL,
+        "zcode-sqlite",
+        &path,
+        SqliteAdapterPlan::ZcodeV2,
+        "zcode-sqlite-v2-uv9",
+    )
+    .unwrap();
+    let batch = driver.poll().unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&batch.frames[0].payload).unwrap();
+    assert_eq!(payload["fingerprint"], "zcode-sqlite-v2-uv9");
+    assert_eq!(payload["records"].as_array().unwrap().len(), 2);
+    assert_eq!(batch.cursor, "1:2");
+    let second = driver.poll().unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&second.frames[0].payload).unwrap();
+    assert!(payload["records"].as_array().unwrap().is_empty());
+
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection.pragma_update(None, "user_version", 7).unwrap();
+    drop(connection);
+    assert!(driver.poll().is_err());
+}
+
+#[test]
+fn otlp_json_envelopes_normalize_metrics_and_logs() {
+    let mut otlp =
+        OtlpReceiverDriver::new(INSTALL, "otlp", "127.0.0.1", DEFAULT_OTLP_PAYLOAD_LIMIT).unwrap();
+    let metrics = otlp
+        .accept_http_path(
+            "/v1/metrics",
+            "application/json; charset=utf-8",
+            include_bytes!("../fixtures/otlp-metrics.json"),
+        )
+        .unwrap();
+    let metric: serde_json::Value = serde_json::from_slice(&metrics.payload).unwrap();
+    assert_eq!(metric["signal"], "metrics");
+    assert_eq!(metric["name"], "grok_code.token.usage");
+    assert_eq!(metric["metricType"], "sum");
+    assert_eq!(metric["value"], 15);
+    assert_eq!(metric["temporality"], "cumulative");
+    assert_eq!(metric["aggregationTemporality"], 2);
+    assert_eq!(metric["startTimeUnixNano"], "1788084000000000000");
+    assert_eq!(metric["timeUnixNano"], "1788084060000000000");
+    assert_eq!(metric["timestamp"], "2026-08-30T10:01:00Z");
+    assert_eq!(metric["endTimeUnixNano"], "1788084060000000000");
+    assert_eq!(metric["attributes"]["input_tokens"], 7);
+    assert_eq!(
+        metric["resource"]["attributes"]["service.name"],
+        "grok-build"
+    );
+    assert_eq!(metric["scope"]["name"], "grok.telemetry");
+
+    let logs = otlp
+        .accept_json(
+            OtlpSignal::Logs,
+            include_bytes!("../fixtures/otlp-logs.json"),
+        )
+        .unwrap();
+    let log: serde_json::Value = serde_json::from_slice(&logs.payload).unwrap();
+    assert_eq!(log["signal"], "logs");
+    assert_eq!(log["name"], "grok_code.tool.usage");
+    assert_eq!(log["attributes"]["tool.name"], "editor");
+    assert_eq!(log["resource"]["attributes"]["service.name"], "grok-build");
+    assert_eq!(log["scope"]["version"], "1.2.3");
+}
+
+#[tokio::test]
+async fn normalized_otlp_frame_drives_real_grok_adapter_with_rfc3339_time() {
+    let mut otlp = OtlpReceiverDriver::new(
+        INSTALL,
+        adapter_grok_build::OTLP_SOURCE_ID,
+        "127.0.0.1",
+        DEFAULT_OTLP_PAYLOAD_LIMIT,
+    )
+    .unwrap();
+    let frame = otlp
+        .accept_json(
+            OtlpSignal::Metrics,
+            include_bytes!("../fixtures/otlp-metrics.json"),
+        )
+        .unwrap();
+    let adapter = adapter_grok_build::GrokBuildAdapter::for_version(
+        "1.0.0",
+        b"otlp-end-to-end-device-key".to_vec(),
+    );
+    let events = adapter.decode(frame).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].occurred_at, "2026-08-30T10:01:00Z");
+    assert!(matches!(
+        events[0].payload,
+        adapter_sdk::EventPayload::ModelUsageRecorded(_)
+    ));
+}
+
+#[test]
+fn otlp_protobuf_fixtures_match_json_normalization() {
+    let mut otlp =
+        OtlpReceiverDriver::new(INSTALL, "otlp", "localhost", DEFAULT_OTLP_PAYLOAD_LIMIT).unwrap();
+    let json_metric = otlp
+        .accept_json(
+            OtlpSignal::Metrics,
+            include_bytes!("../fixtures/otlp-metrics.json"),
+        )
+        .unwrap();
+    let protobuf_metric = otlp
+        .accept_protobuf(
+            OtlpSignal::Metrics,
+            include_bytes!("../fixtures/otlp-metrics.pb"),
+        )
+        .unwrap();
+    let json_value: serde_json::Value = serde_json::from_slice(&json_metric.payload).unwrap();
+    let protobuf_value: serde_json::Value =
+        serde_json::from_slice(&protobuf_metric.payload).unwrap();
+    assert_eq!(protobuf_value, json_value);
+
+    let json_log = otlp
+        .accept_json(
+            OtlpSignal::Logs,
+            include_bytes!("../fixtures/otlp-logs.json"),
+        )
+        .unwrap();
+    let protobuf_log = otlp
+        .accept_http(
+            OtlpSignal::Logs,
+            "application/x-protobuf",
+            include_bytes!("../fixtures/otlp-logs.pb"),
+        )
+        .unwrap();
+    let json_value: serde_json::Value = serde_json::from_slice(&json_log.payload).unwrap();
+    let protobuf_value: serde_json::Value = serde_json::from_slice(&protobuf_log.payload).unwrap();
+    assert_eq!(protobuf_value, json_value);
+}
+
+#[test]
+fn otlp_rejects_flat_json_wrong_signal_and_limits() {
+    assert!(OtlpReceiverDriver::new(INSTALL, "otlp", "0.0.0.0", 1024).is_err());
+    assert!(
+        OtlpReceiverDriver::new(INSTALL, "otlp", "127.0.0.1", DEFAULT_OTLP_PAYLOAD_LIMIT + 1)
+            .is_err()
+    );
+
+    let mut small = OtlpReceiverDriver::new(INSTALL, "otlp", "127.0.0.1", 8).unwrap();
+    assert!(small
+        .accept_json(OtlpSignal::Metrics, b"123456789")
+        .is_err());
+
+    let mut otlp =
+        OtlpReceiverDriver::new(INSTALL, "otlp", "127.0.0.1", DEFAULT_OTLP_PAYLOAD_LIMIT).unwrap();
+    assert!(otlp
+        .accept_json(
+            OtlpSignal::Metrics,
+            br#"{"name":"grok_code.token.usage","value":15}"#,
+        )
+        .is_err());
+    assert!(otlp
+        .accept_json(
+            OtlpSignal::Logs,
+            include_bytes!("../fixtures/otlp-metrics.json"),
+        )
+        .is_err());
+    assert!(otlp
+        .accept_http(OtlpSignal::Metrics, "text/plain", b"not otlp")
+        .is_err());
+
+    let mut limited = OtlpReceiverDriver::new_with_limits(INSTALL, "otlp", "::1", 4096, 1).unwrap();
+    assert!(limited
+        .accept_json(
+            OtlpSignal::Metrics,
+            include_bytes!("../fixtures/otlp-metrics.json"),
+        )
+        .is_err());
+}
+
+#[test]
+fn runtime_stream_is_monotonic() {
+    let mut runtime = RuntimeStreamDriver::new(INSTALL, "runtime", "stream.v1", 1024).unwrap();
+    runtime.push("stream.v1", 1, b"{}".to_vec()).unwrap();
+    assert!(runtime.push("stream.v1", 1, b"{}".to_vec()).is_err());
+    assert!(runtime.push("other", 2, b"{}".to_vec()).is_err());
+    assert_eq!(runtime.poll(10).cursor, "1");
 }

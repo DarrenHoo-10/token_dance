@@ -18,6 +18,7 @@ pub struct PollResult {
     pub status: SourceCheckpointStatus,
     pub historical: bool,
     pub skipped: bool,
+    pub accepted_events: usize,
     pub diagnostics: Vec<String>,
 }
 
@@ -76,6 +77,7 @@ impl JsonlTailer {
                 status: SourceCheckpointStatus::Stale,
                 historical,
                 skipped: true,
+                accepted_events: 0,
                 diagnostics: vec!["historical_scan_paused_hard_backpressure".into()],
             });
         }
@@ -86,6 +88,7 @@ impl JsonlTailer {
                 status: SourceCheckpointStatus::Discovered,
                 historical,
                 skipped: false,
+                accepted_events: 0,
                 diagnostics: Vec::new(),
             });
         }
@@ -166,6 +169,7 @@ impl JsonlTailer {
             status,
             historical,
             skipped: false,
+            accepted_events: 0,
             diagnostics,
         })
     }
@@ -174,13 +178,12 @@ impl JsonlTailer {
         RawFrame {
             installation_id: self.installation_id.clone(),
             source_kind: SourceKind::JsonlTail,
-            source_id: format!(
-                "{}:{}:g{}",
-                self.logical_source_id,
+            source_id: self.logical_source_id.clone(),
+            cursor: format!(
+                "{}:{}:{offset}",
                 self.identity.as_deref().unwrap_or("unknown"),
                 self.generation
             ),
-            cursor: format!("{}:{offset}", self.generation),
             payload: line.to_vec(),
         }
     }
@@ -198,6 +201,7 @@ impl JsonlTailer {
             file_len,
             offset: self.offset,
             last_record_hash: self.last_record_hash.clone(),
+            driver_checkpoint: None,
             status,
         }
     }

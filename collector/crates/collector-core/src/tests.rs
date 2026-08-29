@@ -207,9 +207,13 @@ async fn decode_applies_final_privacy_filter() {
         .register_adapter(Arc::new(MockAdapter::new()))
         .unwrap();
     collector.probe_all().await;
+    collector
+        .discover_sources("dev.tokenshow.adapter.mock")
+        .await
+        .unwrap();
     let frame = RawFrame::jsonl(
         &installation_id,
-        "sessions",
+        adapter_mock::SOURCE_ID,
         "0",
         br#"{"type":"model_usage_recorded","occurredAt":"2026-08-30T00:00:00Z","sessionId":"session-1","providerId":"mock","modelId":"C:\\Users\\private\\model","tokens":{"totalTokens":1}}"#.to_vec(),
     );
@@ -219,6 +223,49 @@ async fn decode_applies_final_privacy_filter() {
         .await
         .expect_err("absolute path must be rejected after Adapter decode");
     assert_eq!(error.code, adapter_sdk::ErrorCode::PrivacyRejected);
+}
+
+#[tokio::test]
+async fn decode_rejects_foreign_installation_and_undiscovered_source() {
+    let installation_id = format!("ins_{}", "0".repeat(26));
+    let mut collector = Collector::new(&installation_id);
+    collector
+        .register_adapter(Arc::new(MockAdapter::new()))
+        .unwrap();
+    collector.probe_all().await;
+    collector
+        .discover_sources("dev.tokenshow.adapter.mock")
+        .await
+        .unwrap();
+
+    let foreign = RawFrame::jsonl(
+        format!("ins_{}", "1".repeat(26)),
+        adapter_mock::SOURCE_ID,
+        "0",
+        adapter_mock::MIN_SESSION_JSONL.as_bytes(),
+    );
+    assert_eq!(
+        collector
+            .decode("dev.tokenshow.adapter.mock", foreign)
+            .await
+            .unwrap_err()
+            .code,
+        adapter_sdk::ErrorCode::DecodeFailed
+    );
+    let unknown_source = RawFrame::jsonl(
+        &installation_id,
+        "not-discovered",
+        "0",
+        adapter_mock::MIN_SESSION_JSONL.as_bytes(),
+    );
+    assert_eq!(
+        collector
+            .decode("dev.tokenshow.adapter.mock", unknown_source)
+            .await
+            .unwrap_err()
+            .code,
+        adapter_sdk::ErrorCode::DecodeFailed
+    );
 }
 
 #[test]

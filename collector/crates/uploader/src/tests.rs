@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use protocol::{
     Accuracy, EventDeliveryStatus, EventEnvelope, EventPayload, EventSource,
     ModelUsageRecordedPayload, RejectedEvent, RejectedEventErrorCode, SourceKind, TokenUsage,
@@ -13,10 +14,29 @@ use crate::batch::BatchLimits;
 use crate::client::Uploader;
 use crate::retry::RetryPolicy;
 use crate::transport::{body_contains_canary, MemoryIngest, ScriptStep, ScriptedTransport};
-use crate::IngestTransport;
+use crate::{canonical_request, DeviceSigner, InMemoryDeviceSigner, IngestTransport};
 
 fn hmac() -> String {
     format!("hmac-sha256:{}", "A".repeat(43))
+}
+
+#[test]
+fn memory_device_key_signs_canonical_request() {
+    let signer = InMemoryDeviceSigner::from_seed([7; 32]);
+    let canonical = canonical_request(
+        "post",
+        "/v1/telemetry/batches",
+        "2026-08-30T00:00:00Z",
+        "AQEBAQEBAQEBAQEBAQEBAQ",
+        &[0; 32],
+    );
+    assert_eq!(
+        canonical,
+        "POST\n/v1/telemetry/batches\n2026-08-30T00:00:00Z\nAQEBAQEBAQEBAQEBAQEBAQ\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    );
+    let key = VerifyingKey::from_bytes(&signer.public_key().unwrap()).unwrap();
+    let signature = Signature::from_bytes(&signer.sign(canonical.as_bytes()).unwrap());
+    key.verify(canonical.as_bytes(), &signature).unwrap();
 }
 
 fn event(marker: &str) -> EventEnvelope {
@@ -65,6 +85,7 @@ fn checkpoint(offset: u64) -> SourceCheckpoint {
         file_len: offset + 8,
         offset,
         last_record_hash: None,
+        driver_checkpoint: None,
         status: protocol::SourceCheckpointStatus::Current,
     }
 }

@@ -1,8 +1,10 @@
-use adapter_sdk::ErrorCode;
+use adapter_sdk::{ErrorCode, SourceKind};
 use collector_core::{CollectionControl, Collector};
 use privacy::PrivacyCheckedEvent;
-use wal_spool::{AppendClass, Transaction, WalStore};
+use protocol::SourceCheckpointStatus;
+use wal_spool::{AppendClass, SourceCheckpoint, Transaction, WalStore};
 
+use crate::drivers::DriverBatch;
 use crate::error::AcquisitionError;
 use crate::jsonl::{JsonlTailer, PollResult};
 use crate::log::SafeLog;
@@ -39,6 +41,100 @@ impl<'a> IngestPipeline<'a> {
         }
     }
 
+    pub async fn ingest_batch(
+        &self,
+        source_id: &str,
+        batch: DriverBatch,
+        wal: &mut WalStore,
+        historical: bool,
+    ) -> Result<usize, AcquisitionError> {
+        let source_kind = batch
+            .frames
+            .first()
+            .map(|frame| frame.source_kind)
+            .ok_or_else(|| AcquisitionError::Other("empty_driver_batch".into()))?;
+        self.ingest_bound_batch(source_id, source_kind, batch, wal, historical)
+            .await
+    }
+
+    pub async fn ingest_bound_batch(
+        &self,
+        source_id: &str,
+        source_kind: SourceKind,
+        batch: DriverBatch,
+        wal: &mut WalStore,
+        historical: bool,
+    ) -> Result<usize, AcquisitionError> {
+        self.ensure_enabled()?;
+        if batch
+            .frames
+            .iter()
+            .any(|frame| frame.source_id != source_id || frame.source_kind != source_kind)
+        {
+            return Err(AcquisitionError::Other("source_mismatch".into()));
+        }
+        if historical && !wal.backpressure().allow_historical_scan() {
+            self.log.record("scan_skipped", "hard_backpressure");
+            return Ok(0);
+        }
+        let class = if historical {
+            AppendClass::Historical
+        } else {
+            AppendClass::Realtime
+        };
+        let mut accepted = Vec::new();
+        for frame in batch.frames {
+            self.ensure_enabled()?;
+            match self.collector.decode(&self.adapter_id, frame).await {
+                Ok(events) => accepted.extend(events),
+                Err(err) if err.code == ErrorCode::PrivacyRejected => {
+                    self.log.record("privacy_rejected", "privacy_policy");
+                    wal.append_dead_letter(wal_spool::DeadLetterPayload {
+                        event_id: None,
+                        error_code: "PRIVACY_REJECTED".into(),
+                        retryable: false,
+                        created_at: String::new(),
+                        safe_reason: "privacy_policy".into(),
+                    })?;
+                }
+                Err(err) => self
+                    .log
+                    .record("decode_failed", &err.code.as_str().to_ascii_lowercase()),
+            }
+        }
+        self.ensure_enabled()?;
+        let offset = batch.cursor.parse::<u64>().unwrap_or_else(|_| {
+            batch.cursor.bytes().fold(0_u64, |value, byte| {
+                value.wrapping_mul(109).wrapping_add(byte as u64)
+            })
+        });
+        let previous = wal.latest_checkpoint(source_id).cloned();
+        let checkpoint = SourceCheckpoint {
+            source_id: source_id.to_owned(),
+            path_template_id: source_id.to_owned(),
+            file_identity: source_id.to_owned(),
+            generation: 1,
+            file_len: offset,
+            offset,
+            last_record_hash: Some(batch.cursor),
+            driver_checkpoint: batch.driver_checkpoint,
+            status: SourceCheckpointStatus::Current,
+        };
+        let count = accepted.len();
+        let transaction = Transaction::new(
+            String::new(),
+            source_id,
+            previous,
+            checkpoint,
+            accepted,
+            String::new(),
+        );
+        self.control
+            .with_commit_lease(|| wal.append_txn(transaction, class))
+            .ok_or_else(|| AcquisitionError::Other("adapter_disabled".into()))??;
+        Ok(count)
+    }
+
     pub async fn ingest(
         &self,
         tailer: &mut JsonlTailer,
@@ -51,7 +147,7 @@ impl<'a> IngestPipeline<'a> {
         } else {
             AppendClass::Realtime
         };
-        let poll = tailer.poll(wal.backpressure(), historical)?;
+        let mut poll = tailer.poll(wal.backpressure(), historical)?;
         self.ensure_enabled()?;
         if poll.skipped {
             self.log.record("scan_skipped", "hard_backpressure");
@@ -79,6 +175,7 @@ impl<'a> IngestPipeline<'a> {
                     .record("decode_failed", &err.code.as_str().to_ascii_lowercase()),
             }
         }
+        poll.accepted_events = accepted.len();
         for diagnostic in &poll.diagnostics {
             self.log.record("source_diagnostic", diagnostic);
         }

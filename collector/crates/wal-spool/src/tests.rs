@@ -67,6 +67,7 @@ fn checkpoint(offset: u64, generation: u64) -> SourceCheckpoint {
         file_len: offset + 10,
         offset,
         last_record_hash: Some("sha256:deadbeef".into()),
+        driver_checkpoint: None,
         status: protocol::SourceCheckpointStatus::Current,
     }
 }

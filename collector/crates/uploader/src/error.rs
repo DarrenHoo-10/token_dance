@@ -30,6 +30,8 @@ pub enum TransportError {
     Auth,
     #[error("response decode failed: {0}")]
     Decode(String),
+    #[error("device signing failed: {0}")]
+    Signing(String),
 }
 
 impl TransportError {
@@ -37,7 +39,7 @@ impl TransportError {
         match self {
             Self::Network(_) | Self::Timeout => true,
             Self::Http { status, .. } => matches!(status, 429 | 500..=599),
-            Self::Auth | Self::Decode(_) => false,
+            Self::Auth | Self::Decode(_) | Self::Signing(_) => false,
         }
     }
 

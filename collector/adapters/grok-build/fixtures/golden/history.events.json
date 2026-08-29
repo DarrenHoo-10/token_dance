@@ -1,0 +1,77 @@
+[
+  {
+    "schemaVersion": "1.0",
+    "eventId": "jUuRCGVxm7KfhkCuTdM0UC2ZBblpOJc9VUmVzQPvqEI",
+    "adapterId": "dev.tokenshow.adapter.grok-build",
+    "adapterVersion": "0.1.0",
+    "agentId": "grok-build",
+    "agentVersion": "1.0.0",
+    "installationId": "ins_00000000000000000000000000",
+    "occurredAt": "2026-08-30T10:00:00.000Z",
+    "sessionHash": "hmac-sha256:UjZRRF5PNt29CELFwlUQwluZONTInjQFctouCDybLFM",
+    "source": {
+      "kind": "jsonl_tail",
+      "cursorHmac": "hmac-sha256:qDb5GCZeOZqg97sKud032eJV_CuFI3nlx0_TD2Oi4sU",
+      "rawFingerprintHmac": "hmac-sha256:5AzpFAHqbIoRu2CGqi9RWThMhXWLd_FswJyq9mglwH4"
+    },
+    "accuracy": "exact",
+    "payload": {
+      "type": "session_started",
+      "modelId": "grok-code-fast"
+    }
+  },
+  {
+    "schemaVersion": "1.0",
+    "eventId": "TzxUQyJk_aMZx6BSg485UQ0bWdQZSUX5bly9qcLK-1M",
+    "adapterId": "dev.tokenshow.adapter.grok-build",
+    "adapterVersion": "0.1.0",
+    "agentId": "grok-build",
+    "agentVersion": "1.0.0",
+    "installationId": "ins_00000000000000000000000000",
+    "occurredAt": "2026-08-30T10:00:01.000Z",
+    "sessionHash": "hmac-sha256:UjZRRF5PNt29CELFwlUQwluZONTInjQFctouCDybLFM",
+    "turnHash": "hmac-sha256:4AZhYdYT_lagn37fPvtwJCkbCIGnVPjxpYbCxTsRHrM",
+    "source": {
+      "kind": "jsonl_tail",
+      "cursorHmac": "hmac-sha256:pAXczwTBL6L6RvnHR3zaa0n6P0E4stHHqt576vzMFng",
+      "rawFingerprintHmac": "hmac-sha256:LkwCy1UvQE6hwwdqbsVdQOOS-N4fFUm95y4uJOsGRko"
+    },
+    "accuracy": "exact",
+    "payload": {
+      "type": "model_usage_recorded",
+      "providerId": "xai",
+      "modelId": "grok-code-fast",
+      "tokens": {
+        "inputTokens": "10",
+        "outputTokens": "20",
+        "cacheReadTokens": "5",
+        "totalTokens": "35"
+      }
+    }
+  },
+  {
+    "schemaVersion": "1.0",
+    "eventId": "TSQXiQAWLiLiYPvQDZZHD5K1LDTdHUcTezqMtXuq-v0",
+    "adapterId": "dev.tokenshow.adapter.grok-build",
+    "adapterVersion": "0.1.0",
+    "agentId": "grok-build",
+    "agentVersion": "1.0.0",
+    "installationId": "ins_00000000000000000000000000",
+    "occurredAt": "2026-08-30T10:00:03.000Z",
+    "sessionHash": "hmac-sha256:UjZRRF5PNt29CELFwlUQwluZONTInjQFctouCDybLFM",
+    "toolCallHash": "hmac-sha256:gMt68oTbkF4Fcx6G-tT5CtzonDyC9j2uKgUgHnBiUWs",
+    "source": {
+      "kind": "jsonl_tail",
+      "cursorHmac": "hmac-sha256:Q2hGtTqQBmjymHBKlifYc6qS5a0Fv9_mIvUlNP4uBnY",
+      "rawFingerprintHmac": "hmac-sha256:q2mkekkNHMsdlulKw5iBN8na5-O3hRSNa0UVdbnPRYI"
+    },
+    "accuracy": "exact",
+    "payload": {
+      "type": "skill_invoked",
+      "skillKey": "hmac-sha256:RUanxw3R6B8YdjJt2QhWlKJhLfZDswjEtF3_-LCWzXs",
+      "invokeType": "native",
+      "success": true,
+      "pluginKey": "hmac-sha256:aHASDe92AdD_gjmwO-EGo2r7vhRsoTHKGf2F33QL1EQ"
+    }
+  }
+]

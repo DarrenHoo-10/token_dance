@@ -4,6 +4,24 @@ use protocol::SourceCheckpointStatus;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum DriverCheckpoint {
+    OtlpReceiver {
+        sequence: u64,
+    },
+    RuntimeStream {
+        next_sequence: u64,
+    },
+    RemoteApi {
+        cursor: String,
+        window_end_unix_seconds: i64,
+    },
+    SqliteSnapshot {
+        query_cursors: Vec<i64>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceCheckpoint {
     pub source_id: String,
@@ -13,6 +31,8 @@ pub struct SourceCheckpoint {
     pub file_len: u64,
     pub offset: u64,
     pub last_record_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub driver_checkpoint: Option<DriverCheckpoint>,
     pub status: SourceCheckpointStatus,
 }
 

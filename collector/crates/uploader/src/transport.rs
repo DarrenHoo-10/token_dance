@@ -3,12 +3,23 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use protocol::{RejectedEvent, RejectedEventErrorCode, UploadAck, UploadBatch};
+use protocol::{
+    Architecture, InstallationRegisterRequest, InstallationRegisterResponse, OsType, RejectedEvent,
+    RejectedEventErrorCode, UploadAck, UploadBatch,
+};
+use rand::rngs::OsRng;
+use rand::RngCore;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 
 use crate::error::TransportError;
+use crate::signer::DeviceSigner;
 
 #[async_trait]
 pub trait IngestTransport: Send + Sync {
@@ -173,10 +184,47 @@ impl IngestTransport for ScriptedTransport {
     }
 }
 
+const INGEST_PATH: &str = "/v1/telemetry/batches";
+const REGISTER_PATH: &str = "/v1/installations/register";
+
+pub fn canonical_request(
+    method: &str,
+    path: &str,
+    timestamp: &str,
+    nonce: &str,
+    body_sha256: &[u8; 32],
+) -> String {
+    format!(
+        "{}\n{}\n{}\n{}\n{}",
+        method.to_ascii_uppercase(),
+        path,
+        timestamp,
+        nonce,
+        URL_SAFE_NO_PAD.encode(body_sha256)
+    )
+}
+
 pub struct HttpTransport {
-    pub base_url: String,
-    pub client: reqwest::Client,
-    pub authorization: String,
+    base_url: String,
+    client: reqwest::Client,
+    installation_id: String,
+    signer: Arc<dyn DeviceSigner>,
+}
+
+impl HttpTransport {
+    pub fn new(
+        base_url: impl Into<String>,
+        client: reqwest::Client,
+        installation_id: impl Into<String>,
+        signer: Arc<dyn DeviceSigner>,
+    ) -> Self {
+        Self {
+            base_url: base_url.into(),
+            client,
+            installation_id: installation_id.into(),
+            signer,
+        }
+    }
 }
 
 #[async_trait]
@@ -190,48 +238,150 @@ impl IngestTransport for HttpTransport {
             .write_all(&json)
             .and_then(|_| encoder.finish())
             .map_err(|err| TransportError::Network(err.to_string()))?;
+
+        let timestamp = OffsetDateTime::now_utc()
+            .format(&Rfc3339)
+            .map_err(|err| TransportError::Signing(err.to_string()))?;
+        let mut nonce_bytes = [0u8; 24];
+        OsRng.fill_bytes(&mut nonce_bytes);
+        let nonce = URL_SAFE_NO_PAD.encode(nonce_bytes);
+        let body_sha256: [u8; 32] = Sha256::digest(&gzipped).into();
+        let canonical = canonical_request(
+            reqwest::Method::POST.as_str(),
+            INGEST_PATH,
+            &timestamp,
+            &nonce,
+            &body_sha256,
+        );
+        let signature = self
+            .signer
+            .sign(canonical.as_bytes())
+            .map_err(|err| TransportError::Signing(err.to_string()))?;
+        let authorization = format!(
+            "Device {}:{}",
+            self.installation_id,
+            URL_SAFE_NO_PAD.encode(signature)
+        );
+
         let response = self
             .client
             .post(format!(
-                "{}/v1/telemetry/batches",
-                self.base_url.trim_end_matches('/')
+                "{}{}",
+                self.base_url.trim_end_matches('/'),
+                INGEST_PATH
             ))
             .header("content-type", "application/json")
             .header("content-encoding", "gzip")
-            .header("authorization", &self.authorization)
+            .header("authorization", authorization)
+            .header("x-timestamp", timestamp)
+            .header("x-nonce", nonce)
             .header("idempotency-key", &batch.batch_id)
             .body(gzipped)
             .send()
             .await
-            .map_err(|err| {
-                if err.is_timeout() {
-                    TransportError::Timeout
-                } else {
-                    TransportError::Network(err.to_string())
-                }
-            })?;
-        let status = response.status().as_u16();
-        let retry_after = response
-            .headers()
-            .get("retry-after")
-            .and_then(|value| value.to_str().ok())
-            .and_then(|text| text.parse::<u64>().ok())
-            .map(Duration::from_secs);
-        let body = response
-            .text()
-            .await
-            .map_err(|err| TransportError::Decode(err.to_string()))?;
-        match status {
-            200..=202 => {
-                serde_json::from_str(&body).map_err(|err| TransportError::Decode(err.to_string()))
-            }
-            401 | 403 => Err(TransportError::Auth),
-            other => Err(TransportError::Http {
-                status: other,
-                retry_after,
-                body,
-            }),
+            .map_err(map_reqwest_error)?;
+        decode_response(response).await
+    }
+}
+
+pub struct RegistrationClient {
+    base_url: String,
+    client: reqwest::Client,
+    user_session_token: String,
+}
+
+pub struct RegisteredCollector {
+    pub registration: InstallationRegisterResponse,
+    pub transport: HttpTransport,
+}
+
+impl RegistrationClient {
+    pub fn new(
+        base_url: impl Into<String>,
+        client: reqwest::Client,
+        user_session_token: impl Into<String>,
+    ) -> Self {
+        Self {
+            base_url: base_url.into(),
+            client,
+            user_session_token: user_session_token.into(),
         }
+    }
+
+    pub async fn register(
+        self,
+        signer: Arc<dyn DeviceSigner>,
+        os_type: OsType,
+        architecture: Architecture,
+        collector_version: impl Into<String>,
+    ) -> Result<RegisteredCollector, TransportError> {
+        let public_key = signer
+            .public_key()
+            .map_err(|err| TransportError::Signing(err.to_string()))?;
+        let request = InstallationRegisterRequest {
+            device_public_key: URL_SAFE_NO_PAD.encode(public_key),
+            os_type,
+            architecture,
+            collector_version: collector_version.into(),
+        };
+        let response = self
+            .client
+            .post(format!(
+                "{}{}",
+                self.base_url.trim_end_matches('/'),
+                REGISTER_PATH
+            ))
+            .bearer_auth(&self.user_session_token)
+            .json(&request)
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        let registration: InstallationRegisterResponse = decode_response(response).await?;
+        let transport = HttpTransport::new(
+            self.base_url,
+            self.client,
+            registration.installation_id.clone(),
+            signer,
+        );
+        Ok(RegisteredCollector {
+            registration,
+            transport,
+        })
+    }
+}
+
+async fn decode_response<T: serde::de::DeserializeOwned>(
+    response: reqwest::Response,
+) -> Result<T, TransportError> {
+    let status = response.status().as_u16();
+    let retry_after = response
+        .headers()
+        .get("retry-after")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|text| text.parse::<u64>().ok())
+        .map(Duration::from_secs);
+    let body = response
+        .text()
+        .await
+        .map_err(|err| TransportError::Decode(err.to_string()))?;
+    match status {
+        200..=202 => {
+            serde_json::from_str(&body).map_err(|err| TransportError::Decode(err.to_string()))
+        }
+        401 | 403 => Err(TransportError::Auth),
+        other => Err(TransportError::Http {
+            status: other,
+            retry_after,
+            body,
+        }),
+    }
+}
+
+fn map_reqwest_error(err: reqwest::Error) -> TransportError {
+    if err.is_timeout() {
+        TransportError::Timeout
+    } else {
+        TransportError::Network(err.to_string())
     }
 }
 

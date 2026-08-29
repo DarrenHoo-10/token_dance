@@ -2,6 +2,8 @@
 
 use protocol::{EventEnvelope, EventPayload};
 use serde_json::Value;
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 
 const HMAC_PREFIX: &str = "hmac-sha256:";
 const MAX_STRING_BYTES: usize = 2_048;
@@ -41,6 +43,8 @@ impl PrivacyFilter {
         if event.schema_version != protocol::PROTOCOL_VERSION {
             return Err(PrivacyError::UnsupportedSchema);
         }
+        OffsetDateTime::parse(&event.occurred_at, &Rfc3339)
+            .map_err(|_| PrivacyError::InvalidIdentifier("occurredAt"))?;
         validate_base64url(&event.event_id, 43)
             .then_some(())
             .ok_or(PrivacyError::InvalidIdentifier("eventId"))?;
@@ -322,6 +326,13 @@ mod tests {
         assert_eq!(
             PrivacyFilter.filter(raw_cursor),
             Err(PrivacyError::InvalidHmac("source.cursorHmac"))
+        );
+
+        let mut invalid_time = event();
+        invalid_time.occurred_at = "1788084060000000000".into();
+        assert_eq!(
+            PrivacyFilter.filter(invalid_time),
+            Err(PrivacyError::InvalidIdentifier("occurredAt"))
         );
 
         let mut wrong_schema = event();

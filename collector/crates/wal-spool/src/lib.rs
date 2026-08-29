@@ -14,7 +14,8 @@ mod limits;
 mod store;
 
 pub use checkpoint::{
-    Backpressure, CheckpointKey, IsolatedSegment, RescanHint, Snapshot, SourceCheckpoint,
+    Backpressure, CheckpointKey, DriverCheckpoint, IsolatedSegment, RescanHint, Snapshot,
+    SourceCheckpoint,
 };
 pub use error::{KeyError, WalError};
 pub use fault::{FaultHook, FaultPoint};
