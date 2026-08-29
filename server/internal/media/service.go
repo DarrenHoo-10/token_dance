@@ -135,7 +135,7 @@ func (s *Service) CompleteAvatarIntent(ctx context.Context, objectID, userID str
 	}
 
 	// 2. Object-storage Read
-	rc, err := s.storage.GetObject(ctx, obj.ObjectKey)
+	rc, err := s.storage.OpenObject(ctx, obj.ObjectKey)
 	if err != nil {
 		return nil, domain.NewAppError(500, "INTERNAL_ERROR", "media.storageReadFailed", "failed to read object from storage", nil, err)
 	}

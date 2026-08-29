@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"net/mail"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -17,30 +19,49 @@ const (
 )
 
 type Config struct {
-	HTTPAddr             string        `json:"httpAddr"`
-	Environment          string        `json:"environment"`
-	MySQLDSN             string        `json:"-"`
-	MySQLDSNFile         string        `json:"mysqlDsnFile,omitempty"`
-	RedisAddr            string        `json:"redisAddr,omitempty"`
-	SessionIdleTTL       time.Duration `json:"sessionIdleTTL"`
-	SessionAbsoluteTTL   time.Duration `json:"sessionAbsoluteTTL"`
-	AuthCodeTTL          time.Duration `json:"authCodeTTL"`
-	AuthBindCodeTTL      time.Duration `json:"authBindCodeTTL"`
-	Argon2MemoryKiB      uint32        `json:"argon2MemoryKiB"`
-	Argon2Time           uint32        `json:"argon2Time"`
-	Argon2Parallelism    uint8         `json:"argon2Parallelism"`
-	DeletionCancelWindow time.Duration `json:"deletionCancelWindow"`
-	ExportObjectTTL      time.Duration `json:"exportObjectTTL"`
-	PublicSkillMinUsers  int           `json:"publicSkillMinUsers"`
-	MediaAvatarMaxBytes  int64         `json:"mediaAvatarMaxBytes"`
-	MediaAvatarMaxPixels int64         `json:"mediaAvatarMaxPixels"`
-	ObjectBucket         string        `json:"objectBucket,omitempty"`
-	HMACSecret           string        `json:"-"`
-	EncryptionKey        string        `json:"-"`
-	EncryptionKeyFile    string        `json:"encryptionKeyFile,omitempty"`
-	EncryptionKeyVersion uint16        `json:"encryptionKeyVersion"`
-	EmailProvider        string        `json:"emailProvider,omitempty"`
-	TestAuthCode         string        `json:"-"`
+	HTTPAddr               string        `json:"httpAddr"`
+	Environment            string        `json:"environment"`
+	MySQLDSN               string        `json:"-"`
+	MySQLDSNFile           string        `json:"mysqlDsnFile,omitempty"`
+	RedisAddr              string        `json:"redisAddr,omitempty"`
+	SessionIdleTTL         time.Duration `json:"sessionIdleTTL"`
+	SessionAbsoluteTTL     time.Duration `json:"sessionAbsoluteTTL"`
+	AuthCodeTTL            time.Duration `json:"authCodeTTL"`
+	AuthBindCodeTTL        time.Duration `json:"authBindCodeTTL"`
+	Argon2MemoryKiB        uint32        `json:"argon2MemoryKiB"`
+	Argon2Time             uint32        `json:"argon2Time"`
+	Argon2Parallelism      uint8         `json:"argon2Parallelism"`
+	DeletionCancelWindow   time.Duration `json:"deletionCancelWindow"`
+	ExportObjectTTL        time.Duration `json:"exportObjectTTL"`
+	PublicSkillMinUsers    int           `json:"publicSkillMinUsers"`
+	MediaAvatarMaxBytes    int64         `json:"mediaAvatarMaxBytes"`
+	MediaAvatarMaxPixels   int64         `json:"mediaAvatarMaxPixels"`
+	ObjectProvider         string        `json:"objectProvider,omitempty"`
+	ObjectEndpoint         string        `json:"objectEndpoint,omitempty"`
+	ObjectRegion           string        `json:"objectRegion,omitempty"`
+	ObjectBucket           string        `json:"objectBucket,omitempty"`
+	ObjectAccessKey        string        `json:"-"`
+	ObjectAccessKeyFile    string        `json:"objectAccessKeyFile,omitempty"`
+	ObjectSecretKey        string        `json:"-"`
+	ObjectSecretKeyFile    string        `json:"objectSecretKeyFile,omitempty"`
+	ObjectSessionToken     string        `json:"-"`
+	ObjectSessionTokenFile string        `json:"objectSessionTokenFile,omitempty"`
+	ObjectUsePathStyle     bool          `json:"objectUsePathStyle"`
+	HMACSecret             string        `json:"-"`
+	HMACSecretFile         string        `json:"hmacSecretFile,omitempty"`
+	EncryptionKey          string        `json:"-"`
+	EncryptionKeyFile      string        `json:"encryptionKeyFile,omitempty"`
+	EncryptionKeyVersion   uint16        `json:"encryptionKeyVersion"`
+	EmailProvider          string        `json:"emailProvider,omitempty"`
+	SMTPHost               string        `json:"smtpHost,omitempty"`
+	SMTPPort               int           `json:"smtpPort,omitempty"`
+	SMTPUsername           string        `json:"smtpUsername,omitempty"`
+	SMTPPassword           string        `json:"-"`
+	SMTPPasswordFile       string        `json:"smtpPasswordFile,omitempty"`
+	SMTPFrom               string        `json:"smtpFrom,omitempty"`
+	SMTPTLSMode            string        `json:"smtpTlsMode,omitempty"`
+	SMTPEHLOName           string        `json:"smtpEhloName,omitempty"`
+	TestAuthCode           string        `json:"-"`
 }
 
 func DefaultConfig() *Config {
@@ -59,10 +80,15 @@ func DefaultConfig() *Config {
 		PublicSkillMinUsers:  5,
 		MediaAvatarMaxBytes:  5 * 1024 * 1024, // 5 MiB
 		MediaAvatarMaxPixels: 16000000,        // 16M pixels
+		ObjectProvider:       "memory",
+		ObjectRegion:         "us-east-1",
+		ObjectUsePathStyle:   true,
 		HMACSecret:           DefaultDevHMACSecret,
 		EncryptionKey:        DefaultDevEncryptionKey,
 		EncryptionKeyVersion: 1,
 		EmailProvider:        "sink",
+		SMTPPort:             587,
+		SMTPTLSMode:          "starttls",
 	}
 }
 
@@ -93,6 +119,19 @@ func ParseEncryptionKey(keyStr string) ([32]byte, error) {
 	return key, fmt.Errorf("encryption key must be exactly 32 bytes (or 64 hex characters)")
 }
 
+func readSecretEnv(valueName, fileName string) (string, string, error) {
+	value := os.Getenv(valueName)
+	path := os.Getenv(fileName)
+	if path == "" {
+		return value, "", nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", path, fmt.Errorf("failed to read %s file at %s: %w", valueName, path, err)
+	}
+	return strings.TrimSpace(string(data)), path, nil
+}
+
 func LoadFromEnv() (*Config, error) {
 	cfg := DefaultConfig()
 
@@ -102,16 +141,9 @@ func LoadFromEnv() (*Config, error) {
 	if v := os.Getenv("TOKENDANCE_ENVIRONMENT"); v != "" {
 		cfg.Environment = v
 	}
-	if v := os.Getenv("TOKENDANCE_MYSQL_DSN"); v != "" {
-		cfg.MySQLDSN = v
-	}
-	if v := os.Getenv("TOKENDANCE_MYSQL_DSN_FILE"); v != "" {
-		cfg.MySQLDSNFile = v
-		data, err := os.ReadFile(v)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read MySQL DSN file at %s: %w", v, err)
-		}
-		cfg.MySQLDSN = strings.TrimSpace(string(data))
+	var err error
+	if cfg.MySQLDSN, cfg.MySQLDSNFile, err = readSecretEnv("TOKENDANCE_MYSQL_DSN", "TOKENDANCE_MYSQL_DSN_FILE"); err != nil {
+		return nil, err
 	}
 	if v := os.Getenv("TOKENDANCE_REDIS_ADDR"); v != "" {
 		cfg.RedisAddr = v
@@ -176,22 +208,38 @@ func LoadFromEnv() (*Config, error) {
 			cfg.MediaAvatarMaxPixels = val
 		}
 	}
+	if v := os.Getenv("TOKENDANCE_OBJECT_PROVIDER"); v != "" {
+		cfg.ObjectProvider = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("TOKENDANCE_OBJECT_ENDPOINT"); v != "" {
+		cfg.ObjectEndpoint = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("TOKENDANCE_OBJECT_REGION"); v != "" {
+		cfg.ObjectRegion = strings.TrimSpace(v)
+	}
 	if v := os.Getenv("TOKENDANCE_OBJECT_BUCKET"); v != "" {
-		cfg.ObjectBucket = v
+		cfg.ObjectBucket = strings.TrimSpace(v)
 	}
-	if v := os.Getenv("TOKENDANCE_HMAC_SECRET"); v != "" {
-		cfg.HMACSecret = v
+	if cfg.ObjectAccessKey, cfg.ObjectAccessKeyFile, err = readSecretEnv("TOKENDANCE_OBJECT_ACCESS_KEY", "TOKENDANCE_OBJECT_ACCESS_KEY_FILE"); err != nil {
+		return nil, err
 	}
-	if v := os.Getenv("TOKENDANCE_ENCRYPTION_KEY"); v != "" {
-		cfg.EncryptionKey = v
+	if cfg.ObjectSecretKey, cfg.ObjectSecretKeyFile, err = readSecretEnv("TOKENDANCE_OBJECT_SECRET_KEY", "TOKENDANCE_OBJECT_SECRET_KEY_FILE"); err != nil {
+		return nil, err
 	}
-	if v := os.Getenv("TOKENDANCE_ENCRYPTION_KEY_FILE"); v != "" {
-		cfg.EncryptionKeyFile = v
-		data, err := os.ReadFile(v)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read encryption key file at %s: %w", v, err)
-		}
-		cfg.EncryptionKey = strings.TrimSpace(string(data))
+	if cfg.ObjectSessionToken, cfg.ObjectSessionTokenFile, err = readSecretEnv("TOKENDANCE_OBJECT_SESSION_TOKEN", "TOKENDANCE_OBJECT_SESSION_TOKEN_FILE"); err != nil {
+		return nil, err
+	}
+	if cfg.HMACSecret, cfg.HMACSecretFile, err = readSecretEnv("TOKENDANCE_HMAC_SECRET", "TOKENDANCE_HMAC_SECRET_FILE"); err != nil {
+		return nil, err
+	}
+	if cfg.HMACSecret == "" {
+		cfg.HMACSecret = DefaultDevHMACSecret
+	}
+	if cfg.EncryptionKey, cfg.EncryptionKeyFile, err = readSecretEnv("TOKENDANCE_ENCRYPTION_KEY", "TOKENDANCE_ENCRYPTION_KEY_FILE"); err != nil {
+		return nil, err
+	}
+	if cfg.EncryptionKey == "" {
+		cfg.EncryptionKey = DefaultDevEncryptionKey
 	}
 	if v := os.Getenv("TOKENDANCE_ENCRYPTION_KEY_VERSION"); v != "" {
 		if val, err := strconv.ParseUint(v, 10, 16); err == nil {
@@ -199,16 +247,42 @@ func LoadFromEnv() (*Config, error) {
 		}
 	}
 	if v := os.Getenv("TOKENDANCE_EMAIL_PROVIDER"); v != "" {
-		cfg.EmailProvider = v
+		cfg.EmailProvider = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("TOKENDANCE_SMTP_HOST"); v != "" {
+		cfg.SMTPHost = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("TOKENDANCE_SMTP_USERNAME"); v != "" {
+		cfg.SMTPUsername = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("TOKENDANCE_SMTP_FROM"); v != "" {
+		cfg.SMTPFrom = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("TOKENDANCE_SMTP_TLS_MODE"); v != "" {
+		cfg.SMTPTLSMode = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("TOKENDANCE_SMTP_EHLO_NAME"); v != "" {
+		cfg.SMTPEHLOName = strings.TrimSpace(v)
+	}
+	if cfg.SMTPPassword, cfg.SMTPPasswordFile, err = readSecretEnv("TOKENDANCE_SMTP_PASSWORD", "TOKENDANCE_SMTP_PASSWORD_FILE"); err != nil {
+		return nil, err
+	}
+	if v := os.Getenv("TOKENDANCE_SMTP_PORT"); v != "" {
+		val, parseErr := strconv.Atoi(v)
+		if parseErr != nil {
+			return nil, fmt.Errorf("invalid TOKENDANCE_SMTP_PORT: %w", parseErr)
+		}
+		cfg.SMTPPort = val
+	}
+	if v := os.Getenv("TOKENDANCE_OBJECT_USE_PATH_STYLE"); v != "" {
+		val, parseErr := strconv.ParseBool(v)
+		if parseErr != nil {
+			return nil, fmt.Errorf("invalid TOKENDANCE_OBJECT_USE_PATH_STYLE: %w", parseErr)
+		}
+		cfg.ObjectUsePathStyle = val
 	}
 	if v := os.Getenv("TOKENDANCE_TEST_AUTH_CODE"); v != "" {
 		cfg.TestAuthCode = v
-	}
-
-	if cfg.Environment == "production" {
-		if cfg.EmailProvider == "sink" {
-			cfg.EmailProvider = "worker"
-		}
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -267,6 +341,52 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("HMACSecret must be at least 16 bytes")
 	}
 
+	local := c.Environment == "development" || c.Environment == "test"
+	if c.ObjectProvider == "memory" && !local {
+		return fmt.Errorf("memory object storage is only allowed in explicit development or test environments")
+	}
+	if c.EmailProvider == "sink" && !local {
+		return fmt.Errorf("email sink is only allowed in explicit development or test environments")
+	}
+	if c.ObjectProvider != "memory" && c.ObjectProvider != "s3" {
+		return fmt.Errorf("unsupported object provider %q", c.ObjectProvider)
+	}
+	if c.EmailProvider != "sink" && c.EmailProvider != "smtp" {
+		return fmt.Errorf("unsupported email provider %q", c.EmailProvider)
+	}
+	if c.ObjectProvider == "s3" {
+		if c.ObjectEndpoint == "" {
+			return fmt.Errorf("TOKENDANCE_OBJECT_ENDPOINT is required for S3 object storage")
+		}
+		u, err := url.Parse(c.ObjectEndpoint)
+		if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
+			return fmt.Errorf("TOKENDANCE_OBJECT_ENDPOINT must be an http(s) URL without embedded credentials")
+		}
+		if c.ObjectRegion == "" || c.ObjectBucket == "" {
+			return fmt.Errorf("S3 region and bucket are required")
+		}
+		if c.ObjectAccessKey == "" || c.ObjectSecretKey == "" {
+			return fmt.Errorf("S3 object storage credentials are required")
+		}
+	}
+	if c.EmailProvider == "smtp" {
+		if c.SMTPHost == "" || c.SMTPPort < 1 || c.SMTPPort > 65535 {
+			return fmt.Errorf("valid SMTP host and port are required")
+		}
+		if c.SMTPUsername == "" || c.SMTPPassword == "" {
+			return fmt.Errorf("SMTP credentials are required")
+		}
+		if _, err := mail.ParseAddress(c.SMTPFrom); err != nil {
+			return fmt.Errorf("TOKENDANCE_SMTP_FROM must be a valid email address")
+		}
+		if c.SMTPTLSMode != "starttls" && c.SMTPTLSMode != "tls" && c.SMTPTLSMode != "none" {
+			return fmt.Errorf("invalid SMTP TLS mode")
+		}
+		if !local && c.SMTPTLSMode == "none" {
+			return fmt.Errorf("SMTP TLS cannot be disabled outside development or test")
+		}
+	}
+
 	// Environment specific rules
 	if c.Environment == "production" {
 		if c.MySQLDSN == "" {
@@ -281,8 +401,11 @@ func (c *Config) Validate() error {
 		if c.TestAuthCode != "" {
 			return fmt.Errorf("TOKENDANCE_TEST_AUTH_CODE is strictly prohibited in production environment")
 		}
-		if c.EmailProvider != "worker" && c.EmailProvider != "smtp" {
-			return fmt.Errorf("production environment requires a durable email provider (e.g. 'worker' or 'smtp'), got '%s'", c.EmailProvider)
+		if c.EmailProvider != "smtp" {
+			return fmt.Errorf("production environment requires SMTP email delivery")
+		}
+		if c.ObjectProvider != "s3" {
+			return fmt.Errorf("production environment requires S3-compatible object storage")
 		}
 	}
 

@@ -75,7 +75,10 @@ func main() {
 		st = memory.NewMemoryStore()
 	}
 
-	storage := provider.NewMemoryObjectStorage("")
+	storage, err := provider.NewObjectStorage(cfg)
+	if err != nil {
+		log.Fatalf("Fatal object storage configuration error: %v", err)
+	}
 
 	authService := auth.NewService(st, cfg, clk)
 	profileService := profile.NewService(st, clk)

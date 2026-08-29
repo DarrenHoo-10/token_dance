@@ -36,7 +36,14 @@ func main() {
 		log.Fatalf("Fatal cipher initialization error: %v", err)
 	}
 
-	var emailProvider email.Provider = email.DefaultSink
+	emailProvider, err := email.NewProvider(cfg)
+	if err != nil {
+		log.Fatalf("Fatal email provider configuration error: %v", err)
+	}
+	storage, err := provider.NewObjectStorage(cfg)
+	if err != nil {
+		log.Fatalf("Fatal object storage configuration error: %v", err)
+	}
 
 	clk := clock.RealClock{}
 	var db *sql.DB
@@ -68,7 +75,6 @@ func main() {
 		cancelCheck()
 		log.Println("Database schema compatibility verified for worker.")
 
-		storage := provider.NewMemoryObjectStorage("")
 		wrk = worker.NewWorkerWithFull(db, clk, cipher, emailProvider, storage)
 		log.Printf("Worker registered with durable lease ID: %s", wrk.WorkerID())
 	} else {

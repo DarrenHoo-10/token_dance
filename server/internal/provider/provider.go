@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -18,11 +19,11 @@ import (
 )
 
 var (
-	ErrTransient       = errors.New("transient provider error")
-	ErrPermanent       = errors.New("permanent provider error")
-	ErrExpired         = errors.New("message expired")
-	ErrObjectNotFound  = errors.New("object not found in storage")
-	ErrInvalidPayload  = errors.New("invalid payload data")
+	ErrTransient      = errors.New("transient provider error")
+	ErrPermanent      = errors.New("permanent provider error")
+	ErrExpired        = errors.New("message expired")
+	ErrObjectNotFound = errors.New("object not found in storage")
+	ErrInvalidPayload = errors.New("invalid payload data")
 )
 
 type ProviderError struct {
@@ -202,6 +203,7 @@ type ObjectMeta struct {
 type ObjectStorage interface {
 	PutObject(ctx context.Context, key string, data io.Reader, size int64, contentType string) error
 	HeadObject(ctx context.Context, key string) (*ObjectMeta, error)
+	OpenObject(ctx context.Context, key string) (io.ReadCloser, error)
 	GetObject(ctx context.Context, key string) (io.ReadCloser, error)
 	PresignDownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error)
 	PresignUploadURL(ctx context.Context, key string, ttl time.Duration) (string, error)
@@ -225,9 +227,13 @@ func NewMemoryObjectStorage(baseURL string) *MemoryObjectStorage {
 	if baseURL == "" {
 		baseURL = "https://storage.tokendance.dev"
 	}
+	secret := make([]byte, 32)
+	if _, err := rand.Read(secret); err != nil {
+		panic(fmt.Sprintf("generate memory object storage signing key: %v", err))
+	}
 	return &MemoryObjectStorage{
 		objects: make(map[string]*storedObject),
-		secret:  []byte("tokendance-object-storage-secret-key-32b"),
+		secret:  secret,
 		baseURL: baseURL,
 	}
 }
@@ -280,7 +286,7 @@ func (s *MemoryObjectStorage) HeadObject(ctx context.Context, key string) (*Obje
 	return &metaCopy, nil
 }
 
-func (s *MemoryObjectStorage) GetObject(ctx context.Context, key string) (io.ReadCloser, error) {
+func (s *MemoryObjectStorage) OpenObject(ctx context.Context, key string) (io.ReadCloser, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -289,6 +295,10 @@ func (s *MemoryObjectStorage) GetObject(ctx context.Context, key string) (io.Rea
 		return nil, ErrObjectNotFound
 	}
 	return io.NopCloser(bytes.NewReader(obj.data)), nil
+}
+
+func (s *MemoryObjectStorage) GetObject(ctx context.Context, key string) (io.ReadCloser, error) {
+	return s.OpenObject(ctx, key)
 }
 
 func (s *MemoryObjectStorage) PresignDownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
