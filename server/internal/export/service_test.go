@@ -13,7 +13,7 @@ import (
 	"tokendance/internal/store/memory"
 )
 
-func TestExportService(t *testing.T) {
+func TestUSR102_ExportAuthorizationAndSignedURL(t *testing.T) {
 	ctx := context.Background()
 	st := memory.NewMemoryStore()
 	storage := provider.NewMemoryObjectStorage("")

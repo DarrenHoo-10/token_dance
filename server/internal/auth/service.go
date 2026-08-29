@@ -567,7 +567,9 @@ func (s *Service) Login(ctx context.Context, email, password, returnTo, deviceLa
 	}
 
 	if cred.LockedUntil != nil && now.Before(*cred.LockedUntil) {
-		return nil, domain.NewAppError(401, "AUTH_INVALID_CREDENTIALS", "auth.accountLocked", "account temporarily locked, please try again later", nil, nil)
+		// Preserve the same password-work and response shape as unknown or bad-password accounts.
+		_, _ = crypto.VerifyPassword(password, s.dummyArgonHash)
+		return nil, domain.NewAppError(401, "AUTH_INVALID_CREDENTIALS", "auth.invalidCredentials", "invalid email or password", nil, nil)
 	}
 
 	match, verifyErr := crypto.VerifyPassword(password, cred.PasswordHash)

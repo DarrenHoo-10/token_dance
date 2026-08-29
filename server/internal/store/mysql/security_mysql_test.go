@@ -321,6 +321,92 @@ func TestMySQL_PasswordResetConcurrencyAndReplay(t *testing.T) {
 	}
 }
 
+func TestUSR017_OneTimeDeviceBindingConcurrencyAndIdempotencyMySQL(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	userID := "usr_binding_concurrency"
+	seedTestUser(t, db, st, userID, "binding_concurrency", "Binding Concurrency", "binding@tokendance.dev", false, now)
+	sessionID := "ses_" + userID
+	codeHash := crypto.SHA256([]byte("ONE-TIME-BINDING-CODE"))
+	challenge := domain.DeviceBindingChallenge{
+		ChallengeID:      "dbc_binding_concurrency",
+		UserID:           userID,
+		SessionID:        sessionID,
+		CodeLookupHash:   codeHash,
+		CodeKeyVersion:   1,
+		ChallengeStatus:  domain.ChallengeStatusPending,
+		ExpiresAt:        now.Add(5 * time.Minute),
+		ActiveSessionKey: &sessionID,
+		CreatedAt:        now,
+		UpdatedAt:        now,
+	}
+	if _, err := st.Device().CreateBindingChallenge(ctx, challenge); err != nil {
+		t.Fatal(err)
+	}
+	publicKey := crypto.SHA256([]byte("shared-binding-public-key"))
+	const concurrency = 20
+	results := make(chan *domain.Installation, concurrency)
+	errs := make(chan error, concurrency)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for index := 0; index < concurrency; index++ {
+		wg.Add(1)
+		go func(index int) {
+			defer wg.Done()
+			<-start
+			installation, err := st.Device().ClaimInstallationTx(context.Background(), codeHash, domain.Installation{
+				InstallationID:     "ins_binding_" + string(rune('a'+index)),
+				DevicePublicKey:    publicKey,
+				OSType:             "windows",
+				Architecture:       "x86_64",
+				CollectorVersion:   "1.0.0",
+				InstallationStatus: domain.InstallationStatusActive,
+				RegisteredAt:       now,
+				UpdatedAt:          now,
+			}, now)
+			results <- installation
+			errs <- err
+		}(index)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	close(errs)
+	var canonicalID string
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("same-public-key retry should be idempotent, got %v", err)
+		}
+	}
+	for result := range results {
+		if result == nil {
+			t.Fatal("nil installation result")
+		}
+		if canonicalID == "" {
+			canonicalID = result.InstallationID
+		} else if result.InstallationID != canonicalID {
+			t.Fatalf("binding created multiple installations: %s and %s", canonicalID, result.InstallationID)
+		}
+	}
+	var installationCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM installations WHERE user_id = ?`, userID).Scan(&installationCount); err != nil {
+		t.Fatal(err)
+	}
+	if installationCount != 1 {
+		t.Fatalf("expected exactly one installation, got %d", installationCount)
+	}
+	otherKey := crypto.SHA256([]byte("conflicting-binding-public-key"))
+	if _, err := st.Device().ClaimInstallationTx(ctx, codeHash, domain.Installation{
+		InstallationID: "ins_binding_conflict", DevicePublicKey: otherKey, OSType: "windows",
+		Architecture: "x86_64", CollectorVersion: "1.0.0", InstallationStatus: domain.InstallationStatusActive,
+		RegisteredAt: now, UpdatedAt: now,
+	}, now); err == nil {
+		t.Fatal("consumed code with a different public key must fail")
+	}
+}
+
 // TestMySQL_DeviceBindingStaleSessionAndOnboarding verifies that claiming a binding
 // code fails if the authorizing session was revoked or if onboarding is incomplete.
 func TestMySQL_DeviceBindingStaleSessionAndOnboarding(t *testing.T) {
@@ -447,7 +533,7 @@ func TestMySQL_DeviceBindingStaleSessionAndOnboarding(t *testing.T) {
 // TestMySQL_DevicePauseResumeRevokeAndAuthorizeIngestSharedLock verifies that
 // device revocation and ingest authorization share row locks in MySQL, ensuring
 // ingest immediately sees revocation without stale authorization windows.
-func TestMySQL_DevicePauseResumeRevokeAndAuthorizeIngestSharedLock(t *testing.T) {
+func TestUSR018_DeviceRevocationRejectsIngestMySQL(t *testing.T) {
 	st, _, cleanup := getTestStore(t)
 	defer cleanup()
 

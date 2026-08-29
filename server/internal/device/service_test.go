@@ -12,7 +12,7 @@ import (
 	"tokendance/internal/store/memory"
 )
 
-func TestDeviceManagementFlow(t *testing.T) {
+func TestUSR023_DevicePauseResumeRevokeLifecycle(t *testing.T) {
 	ctx := context.Background()
 	st := memory.NewMemoryStore()
 	cfg := config.DefaultConfig()

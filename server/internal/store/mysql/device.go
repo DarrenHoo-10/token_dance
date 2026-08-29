@@ -153,23 +153,58 @@ func (s *deviceStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 	}
 	defer tx.Rollback()
 
-	// Query challenge FOR UPDATE
+	// Lock the challenge regardless of terminal state so a lost successful response
+	// can be retried idempotently with the same public key.
 	queryChallenge := `
-		SELECT challenge_id, user_id, session_id, challenge_status, expires_at
+		SELECT challenge_id, user_id, session_id, challenge_status, expires_at, consumed_installation_id
 		FROM device_binding_challenges
-		WHERE code_lookup_hash = ? AND challenge_status = 'pending'
+		WHERE code_lookup_hash = ?
 		FOR UPDATE`
 
 	var challengeID, userID, sessionID string
 	var chStatus domain.ChallengeStatus
 	var expiresAt time.Time
+	var consumedInstallationID sql.NullString
 
-	err = tx.QueryRowContext(ctx, queryChallenge, bytes32Slice(codeHash)).Scan(&challengeID, &userID, &sessionID, &chStatus, &expiresAt)
+	err = tx.QueryRowContext(ctx, queryChallenge, bytes32Slice(codeHash)).Scan(
+		&challengeID, &userID, &sessionID, &chStatus, &expiresAt, &consumedInstallationID,
+	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, domain.ErrChallengeInvalid
 		}
 		return nil, fmt.Errorf("failed to lock challenge: %w", err)
+	}
+
+	if chStatus == domain.ChallengeStatusConsumed {
+		if !consumedInstallationID.Valid {
+			return nil, domain.ErrChallengeInvalid
+		}
+		const consumedQuery = `
+			SELECT installation_id, user_id, device_public_key, device_name,
+			       os_type, os_version, architecture, collector_version,
+			       installation_status, disabled_at, disabled_reason,
+			       status_version, registered_at, last_seen_at, revoked_at, updated_at
+			FROM installations
+			WHERE installation_id = ?
+			FOR UPDATE`
+		existing, err := s.scanInstallationRow(tx.QueryRowContext(ctx, consumedQuery, consumedInstallationID.String))
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, domain.ErrChallengeInvalid
+			}
+			return nil, fmt.Errorf("load consumed installation: %w", err)
+		}
+		if existing.UserID != userID || existing.DevicePublicKey != inst.DevicePublicKey || existing.InstallationStatus != domain.InstallationStatusActive {
+			return nil, domain.ErrPublicKeyConflict
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, fmt.Errorf("commit idempotent consumed claim: %w", err)
+		}
+		return existing, nil
+	}
+	if chStatus != domain.ChallengeStatusPending {
+		return nil, domain.ErrChallengeInvalid
 	}
 
 	if now.After(expiresAt) {

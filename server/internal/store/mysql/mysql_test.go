@@ -230,7 +230,7 @@ func TestMySQL_AuthStoreLifecycle(t *testing.T) {
 	}
 }
 
-func TestMySQL_ExportServiceIdempotencySurvivesKeyRotation(t *testing.T) {
+func TestUSR101_ExportIdempotencyAndKeyRotationMySQL(t *testing.T) {
 	st, db, cleanup := getTestStore(t)
 	defer cleanup()
 
@@ -701,7 +701,7 @@ func seedTestUser(t *testing.T, db *sql.DB, st *Store, userID, handle, displayNa
 	}
 }
 
-func TestMySQL_SeededMetricsAndUnsupportedVsZero(t *testing.T) {
+func TestUSR011_TenMetricsMySQLSupportedVsZero(t *testing.T) {
 	st, db, cleanup := getTestStore(t)
 	defer cleanup()
 
@@ -847,7 +847,7 @@ func TestMySQL_SeededMetricsAndUnsupportedVsZero(t *testing.T) {
 	}
 }
 
-func TestMySQL_DimensionFiltersAndBreakdowns(t *testing.T) {
+func TestUSR012_TokenTrendFiltersAndBreakdownsMySQL(t *testing.T) {
 	st, db, cleanup := getTestStore(t)
 	defer cleanup()
 
@@ -974,7 +974,56 @@ func TestMySQL_DimensionFiltersAndBreakdowns(t *testing.T) {
 	}
 }
 
-func TestMySQL_OldSnapshotPrivacyClosure(t *testing.T) {
+func TestUSR014_PersonalSkillRankingAcrossDaysAndAgentsMySQL(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	userID := "usr_skill_ranking"
+	seedTestUser(t, db, st, userID, "skill_ranker", "Skill Ranker", "skill-ranker@tokendance.dev", false, now)
+	publicKey := crypto.SHA256([]byte("public-skill-key"))
+	privateKey := crypto.SHA256([]byte("private-skill-key"))
+	for index, date := range []string{"2026-08-27", "2026-08-28", "2026-08-29"} {
+		agent := "claude-code"
+		if index == 1 {
+			agent = "cursor"
+		}
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO daily_skill_metrics (
+				metric_date, user_id, agent_id, skill_key, skill_public_name,
+				use_count, exact_use_count, success_count, failure_count,
+				duration_ms, source_max_event_pk, aggregation_version, computed_at, updated_at
+			) VALUES (?, ?, ?, ?, 'Public Review Skill', ?, ?, ?, 1, 100, ?, 2, ?, ?)`,
+			date, userID, agent, publicKey[:], 10+index, 10+index, 9+index, index+1, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO daily_skill_metrics (
+			metric_date, user_id, agent_id, skill_key, skill_public_name,
+			use_count, exact_use_count, success_count, failure_count,
+			duration_ms, source_max_event_pk, aggregation_version, computed_at, updated_at
+		) VALUES ('2026-08-29', ?, 'cursor', ?, NULL, 5, 5, 5, 0, 50, 10, 2, ?, ?)`,
+		userID, privateKey[:], now, now); err != nil {
+		t.Fatal(err)
+	}
+	range30d := domain.TimeRange{Key: domain.TimeRange30d, From: now.AddDate(0, 0, -29), To: now, Timezone: "UTC"}
+	result, err := st.Analytics().GetSkillRanking(ctx, userID, range30d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Skills) != 2 {
+		t.Fatalf("expected public and private skill rows, got %+v", result.Skills)
+	}
+	if result.Skills[0].SkillPublicName != "Public Review Skill" || result.Skills[0].UseCount != "33" || result.Skills[0].ActiveDays != 3 {
+		t.Fatalf("public skill aggregation mismatch: %+v", result.Skills[0])
+	}
+	if result.Skills[1].SkillPublicName != "Private Skill" || !strings.HasPrefix(result.Skills[1].SkillID, "skl_") || strings.Contains(strings.ToLower(result.Skills[1].SkillID), strings.ToLower(fmt.Sprintf("%x", privateKey[:]))) {
+		t.Fatalf("private skill identity leaked or was not masked: %+v", result.Skills[1])
+	}
+}
+
+func TestUSR015_ImmediatePrivacyClosureMySQL(t *testing.T) {
 	st, db, cleanup := getTestStore(t)
 	defer cleanup()
 
@@ -1057,7 +1106,7 @@ func TestMySQL_OldSnapshotPrivacyClosure(t *testing.T) {
 	}
 }
 
-func TestMySQL_PublicDTOWhitelist(t *testing.T) {
+func TestUSR016_PublicDTOWhitelistMySQL(t *testing.T) {
 	st, db, cleanup := getTestStore(t)
 	defer cleanup()
 
@@ -1164,7 +1213,7 @@ func TestMySQL_PublicDTOWhitelist(t *testing.T) {
 	}
 }
 
-func TestMySQL_SkillMinimumSample(t *testing.T) {
+func TestUSR106_PublicSkillMinimumSampleMySQL(t *testing.T) {
 	st, db, cleanup := getTestStore(t)
 	defer cleanup()
 
@@ -1253,7 +1302,7 @@ func TestMySQL_SkillMinimumSample(t *testing.T) {
 	}
 }
 
-func TestMySQL_CompareHiddenValues(t *testing.T) {
+func TestUSR107_CompareHiddenMetricPrivacyMySQL(t *testing.T) {
 	st, db, cleanup := getTestStore(t)
 	defer cleanup()
 

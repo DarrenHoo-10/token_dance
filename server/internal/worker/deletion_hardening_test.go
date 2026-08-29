@@ -102,7 +102,93 @@ func seedDeletionRequest(t *testing.T, db *sql.DB, requestID, userID, installati
 	}
 }
 
-func TestDeletionTwoWorkerSkipLockedCrashTakeoverAndStaleCompletion(t *testing.T) {
+func TestUSR013_MessageCountingTriggerCriteriaMySQL(t *testing.T) {
+	db := getTestMySQLDB(t)
+	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
+	defer func() {
+		_, _ = db.Exec("SELECT RELEASE_LOCK('tokendance_global_test_lock')")
+		db.Close()
+	}()
+	resetDeletionTestSchema(t, db)
+
+	ctx := context.Background()
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	userID := "usr_message_criteria"
+	installationID := "ins_message_criteria"
+	batchID := "bat_message_criteria"
+	seedDeletionUser(t, db, userID, "active")
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO installations (
+			installation_id, user_id, device_public_key, os_type, architecture,
+			collector_version, installation_status, registered_at, updated_at
+		) VALUES (?, ?, UNHEX(SHA2('message-device', 256)), 'windows', 'x86_64', '1.0.0', 'active', ?, ?)`,
+		installationID, userID, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO ingest_batches (
+			batch_id, installation_id, request_sha256, event_count, accepted_count,
+			duplicate_count, rejected_count, batch_status, received_at, committed_at, updated_at
+		) VALUES (?, ?, UNHEX(SHA2('message-batch', 256)), 6, 6, 0, 0, 'committed', ?, ?, ?)`,
+		batchID, installationID, now, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	type eventSeed struct {
+		id, eventType, turn, trigger string
+		duration                     interface{}
+		tokens                       interface{}
+	}
+	events := []eventSeed{
+		{"message-user-start-1", "turn_started", "turn-user", "user", nil, nil},
+		{"message-user-start-duplicate", "turn_started", "turn-user", "user", nil, nil},
+		{"message-user-complete", "turn_completed", "turn-user", "", 100, nil},
+		{"message-system-start", "turn_started", "turn-system", "system", nil, nil},
+		{"message-system-complete", "turn_completed", "turn-system", "", 200, nil},
+		{"message-model-request", "model_usage_recorded", "turn-user", "", nil, 10},
+	}
+	for _, event := range events {
+		if _, err := db.ExecContext(ctx, `
+			INSERT INTO usage_events (
+				event_id, schema_version, batch_id, installation_id, user_id,
+				adapter_id, adapter_version, agent_id, event_type, accuracy, source_kind,
+				occurred_at, received_at, session_hash, turn_hash, turn_trigger,
+				token_total, duration_ms, privacy_policy_version
+			) VALUES (
+				UNHEX(SHA2(?, 256)), 1, ?, ?, ?, 'test.adapter', '1.0.0', 'test-agent',
+				?, 'exact', 'runtime_stream', ?, ?, UNHEX(SHA2('session-message', 256)),
+				UNHEX(SHA2(?, 256)), NULLIF(?, ''), ?, ?, 1
+			)`, event.id, batchID, installationID, userID, event.eventType, now, now,
+			event.turn, event.trigger, event.tokens, event.duration); err != nil {
+			t.Fatalf("insert %s: %v", event.id, err)
+		}
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rebuildUserAggregates(ctx, tx, userID, []string{"2026-08-30"}); err != nil {
+		tx.Rollback()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	var messages, userMessages, turns, requests uint64
+	if err := db.QueryRowContext(ctx, `
+		SELECT message_count, user_message_count, interaction_turn_count, model_request_count
+		FROM daily_user_agent_metrics
+		WHERE metric_date = '2026-08-30' AND user_id = ? AND agent_id = 'test-agent'`, userID).
+		Scan(&messages, &userMessages, &turns, &requests); err != nil {
+		t.Fatal(err)
+	}
+	if messages != 4 || userMessages != 1 || turns != 2 || requests != 1 {
+		t.Fatalf("message criteria mismatch: messages=%d user=%d turns=%d requests=%d", messages, userMessages, turns, requests)
+	}
+}
+
+func TestUSR105_WorkerCrashTakeoverAndFencingMySQL(t *testing.T) {
 	db := getTestMySQLDB(t)
 	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
 	defer func() {
@@ -158,7 +244,7 @@ func TestDeletionTwoWorkerSkipLockedCrashTakeoverAndStaleCompletion(t *testing.T
 	}
 }
 
-func TestDeletionCancellationRaceCannotReclaimCancelledPendingAccount(t *testing.T) {
+func TestUSR103_DeletionCancellationRaceMySQL(t *testing.T) {
 	db := getTestMySQLDB(t)
 	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
 	defer func() {
@@ -311,7 +397,7 @@ func TestDeletionDatabaseAndObjectFailureInjectionRetainsRetryableState(t *testi
 	})
 }
 
-func TestRebuildPublishedLeaderboardsCreatesImmutableScopedMetricRevisionsMySQL8034(t *testing.T) {
+func TestUSR019_ImmutablePublishedLeaderboardSnapshotsMySQL(t *testing.T) {
 	db := getTestMySQLDB(t)
 	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
 	defer func() {

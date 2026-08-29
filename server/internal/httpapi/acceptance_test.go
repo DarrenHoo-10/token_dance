@@ -5,13 +5,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"tokendance/internal/config"
 	"tokendance/internal/domain"
 )
 
@@ -260,60 +264,107 @@ func TestUSR004_CodeReplayPrevention(t *testing.T) {
 
 // USR-005: 登录防枚举 (不存在邮箱和错误密码各 1,000 次 -> 错误码一致，响应时延分布无显著可利用差异)
 func TestUSR005_Argon2idAntiEnumeration(t *testing.T) {
-	router, _, st := setupTestRouter(t)
-
-	// Seed existing user
+	router, authSvc, st := setupTestRouter(t)
 	existingEmail := "realuser-usr005@tokendance.dev"
-	_, _, err := st.SeedUserForTest("usr_usr005real", "realuser", existingEmail, time.Now().UTC())
+	correctPassword := "CorrectPassword123!"
+
+	// Register through the shipped HTTP path so the known account has a real Argon2id credential.
+	codeBody, _ := json.Marshal(map[string]string{"email": existingEmail, "locale": "en-US"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register/code", bytes.NewReader(codeBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("request registration code: %d %s", rec.Code, rec.Body.String())
+	}
+	emailHash := authSvc.ComputeEmailLookupHash(existingEmail)
+	challenge, err := st.FindPendingEmailChallenge(context.Background(), domain.ChallengeTypeRegister, emailHash)
 	if err != nil {
-		t.Fatalf("failed to seed user: %v", err)
+		t.Fatal(err)
+	}
+	registrationCode := getChallengeCode(authSvc, challenge.CodeHash)
+	registerBody, _ := json.Marshal(map[string]string{"email": existingEmail, "code": registrationCode, "password": correctPassword})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(registerBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("complete registration: %d %s", rec.Code, rec.Body.String())
 	}
 
-	// 1. Existing user with wrong password
-	wrongPassBody, _ := json.Marshal(map[string]string{
-		"email":    existingEmail,
-		"password": "WrongPassword123!",
-	})
-	reqWrong := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(wrongPassBody))
-	reqWrong.Header.Set("Content-Type", "application/json")
-	recWrong := httptest.NewRecorder()
-	router.ServeHTTP(recWrong, reqWrong)
+	wrongPassBody, _ := json.Marshal(map[string]string{"email": existingEmail, "password": "WrongPassword123!"})
+	nonExistentBody, _ := json.Marshal(map[string]string{"email": "nonexistent-usr005@tokendance.dev", "password": "SomeRandomPassword123!"})
+	const attemptsPerCohort = 1000
+	wrongDurations := make([]time.Duration, 0, attemptsPerCohort)
+	unknownDurations := make([]time.Duration, 0, attemptsPerCohort)
 
-	if recWrong.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 Unauthorized for wrong password, got %d", recWrong.Code)
+	previousLogWriter := log.Writer()
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(previousLogWriter)
+
+	requestSequence := 0
+	requestLogin := func(body []byte) (time.Duration, ErrorWrapper) {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		// Use a unique direct peer address per request so the authentication timing
+		// observation is not replaced by the separately tested rate-limit response.
+		requestSequence++
+		request.RemoteAddr = fmt.Sprintf("198.51.%d.%d:1234", requestSequence/250, requestSequence%250+1)
+		response := httptest.NewRecorder()
+		started := time.Now()
+		router.ServeHTTP(response, request)
+		duration := time.Since(started)
+		if response.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d: %s", response.Code, response.Body.String())
+		}
+		var envelope ErrorWrapper
+		if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+			t.Fatal(err)
+		}
+		if envelope.Error.Code != "AUTH_INVALID_CREDENTIALS" || envelope.Error.MessageKey != "auth.invalidCredentials" {
+			t.Fatalf("enumerable response: %+v", envelope.Error)
+		}
+		return duration, envelope
 	}
 
-	var wrongResp ErrorWrapper
-	_ = json.Unmarshal(recWrong.Body.Bytes(), &wrongResp)
-	if wrongResp.Error.Code != "AUTH_INVALID_CREDENTIALS" {
-		t.Errorf("expected error code AUTH_INVALID_CREDENTIALS, got %s", wrongResp.Error.Code)
+	// Alternate cohorts to avoid warm-up and scheduler drift favoring one cohort.
+	for attempt := 0; attempt < attemptsPerCohort; attempt++ {
+		wrongDuration, wrongEnvelope := requestLogin(wrongPassBody)
+		unknownDuration, unknownEnvelope := requestLogin(nonExistentBody)
+		if wrongEnvelope.Error.Code != unknownEnvelope.Error.Code || wrongEnvelope.Error.MessageKey != unknownEnvelope.Error.MessageKey {
+			t.Fatalf("cohort response mismatch at attempt %d", attempt)
+		}
+		wrongDurations = append(wrongDurations, wrongDuration)
+		unknownDurations = append(unknownDurations, unknownDuration)
 	}
 
-	// 2. Non-existent user
-	nonExistentBody, _ := json.Marshal(map[string]string{
-		"email":    "nonexistent-usr005@tokendance.dev",
-		"password": "SomeRandomPassword123!",
-	})
-	reqNonExist := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(nonExistentBody))
-	reqNonExist.Header.Set("Content-Type", "application/json")
-	recNonExist := httptest.NewRecorder()
-	router.ServeHTTP(recNonExist, reqNonExist)
-
-	if recNonExist.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 Unauthorized for non-existent user, got %d", recNonExist.Code)
+	sort.Slice(wrongDurations, func(i, j int) bool { return wrongDurations[i] < wrongDurations[j] })
+	sort.Slice(unknownDurations, func(i, j int) bool { return unknownDurations[i] < unknownDurations[j] })
+	percentile := func(values []time.Duration, percentile int) time.Duration {
+		index := (len(values) - 1) * percentile / 100
+		return values[index]
 	}
-
-	var nonExistResp ErrorWrapper
-	_ = json.Unmarshal(recNonExist.Body.Bytes(), &nonExistResp)
-	if nonExistResp.Error.Code != "AUTH_INVALID_CREDENTIALS" {
-		t.Errorf("expected error code AUTH_INVALID_CREDENTIALS, got %s", nonExistResp.Error.Code)
+	wrongP50, unknownP50 := percentile(wrongDurations, 50), percentile(unknownDurations, 50)
+	wrongP95, unknownP95 := percentile(wrongDurations, 95), percentile(unknownDurations, 95)
+	absDuration := func(value time.Duration) time.Duration {
+		if value < 0 {
+			return -value
+		}
+		return value
 	}
-
-	// Verify both return identical error codes and message keys
-	if wrongResp.Error.Code != nonExistResp.Error.Code || wrongResp.Error.MessageKey != nonExistResp.Error.MessageKey {
-		t.Fatalf("anti-enumeration failure: wrong password error %+v differs from non-existent user error %+v",
-			wrongResp.Error, nonExistResp.Error)
+	maxDuration := func(a, b time.Duration) time.Duration {
+		if a > b {
+			return a
+		}
+		return b
 	}
+	p50Tolerance := maxDuration(5*time.Millisecond, maxDuration(wrongP50, unknownP50)/2)
+	p95Tolerance := maxDuration(10*time.Millisecond, maxDuration(wrongP95, unknownP95)/2)
+	if absDuration(wrongP50-unknownP50) > p50Tolerance || absDuration(wrongP95-unknownP95) > p95Tolerance {
+		t.Fatalf("exploitable timing separation: wrong p50=%v p95=%v unknown p50=%v p95=%v tolerances=%v/%v",
+			wrongP50, wrongP95, unknownP50, unknownP95, p50Tolerance, p95Tolerance)
+	}
+	t.Logf("USR-005 cohorts=%d each wrong[p50=%v p95=%v] unknown[p50=%v p95=%v]", attemptsPerCohort, wrongP50, wrongP95, unknownP50, unknownP95)
 }
 
 // USR-006: Session 撤销 (退出其他设备后复用旧 Cookie -> 立即 401，不依赖 Redis TTL)
@@ -750,7 +801,92 @@ func TestUSR010_LocaleAndMessageKeyConsistency(t *testing.T) {
 	}
 }
 
-// USR-021: Public Profile 投影 (修改资料、隐私、暂停/注销账户并并发读取 -> projection version 单调递增；关闭路径同事务 hidden，无私有字段)
+func TestUSR020_RedisUnavailablePreservesCorrectness(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.RedisAddr = "127.0.0.1:1"
+	router, authSvc, st := setupTestRouterWithConfig(t, cfg)
+	email := "redis-unavailable@tokendance.dev"
+
+	codeBody, _ := json.Marshal(map[string]string{"email": email, "locale": "en-US"})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register/code", bytes.NewReader(codeBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("register code failed without Redis: %d %s", rec.Code, rec.Body.String())
+	}
+	emailHash := authSvc.ComputeEmailLookupHash(email)
+	challenge, err := st.FindPendingEmailChallenge(context.Background(), domain.ChallengeTypeRegister, emailHash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := getChallengeCode(authSvc, challenge.CodeHash)
+	registerBody, _ := json.Marshal(map[string]string{"email": email, "code": code, "password": "RedisFallback123!", "returnTo": "/me"})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(registerBody))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("registration failed without Redis: %d %s", rec.Code, rec.Body.String())
+	}
+	cookie := extractSessionCookie(rec)
+	var authResponse map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &authResponse); err != nil {
+		t.Fatal(err)
+	}
+	csrf, _ := authResponse["csrfToken"].(string)
+	if cookie == nil || csrf == "" {
+		t.Fatal("missing session or CSRF without Redis")
+	}
+
+	writeRequest := func(method, path string, body []byte) *http.Request {
+		r := httptest.NewRequest(method, path, bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-CSRF-Token", csrf)
+		r.Header.Set("Origin", "http://example.com")
+		r.Header.Set("Sec-Fetch-Site", "same-origin")
+		r.AddCookie(cookie)
+		return r
+	}
+	onboardingBody, _ := json.Marshal(map[string]interface{}{
+		"displayName": "Redis Fallback", "handle": "redis_fallback", "timezone": "UTC", "locale": "en-US",
+		"privacy": map[string]interface{}{"publicProfileEnabled": false},
+	})
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, writeRequest(http.MethodPost, "/api/v1/me/onboarding", onboardingBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("onboarding failed without Redis: %d %s", rec.Code, rec.Body.String())
+	}
+
+	privacyBody, _ := json.Marshal(map[string]interface{}{
+		"publicProfileEnabled": true, "leaderboardVisibility": "public", "showTokenTotal": true,
+		"showBio": false, "showTrends": false, "showActivityCalendar": false,
+		"showAgentBreakdown": false, "showSkillRanking": false, "showAchievements": false,
+	})
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, writeRequest(http.MethodPatch, "/api/v1/me/privacy", privacyBody))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("privacy update failed without Redis: %d %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/public/users/redis_fallback", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("public query failed without Redis: %d %s", rec.Code, rec.Body.String())
+	}
+
+	exportBody, _ := json.Marshal(map[string]interface{}{"scope": "summary", "format": "csv", "filter": map[string]interface{}{}})
+	exportReq := writeRequest(http.MethodPost, "/api/v1/me/exports", exportBody)
+	exportReq.Header.Set("Idempotency-Key", "redis-fallback-export")
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, exportReq)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("durable task creation failed without Redis: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// USR-021: Public Profile 投影 (修改资料、隐私、暂停/注销账户并发读取 -> projection version 单调递增；关闭路径同事务 hidden，无私有字段)
 func TestUSR021_PublicProfileProjectionAndSameTransactionHidden(t *testing.T) {
 	router, _, st := setupTestRouter(t)
 

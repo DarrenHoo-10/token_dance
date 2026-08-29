@@ -98,8 +98,11 @@ func TestAvatarUploadIntentWebContractDecodesByteSize(t *testing.T) {
 }
 
 func setupTestRouter(t *testing.T) (http.Handler, *auth.Service, *memory.MemoryStore) {
+	return setupTestRouterWithConfig(t, config.DefaultConfig())
+}
+
+func setupTestRouterWithConfig(t *testing.T, cfg *config.Config) (http.Handler, *auth.Service, *memory.MemoryStore) {
 	st := memory.NewMemoryStore()
-	cfg := config.DefaultConfig()
 	cfg.Argon2MemoryKiB = 1024
 	cfg.Argon2Time = 1
 	cfg.Argon2Parallelism = 1

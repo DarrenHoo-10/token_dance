@@ -327,7 +327,7 @@ func TestWorker_ExportJobs_StreamingToStorageAndTakeover(t *testing.T) {
 	}
 }
 
-func TestWorker_DeletionRequests_AllFourScopesAndPIIScrubbing(t *testing.T) {
+func TestUSR104_DeletionTombstoneAndPIIScrubbingMySQL(t *testing.T) {
 	db := getTestMySQLDB(t)
 	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
 	defer func() {
