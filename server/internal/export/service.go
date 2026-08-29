@@ -3,7 +3,7 @@ package export
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,7 +61,7 @@ func (s *Service) CreateJob(ctx context.Context, userID string, in CreateExportI
 		}
 	}
 	idempotencyHash := crypto.HMACSHA256(s.idempotencyKeys.Current(), []byte(in.IdempotencyKey))
-	hashedIdempotencyKey := fmt.Sprintf("v%d:%s", s.idempotencyKeys.CurrentVersion, hex.EncodeToString(idempotencyHash[:]))
+	hashedIdempotencyKey := fmt.Sprintf("v%d:%s", s.idempotencyKeys.CurrentVersion, base64.RawURLEncoding.EncodeToString(idempotencyHash[:]))
 
 	if in.Scope != "summary" && in.Scope != "activity" && in.Scope != "all_aggregates" {
 		in.Scope = "summary"
