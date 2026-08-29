@@ -8,6 +8,7 @@ use adapter_sdk::{
 pub struct AdapterRuntime {
     pub adapter_id: String,
     pub adapter_version: String,
+    pub agent_version: Option<String>,
     pub status: AdapterRuntimeStatus,
     pub enabled: bool,
     pub detected: bool,
@@ -32,6 +33,7 @@ impl AdapterRuntime {
             },
             adapter_id,
             adapter_version,
+            agent_version: None,
             status: AdapterRuntimeStatus::Undetected,
             enabled: true,
             detected: false,
@@ -50,6 +52,7 @@ impl AdapterRuntime {
                 self.last_error = None;
                 self.last_error_code = None;
                 self.detected = report.detected;
+                self.agent_version = report.agent_version;
                 self.needs_permission = report.needs_permission;
                 self.needs_setup = report.needs_setup;
                 self.capability = report.capability;
@@ -64,10 +67,24 @@ impl AdapterRuntime {
     }
 
     pub fn apply_health(&mut self, health: &AdapterHealth) {
-        if !matches!(health, AdapterHealth::Healthy) {
+        if matches!(health, AdapterHealth::Healthy) {
+            self.last_error = None;
+            self.last_error_code = None;
+        } else {
             self.last_error = health_reason(health).map(ToOwned::to_owned);
         }
         self.recompute(Some(health));
+    }
+
+    pub fn apply_operation_error(&mut self, err: &AdapterError) {
+        self.last_error = Some(err.message.clone());
+        self.last_error_code = Some(err.code);
+        self.recompute(None);
+    }
+
+    pub fn record_setup_proposed(&mut self) {
+        self.setup_plan_status = Some(SetupPlanStatus::Proposed);
+        self.recompute(None);
     }
 
     pub fn apply_sources(&mut self, sources: Vec<SourceSpec>) {
@@ -120,7 +137,7 @@ impl AdapterRuntime {
         adapter_sdk::AdapterStatusReport {
             adapter_id: self.adapter_id.clone(),
             adapter_version: self.adapter_version.clone(),
-            agent_version: None,
+            agent_version: self.agent_version.clone(),
             runtime_status: self.status,
             capabilities: self.capability.capabilities.clone(),
             source_kinds: self
@@ -242,6 +259,25 @@ mod tests {
         assert_eq!(
             derive_status(&runtime, None),
             AdapterRuntimeStatus::Degraded
+        );
+    }
+
+    #[test]
+    fn healthy_probe_clears_recoverable_error_and_reports_agent_version() {
+        let mut runtime = runtime_with(&[Capability::Sessions], &[Capability::Sessions]);
+        runtime.agent_version = Some("2.3.4".into());
+        runtime.last_error = Some("temporary".into());
+        runtime.last_error_code = Some(ErrorCode::ProbeFailed);
+        runtime.apply_health(&AdapterHealth::Healthy);
+        assert_eq!(runtime.status, AdapterRuntimeStatus::Active);
+        assert!(runtime.last_error.is_none());
+        assert!(runtime.last_error_code.is_none());
+        assert_eq!(
+            runtime
+                .to_status_report("2026-08-30T00:00:00Z")
+                .agent_version
+                .as_deref(),
+            Some("2.3.4")
         );
     }
 

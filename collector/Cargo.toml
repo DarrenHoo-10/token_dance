@@ -6,6 +6,9 @@ members = [
     "crates/adapter-host",
     "crates/collector-core",
     "crates/privacy",
+    "crates/wal-spool",
+    "crates/uploader",
+    "crates/acquisition",
     "adapters/mock",
 ]
 
@@ -21,14 +24,26 @@ adapter-sdk = { path = "crates/adapter-sdk" }
 adapter-host = { path = "crates/adapter-host" }
 collector-core = { path = "crates/collector-core" }
 privacy = { path = "crates/privacy" }
+wal-spool = { path = "crates/wal-spool" }
+uploader = { path = "crates/uploader" }
+acquisition = { path = "crates/acquisition" }
 adapter-mock = { path = "adapters/mock" }
 
+aes-gcm = "0.10"
 async-trait = "0.1"
 base64 = "0.22"
+ciborium = "0.2"
+crc32c = "0.6"
+flate2 = "1"
 futures = "0.3"
 hmac = "0.12"
+keyring = "3"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+tempfile = "3"
 thiserror = "1"
-tokio = { version = "1", features = ["macros", "rt"] }
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time", "sync"] }
+zeroize = { version = "1", features = ["zeroize_derive"] }

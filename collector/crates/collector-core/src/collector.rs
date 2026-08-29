@@ -4,12 +4,13 @@ use std::sync::Arc;
 use adapter_host::AdapterHost;
 use adapter_sdk::{
     AdapterError, AdapterHealth, AdapterRuntimeStatus, AdapterStatusReport, AgentAdapter,
-    CapabilityReport, ErrorCode, NormalizedEvent, ProbeContext, RawFrame, SetupContext,
-    SourceContext, SourceSpec,
+    CapabilityReport, ErrorCode, ProbeContext, RawFrame, SetupContext, SourceContext, SourceSpec,
 };
 
-use privacy::PrivacyFilter;
+use futures::future::join_all;
+use privacy::{PrivacyCheckedEvent, PrivacyFilter};
 
+use crate::control::CollectionControl;
 use crate::runtime::AdapterRuntime;
 
 /// Core orchestrator. Adapters are injected through the host; Core has no product switch.
@@ -17,6 +18,7 @@ pub struct Collector {
     installation_id: String,
     host: AdapterHost,
     privacy: PrivacyFilter,
+    controls: HashMap<String, CollectionControl>,
     runtimes: HashMap<String, AdapterRuntime>,
 }
 
@@ -26,6 +28,7 @@ impl Collector {
             installation_id: installation_id.into(),
             host: AdapterHost::new(),
             privacy: PrivacyFilter,
+            controls: HashMap::new(),
             runtimes: HashMap::new(),
         }
     }
@@ -35,6 +38,7 @@ impl Collector {
             installation_id: installation_id.into(),
             host,
             privacy: PrivacyFilter,
+            controls: HashMap::new(),
             runtimes: HashMap::new(),
         }
     }
@@ -43,14 +47,12 @@ impl Collector {
         &self.installation_id
     }
 
-    pub fn host(&self) -> &AdapterHost {
-        &self.host
-    }
-
     pub fn register_adapter(&mut self, adapter: Arc<dyn AgentAdapter>) -> Result<(), AdapterError> {
-        let id = adapter.manifest().id.clone();
-        let version = adapter.manifest().version.clone();
-        self.host.register(adapter)?;
+        let manifest = self.host.register(adapter)?;
+        let id = manifest.id;
+        let version = manifest.version;
+        self.controls
+            .insert(id.clone(), CollectionControl::default());
         self.runtimes
             .insert(id.clone(), AdapterRuntime::new(id, version));
         Ok(())
@@ -72,6 +74,30 @@ impl Collector {
         self.runtimes.get(adapter_id).map(|runtime| runtime.status)
     }
 
+    pub fn is_enabled(&self, adapter_id: &str) -> bool {
+        self.controls
+            .get(adapter_id)
+            .is_some_and(CollectionControl::is_enabled)
+    }
+
+    pub fn control(&self, adapter_id: &str) -> Option<CollectionControl> {
+        self.controls.get(adapter_id).cloned()
+    }
+
+    fn ensure_enabled(&self, adapter_id: &str) -> Result<(), AdapterError> {
+        let runtime = self.runtimes.get(adapter_id).ok_or_else(|| {
+            AdapterError::adapter_not_found(format!("adapter `{adapter_id}` is not registered"))
+        })?;
+        if runtime.enabled && self.is_enabled(adapter_id) {
+            Ok(())
+        } else {
+            Err(AdapterError::new(
+                ErrorCode::AdapterDisabled,
+                format!("adapter `{adapter_id}` is disabled"),
+            ))
+        }
+    }
+
     pub fn capability_reports(&self) -> Vec<CapabilityReport> {
         self.runtimes()
             .into_iter()
@@ -91,7 +117,21 @@ impl Collector {
         let ctx = ProbeContext {
             installation_id: self.installation_id.clone(),
         };
-        let outcomes = self.host.probe_all(ctx).await;
+        let enabled_ids: Vec<String> = self
+            .runtimes()
+            .into_iter()
+            .filter(|runtime| runtime.enabled)
+            .map(|runtime| runtime.adapter_id.clone())
+            .collect();
+        let host = &self.host;
+        let outcomes = join_all(enabled_ids.into_iter().map(|id| {
+            let call_ctx = ctx.clone();
+            async move {
+                let result = host.probe(&id, call_ctx).await;
+                (id, result)
+            }
+        }))
+        .await;
         for (id, result) in outcomes {
             if let Some(runtime) = self.runtimes.get_mut(&id) {
                 runtime.apply_probe_result(result);
@@ -103,17 +143,28 @@ impl Collector {
         &mut self,
         adapter_id: &str,
     ) -> Result<AdapterHealth, AdapterError> {
-        let health = self.host.health(adapter_id).await?;
-        if let Some(runtime) = self.runtimes.get_mut(adapter_id) {
-            runtime.apply_health(&health);
+        self.ensure_enabled(adapter_id)?;
+        match self.host.health(adapter_id).await {
+            Ok(health) => {
+                if let Some(runtime) = self.runtimes.get_mut(adapter_id) {
+                    runtime.apply_health(&health);
+                }
+                Ok(health)
+            }
+            Err(err) => {
+                if let Some(runtime) = self.runtimes.get_mut(adapter_id) {
+                    runtime.apply_operation_error(&err);
+                }
+                Err(err)
+            }
         }
-        Ok(health)
     }
 
     pub async fn discover_sources(
         &mut self,
         adapter_id: &str,
     ) -> Result<Vec<SourceSpec>, AdapterError> {
+        self.ensure_enabled(adapter_id)?;
         let ctx = SourceContext {
             installation_id: self.installation_id.clone(),
         };
@@ -134,26 +185,25 @@ impl Collector {
         }
     }
 
-    pub async fn approve_setup(
+    /// Request a declarative setup proposal. This does not mutate user configuration.
+    pub async fn propose_setup(
         &mut self,
         adapter_id: &str,
     ) -> Result<adapter_sdk::SetupPlan, AdapterError> {
-        if let Some(runtime) = self.runtimes.get_mut(adapter_id) {
-            runtime.begin_configure();
-        }
+        self.ensure_enabled(adapter_id)?;
         let ctx = SetupContext {
             installation_id: self.installation_id.clone(),
         };
         match self.host.setup_plan(adapter_id, ctx).await {
             Ok(plan) => {
                 if let Some(runtime) = self.runtimes.get_mut(adapter_id) {
-                    runtime.finish_configure_ok();
+                    runtime.record_setup_proposed();
                 }
                 Ok(plan)
             }
             Err(err) => {
                 if let Some(runtime) = self.runtimes.get_mut(adapter_id) {
-                    runtime.finish_configure_err(&err);
+                    runtime.apply_operation_error(&err);
                 }
                 Err(err)
             }
@@ -164,7 +214,8 @@ impl Collector {
         &self,
         adapter_id: &str,
         frame: RawFrame,
-    ) -> Result<Vec<NormalizedEvent>, AdapterError> {
+    ) -> Result<Vec<PrivacyCheckedEvent>, AdapterError> {
+        self.ensure_enabled(adapter_id)?;
         let events = self.host.decode(adapter_id, frame).await?;
         self.privacy
             .filter_all(events)
@@ -176,6 +227,9 @@ impl Collector {
             AdapterError::adapter_not_found(format!("adapter `{adapter_id}` is not registered"))
         })?;
         runtime.disable();
+        if let Some(control) = self.controls.get(adapter_id) {
+            control.disable();
+        }
         Ok(())
     }
 
@@ -184,6 +238,9 @@ impl Collector {
             AdapterError::adapter_not_found(format!("adapter `{adapter_id}` is not registered"))
         })?;
         runtime.enable();
+        if let Some(control) = self.controls.get(adapter_id) {
+            control.enable();
+        }
         Ok(())
     }
 }

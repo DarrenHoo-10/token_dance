@@ -191,21 +191,26 @@ fn validate_path_permission(
             format_path_permission(permission)
         )));
     }
-    if expected_access == PathAccess::Read && is_unbounded_home_read(permission) {
+    if is_unbounded_home_access(permission) {
         return Err(AdapterError::manifest_permission_denied(format!(
-            "path `{}` grants whole-home read access",
+            "path `{}` grants whole-home access",
             format_path_permission(permission)
         )));
     }
     Ok(())
 }
 
-fn is_unbounded_home_read(permission: &PathPermission) -> bool {
+fn is_unbounded_home_access(permission: &PathPermission) -> bool {
     if permission.template != PathTemplateId::UserHome {
         return false;
     }
-    let glob = permission.relative_glob.trim();
-    glob.is_empty() || glob == "*" || glob == "**" || glob == "/**"
+    let normalized = permission.relative_glob.trim().replace('\\', "/");
+    let first = normalized
+        .trim_start_matches('/')
+        .split('/')
+        .next()
+        .unwrap_or("");
+    first.is_empty() || first.contains('*') || first.contains('?')
 }
 
 fn validate_command(command: &CommandPermission) -> Result<(), AdapterError> {
@@ -277,16 +282,23 @@ fn split_template(template: &str) -> Option<TemplateParts> {
     } else if !path.is_empty() {
         return None;
     }
-    if path.contains("${") {
+    if path.contains("${") || path.contains('\0') {
         return None;
     }
     let segments = if path.is_empty() {
         Vec::new()
     } else {
-        path.split('/')
-            .filter(|segment| !segment.is_empty())
-            .map(ToOwned::to_owned)
-            .collect()
+        let raw: Vec<&str> = path.split('/').collect();
+        if raw.iter().any(|segment| {
+            segment.is_empty()
+                || *segment == "."
+                || *segment == ".."
+                || segment.contains(':')
+                || segment.starts_with("//")
+        }) {
+            return None;
+        }
+        raw.into_iter().map(ToOwned::to_owned).collect()
     };
     Some(TemplateParts { var, segments })
 }
@@ -332,6 +344,23 @@ mod tests {
             template: PathTemplateId::UserHome,
             relative_glob: "**".into(),
             access: PathAccess::Read,
+        }];
+        let err = manifest.validate().unwrap_err();
+        assert_eq!(err.code, ErrorCode::ManifestPermissionDenied);
+    }
+
+    #[test]
+    fn rejects_traversal_and_wildcard_home_access() {
+        assert!(!path_template_covers(
+            "${AGENT_CONFIG_HOME}/sessions/**",
+            "${AGENT_CONFIG_HOME}/sessions/../../credentials.json"
+        ));
+
+        let mut manifest = sample_manifest("dev.tokenshow.adapter.example");
+        manifest.permissions.write_paths = vec![PathPermission {
+            template: PathTemplateId::UserHome,
+            relative_glob: "*/**".into(),
+            access: PathAccess::Write,
         }];
         let err = manifest.validate().unwrap_err();
         assert_eq!(err.code, ErrorCode::ManifestPermissionDenied);

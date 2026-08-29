@@ -1,19 +1,24 @@
 [package]
-name = "collector-core"
+name = "acquisition"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
 [dependencies]
-adapter-host.workspace = true
 adapter-sdk.workspace = true
-futures.workspace = true
+collector-core.workspace = true
 privacy.workspace = true
 protocol.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+wal-spool.workspace = true
 
 [dev-dependencies]
 adapter-mock.workspace = true
 async-trait.workspace = true
-serde_json.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
+uploader.workspace = true

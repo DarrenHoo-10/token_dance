@@ -93,10 +93,7 @@ pub fn assert_source_allowed(
         }
         SourceSpec::RuntimeStream { .. } => Ok(()),
         SourceSpec::LocalHttpApi { url, .. } => {
-            if !(url.starts_with("http://127.0.0.1")
-                || url.starts_with("http://localhost")
-                || url.starts_with("http://[::1]"))
-            {
+            if !is_loopback_http_url(url) {
                 return Err(AdapterError::new(
                     ErrorCode::SourcePermissionDenied,
                     format!("local HTTP source `{url}` is not loopback"),
@@ -166,6 +163,48 @@ fn is_loopback(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "::1")
 }
 
+fn is_loopback_http_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("http://") else {
+        return false;
+    };
+    if rest.contains('@') || rest.contains('#') || rest.contains('\\') {
+        return false;
+    }
+    let authority = rest.split('/').next().unwrap_or("");
+    if authority.is_empty() {
+        return false;
+    }
+    let host = if let Some(ipv6) = authority.strip_prefix('[') {
+        let Some(close) = ipv6.find(']') else {
+            return false;
+        };
+        let host = &ipv6[..close];
+        let suffix = &ipv6[close + 1..];
+        if !suffix.is_empty()
+            && (!suffix.starts_with(':')
+                || suffix[1..].is_empty()
+                || !suffix[1..].bytes().all(|byte| byte.is_ascii_digit()))
+        {
+            return false;
+        }
+        host
+    } else {
+        match authority.rsplit_once(':') {
+            Some((host, port)) if !host.contains(':') => {
+                if port.is_empty() || !port.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return false;
+                }
+                host
+            }
+            _ => authority,
+        }
+    };
+    host == "localhost"
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+}
+
 #[cfg(test)]
 mod tests {
     use protocol::{CommandPermission, SourceKind};
@@ -207,6 +246,45 @@ mod tests {
             },
         )
         .unwrap();
+    }
+
+    #[test]
+    fn local_http_requires_exact_loopback_authority() {
+        let mut manifest = manifest();
+        manifest.sources.push(SourceKind::LocalHttpApi);
+        for url in [
+            "http://127.0.0.1:4318/v1/events",
+            "http://localhost:8080/health",
+            "http://[::1]:8080/health",
+        ] {
+            assert_source_allowed(
+                &manifest,
+                &SourceSpec::LocalHttpApi {
+                    id: "local".into(),
+                    url: url.into(),
+                },
+            )
+            .unwrap();
+        }
+        for url in [
+            "http://localhost.evil.example/",
+            "http://localhost@evil.example/",
+            "http://127.0.0.1.evil.example/",
+            "http://[::1]evil.example/",
+            "https://127.0.0.1/",
+        ] {
+            assert!(
+                assert_source_allowed(
+                    &manifest,
+                    &SourceSpec::LocalHttpApi {
+                        id: "local".into(),
+                        url: url.into(),
+                    },
+                )
+                .is_err(),
+                "accepted malicious URL {url}"
+            );
+        }
     }
 
     #[test]

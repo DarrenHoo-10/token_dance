@@ -20,11 +20,24 @@ pub enum PrivacyError {
     Serialization,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct PrivacyCheckedEvent(EventEnvelope);
+
+impl PrivacyCheckedEvent {
+    pub fn as_envelope(&self) -> &EventEnvelope {
+        &self.0
+    }
+
+    pub fn into_envelope(self) -> EventEnvelope {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct PrivacyFilter;
 
 impl PrivacyFilter {
-    pub fn filter(&self, event: EventEnvelope) -> Result<EventEnvelope, PrivacyError> {
+    pub fn filter(&self, event: EventEnvelope) -> Result<PrivacyCheckedEvent, PrivacyError> {
         if event.schema_version != protocol::PROTOCOL_VERSION {
             return Err(PrivacyError::UnsupportedSchema);
         }
@@ -34,6 +47,12 @@ impl PrivacyFilter {
         validate_prefixed_id(&event.installation_id)
             .then_some(())
             .ok_or(PrivacyError::InvalidIdentifier("installationId"))?;
+        validate_identifier(&event.adapter_id, "adapterId")?;
+        validate_version(&event.adapter_version, "adapterVersion")?;
+        validate_identifier(&event.agent_id, "agentId")?;
+        if let Some(agent_version) = event.agent_version.as_deref() {
+            validate_version(agent_version, "agentVersion")?;
+        }
         validate_hmac(&event.source.cursor_hmac, "source.cursorHmac")?;
         validate_hmac(
             &event.source.raw_fingerprint_hmac,
@@ -44,29 +63,89 @@ impl PrivacyFilter {
         validate_optional_hmac(event.tool_call_hash.as_deref(), "toolCallHash")?;
         match &event.payload {
             EventPayload::SessionStarted(payload) => {
+                validate_optional_identifier(payload.model_id.as_deref(), "modelId")?;
                 validate_optional_hmac(payload.workspace_hash.as_deref(), "workspaceHash")?;
+            }
+            EventPayload::TurnCompleted(payload) => {
+                validate_optional_identifier(payload.error_class.as_deref(), "errorClass")?;
+            }
+            EventPayload::ModelUsageRecorded(payload) => {
+                validate_identifier(&payload.provider_id, "providerId")?;
+                validate_identifier(&payload.model_id, "modelId")?;
+            }
+            EventPayload::ToolInvoked(payload) => {
+                validate_identifier(&payload.tool_category, "toolCategory")?;
             }
             EventPayload::SkillInvoked(payload) => {
                 validate_hmac(&payload.skill_key, "skillKey")?;
                 validate_optional_hmac(payload.plugin_key.as_deref(), "pluginKey")?;
             }
+            EventPayload::CodeChanged(payload) => {
+                validate_optional_identifier(payload.language.as_deref(), "language")?;
+            }
             EventPayload::AgentSpawned(payload) => {
                 validate_hmac(&payload.child_session_hash, "childSessionHash")?;
+                validate_identifier(&payload.spawned_agent_type, "spawnedAgentType")?;
             }
             _ => {}
         }
 
         let value = serde_json::to_value(&event).map_err(|_| PrivacyError::Serialization)?;
         inspect_value(&value, "$")?;
-        Ok(event)
+        Ok(PrivacyCheckedEvent(event))
     }
 
     pub fn filter_all(
         &self,
         events: Vec<EventEnvelope>,
-    ) -> Result<Vec<EventEnvelope>, PrivacyError> {
+    ) -> Result<Vec<PrivacyCheckedEvent>, PrivacyError> {
         events.into_iter().map(|event| self.filter(event)).collect()
     }
+}
+
+fn validate_version(value: &str, field: &'static str) -> Result<(), PrivacyError> {
+    let safe = !value.is_empty()
+        && value.len() <= 64
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-' | b'+')
+        });
+    if safe {
+        Ok(())
+    } else {
+        Err(PrivacyError::InvalidIdentifier(field))
+    }
+}
+
+fn validate_optional_identifier(
+    value: Option<&str>,
+    field: &'static str,
+) -> Result<(), PrivacyError> {
+    match value {
+        Some(value) => validate_identifier(value, field),
+        None => Ok(()),
+    }
+}
+
+fn validate_identifier(value: &str, field: &'static str) -> Result<(), PrivacyError> {
+    let safe = !value.is_empty()
+        && value.len() <= 160
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
+        && !looks_like_secret(value);
+    if safe {
+        Ok(())
+    } else {
+        Err(PrivacyError::InvalidIdentifier(field))
+    }
+}
+
+fn looks_like_secret(value: &str) -> bool {
+    let lowered = value.to_ascii_lowercase();
+    (lowered.starts_with("sk-") && value.len() > 20)
+        || lowered.starts_with("ghp_")
+        || lowered.starts_with("xoxb-")
+        || lowered.starts_with("bearer")
 }
 
 fn validate_optional_hmac(value: Option<&str>, field: &'static str) -> Result<(), PrivacyError> {
@@ -143,13 +222,18 @@ fn inspect_string(text: &str, path: &str) -> Result<(), PrivacyError> {
             .as_bytes()
             .get(2)
             .is_some_and(|byte| *byte == b'\\' || *byte == b'/');
-    let has_unix_home =
-        text.starts_with("/Users/") || text.starts_with("/home/") || text.starts_with("/root/");
-    let has_secret_marker = text.contains("TOKSHOW_TEST_")
-        || lowered.contains("authorization: bearer")
+    let has_absolute_path = text.starts_with('/') || text.starts_with("\\\\");
+    let has_secret_marker = lowered.contains("authorization: bearer")
         || lowered.contains("api_key=")
-        || lowered.contains("apikey=");
-    if text.len() > MAX_STRING_BYTES || has_windows_path || has_unix_home || has_secret_marker {
+        || lowered.contains("apikey=")
+        || looks_like_secret(text);
+    let has_unsafe_text = text.chars().any(char::is_control) || text.contains("://");
+    if text.len() > MAX_STRING_BYTES
+        || has_windows_path
+        || has_absolute_path
+        || has_secret_marker
+        || has_unsafe_text
+    {
         return Err(PrivacyError::SensitiveContent(path.to_string()));
     }
     Ok(())
@@ -201,24 +285,34 @@ mod tests {
 
     #[test]
     fn accepts_schema_valid_content_free_event() {
-        assert_eq!(PrivacyFilter.filter(event()).unwrap(), event());
+        assert_eq!(
+            PrivacyFilter.filter(event()).unwrap().as_envelope(),
+            &event()
+        );
     }
 
     #[test]
-    fn rejects_canary_and_absolute_path_in_allowed_string_slots() {
-        let mut canary = event();
-        canary.agent_id = "TOKSHOW_TEST_PROMPT_SECRET".into();
-        assert!(matches!(
-            PrivacyFilter.filter(canary),
-            Err(PrivacyError::SensitiveContent(_))
-        ));
+    fn rejects_prose_secret_and_absolute_path_in_identifier_slots() {
+        let mut prose = event();
+        prose.agent_id = "Please refactor the private payment code".into();
+        assert_eq!(
+            PrivacyFilter.filter(prose),
+            Err(PrivacyError::InvalidIdentifier("agentId"))
+        );
 
         let mut path = event();
         path.agent_id = r"C:\Users\private\session.jsonl".into();
-        assert!(matches!(
+        assert_eq!(
             PrivacyFilter.filter(path),
-            Err(PrivacyError::SensitiveContent(_))
-        ));
+            Err(PrivacyError::InvalidIdentifier("agentId"))
+        );
+
+        let mut version = event();
+        version.agent_version = Some("private prompt content".into());
+        assert_eq!(
+            PrivacyFilter.filter(version),
+            Err(PrivacyError::InvalidIdentifier("agentVersion"))
+        );
     }
 
     #[test]

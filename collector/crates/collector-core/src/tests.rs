@@ -6,7 +6,7 @@ use adapter_mock::MockAdapter;
 use adapter_sdk::{
     sample_manifest, AdapterError, AdapterHealth, AdapterManifest, AdapterRuntimeStatus,
     AgentAdapter, Capability, CapabilityReport, ConfigMutation, ProbeContext, ProbeReport,
-    RawFrame, SetupContext, SetupPlan, SourceContext, SourceKind, SourceSpec,
+    RawFrame, SetupContext, SetupPlan, SetupPlanStatus, SourceContext, SourceKind, SourceSpec,
 };
 use async_trait::async_trait;
 
@@ -159,6 +159,21 @@ async fn partial_capabilities_are_degraded() {
 }
 
 #[tokio::test]
+async fn setup_request_remains_proposed_until_an_executor_applies_it() {
+    let mut collector = Collector::new("ins_setup");
+    collector
+        .register_adapter(Arc::new(StubAdapter::new("dev.tokenshow.adapter.setup")))
+        .unwrap();
+    collector
+        .propose_setup("dev.tokenshow.adapter.setup")
+        .await
+        .unwrap();
+    let runtime = collector.runtime("dev.tokenshow.adapter.setup").unwrap();
+    assert_eq!(runtime.setup_plan_status, Some(SetupPlanStatus::Proposed));
+    assert_ne!(runtime.setup_plan_status, Some(SetupPlanStatus::Applied));
+}
+
+#[tokio::test]
 async fn disable_one_adapter_leaves_others_active() {
     let mut collector = Collector::new("ins_disable");
     collector
@@ -177,6 +192,11 @@ async fn disable_one_adapter_leaves_others_active() {
         collector.status_of("dev.tokenshow.adapter.two"),
         Some(AdapterRuntimeStatus::Active)
     );
+    let error = collector
+        .discover_sources("dev.tokenshow.adapter.one")
+        .await
+        .expect_err("disabled Adapter must not be called");
+    assert_eq!(error.code, adapter_sdk::ErrorCode::AdapterDisabled);
 }
 
 #[tokio::test]
@@ -186,6 +206,7 @@ async fn decode_applies_final_privacy_filter() {
     collector
         .register_adapter(Arc::new(MockAdapter::new()))
         .unwrap();
+    collector.probe_all().await;
     let frame = RawFrame::jsonl(
         &installation_id,
         "sessions",

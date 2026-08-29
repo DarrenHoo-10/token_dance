@@ -1,21 +1,30 @@
+use std::future::pending;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use adapter_sdk::{
-    sample_manifest, AdapterError, AdapterHealth, AdapterManifest, AgentAdapter, CapabilityReport,
-    ConfigMutation, ErrorCode, ProbeContext, ProbeReport, RawFrame, RollbackStep, SetupContext,
-    SetupPlan, SourceContext, SourceSpec, VerifyStep,
+    sample_manifest, Accuracy, AdapterError, AdapterHealth, AdapterManifest, AgentAdapter,
+    CapabilityReport, ConfigMutation, ErrorCode, EventEnvelope, EventPayload, EventSource,
+    ProbeContext, ProbeReport, RawFrame, RollbackStep, SetupContext, SetupPlan, SourceContext,
+    SourceKind, SourceSpec, TokenUsage, VerifyStep,
 };
 use async_trait::async_trait;
+use protocol::ModelUsageRecordedPayload;
 
 use crate::AdapterHost;
 
 struct StubAdapter {
     manifest: AdapterManifest,
     detected: bool,
+    agent_version: Option<String>,
     panic_on_probe: bool,
     panic_on_decode: bool,
+    hang_probe: bool,
     fail_probe: bool,
+    spoof_capability: bool,
+    unsafe_reason: bool,
     overreach_source: bool,
+    decoded_events: Vec<adapter_sdk::NormalizedEvent>,
 }
 
 impl StubAdapter {
@@ -25,11 +34,56 @@ impl StubAdapter {
         Self {
             manifest,
             detected: true,
+            agent_version: Some("1.0.0".into()),
             panic_on_probe: false,
             panic_on_decode: false,
+            hang_probe: false,
             fail_probe: false,
+            spoof_capability: false,
+            unsafe_reason: false,
             overreach_source: false,
+            decoded_events: Vec::new(),
         }
+    }
+}
+
+fn normalized_event(
+    manifest: &AdapterManifest,
+    installation_id: &str,
+    agent_version: &str,
+) -> EventEnvelope {
+    let hmac = format!("hmac-sha256:{}", "A".repeat(43));
+    EventEnvelope {
+        schema_version: "1.0".into(),
+        event_id: "B".repeat(43),
+        adapter_id: manifest.id.clone(),
+        adapter_version: manifest.version.clone(),
+        agent_id: manifest.agent.id.clone(),
+        agent_version: Some(agent_version.into()),
+        installation_id: installation_id.into(),
+        occurred_at: "2026-08-30T00:00:00Z".into(),
+        session_hash: Some(hmac.clone()),
+        turn_hash: None,
+        tool_call_hash: None,
+        source: EventSource {
+            kind: SourceKind::JsonlTail,
+            cursor_hmac: hmac.clone(),
+            raw_fingerprint_hmac: hmac,
+        },
+        accuracy: Accuracy::Exact,
+        payload: EventPayload::ModelUsageRecorded(ModelUsageRecordedPayload {
+            provider_id: "mock".into(),
+            model_id: "mock-model".into(),
+            tokens: TokenUsage {
+                input_tokens: None,
+                output_tokens: None,
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+                reasoning_tokens: None,
+                tool_tokens: None,
+                total_tokens: Some("1".into()),
+            },
+        }),
     }
 }
 
@@ -43,6 +97,9 @@ impl AgentAdapter for StubAdapter {
         if self.panic_on_probe {
             panic!("stub probe panic");
         }
+        if self.hang_probe {
+            pending::<()>().await;
+        }
         if self.fail_probe {
             return Err(AdapterError::probe_failed("forced probe failure"));
         }
@@ -51,17 +108,25 @@ impl AgentAdapter for StubAdapter {
         } else {
             Vec::new()
         };
+        let mut capability = CapabilityReport::from_declared(
+            &self.manifest.id,
+            &self.manifest.version,
+            &self.manifest.capabilities,
+            &available,
+        );
+        if self.spoof_capability {
+            capability.adapter_id = "dev.tokenshow.adapter.spoofed".into();
+        }
+        if self.unsafe_reason {
+            capability.capabilities[0].safe_reason_code =
+                Some("C:\\Users\\private\\prompt content".into());
+        }
         Ok(ProbeReport {
             detected: self.detected,
-            agent_version: Some("1.0.0".into()),
+            agent_version: self.agent_version.clone(),
             needs_permission: false,
             needs_setup: false,
-            capability: CapabilityReport::from_declared(
-                &self.manifest.id,
-                &self.manifest.version,
-                &self.manifest.capabilities,
-                &available,
-            ),
+            capability,
             detail: Some(ctx.installation_id),
         })
     }
@@ -107,12 +172,53 @@ impl AgentAdapter for StubAdapter {
         if self.panic_on_decode {
             panic!("stub decode panic");
         }
-        Ok(Vec::new())
+        Ok(self.decoded_events.clone())
     }
 
     async fn health(&self) -> AdapterHealth {
         AdapterHealth::Healthy
     }
+}
+
+struct PanicManifestAdapter;
+
+#[async_trait]
+impl AgentAdapter for PanicManifestAdapter {
+    fn manifest(&self) -> &AdapterManifest {
+        panic!("manifest panic")
+    }
+
+    async fn probe(&self, _ctx: ProbeContext) -> Result<ProbeReport, AdapterError> {
+        unreachable!()
+    }
+
+    async fn setup_plan(&self, _ctx: SetupContext) -> Result<SetupPlan, AdapterError> {
+        unreachable!()
+    }
+
+    async fn discover_sources(&self, _ctx: SourceContext) -> Result<Vec<SourceSpec>, AdapterError> {
+        unreachable!()
+    }
+
+    async fn decode(
+        &self,
+        _frame: RawFrame,
+    ) -> Result<Vec<adapter_sdk::NormalizedEvent>, AdapterError> {
+        unreachable!()
+    }
+
+    async fn health(&self) -> AdapterHealth {
+        unreachable!()
+    }
+}
+
+#[test]
+fn manifest_panic_is_rejected_without_escaping() {
+    let mut host = AdapterHost::new();
+    let error = host
+        .register(Arc::new(PanicManifestAdapter))
+        .expect_err("manifest panic must be isolated");
+    assert_eq!(error.code, ErrorCode::AdapterPanic);
 }
 
 #[tokio::test]
@@ -150,6 +256,42 @@ async fn rejects_duplicate_and_incompatible_protocol() {
 }
 
 #[tokio::test]
+async fn rejects_spoofed_capability_identity() {
+    let mut host = AdapterHost::new();
+    let mut spoofed = StubAdapter::new("dev.tokenshow.adapter.one");
+    spoofed.spoof_capability = true;
+    host.register(Arc::new(spoofed)).unwrap();
+    let error = host
+        .probe(
+            "dev.tokenshow.adapter.one",
+            ProbeContext {
+                installation_id: "ins_1".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::ProbeFailed);
+}
+
+#[tokio::test]
+async fn rejects_unsafe_capability_reason_code() {
+    let mut host = AdapterHost::new();
+    let mut unsafe_adapter = StubAdapter::new("dev.tokenshow.adapter.one");
+    unsafe_adapter.unsafe_reason = true;
+    host.register(Arc::new(unsafe_adapter)).unwrap();
+    let error = host
+        .probe(
+            "dev.tokenshow.adapter.one",
+            ProbeContext {
+                installation_id: "ins_1".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::ProbeFailed);
+}
+
+#[tokio::test]
 async fn panicking_adapter_is_isolated_from_peers() {
     let mut host = AdapterHost::new();
     let mut panicking = StubAdapter::new("dev.tokenshow.adapter.panic");
@@ -163,11 +305,44 @@ async fn panicking_adapter_is_isolated_from_peers() {
             installation_id: "ins_1".into(),
         })
         .await;
-    assert_eq!(
-        outcomes[0].1.as_ref().unwrap_err().code,
-        ErrorCode::AdapterPanic
-    );
-    assert!(outcomes[1].1.as_ref().unwrap().detected);
+    let panic = outcomes
+        .iter()
+        .find(|(id, _)| id.ends_with("panic"))
+        .unwrap();
+    let healthy = outcomes
+        .iter()
+        .find(|(id, _)| id.ends_with("healthy"))
+        .unwrap();
+    assert_eq!(panic.1.as_ref().unwrap_err().code, ErrorCode::AdapterPanic);
+    assert!(healthy.1.as_ref().unwrap().detected);
+}
+
+#[tokio::test]
+async fn hung_adapter_times_out_without_blocking_peer() {
+    let mut host = AdapterHost::new().with_call_timeout(Duration::from_millis(25));
+    let mut hung = StubAdapter::new("dev.tokenshow.adapter.hung");
+    hung.hang_probe = true;
+    host.register(Arc::new(hung)).unwrap();
+    host.register(Arc::new(StubAdapter::new("dev.tokenshow.adapter.healthy")))
+        .unwrap();
+
+    let started = Instant::now();
+    let outcomes = host
+        .probe_all(ProbeContext {
+            installation_id: "ins_1".into(),
+        })
+        .await;
+    assert!(started.elapsed() < Duration::from_secs(1));
+    let hung = outcomes
+        .iter()
+        .find(|(id, _)| id.ends_with("hung"))
+        .unwrap();
+    let healthy = outcomes
+        .iter()
+        .find(|(id, _)| id.ends_with("healthy"))
+        .unwrap();
+    assert_eq!(hung.1.as_ref().unwrap_err().code, ErrorCode::AdapterTimeout);
+    assert!(healthy.1.as_ref().unwrap().detected);
 }
 
 #[tokio::test]
@@ -240,11 +415,91 @@ async fn setup_plan_allows_declared_write_path() {
 }
 
 #[tokio::test]
+async fn decode_rejects_spoofed_installation_and_agent_version() {
+    for (installation_id, agent_version) in [("ins_other", "1.0.0"), ("ins_1", "9.9.9")] {
+        let mut host = AdapterHost::new();
+        let mut adapter = StubAdapter::new("dev.tokenshow.adapter.one");
+        adapter.decoded_events = vec![normalized_event(
+            &adapter.manifest,
+            installation_id,
+            agent_version,
+        )];
+        host.register(Arc::new(adapter)).unwrap();
+        host.probe(
+            "dev.tokenshow.adapter.one",
+            ProbeContext {
+                installation_id: "ins_1".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let error = host
+            .decode(
+                "dev.tokenshow.adapter.one",
+                RawFrame::jsonl("ins_1", "sessions", "0", b"{}".as_slice()),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, ErrorCode::DecodeFailed);
+    }
+}
+
+#[tokio::test]
+async fn decode_requires_successful_probe() {
+    let mut host = AdapterHost::new();
+    host.register(Arc::new(StubAdapter::new("dev.tokenshow.adapter.one")))
+        .unwrap();
+    let error = host
+        .decode(
+            "dev.tokenshow.adapter.one",
+            RawFrame::jsonl("ins_1", "sessions", "0", b"{}".as_slice()),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::DecodeFailed);
+}
+
+#[tokio::test]
+async fn successful_probe_with_unknown_version_allows_versionless_event() {
+    let mut host = AdapterHost::new();
+    let mut adapter = StubAdapter::new("dev.tokenshow.adapter.one");
+    adapter.agent_version = None;
+    let mut event = normalized_event(&adapter.manifest, "ins_1", "1.0.0");
+    event.agent_version = None;
+    adapter.decoded_events = vec![event];
+    host.register(Arc::new(adapter)).unwrap();
+    host.probe(
+        "dev.tokenshow.adapter.one",
+        ProbeContext {
+            installation_id: "ins_1".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let events = host
+        .decode(
+            "dev.tokenshow.adapter.one",
+            RawFrame::jsonl("ins_1", "sessions", "0", b"{}".as_slice()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1);
+}
+
+#[tokio::test]
 async fn decode_panic_does_not_escape_host() {
     let mut host = AdapterHost::new();
     let mut panicking = StubAdapter::new("dev.tokenshow.adapter.panic");
     panicking.panic_on_decode = true;
     host.register(Arc::new(panicking)).unwrap();
+    host.probe(
+        "dev.tokenshow.adapter.panic",
+        ProbeContext {
+            installation_id: "ins_1".into(),
+        },
+    )
+    .await
+    .unwrap();
     let err = host
         .decode(
             "dev.tokenshow.adapter.panic",
