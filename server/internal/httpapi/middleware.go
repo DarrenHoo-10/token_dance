@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/subtle"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -116,6 +118,10 @@ func (m *Middleware) RequireAuth(next http.Handler) http.Handler {
 			WriteError(w, r, domain.NewAppError(403, "ACCOUNT_SUSPENDED", "auth.accountSuspended", "account is suspended", nil, domain.ErrAccountSuspended))
 			return
 		}
+		if user.AccountStatus == domain.AccountStatusDeleted {
+			WriteError(w, r, domain.NewAppError(401, "AUTH_REQUIRED", "auth.accountDeleted", "account has been deleted", nil, domain.ErrAccountDeleted))
+			return
+		}
 
 		// Route gating for deletion_pending
 		if user.AccountStatus == domain.AccountStatusDeletionPending {
@@ -129,8 +135,50 @@ func (m *Middleware) RequireAuth(next http.Handler) http.Handler {
 			}
 		}
 
+		// Mandatory onboarding route gate (USR-008)
+		if user.OnboardingCompletedAt == nil {
+			path := r.URL.Path
+			allowed := strings.HasPrefix(path, "/api/v1/auth/") ||
+				path == "/api/v1/me/onboarding"
+			if !allowed {
+				WriteError(w, r, domain.NewAppError(403, "ONBOARDING_REQUIRED", "auth.onboardingRequired", "onboarding required before accessing this resource", map[string]interface{}{
+					"onboardingRequired": true,
+				}, nil))
+				return
+			}
+		}
+
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isAllowedOrigin(origin string, reqHost string) bool {
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	originHost := u.Host
+	if originHost == reqHost {
+		return true
+	}
+	hostOnly := originHost
+	if h, _, err := net.SplitHostPort(originHost); err == nil {
+		hostOnly = h
+	}
+	reqHostOnly := reqHost
+	if h, _, err := net.SplitHostPort(reqHost); err == nil {
+		reqHostOnly = h
+	}
+	if hostOnly == reqHostOnly {
+		return true
+	}
+	if hostOnly == "localhost" || hostOnly == "127.0.0.1" || hostOnly == "tokendance.dev" || strings.HasSuffix(hostOnly, ".tokendance.dev") {
+		return true
+	}
+	return false
 }
 
 func (m *Middleware) RequireCSRF(next http.Handler) http.Handler {
@@ -148,6 +196,21 @@ func (m *Middleware) RequireCSRF(next http.Handler) http.Handler {
 			return
 		}
 
+		// 1. Fetch Metadata check
+		if strings.EqualFold(r.Header.Get("Sec-Fetch-Site"), "cross-site") {
+			WriteError(w, r, domain.NewAppError(403, "CSRF_VALIDATION_FAILED", "auth.csrfFailed", "cross-site request forbidden by fetch metadata", nil, domain.ErrCsrfFailed))
+			return
+		}
+
+		// 2. Origin check
+		if origin := r.Header.Get("Origin"); origin != "" {
+			if !isAllowedOrigin(origin, r.Host) {
+				WriteError(w, r, domain.NewAppError(403, "CSRF_VALIDATION_FAILED", "auth.csrfFailed", "origin header validation failed", nil, domain.ErrCsrfFailed))
+				return
+			}
+		}
+
+		// 3. X-CSRF-Token check
 		csrfHeader := r.Header.Get("X-CSRF-Token")
 		if csrfHeader == "" {
 			WriteError(w, r, domain.NewAppError(403, "CSRF_VALIDATION_FAILED", "auth.csrfFailed", "CSRF token missing", nil, domain.ErrCsrfFailed))

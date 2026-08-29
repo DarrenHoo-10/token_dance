@@ -1,8 +1,13 @@
 package migrate
 
 import (
+	"context"
+	"database/sql"
+	"os"
 	"testing"
 	"time"
+
+	_ "github.com/go-sql-driver/mysql"
 
 	"tokendance/internal/domain"
 )
@@ -57,5 +62,93 @@ func TestValidateBaselineRecords(t *testing.T) {
 
 	if err := ValidateBaselineRecords(invalidRecords); err == nil {
 		t.Errorf("expected duplicate active account deletion to fail baseline guard")
+	}
+}
+
+func getTestMySQLDB(t *testing.T) *sql.DB {
+	t.Helper()
+	dsn := os.Getenv("TOKENDANCE_TEST_MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("skipping MySQL test: TOKENDANCE_TEST_MYSQL_DSN not set")
+	}
+
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatalf("failed to open MySQL test connection: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := db.PingContext(ctx); err != nil {
+		t.Fatalf("failed to ping MySQL test database: %v", err)
+	}
+
+	return db
+}
+
+func TestMigrationRunnerIntegration_CleanAndUpgrade(t *testing.T) {
+	db := getTestMySQLDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+	runner := NewRunner(db)
+
+	if err := runner.ResetCleanSchema(ctx); err != nil {
+		t.Fatalf("failed to reset clean schema: %v", err)
+	}
+
+	if err := runner.RunMigrations(ctx); err != nil {
+		t.Fatalf("failed to run migrations: %v", err)
+	}
+
+	// Verify idempotency
+	if err := runner.RunMigrations(ctx); err != nil {
+		t.Fatalf("expected second run to be idempotent: %v", err)
+	}
+}
+
+func TestMigrationRunnerIntegration_DirtyBaselineGuard(t *testing.T) {
+	db := getTestMySQLDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+	runner := NewRunner(db)
+
+	if err := runner.ResetCleanSchema(ctx); err != nil {
+		t.Fatalf("failed to reset clean schema: %v", err)
+	}
+
+	if err := runner.LoadFromEmbed(); err != nil {
+		t.Fatalf("failed to load migrations: %v", err)
+	}
+
+	// Apply only 0001
+	runner0001 := &Runner{
+		db:         db,
+		migrations: []MigrationInfo{runner.migrations[0]},
+	}
+	if err := runner0001.RunMigrations(ctx); err != nil {
+		t.Fatalf("failed to run 0001: %v", err)
+	}
+
+	// Insert duplicate pending account deletion requests
+	uID := "usr_test_dirty_01"
+	_, err := db.ExecContext(ctx, "INSERT INTO users (user_id, auth_subject_hash, display_name) VALUES (?, UNHEX(SHA2('user', 256)), 'User 1')", uID)
+	if err != nil {
+		t.Fatalf("failed to insert test user: %v", err)
+	}
+	_, err = db.ExecContext(ctx, "INSERT INTO data_deletion_requests (request_id, user_id, deletion_scope, request_status) VALUES ('req_1', ?, 'account', 'pending'), ('req_2', ?, 'account', 'running')", uID, uID)
+	if err != nil {
+		t.Fatalf("failed to insert duplicate deletion requests: %v", err)
+	}
+
+	// Now try to run 0002
+	runner0002 := &Runner{
+		db:         db,
+		migrations: []MigrationInfo{runner.migrations[1]},
+	}
+	err = runner0002.RunMigrations(ctx)
+	if err == nil {
+		t.Fatalf("expected dirty baseline guard to fail when duplicate account deletions exist")
 	}
 }

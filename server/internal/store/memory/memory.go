@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,41 +13,97 @@ import (
 	"tokendance/internal/store"
 )
 
+type UserMetricFixture struct {
+	AggregationVersion   uint32
+	CostAmount           *string
+	CostCurrency         *string
+	CostSupported        bool
+	ExactTokenTotal      uint64
+	DerivedTokenTotal    uint64
+	CodeGeneratedLines   uint64
+	TokenInputTotal      uint64
+	TokenOutputTotal     uint64
+	TokenCacheReadTotal  uint64
+	TokenCacheWriteTotal uint64
+	TokenReasoningTotal  uint64
+	ActiveDurationMs     uint64
+	MessageCount         uint64
+	UserMessageCount     uint64
+	ExtensionsSupported  bool
+}
+
+type UserSkillFixture struct {
+	SkillID          string
+	SkillKey         string
+	SkillPublicName  string
+	UseCount         uint64
+	ActiveDays       int
+	PublicUserCount  int
+	SuccessRate      *float64
+	PreviousDeltaPct *float64
+}
+
+type UserTrendFixture struct {
+	Date             string
+	AgentID          string
+	ProviderID       string
+	ModelID          string
+	ExactTokens      uint64
+	DerivedTokens    uint64
+	InputTokens      uint64
+	OutputTokens     uint64
+	CacheReadTokens  uint64
+	CacheWriteTokens uint64
+	ReasoningTokens  uint64
+}
+
 type MemoryStore struct {
 	mu sync.RWMutex
 
-	users             map[string]*domain.User
-	userCredentials   map[string]*domain.UserPasswordCredential
-	sessions          map[string]*domain.UserSession
-	emailChallenges   map[string]*domain.EmailChallenge
-	emailOutbox       map[string]*domain.EmailOutbox
-	privacySettings   map[string]*domain.UserPrivacySettings
-	publicProfiles    map[string]*domain.PublicUserProfile
-	handleHistory     map[string]*domain.UserHandleHistory
-	uploadObjects     map[string]*domain.UserUploadObject
-	bindingChallenges map[string]*domain.DeviceBindingChallenge
-	installations     map[string]*domain.Installation
-	securityEvents    []domain.UserSecurityEvent
-	exportJobs        map[string]*domain.DataExportJob
-	deletionRequests  map[string]*domain.DataDeletionRequest
+	FaultInjector func(operation string) error
+
+	users              map[string]*domain.User
+	userCredentials    map[string]*domain.UserPasswordCredential
+	sessions           map[string]*domain.UserSession
+	emailChallenges    map[string]*domain.EmailChallenge
+	emailOutbox        map[string]*domain.EmailOutbox
+	privacySettings    map[string]*domain.UserPrivacySettings
+	publicProfiles     map[string]*domain.PublicUserProfile
+	handleHistory      map[string]*domain.UserHandleHistory
+	uploadObjects      map[string]*domain.UserUploadObject
+	bindingChallenges  map[string]*domain.DeviceBindingChallenge
+	installations      map[string]*domain.Installation
+	securityEvents     []domain.UserSecurityEvent
+	exportJobs         map[string]*domain.DataExportJob
+	deletionRequests   map[string]*domain.DataDeletionRequest
+	userMetricFixtures map[string]UserMetricFixture
+	userSkillFixtures  map[string][]UserSkillFixture
+	userTrendFixtures  map[string][]UserTrendFixture
+	publishedSnapshots map[string]*domain.LeaderboardResponse
+	buildingSnapshots  map[string]*domain.LeaderboardResponse
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		users:             make(map[string]*domain.User),
-		userCredentials:   make(map[string]*domain.UserPasswordCredential),
-		sessions:          make(map[string]*domain.UserSession),
-		emailChallenges:   make(map[string]*domain.EmailChallenge),
-		emailOutbox:       make(map[string]*domain.EmailOutbox),
-		privacySettings:   make(map[string]*domain.UserPrivacySettings),
-		publicProfiles:    make(map[string]*domain.PublicUserProfile),
-		handleHistory:     make(map[string]*domain.UserHandleHistory),
-		uploadObjects:     make(map[string]*domain.UserUploadObject),
-		bindingChallenges: make(map[string]*domain.DeviceBindingChallenge),
-		installations:     make(map[string]*domain.Installation),
-		securityEvents:    make([]domain.UserSecurityEvent, 0),
-		exportJobs:        make(map[string]*domain.DataExportJob),
-		deletionRequests:  make(map[string]*domain.DataDeletionRequest),
+		users:              make(map[string]*domain.User),
+		userCredentials:    make(map[string]*domain.UserPasswordCredential),
+		sessions:           make(map[string]*domain.UserSession),
+		emailChallenges:    make(map[string]*domain.EmailChallenge),
+		emailOutbox:        make(map[string]*domain.EmailOutbox),
+		privacySettings:    make(map[string]*domain.UserPrivacySettings),
+		publicProfiles:     make(map[string]*domain.PublicUserProfile),
+		handleHistory:      make(map[string]*domain.UserHandleHistory),
+		uploadObjects:      make(map[string]*domain.UserUploadObject),
+		bindingChallenges:  make(map[string]*domain.DeviceBindingChallenge),
+		installations:      make(map[string]*domain.Installation),
+		securityEvents:     make([]domain.UserSecurityEvent, 0),
+		exportJobs:         make(map[string]*domain.DataExportJob),
+		deletionRequests:   make(map[string]*domain.DataDeletionRequest),
+		userMetricFixtures: make(map[string]UserMetricFixture),
+		userSkillFixtures:  make(map[string][]UserSkillFixture),
+		userTrendFixtures:  make(map[string][]UserTrendFixture),
+		publishedSnapshots: make(map[string]*domain.LeaderboardResponse),
+		buildingSnapshots:  make(map[string]*domain.LeaderboardResponse),
 	}
 }
 
@@ -66,7 +123,6 @@ func (m *MemoryStore) CreateOrReplaceEmailChallenge(ctx context.Context, challen
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Cancel any active pending challenges for the same type + email
 	for _, c := range m.emailChallenges {
 		if c.ChallengeType == challenge.ChallengeType && c.EmailLookupHash == challenge.EmailLookupHash && c.ChallengeStatus == domain.ChallengeStatusPending {
 			c.ChallengeStatus = domain.ChallengeStatusCancelled
@@ -113,6 +169,16 @@ func (m *MemoryStore) CompleteRegistrationTx(ctx context.Context, in store.Regis
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	// Verify challenge exists and is pending
+	ch, ok := m.emailChallenges[in.ChallengeID]
+	if !ok || ch.ChallengeStatus != domain.ChallengeStatusPending {
+		return nil, domain.ErrChallengeInvalid
+	}
+	if in.Session.CreatedAt.After(ch.ExpiresAt) {
+		ch.ChallengeStatus = domain.ChallengeStatusExpired
+		return nil, domain.ErrChallengeExpired
+	}
+
 	// Verify email uniqueness
 	if in.User.EmailLookupHash != nil {
 		for _, u := range m.users {
@@ -122,16 +188,18 @@ func (m *MemoryStore) CompleteRegistrationTx(ctx context.Context, in store.Regis
 		}
 	}
 
-	// Update challenge
-	if ch, ok := m.emailChallenges[in.ChallengeID]; ok {
-		if ch.ChallengeStatus != domain.ChallengeStatusPending {
-			return nil, domain.ErrChallengeInvalid
+	// Support fault injection for atomic rollback testing (USR-002)
+	if m.FaultInjector != nil {
+		if err := m.FaultInjector("CompleteRegistrationTx:credential_inserted"); err != nil {
+			return nil, err
 		}
-		ch.ChallengeStatus = domain.ChallengeStatusConsumed
-		now := time.Now().UTC()
-		ch.ConsumedAt = &now
-		ch.UserID = &in.User.UserID
 	}
+
+	// Atomically commit
+	now := in.Session.CreatedAt
+	ch.ChallengeStatus = domain.ChallengeStatusConsumed
+	ch.ConsumedAt = &now
+	ch.UserID = &in.User.UserID
 
 	u := in.User
 	m.users[u.UserID] = &u
@@ -199,14 +267,12 @@ func (m *MemoryStore) CreateSessionTx(ctx context.Context, session domain.UserSe
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Clear failed login count on successful login
 	if cred, ok := m.userCredentials[session.UserID]; ok {
 		cred.FailedLoginCount = 0
 		cred.LockedUntil = nil
 		cred.UpdatedAt = time.Now().UTC()
 	}
 
-	// Check max 20 active sessions limit - revoke oldest if > 20
 	var userSessions []*domain.UserSession
 	for _, s := range m.sessions {
 		if s.UserID == session.UserID && s.SessionStatus == domain.SessionStatusActive {
@@ -333,7 +399,6 @@ func (m *MemoryStore) ResetPasswordTx(ctx context.Context, userID string, challe
 	cred.LockedUntil = nil
 	cred.UpdatedAt = now
 
-	// Revoke all active sessions
 	reason := "password_reset"
 	for _, s := range m.sessions {
 		if s.UserID == userID && s.SessionStatus == domain.SessionStatusActive {
@@ -374,7 +439,6 @@ func (m *MemoryStore) CompleteOnboardingTx(ctx context.Context, userID string, h
 	}
 
 	handle = strings.ToLower(strings.TrimSpace(handle))
-	// Check handle availability
 	for id, other := range m.users {
 		if id != userID && other.Handle != nil && *other.Handle == handle {
 			return nil, nil, domain.ErrHandleTaken
@@ -398,10 +462,12 @@ func (m *MemoryStore) CompleteOnboardingTx(ctx context.Context, userID string, h
 	priv.UpdatedAt = now
 	m.privacySettings[userID] = &priv
 
-	// Update public profile projection
 	profileStatus := domain.ProfileStatusHidden
 	if priv.PublicProfileEnabled {
 		profileStatus = domain.ProfileStatusPublished
+		u.LeaderboardVisibility = domain.LeaderboardVisibilityPublic
+	} else {
+		u.LeaderboardVisibility = domain.LeaderboardVisibilityPrivate
 	}
 
 	var bio *string
@@ -454,7 +520,6 @@ func (m *MemoryStore) UpdateProfileTx(ctx context.Context, userID string, displa
 	if handle != nil {
 		newHandle := strings.ToLower(strings.TrimSpace(*handle))
 		if u.Handle == nil || *u.Handle != newHandle {
-			// Check collisions
 			for id, other := range m.users {
 				if id != userID && other.Handle != nil && *other.Handle == newHandle {
 					return nil, domain.ErrHandleTaken
@@ -464,7 +529,6 @@ func (m *MemoryStore) UpdateProfileTx(ctx context.Context, userID string, displa
 				return nil, domain.ErrHandleTaken
 			}
 
-			// Store old handle in history
 			if u.Handle != nil && *u.Handle != "" {
 				m.handleHistory[*u.Handle] = &domain.UserHandleHistory{
 					Handle:        *u.Handle,
@@ -494,7 +558,6 @@ func (m *MemoryStore) UpdateProfileTx(ctx context.Context, userID string, displa
 	u.ProfileVersion++
 	u.UpdatedAt = now
 
-	// Update public profile projection
 	if pub, ok := m.publicProfiles[userID]; ok {
 		if u.Handle != nil {
 			pub.Handle = *u.Handle
@@ -591,7 +654,6 @@ func (m *MemoryStore) UpdatePrivacyTx(ctx context.Context, userID string, in dom
 	p.PrivacyVersion++
 	p.UpdatedAt = now
 
-	// Update user visibility
 	if in.PublicProfileEnabled {
 		u.LeaderboardVisibility = domain.LeaderboardVisibilityPublic
 	} else {
@@ -600,7 +662,6 @@ func (m *MemoryStore) UpdatePrivacyTx(ctx context.Context, userID string, in dom
 	u.PublicProfileUpdatedAt = &now
 	u.UpdatedAt = now
 
-	// Sync public profile projection immediately
 	pub, ok := m.publicProfiles[userID]
 	if !ok && u.Handle != nil {
 		pub = &domain.PublicUserProfile{
@@ -656,6 +717,10 @@ func (m *MemoryStore) GetPublicProfileByHandle(ctx context.Context, handle strin
 			if !ok || u.AccountStatus != domain.AccountStatusActive {
 				return nil, domain.ErrNotFound
 			}
+			priv, ok := m.privacySettings[pub.UserID]
+			if !ok || !priv.PublicProfileEnabled {
+				return nil, domain.ErrNotFound
+			}
 			pubCopy := *pub
 			return &pubCopy, nil
 		}
@@ -677,10 +742,29 @@ func (m *MemoryStore) RequestDeletionTx(ctx context.Context, req domain.DataDele
 				u.LeaderboardVisibility = domain.LeaderboardVisibilityPrivate
 				u.UpdatedAt = now
 			}
+			if priv, ok := m.privacySettings[*req.UserID]; ok {
+				priv.PublicProfileEnabled = false
+				priv.UpdatedAt = now
+			}
 			if pub, ok := m.publicProfiles[*req.UserID]; ok {
 				pub.ProfileStatus = domain.ProfileStatusHidden
 				pub.ProjectionVersion++
 				pub.UpdatedAt = now
+			}
+			for _, b := range m.bindingChallenges {
+				if b.UserID == *req.UserID && b.ChallengeStatus == domain.ChallengeStatusPending {
+					b.ChallengeStatus = domain.ChallengeStatusCancelled
+					b.UpdatedAt = now
+				}
+			}
+			for _, s := range m.sessions {
+				if s.UserID == *req.UserID && s.SessionStatus == domain.SessionStatusActive {
+					reason := "account_deletion"
+					s.SessionStatus = domain.SessionStatusRevoked
+					s.RevokedAt = &now
+					s.RevokeReason = &reason
+					s.UpdatedAt = now
+				}
 			}
 		}
 	}
@@ -714,6 +798,15 @@ func (m *MemoryStore) CancelDeletionTx(ctx context.Context, requestID string, us
 			u.LeaderboardVisibility = domain.LeaderboardVisibilityPrivate
 			u.UpdatedAt = now
 		}
+		if priv, ok := m.privacySettings[userID]; ok {
+			priv.PublicProfileEnabled = false
+			priv.UpdatedAt = now
+		}
+		if pub, ok := m.publicProfiles[userID]; ok {
+			pub.ProfileStatus = domain.ProfileStatusHidden
+			pub.ProjectionVersion++
+			pub.UpdatedAt = now
+		}
 	}
 	return nil
 }
@@ -730,6 +823,116 @@ func (m *MemoryStore) GetDeletionRequest(ctx context.Context, requestID string, 
 	return &reqCopy, nil
 }
 
+func (m *MemoryStore) ClaimPendingDeletion(ctx context.Context, workerID string, leaseDuration time.Duration, now time.Time) (*domain.DataDeletionRequest, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, req := range m.deletionRequests {
+		if req.RequestStatus == domain.DeletionStatusPending {
+			if req.CancelBefore == nil || now.After(*req.CancelBefore) {
+				req.RequestStatus = domain.DeletionStatusRunning
+				req.Phase = "running"
+				rCopy := *req
+				return &rCopy, nil
+			}
+		} else if req.RequestStatus == domain.DeletionStatusRunning {
+			if req.CancelBefore != nil && now.After(req.RequestedAt.Add(leaseDuration)) {
+				rCopy := *req
+				return &rCopy, nil
+			}
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (m *MemoryStore) ExecuteDeletionPhase(ctx context.Context, requestID string, workerID string, phase string, cursor uint64, auditRef string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	req, ok := m.deletionRequests[requestID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+
+	req.Phase = phase
+	req.ProgressCursor = cursor
+
+	if req.UserID != nil {
+		userID := *req.UserID
+		switch phase {
+		case "phase1_revoke_sessions_devices":
+			for _, inst := range m.installations {
+				if inst.UserID == userID {
+					inst.InstallationStatus = domain.InstallationStatusRevoked
+					inst.RevokedAt = &now
+					inst.StatusVersion++
+					inst.UpdatedAt = now
+				}
+			}
+			for _, sess := range m.sessions {
+				if sess.UserID == userID {
+					reason := "account_deleted"
+					sess.SessionStatus = domain.SessionStatusRevoked
+					sess.RevokedAt = &now
+					sess.RevokeReason = &reason
+					sess.UpdatedAt = now
+				}
+			}
+		case "phase2_delete_credentials_outbox_exports":
+			delete(m.userCredentials, userID)
+			for id, out := range m.emailOutbox {
+				if out.UserID != nil && *out.UserID == userID {
+					delete(m.emailOutbox, id)
+				}
+			}
+			for id, ch := range m.emailChallenges {
+				if ch.UserID != nil && *ch.UserID == userID {
+					delete(m.emailChallenges, id)
+				}
+			}
+			for id, exp := range m.exportJobs {
+				if exp.UserID == userID {
+					delete(m.exportJobs, id)
+				}
+			}
+		case "phase3_delete_upload_objects":
+			for id, obj := range m.uploadObjects {
+				if obj.UserID == userID {
+					obj.UploadStatus = domain.UploadStatusDeleted
+					obj.DeletedAt = &now
+					delete(m.uploadObjects, id)
+				}
+			}
+		case "phase4_delete_usage_events":
+			delete(m.userMetricFixtures, userID)
+			delete(m.userSkillFixtures, userID)
+			delete(m.userTrendFixtures, userID)
+		case "phase5_tombstone_user", "completed":
+			if u, ok := m.users[userID]; ok {
+				u.EmailLookupHash = nil
+				u.EmailCiphertext = nil
+				u.Handle = nil
+				u.AvatarURL = nil
+				u.AvatarObjectID = nil
+				u.Bio = nil
+				u.DisplayName = "Deleted user"
+				u.AccountStatus = domain.AccountStatusDeleted
+				u.LeaderboardVisibility = domain.LeaderboardVisibilityPrivate
+				u.DeletedAt = &now
+				u.UpdatedAt = now
+			}
+			delete(m.publicProfiles, userID)
+			delete(m.privacySettings, userID)
+			req.RequestStatus = domain.DeletionStatusCompleted
+			req.Phase = "completed"
+			req.CompletedAt = &now
+			req.AuditReference = &auditRef
+		}
+	}
+
+	return nil
+}
+
 // --- AnalyticsStore Implementation ---
 
 func (m *MemoryStore) GetPersonalSummary(ctx context.Context, userID string, r domain.TimeRange) (*domain.PersonalSummary, error) {
@@ -740,19 +943,6 @@ func (m *MemoryStore) GetPersonalSummary(ctx context.Context, userID string, r d
 	if !ok {
 		return nil, domain.ErrNotFound
 	}
-
-	// Deterministic mock values suitable for tests and UI
-	costAmount := "1428.60000000"
-	costCurrency := "USD"
-	totalTokens := "325700000"
-	codeLines := "864200"
-	tokensPerCodeLine := "376.88"
-	inputTokens := "184600000"
-	outputTokens := "78300000"
-	cacheHitRate := "0.386"
-	activeDurationMs := "1737360000"
-	messageCount := "42800"
-	userMessageCount := "18400"
 
 	now := time.Now().UTC()
 	var rank *int
@@ -767,19 +957,105 @@ func (m *MemoryStore) GetPersonalSummary(ctx context.Context, userID string, r d
 		percentile = &pVal
 	}
 
+	fix, hasFixture := m.userMetricFixtures[userID]
+	if !hasFixture {
+		costAmount := "1428.60000000"
+		costCurrency := "USD"
+		totalTokens := "325700000"
+		codeLines := "864200"
+		tokensPerCodeLine := "376.88"
+		inputTokens := "184600000"
+		outputTokens := "78300000"
+		cacheHitRate := "0.386"
+		activeDurationMs := "1737360000"
+		messageCount := "42800"
+		userMessageCount := "18400"
+
+		return &domain.PersonalSummary{
+			Range: r,
+			Metrics: domain.PersonalSummaryMetrics{
+				EstimatedCost:      domain.MetricCost{Amount: &costAmount, Currency: &costCurrency, Supported: true},
+				TotalTokens:        domain.MetricBigInt{Value: &totalTokens, Supported: true},
+				GeneratedCodeLines: domain.MetricBigInt{Value: &codeLines, Supported: true},
+				TokensPerCodeLine:  domain.MetricDecimal{Value: &tokensPerCodeLine, Supported: true},
+				InputContextTokens: domain.MetricBigInt{Value: &inputTokens, Supported: true},
+				OutputTokens:       domain.MetricBigInt{Value: &outputTokens, Supported: true},
+				CacheHitRate:       domain.MetricDecimal{Value: &cacheHitRate, Supported: true},
+				ActiveDurationMs:   domain.MetricBigInt{Value: &activeDurationMs, Supported: true},
+				MessageCount:       domain.MetricBigInt{Value: &messageCount, Supported: true},
+				UserMessageCount:   domain.MetricBigInt{Value: &userMessageCount, Supported: true},
+			},
+			Ranking: domain.PersonalSummaryRanking{
+				Visibility: u.LeaderboardVisibility,
+				Rank:       rank,
+				Delta:      delta,
+				Percentile: percentile,
+			},
+			Sync: domain.PersonalSummarySync{
+				LastCommittedAt:   &now,
+				PendingLocalCount: nil,
+			},
+			DataWatermarkAt:    &now,
+			AggregationVersion: 2,
+		}, nil
+	}
+
+	totalTokensVal := fix.ExactTokenTotal + fix.DerivedTokenTotal
+	totalTokensStr := fmt.Sprintf("%d", totalTokensVal)
+	codeLinesStr := fmt.Sprintf("%d", fix.CodeGeneratedLines)
+
+	var tokensPerCodeLineStr *string
+	if fix.CodeGeneratedLines > 0 {
+		str := fmt.Sprintf("%.2f", float64(totalTokensVal)/float64(fix.CodeGeneratedLines))
+		tokensPerCodeLineStr = &str
+	}
+
+	aggVer := fix.AggregationVersion
+	if aggVer == 0 {
+		aggVer = 2
+	}
+
+	var inputTokensStr, outputTokensStr, activeDurationStr, messageCountStr, userMessageCountStr *string
+	var cacheHitRateStr *string
+	extSupported := fix.ExtensionsSupported && aggVer >= 2
+
+	if extSupported {
+		inpVal := fix.TokenInputTotal + fix.TokenCacheReadTotal
+		inpStr := fmt.Sprintf("%d", inpVal)
+		inputTokensStr = &inpStr
+
+		outStr := fmt.Sprintf("%d", fix.TokenOutputTotal)
+		outputTokensStr = &outStr
+
+		denom := fix.TokenInputTotal + fix.TokenCacheReadTotal
+		if denom > 0 {
+			rateStr := fmt.Sprintf("%.3f", float64(fix.TokenCacheReadTotal)/float64(denom))
+			cacheHitRateStr = &rateStr
+		}
+
+		durStr := fmt.Sprintf("%d", fix.ActiveDurationMs)
+		activeDurationStr = &durStr
+
+		msgStr := fmt.Sprintf("%d", fix.MessageCount)
+		messageCountStr = &msgStr
+
+		usrMsgStr := fmt.Sprintf("%d", fix.UserMessageCount)
+		userMessageCountStr = &usrMsgStr
+	}
+
 	return &domain.PersonalSummary{
 		Range: r,
 		Metrics: domain.PersonalSummaryMetrics{
-			EstimatedCost:      domain.MetricCost{Amount: &costAmount, Currency: &costCurrency, Supported: true},
-			TotalTokens:        domain.MetricBigInt{Value: &totalTokens, Supported: true},
-			GeneratedCodeLines: domain.MetricBigInt{Value: &codeLines, Supported: true},
-			TokensPerCodeLine:  domain.MetricDecimal{Value: &tokensPerCodeLine, Supported: true},
-			InputContextTokens: domain.MetricBigInt{Value: &inputTokens, Supported: true},
-			OutputTokens:       domain.MetricBigInt{Value: &outputTokens, Supported: true},
-			CacheHitRate:       domain.MetricDecimal{Value: &cacheHitRate, Supported: true},
-			ActiveDurationMs:   domain.MetricBigInt{Value: &activeDurationMs, Supported: true},
-			MessageCount:       domain.MetricBigInt{Value: &messageCount, Supported: true},
-			UserMessageCount:   domain.MetricBigInt{Value: &userMessageCount, Supported: true},
+			EstimatedCost:      domain.MetricCost{Amount: fix.CostAmount, Currency: fix.CostCurrency, Supported: fix.CostSupported},
+			TotalTokens:        domain.MetricBigInt{Value: &totalTokensStr, Supported: true},
+			GeneratedCodeLines: domain.MetricBigInt{Value: &codeLinesStr, Supported: true},
+			TokensPerCodeLine:  domain.MetricDecimal{Value: tokensPerCodeLineStr, Supported: true},
+			InputContextTokens: domain.MetricBigInt{Value: inputTokensStr, Supported: extSupported},
+			OutputTokens:       domain.MetricBigInt{Value: outputTokensStr, Supported: extSupported},
+			CacheHitRate:       domain.MetricDecimal{Value: cacheHitRateStr, Supported: extSupported},
+			ActiveDurationMs:   domain.MetricBigInt{Value: activeDurationStr, Supported: extSupported},
+			MessageCount:       domain.MetricBigInt{Value: messageCountStr, Supported: extSupported},
+			UserMessageCount:   domain.MetricBigInt{Value: userMessageCountStr, Supported: extSupported},
 		},
 		Ranking: domain.PersonalSummaryRanking{
 			Visibility: u.LeaderboardVisibility,
@@ -792,29 +1068,117 @@ func (m *MemoryStore) GetPersonalSummary(ctx context.Context, userID string, r d
 			PendingLocalCount: nil,
 		},
 		DataWatermarkAt:    &now,
-		AggregationVersion: 2,
+		AggregationVersion: aggVer,
 	}, nil
 }
 
 func (m *MemoryStore) GetTokenTrend(ctx context.Context, userID string, r domain.TimeRange, mode string, agentID, providerID, modelID *string) (*domain.TrendResponse, error) {
-	now := time.Now().UTC()
-	var points []domain.TrendPoint
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	days := 7
-	if r.Key == domain.TimeRange30d {
-		days = 30
-	} else if r.Key == domain.TimeRangeToday {
-		days = 1
+	now := time.Now().UTC()
+	fixtures, hasFixtures := m.userTrendFixtures[userID]
+
+	if !hasFixtures {
+		var points []domain.TrendPoint
+		days := 7
+		if r.Key == domain.TimeRange30d {
+			days = 30
+		} else if r.Key == domain.TimeRangeToday {
+			days = 1
+		}
+
+		for i := days - 1; i >= 0; i-- {
+			d := now.AddDate(0, 0, -i).Format("2006-01-02")
+			tot := fmt.Sprintf("%d", 10000000+i*500000)
+			inp := fmt.Sprintf("%d", 6000000+i*300000)
+			out := fmt.Sprintf("%d", 2500000+i*100000)
+			cr := fmt.Sprintf("%d", 1500000+i*100000)
+			cw := "0"
+			rsn := fmt.Sprintf("%d", 500000+i*20000)
+
+			if mode == "structure" {
+				points = append(points, domain.TrendPoint{
+					Date:             d,
+					InputTokens:      &inp,
+					OutputTokens:     &out,
+					CacheReadTokens:  &cr,
+					CacheWriteTokens: &cw,
+					ReasoningTokens:  &rsn,
+				})
+			} else {
+				points = append(points, domain.TrendPoint{
+					Date:       d,
+					TokenTotal: &tot,
+				})
+			}
+		}
+
+		return &domain.TrendResponse{
+			Range:              r,
+			Mode:               mode,
+			AgentID:            agentID,
+			ProviderID:         providerID,
+			ModelID:            modelID,
+			Granularity:        "day",
+			Points:             points,
+			DataWatermarkAt:    &now,
+			AggregationVersion: 2,
+		}, nil
 	}
 
-	for i := days - 1; i >= 0; i-- {
-		d := now.AddDate(0, 0, -i).Format("2006-01-02")
-		tot := fmt.Sprintf("%d", 10000000+i*500000)
-		inp := fmt.Sprintf("%d", 6000000+i*300000)
-		out := fmt.Sprintf("%d", 2500000+i*100000)
-		cr := fmt.Sprintf("%d", 1500000+i*100000)
-		cw := "0"
-		rsn := fmt.Sprintf("%d", 500000+i*20000)
+	type dayBucket struct {
+		Date             string
+		ExactTokens      uint64
+		DerivedTokens    uint64
+		InputTokens      uint64
+		OutputTokens     uint64
+		CacheReadTokens  uint64
+		CacheWriteTokens uint64
+		ReasoningTokens  uint64
+	}
+
+	buckets := make(map[string]*dayBucket)
+	for _, f := range fixtures {
+		if agentID != nil && *agentID != "all" && f.AgentID != *agentID {
+			continue
+		}
+		if providerID != nil && *providerID != "all" && f.ProviderID != *providerID {
+			continue
+		}
+		if modelID != nil && *modelID != "all" && f.ModelID != *modelID {
+			continue
+		}
+
+		b, ok := buckets[f.Date]
+		if !ok {
+			b = &dayBucket{Date: f.Date}
+			buckets[f.Date] = b
+		}
+		b.ExactTokens += f.ExactTokens
+		b.DerivedTokens += f.DerivedTokens
+		b.InputTokens += f.InputTokens
+		b.OutputTokens += f.OutputTokens
+		b.CacheReadTokens += f.CacheReadTokens
+		b.CacheWriteTokens += f.CacheWriteTokens
+		b.ReasoningTokens += f.ReasoningTokens
+	}
+
+	var dates []string
+	for d := range buckets {
+		dates = append(dates, d)
+	}
+	sort.Strings(dates)
+
+	var points []domain.TrendPoint
+	for _, d := range dates {
+		b := buckets[d]
+		tot := fmt.Sprintf("%d", b.ExactTokens+b.DerivedTokens)
+		inp := fmt.Sprintf("%d", b.InputTokens)
+		out := fmt.Sprintf("%d", b.OutputTokens)
+		cr := fmt.Sprintf("%d", b.CacheReadTokens)
+		cw := fmt.Sprintf("%d", b.CacheWriteTokens)
+		rsn := fmt.Sprintf("%d", b.ReasoningTokens)
 
 		if mode == "structure" {
 			points = append(points, domain.TrendPoint{
@@ -875,18 +1239,55 @@ func (m *MemoryStore) GetModelBreakdown(ctx context.Context, userID string, r do
 }
 
 func (m *MemoryStore) GetSkillRanking(ctx context.Context, userID string, r domain.TimeRange) (*domain.SkillsResponse, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	now := time.Now().UTC()
-	sr1 := 0.98
-	d1 := 12.5
-	sr2 := 0.94
-	d2 := -4.2
+	fixtures, hasFixtures := m.userSkillFixtures[userID]
+
+	if !hasFixtures {
+		sr1 := 0.98
+		d1 := 12.5
+		sr2 := 0.94
+		d2 := -4.2
+		return &domain.SkillsResponse{
+			Range: r,
+			Skills: []domain.SkillItem{
+				{SkillID: "skl_git_diff", SkillPublicName: "Git Smart Diff", UseCount: "1420", ActiveDays: 24, SuccessRate: &sr1, PreviousDeltaPct: &d1},
+				{SkillID: "skl_ast_search", SkillPublicName: "AST Code Search", UseCount: "890", ActiveDays: 18, SuccessRate: &sr2, PreviousDeltaPct: &d2},
+				{SkillID: "skl_test_gen", SkillPublicName: "Unit Test Synthesizer", UseCount: "630", ActiveDays: 15},
+			},
+			DataWatermarkAt:    &now,
+			AggregationVersion: 2,
+		}, nil
+	}
+
+	var items []domain.SkillItem
+	for _, f := range fixtures {
+		pubName := f.SkillPublicName
+		skillID := f.SkillID
+		if pubName == "" {
+			pubName = "Private Skill"
+			hash := sha256.Sum256([]byte(f.SkillKey))
+			skillID = fmt.Sprintf("skl_%x", hash[:4])
+		}
+		items = append(items, domain.SkillItem{
+			SkillID:          skillID,
+			SkillPublicName:  pubName,
+			UseCount:         fmt.Sprintf("%d", f.UseCount),
+			ActiveDays:       f.ActiveDays,
+			SuccessRate:      f.SuccessRate,
+			PreviousDeltaPct: f.PreviousDeltaPct,
+		})
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		return items[i].UseCount > items[j].UseCount
+	})
+
 	return &domain.SkillsResponse{
-		Range: r,
-		Skills: []domain.SkillItem{
-			{SkillID: "skl_git_diff", SkillPublicName: "Git Smart Diff", UseCount: "1420", ActiveDays: 24, SuccessRate: &sr1, PreviousDeltaPct: &d1},
-			{SkillID: "skl_ast_search", SkillPublicName: "AST Code Search", UseCount: "890", ActiveDays: 18, SuccessRate: &sr2, PreviousDeltaPct: &d2},
-			{SkillID: "skl_test_gen", SkillPublicName: "Unit Test Synthesizer", UseCount: "630", ActiveDays: 15},
-		},
+		Range:              r,
+		Skills:             items,
 		DataWatermarkAt:    &now,
 		AggregationVersion: 2,
 	}, nil
@@ -960,7 +1361,6 @@ func (m *MemoryStore) CreateBindingChallenge(ctx context.Context, challenge doma
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Cancel any active binding challenge for this session
 	for _, c := range m.bindingChallenges {
 		if c.SessionID == challenge.SessionID && c.ChallengeStatus == domain.ChallengeStatusPending {
 			c.ChallengeStatus = domain.ChallengeStatusCancelled
@@ -1007,17 +1407,14 @@ func (m *MemoryStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 		return nil, domain.ErrChallengeExpired
 	}
 
-	// Verify user is active
 	u, ok := m.users[challenge.UserID]
 	if !ok || u.AccountStatus != domain.AccountStatusActive {
 		return nil, domain.ErrForbidden
 	}
 
-	// Check if public key is already used
 	for _, existing := range m.installations {
 		if existing.DevicePublicKey == inst.DevicePublicKey {
 			if existing.UserID == challenge.UserID && existing.InstallationStatus == domain.InstallationStatusActive {
-				// Idempotent return
 				challenge.ChallengeStatus = domain.ChallengeStatusConsumed
 				challenge.ConsumedInstallationID = &existing.InstallationID
 				challenge.ConsumedAt = &now
@@ -1153,13 +1550,37 @@ func (m *MemoryStore) RevokeInstallation(ctx context.Context, installationID, us
 	return &instCopy, nil
 }
 
+func (m *MemoryStore) AuthorizeIngest(ctx context.Context, installationID string) (*domain.Installation, *domain.User, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	inst, ok := m.installations[installationID]
+	if !ok {
+		return nil, nil, domain.ErrNotFound
+	}
+	if inst.InstallationStatus == domain.InstallationStatusRevoked {
+		return nil, nil, domain.ErrDeviceRevoked
+	}
+	if inst.InstallationStatus == domain.InstallationStatusDisabled {
+		return nil, nil, domain.ErrDeviceDisabled
+	}
+
+	u, ok := m.users[inst.UserID]
+	if !ok || u.AccountStatus != domain.AccountStatusActive {
+		return nil, nil, domain.ErrAccountSuspended
+	}
+
+	instCopy := *inst
+	uCopy := *u
+	return &instCopy, &uCopy, nil
+}
+
 // --- ExportStore Implementation ---
 
 func (m *MemoryStore) CreateJob(ctx context.Context, job domain.DataExportJob) (*domain.DataExportJob, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Check idempotency
 	for _, j := range m.exportJobs {
 		if j.UserID == job.UserID && j.IdempotencyKey == job.IdempotencyKey {
 			if j.RequestHash == job.RequestHash {
@@ -1203,6 +1624,63 @@ func (m *MemoryStore) GetJob(ctx context.Context, exportID, userID string) (*dom
 	return &jCopy, nil
 }
 
+func (m *MemoryStore) ClaimPendingJob(ctx context.Context, workerID string, leaseDuration time.Duration, now time.Time) (*domain.DataExportJob, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, j := range m.exportJobs {
+		if j.JobStatus == domain.ExportJobStatusPending {
+			j.JobStatus = domain.ExportJobStatusRunning
+			j.LockedBy = &workerID
+			j.LockedAt = &now
+			j.StartedAt = &now
+			jCopy := *j
+			return &jCopy, nil
+		} else if j.JobStatus == domain.ExportJobStatusRunning {
+			if j.LockedAt != nil && now.After(j.LockedAt.Add(leaseDuration)) {
+				j.LockedBy = &workerID
+				j.LockedAt = &now
+				jCopy := *j
+				return &jCopy, nil
+			}
+		}
+	}
+	return nil, domain.ErrNotFound
+}
+
+func (m *MemoryStore) CompleteJob(ctx context.Context, exportID string, workerID string, objectKey string, fileSha256 [32]byte, fileSize uint64, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	j, ok := m.exportJobs[exportID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	j.JobStatus = domain.ExportJobStatusCompleted
+	j.ObjectKey = &objectKey
+	j.FileSha256 = &fileSha256
+	j.FileSize = &fileSize
+	j.CompletedAt = &now
+	exp := now.Add(24 * time.Hour)
+	j.ExpiresAt = &exp
+	j.UpdatedAt = now
+	return nil
+}
+
+func (m *MemoryStore) FailJob(ctx context.Context, exportID string, workerID string, lastError string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	j, ok := m.exportJobs[exportID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	j.JobStatus = domain.ExportJobStatusFailed
+	j.LastErrorCode = &lastError
+	j.UpdatedAt = now
+	return nil
+}
+
 // --- SearchStore Implementation ---
 
 type memorySearchStore struct {
@@ -1218,6 +1696,15 @@ func (s *memorySearchStore) Search(ctx context.Context, query string, limit int,
 
 	for _, pub := range s.m.publicProfiles {
 		if pub.ProfileStatus == domain.ProfileStatusPublished {
+			u, ok := s.m.users[pub.UserID]
+			if !ok || u.AccountStatus != domain.AccountStatusActive {
+				continue
+			}
+			priv, ok := s.m.privacySettings[pub.UserID]
+			if !ok || !priv.PublicProfileEnabled {
+				continue
+			}
+
 			if strings.Contains(strings.ToLower(pub.Handle), query) || strings.Contains(strings.ToLower(pub.DisplayName), query) {
 				rVal := 1
 				users = append(users, domain.SearchUserResult{
@@ -1231,7 +1718,6 @@ func (s *memorySearchStore) Search(ctx context.Context, query string, limit int,
 		}
 	}
 
-	// Agents catalog
 	agentCatalog := []domain.SearchAgentResult{
 		{AgentID: "claude-code", Name: "Claude Code", Description: "Anthropic's terminal coding agent"},
 		{AgentID: "cursor", Name: "Cursor", Description: "AI-first code editor"},
@@ -1245,24 +1731,113 @@ func (s *memorySearchStore) Search(ctx context.Context, query string, limit int,
 		}
 	}
 
+	// Skills Search with minimum sample requirement (USR-106): min 5 public users & 3 active days
+	var skills []domain.SearchSkillResult
+	seenSkills := make(map[string]bool)
+
+	for uid, skillList := range s.m.userSkillFixtures {
+		u, uOk := s.m.users[uid]
+		priv, pOk := s.m.privacySettings[uid]
+		if !uOk || !pOk || u.AccountStatus != domain.AccountStatusActive || !priv.PublicProfileEnabled {
+			continue
+		}
+
+		for _, sk := range skillList {
+			if sk.SkillPublicName == "" || seenSkills[sk.SkillID] {
+				continue
+			}
+			if sk.PublicUserCount >= 5 && sk.ActiveDays >= 3 {
+				if strings.Contains(strings.ToLower(sk.SkillPublicName), query) || strings.Contains(strings.ToLower(sk.SkillID), query) {
+					skills = append(skills, domain.SearchSkillResult{
+						SkillID:         sk.SkillID,
+						SkillPublicName: sk.SkillPublicName,
+						UseCount:        fmt.Sprintf("%d", sk.UseCount),
+						PublicUserCount: sk.PublicUserCount,
+						ActiveDays:      sk.ActiveDays,
+					})
+					seenSkills[sk.SkillID] = true
+				}
+			}
+		}
+	}
+
 	return &domain.SearchResponse{
 		Users:  users,
 		Agents: agents,
+		Skills: skills,
 	}, nil
 }
 
 // --- LeaderboardStore Implementation ---
+
+func (m *MemoryStore) PublishSnapshot(ctx context.Context, snapshotID string, boardKey, window, metric string, entries []domain.LeaderboardEntry, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	resp := &domain.LeaderboardResponse{
+		SnapshotID:      snapshotID,
+		BoardKey:        boardKey,
+		Window:          window,
+		Metric:          metric,
+		Entries:         entries,
+		DataWatermarkAt: &now,
+	}
+	m.publishedSnapshots[snapshotID] = resp
+	m.publishedSnapshots[boardKey+":"+window+":"+metric] = resp
+	return nil
+}
 
 func (m *MemoryStore) GetLeaderboard(ctx context.Context, boardKey, window, metric string, cursor *string, limit int) (*domain.LeaderboardResponse, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	now := time.Now().UTC()
-	var entries []domain.LeaderboardEntry
 
+	key := boardKey + ":" + window + ":" + metric
+	if snap, ok := m.publishedSnapshots[key]; ok {
+		var filteredEntries []domain.LeaderboardEntry
+		rank := 1
+		for _, e := range snap.Entries {
+			var uID string
+			for _, pub := range m.publicProfiles {
+				if strings.EqualFold(pub.Handle, e.Handle) {
+					uID = pub.UserID
+					break
+				}
+			}
+			if uID != "" {
+				u, uOk := m.users[uID]
+				priv, pOk := m.privacySettings[uID]
+				if !uOk || !pOk || u.AccountStatus != domain.AccountStatusActive || !priv.PublicProfileEnabled {
+					continue
+				}
+			}
+			eCopy := e
+			eCopy.RankNo = rank
+			filteredEntries = append(filteredEntries, eCopy)
+			rank++
+		}
+
+		return &domain.LeaderboardResponse{
+			SnapshotID:      snap.SnapshotID,
+			BoardKey:        snap.BoardKey,
+			Window:          snap.Window,
+			Metric:          snap.Metric,
+			Entries:         filteredEntries,
+			DataWatermarkAt: snap.DataWatermarkAt,
+		}, nil
+	}
+
+	var entries []domain.LeaderboardEntry
 	rank := 1
 	for _, pub := range m.publicProfiles {
 		if pub.ProfileStatus == domain.ProfileStatusPublished {
+			u, uOk := m.users[pub.UserID]
+			priv, pOk := m.privacySettings[pub.UserID]
+			if !uOk || !pOk || u.AccountStatus != domain.AccountStatusActive || !priv.PublicProfileEnabled {
+				continue
+			}
+
 			delta := 0
 			entries = append(entries, domain.LeaderboardEntry{
 				RankNo:      rank,
@@ -1309,7 +1884,6 @@ func (m *MemoryStore) CompleteAvatarUploadIntent(ctx context.Context, objectID, 
 	obj.ReadyAt = &now
 	obj.UpdatedAt = now
 
-	// Update user's avatar object pointer
 	if u, ok := m.users[userID]; ok {
 		u.AvatarObjectID = &objectID
 		avatarURL := fmt.Sprintf("https://cdn.tokendance.dev/%s", obj.ObjectKey)

@@ -65,9 +65,11 @@ func LoadFromEnv() (*Config, error) {
 	}
 	if v := os.Getenv("TOKENDANCE_MYSQL_DSN_FILE"); v != "" {
 		cfg.MySQLDSNFile = v
-		if data, err := os.ReadFile(v); err == nil {
-			cfg.MySQLDSN = strings.TrimSpace(string(data))
+		data, err := os.ReadFile(v)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read MySQL DSN file at %s: %w", v, err)
 		}
+		cfg.MySQLDSN = strings.TrimSpace(string(data))
 	}
 	if v := os.Getenv("TOKENDANCE_REDIS_ADDR"); v != "" {
 		cfg.RedisAddr = v

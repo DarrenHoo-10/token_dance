@@ -48,8 +48,13 @@ func (s *Service) CreateAvatarIntent(ctx context.Context, userID string, in Crea
 		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "media.invalidContentType", "only image/png, image/jpeg, image/webp allowed", nil, domain.ErrInvalidArgument)
 	}
 
-	if in.ByteSize > uint64(s.cfg.MediaAvatarMaxBytes) {
-		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "media.fileTooLarge", "file exceeds 5 MiB max size", nil, domain.ErrInvalidArgument)
+	if in.ByteSize == 0 || in.ByteSize > uint64(s.cfg.MediaAvatarMaxBytes) {
+		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "media.fileTooLarge", "file size must be between 1 byte and 5 MiB", nil, domain.ErrInvalidArgument)
+	}
+
+	shaTrimmed := strings.TrimSpace(in.Sha256)
+	if len(shaTrimmed) != 64 {
+		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "media.invalidSha256", "sha256 must be a 64-character hex string", nil, domain.ErrInvalidArgument)
 	}
 
 	now := s.clk.Now()
@@ -61,7 +66,7 @@ func (s *Service) CreateAvatarIntent(ctx context.Context, userID string, in Crea
 
 	w := uint32(512)
 	h := uint32(512)
-	sha := crypto.SHA256([]byte(in.Sha256))
+	sha := crypto.SHA256([]byte(shaTrimmed))
 
 	obj := domain.UserUploadObject{
 		ObjectID:      objectID,
@@ -97,6 +102,9 @@ func (s *Service) CompleteAvatarIntent(ctx context.Context, objectID, userID str
 	now := s.clk.Now()
 	obj, err := s.store.CompleteAvatarUploadIntent(ctx, objectID, userID, now)
 	if err != nil {
+		if err == domain.ErrInvalidArgument {
+			return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "media.invalidDimensions", "image dimensions invalid or exceeds 4096px limit", nil, err)
+		}
 		return nil, domain.NewAppError(404, "RESOURCE_NOT_FOUND", "media.objectNotFound", "upload object not found", nil, err)
 	}
 	return obj, nil

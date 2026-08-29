@@ -83,32 +83,84 @@ func (s *Service) SanitizeReturnTo(returnTo string) string {
 	if returnTo == "" {
 		return "/"
 	}
-	returnTo = strings.TrimSpace(returnTo)
-
-	// Must start with single slash and not double slash
-	if !strings.HasPrefix(returnTo, "/") || strings.HasPrefix(returnTo, "//") || strings.Contains(returnTo, "\\") {
+	trimmed := strings.TrimSpace(returnTo)
+	if len(trimmed) > 2048 {
 		return "/"
 	}
 
-	// Reject control characters or excessive length
-	if len(returnTo) > 2048 {
+	// Reject null bytes and raw control characters
+	for i := 0; i < len(trimmed); i++ {
+		if trimmed[i] < 32 || trimmed[i] == 127 {
+			return "/"
+		}
+	}
+
+	// Reject backslashes in raw input
+	if strings.Contains(trimmed, "\\") {
 		return "/"
 	}
 
-	// Reject auth loops
-	lower := strings.ToLower(returnTo)
-	if strings.HasPrefix(lower, "/login") || strings.HasPrefix(lower, "/register") ||
-		strings.HasPrefix(lower, "/logout") || strings.HasPrefix(lower, "/auth/callback") {
+	// Reject protocol-relative leading slashes
+	if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "/\\") || strings.HasPrefix(trimmed, "\\/") || strings.HasPrefix(trimmed, "\\\\") {
 		return "/"
 	}
 
-	// Validate relative URI parsing
-	u, err := url.Parse(returnTo)
-	if err != nil || u.IsAbs() || u.Host != "" {
+	// Unescape once to catch encoded bypasses like %2f%2f, %5c, %00, %09
+	unescaped, err := url.QueryUnescape(trimmed)
+	if err != nil {
+		return "/"
+	}
+	if strings.Contains(unescaped, "\\") || strings.HasPrefix(unescaped, "//") || strings.HasPrefix(unescaped, "/\\") {
+		return "/"
+	}
+	for i := 0; i < len(unescaped); i++ {
+		if unescaped[i] < 32 || unescaped[i] == 127 {
+			return "/"
+		}
+	}
+
+	// Reject dangerous schemes in unescaped or raw input
+	lowerUnesc := strings.ToLower(unescaped)
+	if strings.Contains(lowerUnesc, "javascript:") || strings.Contains(lowerUnesc, "data:") ||
+		strings.Contains(lowerUnesc, "vbscript:") || strings.Contains(lowerUnesc, "file:") {
 		return "/"
 	}
 
-	return returnTo
+	// Parse relative URI
+	u, err := url.Parse(trimmed)
+	if err != nil || u.IsAbs() || u.Host != "" || u.Scheme != "" {
+		return "/"
+	}
+
+	// Must start with exactly single slash
+	if !strings.HasPrefix(u.Path, "/") || strings.HasPrefix(u.Path, "//") {
+		return "/"
+	}
+
+	// Reject auth loops and internal API paths
+	pathLower := strings.ToLower(u.Path)
+	if pathLower == "/login" || strings.HasPrefix(pathLower, "/login/") ||
+		pathLower == "/register" || strings.HasPrefix(pathLower, "/register/") ||
+		pathLower == "/logout" || strings.HasPrefix(pathLower, "/logout/") ||
+		pathLower == "/auth" || strings.HasPrefix(pathLower, "/auth/") ||
+		pathLower == "/api" || strings.HasPrefix(pathLower, "/api/") {
+		return "/"
+	}
+
+	// Rebuild clean relative URL
+	cleanPath := u.Path
+	if u.RawQuery != "" {
+		cleanPath += "?" + u.RawQuery
+	}
+	if u.Fragment != "" {
+		cleanPath += "#" + u.Fragment
+	}
+
+	if !strings.HasPrefix(cleanPath, "/") || strings.HasPrefix(cleanPath, "//") {
+		return "/"
+	}
+
+	return cleanPath
 }
 
 func (s *Service) RequestRegistrationCode(ctx context.Context, email, locale string) error {
@@ -329,8 +381,11 @@ func (s *Service) CompleteRegistration(ctx context.Context, email, code, passwor
 		SecurityEvent: event,
 	})
 	if err != nil {
-		if err == domain.ErrAccountExists {
+		if err == domain.ErrAccountExists || err == domain.ErrConflict {
 			return nil, domain.NewAppError(409, "AUTH_ACCOUNT_EXISTS", "auth.accountExists", "an account with this email already exists", nil, err)
+		}
+		if err == domain.ErrChallengeInvalid || err == domain.ErrChallengeExpired {
+			return nil, domain.NewAppError(400, "AUTH_INVALID_CREDENTIALS", "auth.codeReused", "verification code has already been used or expired", nil, err)
 		}
 		return nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to complete registration", nil, err)
 	}

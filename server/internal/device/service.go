@@ -236,3 +236,23 @@ func (s *Service) RevokeDevice(ctx context.Context, installationID, userID strin
 	}
 	return inst, nil
 }
+
+func (s *Service) AuthorizeIngest(ctx context.Context, installationID string) (*domain.Installation, *domain.User, error) {
+	inst, user, err := s.store.AuthorizeIngest(ctx, installationID)
+	if err != nil {
+		if err == domain.ErrNotFound {
+			return nil, nil, domain.NewAppError(404, "DEVICE_NOT_FOUND", "device.notFound", "installation not found", nil, err)
+		}
+		if err == domain.ErrDeviceRevoked {
+			return nil, nil, domain.NewAppError(403, "DEVICE_REVOKED", "device.revoked", "device is revoked", nil, err)
+		}
+		if err == domain.ErrDeviceDisabled {
+			return nil, nil, domain.NewAppError(403, "DEVICE_DISABLED", "device.disabled", "device is disabled", nil, err)
+		}
+		if err == domain.ErrAccountSuspended {
+			return nil, nil, domain.NewAppError(403, "ACCOUNT_ACTION_NOT_ALLOWED", "auth.accountSuspended", "user account is not active", nil, err)
+		}
+		return nil, nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to authorize ingest", nil, err)
+	}
+	return inst, user, nil
+}

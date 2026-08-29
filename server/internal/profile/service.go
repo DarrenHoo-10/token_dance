@@ -95,6 +95,7 @@ type OnboardingInput struct {
 	Timezone    string                     `json:"timezone"`
 	Locale      string                     `json:"locale"`
 	Privacy     domain.UserPrivacySettings `json:"privacy"`
+	ReturnTo    string                     `json:"returnTo,omitempty"`
 }
 
 func (s *Service) CompleteOnboarding(ctx context.Context, userID string, in OnboardingInput) (*domain.User, *domain.UserPrivacySettings, error) {

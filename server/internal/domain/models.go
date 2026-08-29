@@ -579,7 +579,57 @@ type SearchAgentResult struct {
 	Description string `json:"description,omitempty"`
 }
 
+type SearchSkillResult struct {
+	SkillID         string `json:"skillId"`
+	SkillPublicName string `json:"skillPublicName"`
+	UseCount        string `json:"useCount"`
+	PublicUserCount int    `json:"publicUserCount"`
+	ActiveDays      int    `json:"activeDays"`
+}
+
 type SearchResponse struct {
 	Users  []SearchUserResult  `json:"users"`
 	Agents []SearchAgentResult `json:"agents"`
+	Skills []SearchSkillResult `json:"skills,omitempty"`
+}
+
+// Compare Models (P1)
+type CompareUserItem struct {
+	Handle          string     `json:"handle"`
+	DisplayName     *string    `json:"displayName,omitempty"`
+	AvatarURL       *string    `json:"avatarUrl,omitempty"`
+	Visible         bool       `json:"visible"`
+	TokenTotal      *string    `json:"tokenTotal,omitempty"`
+	Rank            *int       `json:"rank,omitempty"`
+	Percentile      *float64   `json:"percentile,omitempty"`
+	DataWatermarkAt *time.Time `json:"dataWatermarkAt,omitempty"`
+}
+
+type CompareResponse struct {
+	Users       []CompareUserItem `json:"users"`
+	GeneratedAt time.Time         `json:"generatedAt"`
+}
+
+// Public DTO Whitelist (USR-016)
+type PublicProfileDTO struct {
+	Handle               string     `json:"handle"`
+	DisplayName          string     `json:"displayName"`
+	AvatarURL            *string    `json:"avatarUrl"`
+	Bio                  *string    `json:"bio,omitempty"`
+	Rank                 *int       `json:"rank,omitempty"`
+	RankDelta            *int       `json:"rankDelta,omitempty"`
+	Percentile           *float64   `json:"percentile,omitempty"`
+	TokenTotal           *string    `json:"tokenTotal,omitempty"`
+	ActiveDays           *int       `json:"activeDays,omitempty"`
+	CurrentStreak        *int       `json:"currentStreak,omitempty"`
+	DataWatermarkAt      *time.Time `json:"dataWatermarkAt,omitempty"`
+	GeneratedAt          time.Time  `json:"generatedAt"`
+	ProjectionVersion    uint64     `json:"projectionVersion"`
+	ShowBio              bool       `json:"showBio"`
+	ShowTokenTotal       bool       `json:"showTokenTotal"`
+	ShowTrends           bool       `json:"showTrends"`
+	ShowActivityCalendar bool       `json:"showActivityCalendar"`
+	ShowAgentBreakdown   bool       `json:"showAgentBreakdown"`
+	ShowSkillRanking     bool       `json:"showSkillRanking"`
+	ShowAchievements     bool       `json:"showAchievements"`
 }

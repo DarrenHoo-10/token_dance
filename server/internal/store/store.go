@@ -60,6 +60,8 @@ type PrivacyStore interface {
 	RequestDeletionTx(ctx context.Context, req domain.DataDeletionRequest, event domain.UserSecurityEvent, now time.Time) (*domain.DataDeletionRequest, error)
 	CancelDeletionTx(ctx context.Context, requestID string, userID string, now time.Time) error
 	GetDeletionRequest(ctx context.Context, requestID string, userID string) (*domain.DataDeletionRequest, error)
+	ClaimPendingDeletion(ctx context.Context, workerID string, leaseDuration time.Duration, now time.Time) (*domain.DataDeletionRequest, error)
+	ExecuteDeletionPhase(ctx context.Context, requestID string, workerID string, phase string, cursor uint64, auditRef string, now time.Time) error
 }
 
 type AnalyticsStore interface {
@@ -83,12 +85,16 @@ type DeviceStore interface {
 	PauseInstallation(ctx context.Context, installationID, userID string, reason string, now time.Time) (*domain.Installation, error)
 	ResumeInstallation(ctx context.Context, installationID, userID string, now time.Time) (*domain.Installation, error)
 	RevokeInstallation(ctx context.Context, installationID, userID string, now time.Time) (*domain.Installation, error)
+	AuthorizeIngest(ctx context.Context, installationID string) (*domain.Installation, *domain.User, error)
 }
 
 type ExportStore interface {
 	CreateJob(ctx context.Context, job domain.DataExportJob) (*domain.DataExportJob, error)
 	ListJobs(ctx context.Context, userID string) ([]domain.DataExportJob, error)
 	GetJob(ctx context.Context, exportID, userID string) (*domain.DataExportJob, error)
+	ClaimPendingJob(ctx context.Context, workerID string, leaseDuration time.Duration, now time.Time) (*domain.DataExportJob, error)
+	CompleteJob(ctx context.Context, exportID string, workerID string, objectKey string, fileSha256 [32]byte, fileSize uint64, now time.Time) error
+	FailJob(ctx context.Context, exportID string, workerID string, lastError string, now time.Time) error
 }
 
 type SearchStore interface {
@@ -96,6 +102,7 @@ type SearchStore interface {
 }
 
 type LeaderboardStore interface {
+	PublishSnapshot(ctx context.Context, snapshotID string, boardKey, window, metric string, entries []domain.LeaderboardEntry, now time.Time) error
 	GetLeaderboard(ctx context.Context, boardKey, window, metric string, cursor *string, limit int) (*domain.LeaderboardResponse, error)
 }
 

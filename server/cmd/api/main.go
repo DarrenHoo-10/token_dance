@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log"
@@ -20,10 +21,13 @@ import (
 	"tokendance/internal/httpapi"
 	"tokendance/internal/leaderboard"
 	"tokendance/internal/media"
+	"tokendance/internal/migrate"
 	"tokendance/internal/privacy"
 	"tokendance/internal/profile"
 	"tokendance/internal/search"
+	"tokendance/internal/store"
 	"tokendance/internal/store/memory"
+	"tokendance/internal/store/mysql"
 )
 
 func main() {
@@ -35,7 +39,37 @@ func main() {
 	}
 
 	clk := clock.RealClock{}
-	st := memory.NewMemoryStore()
+	var st store.Store
+	var db *sql.DB
+
+	if cfg.MySQLDSN != "" {
+		log.Printf("Connecting to MySQL backend (pool: max_open=50, max_idle=25)...")
+		dbPoolCfg := mysql.DefaultDBConfig()
+		dbConn, err := mysql.OpenDB(cfg.MySQLDSN, dbPoolCfg)
+		if err != nil {
+			log.Fatalf("Fatal MySQL connection error: %v", err)
+		}
+		db = dbConn
+		defer db.Close()
+
+		// Run database migrations with advisory lock and baseline checks
+		migRunner := migrate.NewRunner(db)
+		ctxMig, cancelMig := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancelMig()
+
+		if err := migRunner.RunMigrations(ctxMig); err != nil {
+			log.Fatalf("Fatal database migration error: %v", err)
+		}
+		log.Println("Database migrations verified and up to date.")
+
+		st = mysql.NewStore(db)
+	} else {
+		if cfg.Environment == "production" {
+			log.Fatalf("Fatal configuration error: TOKENDANCE_MYSQL_DSN_FILE or TOKENDANCE_MYSQL_DSN is required in production environment")
+		}
+		log.Printf("WARNING: Running with in-memory store in explicit %s mode", cfg.Environment)
+		st = memory.NewMemoryStore()
+	}
 
 	authService := auth.NewService(st, cfg, clk)
 	profileService := profile.NewService(st, clk)

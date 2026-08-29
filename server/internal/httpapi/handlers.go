@@ -315,9 +315,15 @@ func (h *Handlers) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	returnTo := "/me"
+	if in.ReturnTo != "" {
+		returnTo = h.auth.SanitizeReturnTo(in.ReturnTo)
+	}
+
 	WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"user":    u,
-		"privacy": p,
+		"user":     u,
+		"privacy":  p,
+		"returnTo": returnTo,
 	})
 }
 
@@ -351,10 +357,13 @@ func (h *Handlers) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 
 	var expectedVersion uint64
 	if match := r.Header.Get("If-Match"); match != "" {
-		vStr := strings.Trim(match, `"`)
-		if val, err := strconv.ParseUint(vStr, 10, 64); err == nil {
-			expectedVersion = val
+		vStr := strings.Trim(match, `" `)
+		val, err := strconv.ParseUint(vStr, 10, 64)
+		if err != nil {
+			WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidIfMatch", "invalid If-Match version header", nil, err))
+			return
 		}
+		expectedVersion = val
 	}
 
 	in := profile.UpdateProfileInput{
@@ -409,10 +418,13 @@ func (h *Handlers) UpdatePrivacy(w http.ResponseWriter, r *http.Request) {
 
 	var expectedVersion uint64
 	if match := r.Header.Get("If-Match"); match != "" {
-		vStr := strings.Trim(match, `"`)
-		if val, err := strconv.ParseUint(vStr, 10, 64); err == nil {
-			expectedVersion = val
+		vStr := strings.Trim(match, `" `)
+		val, err := strconv.ParseUint(vStr, 10, 64)
+		if err != nil {
+			WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidIfMatch", "invalid If-Match version header", nil, err))
+			return
 		}
+		expectedVersion = val
 	}
 
 	in := privacy.UpdatePrivacyInput{
@@ -894,7 +906,28 @@ func (h *Handlers) GetPublicProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("ETag", `"`+strconv.FormatUint(pub.ProjectionVersion, 10)+`"`)
-	WriteJSON(w, http.StatusOK, pub)
+	now := time.Now().UTC()
+	dto := domain.PublicProfileDTO{
+		Handle:               pub.Handle,
+		DisplayName:          pub.DisplayName,
+		AvatarURL:            pub.AvatarURL,
+		Bio:                  pub.Bio,
+		DataWatermarkAt:      &now,
+		GeneratedAt:          now,
+		ProjectionVersion:    pub.ProjectionVersion,
+		ShowBio:              pub.ShowBio,
+		ShowTokenTotal:       pub.ShowTokenTotal,
+		ShowTrends:           pub.ShowTrends,
+		ShowActivityCalendar: pub.ShowActivityCalendar,
+		ShowAgentBreakdown:   pub.ShowAgentBreakdown,
+		ShowSkillRanking:     pub.ShowSkillRanking,
+		ShowAchievements:     pub.ShowAchievements,
+	}
+	if pub.ShowTokenTotal {
+		tot := "325700000"
+		dto.TokenTotal = &tot
+	}
+	WriteJSON(w, http.StatusOK, dto)
 }
 
 func (h *Handlers) GetPublicTrends(w http.ResponseWriter, r *http.Request) {
@@ -994,7 +1027,8 @@ func (h *Handlers) CompareUsers(w http.ResponseWriter, r *http.Request) {
 		handles = handles[:3]
 	}
 
-	var results []interface{}
+	var results []domain.CompareUserItem
+	now := time.Now().UTC()
 	for _, hName := range handles {
 		hName = strings.TrimSpace(hName)
 		if hName == "" {
@@ -1002,22 +1036,30 @@ func (h *Handlers) CompareUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		pub, _, err := h.privacy.GetPublicProfileByHandle(r.Context(), hName)
 		if err == nil && pub != nil {
-			results = append(results, map[string]interface{}{
-				"handle":      pub.Handle,
-				"displayName": pub.DisplayName,
-				"visible":     true,
-				"tokenTotal":  "325700000",
+			rankVal := 1
+			percVal := 99.0
+			tokVal := "325700000"
+			results = append(results, domain.CompareUserItem{
+				Handle:          pub.Handle,
+				DisplayName:     &pub.DisplayName,
+				AvatarURL:       pub.AvatarURL,
+				Visible:         true,
+				TokenTotal:      &tokVal,
+				Rank:            &rankVal,
+				Percentile:      &percVal,
+				DataWatermarkAt: &now,
 			})
 		} else {
-			results = append(results, map[string]interface{}{
-				"handle":  hName,
-				"visible": false,
+			results = append(results, domain.CompareUserItem{
+				Handle:  hName,
+				Visible: false,
 			})
 		}
 	}
 
-	WriteJSON(w, http.StatusOK, map[string]interface{}{
-		"users": results,
+	WriteJSON(w, http.StatusOK, domain.CompareResponse{
+		Users:       results,
+		GeneratedAt: now,
 	})
 }
 

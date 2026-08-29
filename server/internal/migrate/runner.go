@@ -20,6 +20,8 @@ import (
 //go:embed all:migrations/*.sql
 var EmbeddedMigrations embed.FS
 
+const MigrationAdvisoryLockName = "tokendance_migrations_lock"
+
 type MigrationInfo struct {
 	Version     string
 	Filename    string
@@ -90,10 +92,10 @@ func (r *Runner) LoadFromDir(dir string) error {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".sql") {
 			continue
 		}
-		path := filepath.Join(dir, entry.Name())
-		content, err := os.ReadFile(path)
+		p := filepath.Join(dir, entry.Name())
+		content, err := os.ReadFile(p)
 		if err != nil {
-			return fmt.Errorf("failed to read migration file %s: %w", path, err)
+			return fmt.Errorf("failed to read migration file %s: %w", p, err)
 		}
 
 		sum := sha256.Sum256(content)
@@ -173,13 +175,51 @@ func ValidateBaselineRecords(records []domain.DataDeletionRequest) error {
 	return nil
 }
 
-// RunMigrations applies migrations in order to the database
+// acquireAdvisoryLock acquires MySQL advisory lock
+func (r *Runner) acquireAdvisoryLock(ctx context.Context, timeoutSeconds int) (bool, error) {
+	var locked sql.NullInt64
+	err := r.db.QueryRowContext(ctx, "SELECT GET_LOCK(?, ?)", MigrationAdvisoryLockName, timeoutSeconds).Scan(&locked)
+	if err != nil {
+		return false, fmt.Errorf("failed to execute GET_LOCK: %w", err)
+	}
+	return locked.Valid && locked.Int64 == 1, nil
+}
+
+// releaseAdvisoryLock releases MySQL advisory lock
+func (r *Runner) releaseAdvisoryLock(ctx context.Context) error {
+	var released sql.NullInt64
+	err := r.db.QueryRowContext(ctx, "SELECT RELEASE_LOCK(?)", MigrationAdvisoryLockName).Scan(&released)
+	if err != nil {
+		return fmt.Errorf("failed to execute RELEASE_LOCK: %w", err)
+	}
+	return nil
+}
+
+// RunMigrations applies migrations in order to the database with advisory lock and checksum guard
 func (r *Runner) RunMigrations(ctx context.Context) error {
 	if r.db == nil {
 		return fmt.Errorf("database connection is nil")
 	}
 
-	// 1. Ensure schema_migrations table exists
+	if len(r.migrations) == 0 {
+		if err := r.LoadFromEmbed(); err != nil {
+			return err
+		}
+	}
+
+	// 1. Acquire MySQL advisory lock to prevent concurrent migration executions
+	locked, err := r.acquireAdvisoryLock(ctx, 30)
+	if err != nil {
+		return fmt.Errorf("error acquiring migration advisory lock: %w", err)
+	}
+	if !locked {
+		return fmt.Errorf("failed to acquire migration advisory lock within timeout")
+	}
+	defer func() {
+		_ = r.releaseAdvisoryLock(context.Background())
+	}()
+
+	// 2. Ensure schema_migrations table exists
 	createTableSQL := `
 	CREATE TABLE IF NOT EXISTS schema_migrations (
 	  version             VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -192,7 +232,7 @@ func (r *Runner) RunMigrations(ctx context.Context) error {
 		return fmt.Errorf("failed to ensure schema_migrations table: %w", err)
 	}
 
-	// 2. Query applied migrations
+	// 3. Query applied migrations
 	rows, err := r.db.QueryContext(ctx, "SELECT version, checksum_sha256, applied_at FROM schema_migrations ORDER BY version ASC")
 	if err != nil {
 		return fmt.Errorf("failed to query schema_migrations: %w", err)
@@ -216,7 +256,7 @@ func (r *Runner) RunMigrations(ctx context.Context) error {
 		}
 	}
 
-	// 3. Process each migration
+	// 4. Process each migration
 	for _, m := range r.migrations {
 		if prev, ok := applied[m.Version]; ok {
 			// Verify checksum
@@ -233,7 +273,7 @@ func (r *Runner) RunMigrations(ctx context.Context) error {
 			}
 		}
 
-		// Execute migration
+		// Execute migration statements
 		statements := splitSQLStatements(m.Content)
 		for _, stmt := range statements {
 			stmt = strings.TrimSpace(stmt)
@@ -255,6 +295,58 @@ func (r *Runner) RunMigrations(ctx context.Context) error {
 	return nil
 }
 
+// ResetCleanSchema drops all application tables for clean test setup
+func (r *Runner) ResetCleanSchema(ctx context.Context) error {
+	if r.db == nil {
+		return fmt.Errorf("database connection is nil")
+	}
+
+	// Disable foreign key checks for clean tear down
+	if _, err := r.db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 0;"); err != nil {
+		return fmt.Errorf("failed to disable foreign key checks: %w", err)
+	}
+	defer func() {
+		_, _ = r.db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 1;")
+	}()
+
+	tables := []string{
+		"data_export_jobs",
+		"user_security_events",
+		"device_binding_challenges",
+		"user_upload_objects",
+		"user_handle_history",
+		"public_user_profiles",
+		"user_privacy_settings",
+		"email_outbox",
+		"email_challenges",
+		"user_sessions",
+		"user_password_credentials",
+		"adapter_releases",
+		"leaderboard_entries",
+		"leaderboard_snapshots",
+		"daily_skill_metrics",
+		"daily_user_agent_model_metrics",
+		"daily_user_agent_metrics",
+		"usage_events",
+		"ingest_batches",
+		"ingest_nonces",
+		"installation_adapter_status",
+		"installations",
+		"data_deletion_requests",
+		"users",
+		"schema_migrations",
+	}
+
+	for _, table := range tables {
+		query := fmt.Sprintf("DROP TABLE IF EXISTS %s;", table)
+		if _, err := r.db.ExecContext(ctx, query); err != nil {
+			return fmt.Errorf("failed to drop table %s: %w", table, err)
+		}
+	}
+
+	return nil
+}
+
 func splitSQLStatements(sql string) []string {
 	var stmts []string
 	var current strings.Builder
@@ -265,6 +357,15 @@ func splitSQLStatements(sql string) []string {
 		if strings.HasPrefix(trimmed, "--") || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
+		// Skip USE statement as tests might use an arbitrary database name in DSN
+		if strings.HasPrefix(strings.ToUpper(trimmed), "USE ") {
+			continue
+		}
+		// Skip CREATE DATABASE IF NOT EXISTS statement
+		if strings.HasPrefix(strings.ToUpper(trimmed), "CREATE DATABASE ") {
+			continue
+		}
+
 		current.WriteString(line)
 		current.WriteString("\n")
 		if strings.HasSuffix(trimmed, ";") {
