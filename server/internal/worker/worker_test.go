@@ -11,6 +11,7 @@ import (
 
 	"tokendance/internal/clock"
 	"tokendance/internal/migrate"
+	"tokendance/internal/store/mysql"
 )
 
 func getTestMySQLDB(t *testing.T) *sql.DB {
@@ -20,7 +21,8 @@ func getTestMySQLDB(t *testing.T) *sql.DB {
 		t.Skip("skipping MySQL worker test: TOKENDANCE_TEST_MYSQL_DSN not set")
 	}
 
-	db, err := sql.Open("mysql", dsn)
+	normDSN := mysql.NormalizeDSN(dsn)
+	db, err := sql.Open("mysql", normDSN)
 	if err != nil {
 		t.Fatalf("failed to open MySQL test connection: %v", err)
 	}

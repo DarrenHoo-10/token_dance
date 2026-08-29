@@ -175,20 +175,20 @@ func ValidateBaselineRecords(records []domain.DataDeletionRequest) error {
 	return nil
 }
 
-// acquireAdvisoryLock acquires MySQL advisory lock
-func (r *Runner) acquireAdvisoryLock(ctx context.Context, timeoutSeconds int) (bool, error) {
+// acquireAdvisoryLock acquires MySQL advisory lock on a dedicated connection
+func (r *Runner) acquireAdvisoryLock(ctx context.Context, conn *sql.Conn, timeoutSeconds int) (bool, error) {
 	var locked sql.NullInt64
-	err := r.db.QueryRowContext(ctx, "SELECT GET_LOCK(?, ?)", MigrationAdvisoryLockName, timeoutSeconds).Scan(&locked)
+	err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, ?)", MigrationAdvisoryLockName, timeoutSeconds).Scan(&locked)
 	if err != nil {
 		return false, fmt.Errorf("failed to execute GET_LOCK: %w", err)
 	}
 	return locked.Valid && locked.Int64 == 1, nil
 }
 
-// releaseAdvisoryLock releases MySQL advisory lock
-func (r *Runner) releaseAdvisoryLock(ctx context.Context) error {
+// releaseAdvisoryLock releases MySQL advisory lock on a dedicated connection
+func (r *Runner) releaseAdvisoryLock(ctx context.Context, conn *sql.Conn) error {
 	var released sql.NullInt64
-	err := r.db.QueryRowContext(ctx, "SELECT RELEASE_LOCK(?)", MigrationAdvisoryLockName).Scan(&released)
+	err := conn.QueryRowContext(ctx, "SELECT RELEASE_LOCK(?)", MigrationAdvisoryLockName).Scan(&released)
 	if err != nil {
 		return fmt.Errorf("failed to execute RELEASE_LOCK: %w", err)
 	}
@@ -207,8 +207,14 @@ func (r *Runner) RunMigrations(ctx context.Context) error {
 		}
 	}
 
+	conn, err := r.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire migration connection: %w", err)
+	}
+	defer conn.Close()
+
 	// 1. Acquire MySQL advisory lock to prevent concurrent migration executions
-	locked, err := r.acquireAdvisoryLock(ctx, 30)
+	locked, err := r.acquireAdvisoryLock(ctx, conn, 30)
 	if err != nil {
 		return fmt.Errorf("error acquiring migration advisory lock: %w", err)
 	}
@@ -216,7 +222,7 @@ func (r *Runner) RunMigrations(ctx context.Context) error {
 		return fmt.Errorf("failed to acquire migration advisory lock within timeout")
 	}
 	defer func() {
-		_ = r.releaseAdvisoryLock(context.Background())
+		_ = r.releaseAdvisoryLock(context.Background(), conn)
 	}()
 
 	// 2. Ensure schema_migrations table exists
@@ -228,12 +234,12 @@ func (r *Runner) RunMigrations(ctx context.Context) error {
 	  PRIMARY KEY (version)
 	) ENGINE = InnoDB;`
 
-	if _, err := r.db.ExecContext(ctx, createTableSQL); err != nil {
+	if _, err := conn.ExecContext(ctx, createTableSQL); err != nil {
 		return fmt.Errorf("failed to ensure schema_migrations table: %w", err)
 	}
 
 	// 3. Query applied migrations
-	rows, err := r.db.QueryContext(ctx, "SELECT version, checksum_sha256, applied_at FROM schema_migrations ORDER BY version ASC")
+	rows, err := conn.QueryContext(ctx, "SELECT version, checksum_sha256, applied_at FROM schema_migrations ORDER BY version ASC")
 	if err != nil {
 		return fmt.Errorf("failed to query schema_migrations: %w", err)
 	}
@@ -243,12 +249,36 @@ func (r *Runner) RunMigrations(ctx context.Context) error {
 	for rows.Next() {
 		var ver string
 		var chk []byte
-		var appliedAt time.Time
-		if err := rows.Scan(&ver, &chk, &appliedAt); err != nil {
+		var appliedRaw interface{}
+		if err := rows.Scan(&ver, &chk, &appliedRaw); err != nil {
 			return fmt.Errorf("failed to scan migration row: %w", err)
 		}
 		var sum [32]byte
 		copy(sum[:], chk)
+
+		var appliedAt time.Time
+		switch v := appliedRaw.(type) {
+		case time.Time:
+			appliedAt = v
+		case []byte:
+			str := string(v)
+			appliedAt, _ = time.Parse("2006-01-02 15:04:05.999999", str)
+			if appliedAt.IsZero() {
+				appliedAt, _ = time.Parse(time.RFC3339Nano, str)
+			}
+			if appliedAt.IsZero() {
+				appliedAt, _ = time.Parse("2006-01-02 15:04:05", str)
+			}
+		case string:
+			appliedAt, _ = time.Parse("2006-01-02 15:04:05.999999", v)
+			if appliedAt.IsZero() {
+				appliedAt, _ = time.Parse(time.RFC3339Nano, v)
+			}
+			if appliedAt.IsZero() {
+				appliedAt, _ = time.Parse("2006-01-02 15:04:05", v)
+			}
+		}
+
 		applied[ver] = MigrationInfo{
 			Version:   ver,
 			Checksum:  sum,
@@ -280,14 +310,14 @@ func (r *Runner) RunMigrations(ctx context.Context) error {
 			if stmt == "" {
 				continue
 			}
-			if _, err := r.db.ExecContext(ctx, stmt); err != nil {
+			if _, err := conn.ExecContext(ctx, stmt); err != nil {
 				return fmt.Errorf("failed executing migration %s statement [%s]: %w", m.Filename, stmt, err)
 			}
 		}
 
 		// Record in schema_migrations
-		insertSQL := "INSERT INTO schema_migrations (version, checksum_sha256, applied_at) VALUES (?, ?, ?)"
-		if _, err := r.db.ExecContext(ctx, insertSQL, m.Version, m.Checksum[:], time.Now().UTC()); err != nil {
+		insertSQL := "INSERT INTO schema_migrations (version, checksum_sha256, applied_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE checksum_sha256 = VALUES(checksum_sha256), applied_at = VALUES(applied_at)"
+		if _, err := conn.ExecContext(ctx, insertSQL, m.Version, m.Checksum[:], time.Now().UTC()); err != nil {
 			return fmt.Errorf("failed to record applied migration %s: %w", m.Version, err)
 		}
 	}
@@ -301,12 +331,18 @@ func (r *Runner) ResetCleanSchema(ctx context.Context) error {
 		return fmt.Errorf("database connection is nil")
 	}
 
-	// Disable foreign key checks for clean tear down
-	if _, err := r.db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 0;"); err != nil {
+	conn, err := r.db.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire connection: %w", err)
+	}
+	defer conn.Close()
+
+	// Disable foreign key checks on this connection for clean tear down
+	if _, err := conn.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 0;"); err != nil {
 		return fmt.Errorf("failed to disable foreign key checks: %w", err)
 	}
 	defer func() {
-		_, _ = r.db.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 1;")
+		_, _ = conn.ExecContext(ctx, "SET FOREIGN_KEY_CHECKS = 1;")
 	}()
 
 	tables := []string{
@@ -339,7 +375,7 @@ func (r *Runner) ResetCleanSchema(ctx context.Context) error {
 
 	for _, table := range tables {
 		query := fmt.Sprintf("DROP TABLE IF EXISTS %s;", table)
-		if _, err := r.db.ExecContext(ctx, query); err != nil {
+		if _, err := conn.ExecContext(ctx, query); err != nil {
 			return fmt.Errorf("failed to drop table %s: %w", table, err)
 		}
 	}
@@ -347,34 +383,127 @@ func (r *Runner) ResetCleanSchema(ctx context.Context) error {
 	return nil
 }
 
-func splitSQLStatements(sql string) []string {
+func splitSQLStatements(content string) []string {
 	var stmts []string
 	var current strings.Builder
-	lines := strings.Split(sql, "\n")
+	inSingleQuote := false
+	inDoubleQuote := false
+	inBacktick := false
+	inBlockComment := false
+	inLineComment := false
 
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "--") || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		// Skip USE statement as tests might use an arbitrary database name in DSN
-		if strings.HasPrefix(strings.ToUpper(trimmed), "USE ") {
-			continue
-		}
-		// Skip CREATE DATABASE IF NOT EXISTS statement
-		if strings.HasPrefix(strings.ToUpper(trimmed), "CREATE DATABASE ") {
+	chars := []rune(content)
+	n := len(chars)
+
+	for i := 0; i < n; i++ {
+		c := chars[i]
+
+		// Handle block comments
+		if inBlockComment {
+			if c == '*' && i+1 < n && chars[i+1] == '/' {
+				inBlockComment = false
+				i++ // skip '/'
+			}
 			continue
 		}
 
-		current.WriteString(line)
-		current.WriteString("\n")
-		if strings.HasSuffix(trimmed, ";") {
-			stmts = append(stmts, current.String())
+		// Handle line comments
+		if inLineComment {
+			if c == '\n' || c == '\r' {
+				inLineComment = false
+				current.WriteRune(c)
+			}
+			continue
+		}
+
+		// Check for comment starts when not in quotes
+		if !inSingleQuote && !inDoubleQuote && !inBacktick {
+			if c == '/' && i+1 < n && chars[i+1] == '*' {
+				inBlockComment = true
+				i++ // skip '*'
+				continue
+			}
+			if c == '#' {
+				inLineComment = true
+				continue
+			}
+			if c == '-' && i+1 < n && chars[i+1] == '-' {
+				if i+2 >= n || chars[i+2] == ' ' || chars[i+2] == '\t' || chars[i+2] == '\n' || chars[i+2] == '\r' {
+					inLineComment = true
+					i++ // skip second '-'
+					continue
+				}
+			}
+		}
+
+		// Handle string quotes
+		if c == '\'' && !inDoubleQuote && !inBacktick {
+			if inSingleQuote {
+				if i > 0 && chars[i-1] == '\\' {
+					// escaped backslash
+				} else if i+1 < n && chars[i+1] == '\'' {
+					current.WriteRune(c)
+					i++
+					current.WriteRune(chars[i])
+					continue
+				} else {
+					inSingleQuote = false
+				}
+			} else {
+				inSingleQuote = true
+			}
+		} else if c == '"' && !inSingleQuote && !inBacktick {
+			if inDoubleQuote {
+				if i > 0 && chars[i-1] == '\\' {
+					// escaped
+				} else {
+					inDoubleQuote = false
+				}
+			} else {
+				inDoubleQuote = true
+			}
+		} else if c == '`' && !inSingleQuote && !inDoubleQuote {
+			if inBacktick {
+				inBacktick = false
+			} else {
+				inBacktick = true
+			}
+		}
+
+		if c == ';' && !inSingleQuote && !inDoubleQuote && !inBacktick {
+			stmt := strings.TrimSpace(current.String())
+			if stmt != "" {
+				upper := strings.ToUpper(stmt)
+				// Skip standalone CREATE DATABASE and USE statements as connection is already bound
+				// Also skip CREATE TABLE [IF NOT EXISTS] schema_migrations as it is authoritatively managed by the runner
+				if !strings.HasPrefix(upper, "CREATE DATABASE ") &&
+					!strings.HasPrefix(upper, "USE ") &&
+					!strings.HasPrefix(upper, "CREATE TABLE SCHEMA_MIGRATIONS ") &&
+					!strings.HasPrefix(upper, "CREATE TABLE IF NOT EXISTS SCHEMA_MIGRATIONS ") &&
+					!strings.HasPrefix(upper, "CREATE TABLE `SCHEMA_MIGRATIONS`") &&
+					!strings.HasPrefix(upper, "CREATE TABLE IF NOT EXISTS `SCHEMA_MIGRATIONS`") {
+					stmts = append(stmts, stmt)
+				}
+			}
 			current.Reset()
+			continue
+		}
+
+		current.WriteRune(c)
+	}
+
+	remaining := strings.TrimSpace(current.String())
+	if remaining != "" {
+		upper := strings.ToUpper(remaining)
+		if !strings.HasPrefix(upper, "CREATE DATABASE ") &&
+			!strings.HasPrefix(upper, "USE ") &&
+			!strings.HasPrefix(upper, "CREATE TABLE SCHEMA_MIGRATIONS ") &&
+			!strings.HasPrefix(upper, "CREATE TABLE IF NOT EXISTS SCHEMA_MIGRATIONS ") &&
+			!strings.HasPrefix(upper, "CREATE TABLE `SCHEMA_MIGRATIONS`") &&
+			!strings.HasPrefix(upper, "CREATE TABLE IF NOT EXISTS `SCHEMA_MIGRATIONS`") {
+			stmts = append(stmts, remaining)
 		}
 	}
-	if strings.TrimSpace(current.String()) != "" {
-		stmts = append(stmts, current.String())
-	}
+
 	return stmts
 }

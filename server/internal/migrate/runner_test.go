@@ -4,12 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 
 	"tokendance/internal/domain"
+	"tokendance/internal/store/mysql"
 )
 
 func TestMigrationEmbedLoading(t *testing.T) {
@@ -33,6 +35,12 @@ func TestMigrationEmbedLoading(t *testing.T) {
 		}
 		if len(m.Content) == 0 {
 			t.Errorf("migration %d: content is empty", i)
+		}
+		stmts := splitSQLStatements(m.Content)
+		t.Logf("Migration %s has %d statements:", m.Filename, len(stmts))
+		for j, st := range stmts {
+			firstLine := strings.Split(st, "\n")[0]
+			t.Logf("  [%d] %s", j, firstLine)
 		}
 	}
 }
@@ -72,7 +80,8 @@ func getTestMySQLDB(t *testing.T) *sql.DB {
 		t.Skip("skipping MySQL test: TOKENDANCE_TEST_MYSQL_DSN not set")
 	}
 
-	db, err := sql.Open("mysql", dsn)
+	normDSN := mysql.NormalizeDSN(dsn)
+	db, err := sql.Open("mysql", normDSN)
 	if err != nil {
 		t.Fatalf("failed to open MySQL test connection: %v", err)
 	}
@@ -86,7 +95,8 @@ func getTestMySQLDB(t *testing.T) *sql.DB {
 	return db
 }
 
-func TestMigrationRunnerIntegration_CleanAndUpgrade(t *testing.T) {
+// Path 1: Clean Install (0001 -> 0002 -> 0003)
+func TestMigrationRunnerIntegration_CleanInstall(t *testing.T) {
 	db := getTestMySQLDB(t)
 	defer db.Close()
 
@@ -101,13 +111,21 @@ func TestMigrationRunnerIntegration_CleanAndUpgrade(t *testing.T) {
 		t.Fatalf("failed to run migrations: %v", err)
 	}
 
+	// Verify all 3 migrations recorded in schema_migrations
+	var count int
+	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count)
+	if err != nil || count != 3 {
+		t.Fatalf("expected 3 applied migrations, got %d (err: %v)", count, err)
+	}
+
 	// Verify idempotency
 	if err := runner.RunMigrations(ctx); err != nil {
 		t.Fatalf("expected second run to be idempotent: %v", err)
 	}
 }
 
-func TestMigrationRunnerIntegration_DirtyBaselineGuard(t *testing.T) {
+// Path 2: Upgrade from 0001 baseline with user privacy backfill
+func TestMigrationRunnerIntegration_UpgradeFrom0001(t *testing.T) {
 	db := getTestMySQLDB(t)
 	defer db.Close()
 
@@ -122,33 +140,88 @@ func TestMigrationRunnerIntegration_DirtyBaselineGuard(t *testing.T) {
 		t.Fatalf("failed to load migrations: %v", err)
 	}
 
-	// Apply only 0001
+	// Apply only 0001 baseline
 	runner0001 := &Runner{
 		db:         db,
 		migrations: []MigrationInfo{runner.migrations[0]},
 	}
 	if err := runner0001.RunMigrations(ctx); err != nil {
-		t.Fatalf("failed to run 0001: %v", err)
+		t.Fatalf("failed to apply 0001 baseline: %v", err)
 	}
 
-	// Insert duplicate pending account deletion requests
+	// Seed pre-existing users under 0001 baseline
+	uID1 := "usr_baseline_01"
+	uID2 := "usr_baseline_02"
+	_, err := db.ExecContext(ctx, "INSERT INTO users (user_id, auth_subject_hash, display_name) VALUES (?, UNHEX(SHA2('user1', 256)), 'User One'), (?, UNHEX(SHA2('user2', 256)), 'User Two')", uID1, uID2)
+	if err != nil {
+		t.Fatalf("failed to insert baseline users: %v", err)
+	}
+
+	// Seed clean single deletion request
+	_, err = db.ExecContext(ctx, "INSERT INTO data_deletion_requests (request_id, user_id, deletion_scope, request_status) VALUES ('req_clean_1', ?, 'account', 'pending')", uID1)
+	if err != nil {
+		t.Fatalf("failed to insert baseline deletion request: %v", err)
+	}
+
+	// Now run full migration runner (should apply 0002 and 0003, backfilling user_privacy_settings)
+	if err := runner.RunMigrations(ctx); err != nil {
+		t.Fatalf("failed to upgrade from 0001: %v", err)
+	}
+
+	// Verify backfilled user_privacy_settings for pre-existing users
+	var privCount int
+	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM user_privacy_settings WHERE user_id IN (?, ?) AND public_profile_enabled = FALSE", uID1, uID2).Scan(&privCount)
+	if err != nil || privCount != 2 {
+		t.Fatalf("expected 2 backfilled default-private user_privacy_settings rows, got %d, err: %v", privCount, err)
+	}
+}
+
+// Path 3: Reject dirty baseline before persistent 0002 DDL
+func TestMigrationRunnerIntegration_RejectDirtyBaseline(t *testing.T) {
+	db := getTestMySQLDB(t)
+	defer db.Close()
+
+	ctx := context.Background()
+	runner := NewRunner(db)
+
+	if err := runner.ResetCleanSchema(ctx); err != nil {
+		t.Fatalf("failed to reset clean schema: %v", err)
+	}
+
+	if err := runner.LoadFromEmbed(); err != nil {
+		t.Fatalf("failed to load migrations: %v", err)
+	}
+
+	// Apply only 0001 baseline
+	runner0001 := &Runner{
+		db:         db,
+		migrations: []MigrationInfo{runner.migrations[0]},
+	}
+	if err := runner0001.RunMigrations(ctx); err != nil {
+		t.Fatalf("failed to apply 0001 baseline: %v", err)
+	}
+
+	// Insert duplicate pending account deletion requests for same user (dirty baseline)
 	uID := "usr_test_dirty_01"
-	_, err := db.ExecContext(ctx, "INSERT INTO users (user_id, auth_subject_hash, display_name) VALUES (?, UNHEX(SHA2('user', 256)), 'User 1')", uID)
+	_, err := db.ExecContext(ctx, "INSERT INTO users (user_id, auth_subject_hash, display_name) VALUES (?, UNHEX(SHA2('dirty', 256)), 'Dirty User')", uID)
 	if err != nil {
 		t.Fatalf("failed to insert test user: %v", err)
 	}
-	_, err = db.ExecContext(ctx, "INSERT INTO data_deletion_requests (request_id, user_id, deletion_scope, request_status) VALUES ('req_1', ?, 'account', 'pending'), ('req_2', ?, 'account', 'running')", uID, uID)
+	_, err = db.ExecContext(ctx, "INSERT INTO data_deletion_requests (request_id, user_id, deletion_scope, request_status) VALUES ('req_d1', ?, 'account', 'pending'), ('req_d2', ?, 'account', 'running')", uID, uID)
 	if err != nil {
 		t.Fatalf("failed to insert duplicate deletion requests: %v", err)
 	}
 
-	// Now try to run 0002
-	runner0002 := &Runner{
-		db:         db,
-		migrations: []MigrationInfo{runner.migrations[1]},
-	}
-	err = runner0002.RunMigrations(ctx)
+	// Now try to run migrations (0002 should be rejected by baseline guard)
+	err = runner.RunMigrations(ctx)
 	if err == nil {
 		t.Fatalf("expected dirty baseline guard to fail when duplicate account deletions exist")
+	}
+
+	// Verify 0002 was NOT recorded in schema_migrations
+	var count0002 int
+	_ = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations WHERE version = '0002'").Scan(&count0002)
+	if count0002 != 0 {
+		t.Fatalf("expected 0002 to not be recorded when dirty baseline fails")
 	}
 }

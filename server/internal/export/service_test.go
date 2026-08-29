@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"tokendance/internal/clock"
-	"tokendance/internal/domain"
 	"tokendance/internal/store/memory"
 )
 
