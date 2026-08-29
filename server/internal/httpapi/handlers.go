@@ -995,8 +995,11 @@ func (h *Handlers) DownloadExport(w http.ResponseWriter, r *http.Request) {
 }
 
 type CreateDeletionReq struct {
-	Scope        string `json:"scope"`
-	Confirmation bool   `json:"confirmation"`
+	Scope          string     `json:"scope"`
+	Confirmation   bool       `json:"confirmation"`
+	InstallationID string     `json:"installationId"`
+	From           *time.Time `json:"from"`
+	To             *time.Time `json:"to"`
 }
 
 func (h *Handlers) RequestDeletion(w http.ResponseWriter, r *http.Request) {
@@ -1007,7 +1010,13 @@ func (h *Handlers) RequestDeletion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	delReq, err := h.privacy.RequestDeletion(r.Context(), user.UserID, req.Scope, req.Confirmation)
+	delReq, err := h.privacy.RequestDeletionWithFilter(r.Context(), user.UserID, privacy.DeletionRequestInput{
+		Scope:          req.Scope,
+		Confirmation:   req.Confirmation,
+		InstallationID: req.InstallationID,
+		From:           req.From,
+		To:             req.To,
+	})
 	if err != nil {
 		WriteError(w, r, err)
 		return

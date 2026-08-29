@@ -397,6 +397,7 @@ func (r *Runner) ResetCleanSchema(ctx context.Context) error {
 	}()
 
 	tables := []string{
+		"deletion_object_keys",
 		"data_export_jobs",
 		"user_security_events",
 		"device_binding_challenges",

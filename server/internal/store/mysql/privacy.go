@@ -277,7 +277,30 @@ func (s *privacyStore) RequestDeletionTx(ctx context.Context, req domain.DataDel
 
 	var filterJSON []byte
 	if len(req.ScopeFilterJSON) > 0 {
-		filterJSON, _ = json.Marshal(req.ScopeFilterJSON)
+		filterJSON, err = json.Marshal(req.ScopeFilterJSON)
+		if err != nil {
+			return nil, fmt.Errorf("failed to encode deletion scope filter: %w", err)
+		}
+	}
+
+	var installationID *string
+	if value, ok := req.ScopeFilterJSON["installationId"].(string); ok && value != "" {
+		installationID = &value
+	}
+	if req.DeletionScope == "installation" {
+		if req.UserID == nil || installationID == nil {
+			return nil, domain.ErrInvalidArgument
+		}
+		var owner string
+		if err := tx.QueryRowContext(ctx, "SELECT user_id FROM installations WHERE installation_id = ? FOR UPDATE", *installationID).Scan(&owner); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, domain.ErrNotFound
+			}
+			return nil, fmt.Errorf("failed to lock deletion installation: %w", err)
+		}
+		if owner != *req.UserID {
+			return nil, domain.ErrNotFound
+		}
 	}
 
 	var activeAccountKey *string
@@ -290,16 +313,30 @@ func (s *privacyStore) RequestDeletionTx(ctx context.Context, req domain.DataDel
 		phase = "queued"
 	}
 
+	if req.DeletionScope == "account" && req.UserID != nil {
+		var accountStatus string
+		if err := tx.QueryRowContext(ctx, "SELECT account_status FROM users WHERE user_id = ? FOR UPDATE", *req.UserID).Scan(&accountStatus); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil, domain.ErrNotFound
+			}
+			return nil, fmt.Errorf("failed to lock deletion user: %w", err)
+		}
+		if accountStatus == string(domain.AccountStatusDeleted) || accountStatus == string(domain.AccountStatusDeletionPending) {
+			return nil, domain.ErrConflict
+		}
+	}
+
 	insertSQL := `
 		INSERT INTO data_deletion_requests (
-			request_id, user_id, deletion_scope, request_status, phase,
+			request_id, user_id, installation_id, deletion_scope, request_status, phase,
 			progress_cursor, scope_filter_json, active_account_key,
-			cancel_before, requested_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+			cancel_before, requested_at, next_attempt_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	if _, err := tx.ExecContext(ctx, insertSQL,
 		req.RequestID,
 		nullStringFromPtr(req.UserID),
+		nullStringFromPtr(installationID),
 		req.DeletionScope,
 		req.RequestStatus,
 		phase,
@@ -307,6 +344,8 @@ func (s *privacyStore) RequestDeletionTx(ctx context.Context, req domain.DataDel
 		filterJSON,
 		nullStringFromPtr(activeAccountKey),
 		nullTimeFromPtr(req.CancelBefore),
+		req.RequestedAt,
+		req.RequestedAt,
 		req.RequestedAt,
 	); err != nil {
 		return nil, fmt.Errorf("failed to insert data deletion request: %w", err)
@@ -352,14 +391,15 @@ func (s *privacyStore) CancelDeletionTx(ctx context.Context, requestID string, u
 	defer tx.Rollback()
 
 	query := `
-		SELECT request_status, deletion_scope, cancel_before
+		SELECT request_status, deletion_scope,
+		       cancel_before IS NOT NULL AND cancel_before > CURRENT_TIMESTAMP(3)
 		FROM data_deletion_requests
 		WHERE request_id = ? AND user_id = ?
 		FOR UPDATE`
 
 	var status, scope string
-	var cancelBefore sql.NullTime
-	err = tx.QueryRowContext(ctx, query, requestID, userID).Scan(&status, &scope, &cancelBefore)
+	var cancelWindowOpen bool
+	err = tx.QueryRowContext(ctx, query, requestID, userID).Scan(&status, &scope, &cancelWindowOpen)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return domain.ErrNotFound
@@ -367,20 +407,23 @@ func (s *privacyStore) CancelDeletionTx(ctx context.Context, requestID string, u
 		return fmt.Errorf("failed to lock deletion request: %w", err)
 	}
 
-	if status != string(domain.DeletionStatusPending) {
-		return domain.ErrConflict
-	}
-	if cancelBefore.Valid && now.After(cancelBefore.Time) {
+	if status != string(domain.DeletionStatusPending) || scope != "account" || !cancelWindowOpen {
 		return domain.ErrConflict
 	}
 
 	updateReqSQL := `
 		UPDATE data_deletion_requests
 		SET request_status = 'cancelled', phase = 'cancelled',
-		    cancelled_at = ?, active_account_key = NULL
-		WHERE request_id = ?`
-	if _, err := tx.ExecContext(ctx, updateReqSQL, now, requestID); err != nil {
+		    cancelled_at = CURRENT_TIMESTAMP(3), active_account_key = NULL,
+		    claim_token = NULL, locked_by = NULL, lease_expires_at = NULL,
+		    updated_at = CURRENT_TIMESTAMP(3)
+		WHERE request_id = ? AND request_status = 'pending'`
+	res, err := tx.ExecContext(ctx, updateReqSQL, requestID)
+	if err != nil {
 		return fmt.Errorf("failed to cancel deletion request: %w", err)
+	}
+	if affected, err := res.RowsAffected(); err != nil || affected != 1 {
+		return domain.ErrConflict
 	}
 
 	if scope == "account" {
@@ -441,128 +484,4 @@ func (s *privacyStore) GetDeletionRequest(ctx context.Context, requestID string,
 	}
 
 	return &req, nil
-}
-
-func (s *privacyStore) ClaimPendingDeletion(ctx context.Context, workerID string, leaseDuration time.Duration, now time.Time) (*domain.DataDeletionRequest, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to begin claim deletion tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	query := `
-		SELECT request_id, user_id, deletion_scope, scope_filter_json,
-		       request_status, phase, progress_cursor, cancel_before,
-		       cancelled_at, requested_at, completed_at, audit_reference
-		FROM data_deletion_requests
-		WHERE request_status = 'pending'
-		  AND cancel_before IS NOT NULL
-		  AND cancel_before <= ?
-		ORDER BY cancel_before ASC
-		LIMIT 1
-		FOR UPDATE`
-
-	var req domain.DataDeletionRequest
-	var uid, auditRef sql.NullString
-	var filterJSON []byte
-	var cancelBefore, cancelledAt, completedAt sql.NullTime
-
-	err = tx.QueryRowContext(ctx, query, now).Scan(
-		&req.RequestID,
-		&uid,
-		&req.DeletionScope,
-		&filterJSON,
-		&req.RequestStatus,
-		&req.Phase,
-		&req.ProgressCursor,
-		&cancelBefore,
-		&cancelledAt,
-		&req.RequestedAt,
-		&completedAt,
-		&auditRef,
-	)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, domain.ErrNotFound
-		}
-		return nil, fmt.Errorf("failed to lock pending deletion request: %w", err)
-	}
-
-	req.UserID = ptrFromNullString(uid)
-	req.AuditReference = ptrFromNullString(auditRef)
-	req.CancelBefore = ptrFromNullTime(cancelBefore)
-	req.CancelledAt = ptrFromNullTime(cancelledAt)
-	req.CompletedAt = ptrFromNullTime(completedAt)
-	if len(filterJSON) > 0 {
-		_ = json.Unmarshal(filterJSON, &req.ScopeFilterJSON)
-	}
-
-	updateSQL := `
-		UPDATE data_deletion_requests
-		SET request_status = 'running', phase = 'revoking_access'
-		WHERE request_id = ?`
-	if _, err := tx.ExecContext(ctx, updateSQL, req.RequestID); err != nil {
-		return nil, fmt.Errorf("failed to update deletion status to running: %w", err)
-	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("failed to commit claim deletion: %w", err)
-	}
-
-	req.RequestStatus = domain.DeletionStatusRunning
-	req.Phase = "revoking_access"
-
-	return &req, nil
-}
-
-func (s *privacyStore) ExecuteDeletionPhase(ctx context.Context, requestID string, workerID string, phase string, cursor uint64, auditRef string, now time.Time) error {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("failed to begin execute deletion phase tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	var userID sql.NullString
-	var scope string
-	err = tx.QueryRowContext(ctx, "SELECT user_id, deletion_scope FROM data_deletion_requests WHERE request_id = ? FOR UPDATE", requestID).Scan(&userID, &scope)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return domain.ErrNotFound
-		}
-		return fmt.Errorf("failed to lock deletion request: %w", err)
-	}
-
-	if phase == "completed" {
-		if scope == "account" && userID.Valid {
-			uID := userID.String
-			// Revoke sessions
-			_, _ = tx.ExecContext(ctx, "UPDATE user_sessions SET session_status = 'revoked', revoked_at = ?, revoke_reason = 'account_deletion', updated_at = ? WHERE user_id = ? AND session_status = 'active'", now, now, uID)
-			// Revoke devices
-			_, _ = tx.ExecContext(ctx, "UPDATE installations SET installation_status = 'revoked', revoked_at = ?, updated_at = ? WHERE user_id = ? AND installation_status != 'revoked'", now, now, uID)
-			// Mark user deleted
-			_, _ = tx.ExecContext(ctx, "UPDATE users SET account_status = 'deleted', leaderboard_visibility = 'private', deleted_at = ?, updated_at = ? WHERE user_id = ?", now, now, uID)
-			// Remove public profile
-			_, _ = tx.ExecContext(ctx, "DELETE FROM public_user_profiles WHERE user_id = ?", uID)
-		}
-
-		completeSQL := `
-			UPDATE data_deletion_requests
-			SET request_status = 'completed', phase = 'completed',
-			    progress_cursor = ?, audit_reference = ?,
-			    completed_at = ?, active_account_key = NULL
-			WHERE request_id = ?`
-		if _, err := tx.ExecContext(ctx, completeSQL, cursor, auditRef, now, requestID); err != nil {
-			return fmt.Errorf("failed to mark deletion completed: %w", err)
-		}
-	} else {
-		updateSQL := `
-			UPDATE data_deletion_requests
-			SET phase = ?, progress_cursor = ?, audit_reference = ?
-			WHERE request_id = ?`
-		if _, err := tx.ExecContext(ctx, updateSQL, phase, cursor, auditRef, requestID); err != nil {
-			return fmt.Errorf("failed to update deletion phase: %w", err)
-		}
-	}
-
-	return tx.Commit()
 }

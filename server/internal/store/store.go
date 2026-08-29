@@ -62,8 +62,6 @@ type PrivacyStore interface {
 	RequestDeletionTx(ctx context.Context, req domain.DataDeletionRequest, event domain.UserSecurityEvent, now time.Time) (*domain.DataDeletionRequest, error)
 	CancelDeletionTx(ctx context.Context, requestID string, userID string, now time.Time) error
 	GetDeletionRequest(ctx context.Context, requestID string, userID string) (*domain.DataDeletionRequest, error)
-	ClaimPendingDeletion(ctx context.Context, workerID string, leaseDuration time.Duration, now time.Time) (*domain.DataDeletionRequest, error)
-	ExecuteDeletionPhase(ctx context.Context, requestID string, workerID string, phase string, cursor uint64, auditRef string, now time.Time) error
 }
 
 type AnalyticsStore interface {

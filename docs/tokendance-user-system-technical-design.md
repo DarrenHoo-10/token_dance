@@ -1209,9 +1209,10 @@ Handle 历史最多保留 30 天用于防链接劫持，公开路由对 deleted 
 | 类型 | 说明 |
 | --- | --- |
 | 异步 | 导出、对象删除、usage 批量删除、聚合重算、榜单发布均由 Worker |
-| 锁 | 创建 account deletion 时锁 user；Worker `SKIP LOCKED` 抢任务；大表按主键批次短事务 |
-| 幂等 | 用户+导出 idempotency key 唯一；每用户最多一个 active account deletion；删除步骤按进度可重放 |
-| 配置 | 注销撤销 7d；导出过期 24h；删除批次 5,000；失败退避并最多自动重试 20 次后告警 |
+| 锁 | 创建 account deletion 时锁 user；Worker 使用 `FOR UPDATE SKIP LOCKED` 条件抢占；`claim_token + claim_generation + locked_by` 对所有 phase/cursor/完成写入做 fencing |
+| 租约 | `lease_expires_at` 与重试时间全部由 MySQL `CURRENT_TIMESTAMP(3)` 计算；仅 pending 到期、failed 到重试时间或 lease 过期的 running 可被接管 |
+| 幂等 | 每用户最多一个 active account deletion；删除步骤按 `phase + progress_cursor` 重放；对象 key 先持久化到 `deletion_object_keys`，删除成功后才清源记录 |
+| 配置 | 注销撤销 7d；删除 lease 2 分钟并在对象操作前续租；失败保留 failed checkpoint、退避后在原 request 重试 |
 
 ### 9.6 数据资产稳定性与一致性
 
@@ -1219,10 +1220,10 @@ Handle 历史最多保留 30 天用于防链接劫持，公开路由对 deleted 
 | --- | --- |
 | 数据一致性 | MySQL request 是任务事实源；对象存储只保存导出物；account 状态先阻断公开和新写入 |
 | 幂等防重 | active deletion 生成唯一键；export idempotency 唯一；每个删除 phase 保存 checkpoint |
-| 并发控制 | user 行锁阻止重复注销/公开变更；Ingest 同步校验 user/installation 状态 |
-| 异步健壮性 | Worker 可接管超时 running；删除和对象清理分阶段重试；榜单有 watermark 扫描补偿 |
-| 失败语义 | 任一步失败保持 running/failed 且账户继续不可公开；不能因部分失败恢复上传 |
-| 对账修复 | 检查用户残留 event/aggregate/snapshot/export object 数；管理员可从 phase checkpoint 继续 |
+| 并发控制 | user 行锁阻止重复注销/公开变更；取消与 claim 锁同一 request 行；所有 worker 写入携带 claim fence；Ingest 同步校验 user/installation 状态 |
+| 异步健壮性 | Worker 可接管 lease 过期的 running；旧 worker 的 phase/cursor/completed 写入影响 0 行；删除和对象清理分阶段重试 |
+| 失败语义 | 任一 DB 或对象存储操作失败都不得标 completed；保持 running 至租约接管，或条件写 failed 并从原 cursor 重试；账户继续不可公开 |
+| 对账修复 | credentials、sessions、challenge/outbox、device/event、三类 aggregate、leaderboard、export/upload 对象与 key、public projection 和 PII 的 required residual 全为 0 后才能 completed |
 | 可观测性 | job age、phase latency、remaining rows、object deletion failure、stuck deletion 告警 |
 
 ## 10、HTTP API 设计
@@ -1551,8 +1552,11 @@ Profile、Privacy、Suspend 和 Deletion 路径必须在同一 MySQL 事务同�
 - `cancelled_at`：取消时间。
 - `scope_filter_json`：time_range 等经过校验的安全范围。
 - `phase`、`progress_cursor`：大表分阶段/分批恢复。
+- `claim_token`、`claim_generation`、`locked_by`、`lease_expires_at`：durable claim 与 fencing；running 必须同时持有完整 claim，非 running 必须全部为空。
+- `attempt_count`、`next_attempt_at`、`last_error_code`、`updated_at`：失败保留 checkpoint 并按数据库时间重试。
+- `deletion_object_keys`：持久化 export/upload object key、对象删除状态和错误；源 DB 行仅在所有 key 已成功删除后清理。
 - `active_account_key` 显式唯一槽：仅 account + pending/running/failed 时写 `user_id`，终态置空；failed 继续视为未完成并在原 request 上修复。CHECK 强制活动/终态下的非空映射，唯一键负责并发防重。它不使用生成列，也不在 CHECK 中直接比较 `user_id`，因为 MySQL 会限制这两者与既有 `user_id ON DELETE SET NULL` 外键动作组合；Repository 事务必须维护 `active_account_key=user_id`。
-- CHECK 增加 `cancelled`。
+- CHECK 增加 `cancelled`，并允许 `deleting_objects` 与 `reconciling` running phase。
 
 现有 `audit_reference` 继续作为最终审计引用，不新建重复删除表。
 
@@ -1574,7 +1578,7 @@ Profile、Privacy、Suspend 和 Deletion 路径必须在同一 MySQL 事务同�
 | outbox worker | `idx_email_outbox_dispatch` |
 | binding claim | `uk_device_binding_code_hash` |
 | export worker | `idx_data_export_jobs_dispatch` |
-| 删除 worker | 既有 status/time 索引扩展 `cancel_before` |
+| 删除 worker | `idx_deletion_requests_claim(request_status,next_attempt_at,lease_expires_at,cancel_before,requested_at)` |
 | 设备暂停/恢复 | 既有 owner/status 索引 + `status_version` 条件更新 |
 | 个人趋势 | 既有 `idx_daily_user_date`、`idx_daily_model_user_date` |
 | 个人明细 | 既有 `idx_usage_events_user_time`；P1 压测后再决定 agent/model 复合索引 |

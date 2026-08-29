@@ -1212,6 +1212,17 @@ paths:
                   enum: [account, installation, time_range, all_usage]
                 confirmation:
                   type: boolean
+                installationId:
+                  type: string
+                  description: Required when scope is installation; must belong to the current user.
+                from:
+                  type: string
+                  format: date-time
+                  description: Inclusive UTC boundary required when scope is time_range.
+                to:
+                  type: string
+                  format: date-time
+                  description: Exclusive UTC boundary required when scope is time_range.
       responses:
         '202':
           description: Deletion request submitted

@@ -153,13 +153,31 @@ func (s *Service) GetPublicProfileByHandle(ctx context.Context, handle string) (
 	return nil, "", domain.NewAppError(404, "PUBLIC_PROFILE_NOT_FOUND", "profile.notFound", "public profile not found", nil, domain.ErrNotFound)
 }
 
+type DeletionRequestInput struct {
+	Scope          string
+	Confirmation   bool
+	InstallationID string
+	From           *time.Time
+	To             *time.Time
+}
+
 func (s *Service) RequestDeletion(ctx context.Context, userID, scope string, confirmation bool) (*domain.DataDeletionRequest, error) {
-	if !confirmation {
+	return s.RequestDeletionWithFilter(ctx, userID, DeletionRequestInput{Scope: scope, Confirmation: confirmation})
+}
+
+func (s *Service) RequestDeletionWithFilter(ctx context.Context, userID string, in DeletionRequestInput) (*domain.DataDeletionRequest, error) {
+	if !in.Confirmation {
 		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "deletion.confirmationRequired", "confirmation required", nil, domain.ErrInvalidArgument)
 	}
 
-	if scope != "account" && scope != "installation" && scope != "time_range" && scope != "all_usage" {
+	if in.Scope != "account" && in.Scope != "installation" && in.Scope != "time_range" && in.Scope != "all_usage" {
 		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "deletion.invalidScope", "invalid deletion scope", nil, domain.ErrInvalidArgument)
+	}
+	if in.Scope == "installation" && in.InstallationID == "" {
+		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "deletion.installationRequired", "installationId is required", nil, domain.ErrInvalidArgument)
+	}
+	if in.Scope == "time_range" && (in.From == nil || in.To == nil || !in.To.After(*in.From)) {
+		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "deletion.invalidTimeRange", "from and to must define a valid half-open time range", nil, domain.ErrInvalidArgument)
 	}
 
 	now := s.clk.Now()
@@ -167,20 +185,32 @@ func (s *Service) RequestDeletion(ctx context.Context, userID, scope string, con
 	reqID := "del_" + reqIDToken
 
 	var cancelBefore *time.Time
-	if scope == "account" {
-		cb := now.Add(7 * 24 * time.Hour) // 7 days cancel window
+	if in.Scope == "account" {
+		cb := now.Add(7 * 24 * time.Hour)
 		cancelBefore = &cb
 	}
 
+	scopeFilter := make(map[string]interface{})
+	if in.InstallationID != "" {
+		scopeFilter["installationId"] = in.InstallationID
+	}
+	if in.From != nil {
+		scopeFilter["from"] = in.From.UTC().Format(time.RFC3339)
+	}
+	if in.To != nil {
+		scopeFilter["to"] = in.To.UTC().Format(time.RFC3339)
+	}
+
 	req := domain.DataDeletionRequest{
-		RequestID:      reqID,
-		UserID:         &userID,
-		DeletionScope:  scope,
-		RequestStatus:  domain.DeletionStatusPending,
-		Phase:          "queued",
-		ProgressCursor: 0,
-		CancelBefore:   cancelBefore,
-		RequestedAt:    now,
+		RequestID:       reqID,
+		UserID:          &userID,
+		DeletionScope:   in.Scope,
+		ScopeFilterJSON: scopeFilter,
+		RequestStatus:   domain.DeletionStatusPending,
+		Phase:           "queued",
+		ProgressCursor:  0,
+		CancelBefore:    cancelBefore,
+		RequestedAt:     now,
 	}
 
 	eventID, _ := crypto.GenerateOpaqueToken(13)
@@ -190,11 +220,17 @@ func (s *Service) RequestDeletion(ctx context.Context, userID, scope string, con
 		EventType:    "deletion_requested",
 		Outcome:      "success",
 		CreatedAt:    now,
-		MetadataJSON: map[string]interface{}{"scope": scope},
+		MetadataJSON: map[string]interface{}{"scope": in.Scope},
 	}
 
 	createdReq, err := s.store.RequestDeletionTx(ctx, req, event, now)
 	if err != nil {
+		if err == domain.ErrNotFound {
+			return nil, domain.NewAppError(404, "RESOURCE_NOT_FOUND", "api.deviceNotFound", "installation not found", nil, err)
+		}
+		if err == domain.ErrConflict {
+			return nil, domain.NewAppError(409, "ACCOUNT_ACTION_NOT_ALLOWED", "deletion.alreadyPending", "an account deletion is already active", nil, err)
+		}
 		return nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to request deletion", nil, err)
 	}
 
