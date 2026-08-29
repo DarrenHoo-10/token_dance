@@ -24,25 +24,31 @@ export const AgentBreakdown: React.FC<AgentBreakdownProps> = ({ items }) => {
 
   return (
     <div className="agent-bar-group">
-      {items.map((agent) => (
-        <div key={agent.agentId} className="agent-bar-item">
-          <div>
-            <div className="agent-bar-meta">
-              <span>{agent.displayName || agent.agentId}</span>
-              <span className="mono-num">{agent.percentage.toFixed(0)}%</span>
+      {items.map((agent, idx) => {
+        const itemKey = agent.key || agent.agentId || `agent-${idx}`;
+        const itemLabel = agent.displayName || agent.label || agent.key || agent.agentId || 'Unknown Agent';
+        const pct = typeof agent.percentage === 'number' ? agent.percentage : parseFloat(agent.percentage) || 0;
+
+        return (
+          <div key={itemKey} className="agent-bar-item">
+            <div>
+              <div className="agent-bar-meta">
+                <span>{itemLabel}</span>
+                <span className="mono-num">{pct.toFixed(0)}%</span>
+              </div>
+              <div className="progress-track">
+                <div
+                  className="progress-fill"
+                  style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+                />
+              </div>
             </div>
-            <div className="progress-track">
-              <div
-                className="progress-fill"
-                style={{ width: `${Math.min(100, Math.max(0, agent.percentage))}%` }}
-              />
+            <div className="agent-bar-value mono-num">
+              {formatTokens(agent.tokenTotal)}
             </div>
           </div>
-          <div className="agent-bar-value mono-num">
-            {formatTokens(agent.tokenTotal)}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 };

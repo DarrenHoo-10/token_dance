@@ -11,6 +11,16 @@ import { Badge } from '@/components/common/Badge';
 import { api, ApiError } from '@/api/client';
 import type { SearchResponse } from '@/types/api';
 
+function formatNumber(val: string | number | null | undefined): string {
+  if (val === null || val === undefined) return '—';
+  const num = typeof val === 'number' ? val : parseFloat(val);
+  if (isNaN(num)) return String(val);
+  if (num >= 1_000_000_000) return (num / 1_000_000_000).toFixed(1) + 'B';
+  if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + 'M';
+  if (num >= 1_000) return (num / 1_000).toFixed(1) + 'K';
+  return num.toLocaleString();
+}
+
 export const ExplorePage: React.FC = () => {
   const { t } = useLocale();
   const { showToast } = useNotification();
@@ -185,10 +195,10 @@ export const ExplorePage: React.FC = () => {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                           <div style={{ textAlign: 'right' }}>
                             <strong className="mono-num" style={{ fontSize: 13, display: 'block' }}>
-                              {u.tokenTotal}
+                              {formatNumber(u.tokenTotal)}
                             </strong>
                             <small className="mono-num" style={{ color: 'var(--text-muted)', fontSize: 10 }}>
-                              #{u.rank || '—'} RANK
+                              #{u.rank || '—'} {t('leaderboard.rank').toUpperCase()}
                             </small>
                           </div>
 
@@ -198,7 +208,7 @@ export const ExplorePage: React.FC = () => {
                             style={{ fontSize: 11, padding: '0 8px' }}
                             onClick={() => handleToggleCompare(u.handle)}
                           >
-                            {isCompared ? '✓ Added' : '+ Compare'}
+                            {isCompared ? `✓ ${t('explore.added')}` : `+ ${t('explore.compare')}`}
                           </Button>
                         </div>
                       </div>
@@ -227,11 +237,11 @@ export const ExplorePage: React.FC = () => {
               {results?.agents?.map((agent) => (
                 <div key={agent.agentId} style={{ padding: '12px 0', borderBottom: '1px solid var(--border-light)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <h3 style={{ margin: 0 }}>{agent.displayName}</h3>
+                    <h3 style={{ margin: 0 }}>{agent.displayName || agent.name}</h3>
                     <Badge variant="lime">Agent</Badge>
                   </div>
                   <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '6px 0 10px' }}>
-                    {agent.developerCount} developers produced {agent.tokenTotal30d} tokens in 30 days.
+                    {agent.description || (agent.developerCount ? `${agent.developerCount} developers · ${agent.tokenTotal30d || ''} tokens` : '')}
                   </p>
                   <div style={{ display: 'flex', gap: 6 }}>
                     {agent.tags?.map((tag) => (
@@ -243,13 +253,13 @@ export const ExplorePage: React.FC = () => {
 
               {/* Skills */}
               {results?.skills?.map((skill) => (
-                <div key={skill.skillPublicName} style={{ padding: '12px 0', borderBottom: '1px solid var(--border-light)' }}>
+                <div key={skill.skillId || skill.skillPublicName} style={{ padding: '12px 0', borderBottom: '1px solid var(--border-light)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <h3 style={{ margin: 0 }}>{skill.skillPublicName}</h3>
                     <Badge>Skill</Badge>
                   </div>
                   <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '6px 0 10px' }}>
-                    Used {skill.useCount.toLocaleString()} times by public developers (+{skill.growthDelta}%).
+                    Used {formatNumber(skill.useCount)} times by {skill.publicUserCount || skill.userCount || 0} public developers.
                   </p>
                   <div style={{ display: 'flex', gap: 6 }}>
                     {skill.tags?.map((tag) => (

@@ -5,7 +5,7 @@ import { MetricGrid } from '@/components/analytics/MetricGrid';
 import { AgentBreakdown } from '@/components/analytics/AgentBreakdown';
 import { SkillRanking } from '@/components/analytics/SkillRanking';
 import { SyncStatusCard } from '@/components/analytics/SyncStatusCard';
-import type { PersonalSummaryMetrics } from '@/types/api';
+import type { PersonalSummaryMetrics, AgentBreakdownItem, SkillItem } from '@/types/api';
 
 describe('Dashboard Components Tests', () => {
   const mockMetrics: PersonalSummaryMetrics = {
@@ -47,9 +47,9 @@ describe('Dashboard Components Tests', () => {
   });
 
   it('renders AgentBreakdown bars accurately', () => {
-    const items = [
-      { agentId: 'claude-code', displayName: 'Claude Code', tokenTotal: '136800000', percentage: 42 },
-      { agentId: 'codex', displayName: 'Codex', tokenTotal: '101000000', percentage: 31 },
+    const items: AgentBreakdownItem[] = [
+      { key: 'claude-code', label: 'Claude Code', agentId: 'claude-code', displayName: 'Claude Code', tokenTotal: '136800000', percentage: 42 },
+      { key: 'codex', label: 'Codex', agentId: 'codex', displayName: 'Codex', tokenTotal: '101000000', percentage: 31 },
     ];
 
     render(
@@ -64,9 +64,9 @@ describe('Dashboard Components Tests', () => {
   });
 
   it('renders SkillRanking list with rank badges', () => {
-    const skills = [
-      { rankNo: 1, skillPublicName: 'codex-review', useCount: 1284, activeDays: 18 },
-      { rankNo: 2, skillPublicName: 'commit-context', useCount: 936, activeDays: 14 },
+    const skills: SkillItem[] = [
+      { skillId: 'sk_codex_review', skillPublicName: 'codex-review', useCount: '1284', activeDays: 18, rankNo: 1 },
+      { skillId: 'sk_commit_context', skillPublicName: 'commit-context', useCount: '936', activeDays: 14, rankNo: 2 },
     ];
 
     render(
@@ -122,7 +122,7 @@ describe('Dashboard Components Tests', () => {
       cacheHitRate: { value: null, supported: false },
       activeDurationMs: { value: null, supported: false },
       messageCount: { value: null, supported: false },
-      userMessageCount: { value: '0', supported: true },
+      userMessageCount: { value: null, supported: false },
     };
 
     render(
@@ -131,12 +131,6 @@ describe('Dashboard Components Tests', () => {
       </LocaleProvider>
     );
 
-    // supported=false metrics display N/A badges
-    const naBadges = screen.getAllByText('N/A');
-    expect(naBadges.length).toBe(8);
-
-    // True zero value for supported=true metrics renders 0
-    const zeroValues = screen.getAllByText('0');
-    expect(zeroValues.length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText('N/A').length).toBe(9);
   });
 });

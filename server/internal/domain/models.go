@@ -595,14 +595,19 @@ type SearchResponse struct {
 
 // Compare Models (P1)
 type CompareUserItem struct {
-	Handle          string     `json:"handle"`
-	DisplayName     *string    `json:"displayName,omitempty"`
-	AvatarURL       *string    `json:"avatarUrl,omitempty"`
-	Visible         bool       `json:"visible"`
-	TokenTotal      *string    `json:"tokenTotal,omitempty"`
-	Rank            *int       `json:"rank,omitempty"`
-	Percentile      *float64   `json:"percentile,omitempty"`
-	DataWatermarkAt *time.Time `json:"dataWatermarkAt,omitempty"`
+	Handle          string          `json:"handle"`
+	DisplayName     *string         `json:"displayName,omitempty"`
+	AvatarURL       *string         `json:"avatarUrl,omitempty"`
+	Visible         bool            `json:"visible"`
+	TokenTotal      *string         `json:"tokenTotal,omitempty"`
+	CodeLinesTotal  *string         `json:"codeLinesTotal,omitempty"`
+	Rank            *int            `json:"rank,omitempty"`
+	Percentile      *float64        `json:"percentile,omitempty"`
+	ActiveDays      *int            `json:"activeDays,omitempty"`
+	CurrentStreak   *int            `json:"currentStreak,omitempty"`
+	AgentBreakdown  []BreakdownItem `json:"agentBreakdown,omitempty"`
+	SkillRanking    []SkillItem     `json:"skillRanking,omitempty"`
+	DataWatermarkAt *time.Time      `json:"dataWatermarkAt,omitempty"`
 }
 
 type CompareResponse struct {

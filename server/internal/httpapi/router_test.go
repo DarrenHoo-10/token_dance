@@ -19,9 +19,12 @@ import (
 	"tokendance/internal/media"
 	"tokendance/internal/privacy"
 	"tokendance/internal/profile"
+	"tokendance/internal/provider"
 	"tokendance/internal/search"
 	"tokendance/internal/store/memory"
 )
+
+var testStorage = provider.NewMemoryObjectStorage("")
 
 func setupTestRouter(t *testing.T) (http.Handler, *auth.Service, *memory.MemoryStore) {
 	st := memory.NewMemoryStore()
@@ -38,8 +41,8 @@ func setupTestRouter(t *testing.T) (http.Handler, *auth.Service, *memory.MemoryS
 	privacyService := privacy.NewService(st, clk)
 	analyticsService := analytics.NewService(st, clk)
 	deviceService := device.NewService(st, cfg, clk)
-	exportService := export.NewService(st, clk)
-	mediaService := media.NewService(st, cfg, clk)
+	exportService := export.NewService(st, clk, testStorage)
+	mediaService := media.NewService(st, cfg, clk, testStorage)
 	searchService := search.NewService(st, clk)
 	leaderboardService := leaderboard.NewService(st)
 
@@ -166,6 +169,15 @@ func TestAuthAndProtectedRoutes(t *testing.T) {
 		t.Fatalf("expected 200 from /auth/session, got %d (body: %s)", rec.Code, rec.Body.String())
 	}
 
+	var sessResp struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &sessResp)
+	csrfToken := sessResp.CSRFToken
+	if csrfToken == "" {
+		csrfToken = regResp.CSRFToken
+	}
+
 	// 4. POST /api/v1/me/onboarding without CSRF -> fails 403
 	onboardBody, _ := json.Marshal(map[string]interface{}{
 		"displayName": "Token Pilot",
@@ -190,7 +202,7 @@ func TestAuthAndProtectedRoutes(t *testing.T) {
 	// 5. POST /api/v1/me/onboarding with CSRF -> 200 OK
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/me/onboarding", bytes.NewReader(onboardBody))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-CSRF-Token", regResp.CSRFToken)
+	req.Header.Set("X-CSRF-Token", csrfToken)
 	req.AddCookie(sessionCookie)
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
@@ -238,7 +250,7 @@ func TestAuthAndProtectedRoutes(t *testing.T) {
 
 	// 10. POST /api/v1/me/device-bindings -> creates binding code
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/me/device-bindings", nil)
-	req.Header.Set("X-CSRF-Token", regResp.CSRFToken)
+	req.Header.Set("X-CSRF-Token", csrfToken)
 	req.AddCookie(sessionCookie)
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)

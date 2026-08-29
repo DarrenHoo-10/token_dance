@@ -24,6 +24,7 @@ describe('Auth & Onboarding Flow Tests', () => {
         onboardingRequired: false,
         productState: 'active_private',
       },
+      returnTo: '/me',
     });
 
     vi.spyOn(api, 'getSession').mockResolvedValue({
@@ -35,7 +36,7 @@ describe('Auth & Onboarding Flow Tests', () => {
       <LocaleProvider>
         <NotificationProvider>
           <AuthProvider>
-            <MemoryRouter initialEntries={['/login']}>
+            <MemoryRouter initialEntries={['/login']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
               <LoginPage />
             </MemoryRouter>
           </AuthProvider>
@@ -43,7 +44,9 @@ describe('Auth & Onboarding Flow Tests', () => {
       </LocaleProvider>
     );
 
-    expect(screen.getByText('使用邮箱登录')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('使用邮箱登录')).toBeInTheDocument();
+    });
 
     const emailInput = screen.getByPlaceholderText('name@example.com');
     const passwordInput = screen.getByPlaceholderText('••••••••••••');
@@ -78,7 +81,7 @@ describe('Auth & Onboarding Flow Tests', () => {
       <LocaleProvider>
         <NotificationProvider>
           <AuthProvider>
-            <MemoryRouter initialEntries={['/register']}>
+            <MemoryRouter initialEntries={['/register']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
               <RegisterPage />
             </MemoryRouter>
           </AuthProvider>
@@ -86,7 +89,9 @@ describe('Auth & Onboarding Flow Tests', () => {
       </LocaleProvider>
     );
 
-    expect(screen.getByText('创建你的 TokenDance 账户')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('创建你的 TokenDance 账户')).toBeInTheDocument();
+    });
 
     const emailInput = screen.getByPlaceholderText('name@example.com');
     const sendCodeBtn = screen.getByRole('button', { name: '获取验证码' });
@@ -103,7 +108,7 @@ describe('Auth & Onboarding Flow Tests', () => {
     });
   });
 
-  it('renders OnboardingPage with default private visibility', () => {
+  it('renders OnboardingPage with default private visibility', async () => {
     vi.spyOn(api, 'getSession').mockResolvedValue({
       authenticated: true,
       user: {
@@ -120,7 +125,7 @@ describe('Auth & Onboarding Flow Tests', () => {
       <LocaleProvider>
         <NotificationProvider>
           <AuthProvider>
-            <MemoryRouter initialEntries={['/onboarding']}>
+            <MemoryRouter initialEntries={['/onboarding']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
               <OnboardingPage />
             </MemoryRouter>
           </AuthProvider>
@@ -128,8 +133,9 @@ describe('Auth & Onboarding Flow Tests', () => {
       </LocaleProvider>
     );
 
-    expect(screen.getByText('你想以什么身份出现？')).toBeInTheDocument();
-    expect(screen.getByText('仅自己可见 (推荐)')).toBeInTheDocument();
-    expect(screen.getByText('保存并继续')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('创建你的公开身份')).toBeInTheDocument();
+      expect(screen.getByText('仅自己可见 (推荐)')).toBeInTheDocument();
+    });
   });
 });

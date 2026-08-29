@@ -43,7 +43,7 @@ export const App: React.FC = () => {
     <LocaleProvider>
       <NotificationProvider>
         <AuthProvider>
-          <BrowserRouter>
+          <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <Routes>
               {/* Standalone Auth & Onboarding */}
               <Route path="/login" element={<LoginPage />} />

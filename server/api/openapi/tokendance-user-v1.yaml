@@ -3,13 +3,42 @@ info:
   title: TokenDance User & Device API
   version: 1.0.0
   description: Official OpenAPI contract for TokenDance User System, Personal Analytics, Public Profiles, and Collector Device Management.
+  license:
+    name: Apache-2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
 servers:
-  - url: http://localhost:8080
-    description: Local development server
+  - url: https://api.tokendance.com
+    description: Production API server
+  - url: https://api.staging.tokendance.com
+    description: Staging API server
+tags:
+  - name: System
+    description: System liveness and readiness probes
+  - name: Auth
+    description: User authentication, registration, session management, and password recovery
+  - name: Profile
+    description: User profile and onboarding
+  - name: Privacy
+    description: User privacy settings and account deletion
+  - name: Analytics
+    description: Personal analytics, token trends, breakdowns, and skill metrics
+  - name: Devices
+    description: Collector device management and pairing
+  - name: Exports
+    description: Privacy-safe data exports
+  - name: Public
+    description: Public community profiles, leaderboard rankings, search, and comparison
+  - name: Collector
+    description: Collector agent pairing and ingestion endpoints
+
 paths:
   /healthz:
     get:
+      tags:
+        - System
+      operationId: healthz
       summary: Liveness check
+      security: []
       responses:
         '200':
           description: Service is alive
@@ -24,10 +53,18 @@ paths:
                   timestamp:
                     type: string
                     format: date-time
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/ErrorResponse'
 
   /readyz:
     get:
+      tags:
+        - System
+      operationId: readyz
       summary: Readiness check
+      security: []
       responses:
         '200':
           description: Service is ready
@@ -42,10 +79,18 @@ paths:
                   timestamp:
                     type: string
                     format: date-time
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '503':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/auth/register/code:
     post:
+      tags:
+        - Auth
+      operationId: requestRegisterCode
       summary: Request registration verification code
+      security: []
       requestBody:
         required: true
         content:
@@ -81,7 +126,11 @@ paths:
 
   /api/v1/auth/register:
     post:
+      tags:
+        - Auth
+      operationId: register
       summary: Complete email registration
+      security: []
       requestBody:
         required: true
         content:
@@ -130,7 +179,11 @@ paths:
 
   /api/v1/auth/login:
     post:
+      tags:
+        - Auth
+      operationId: login
       summary: Login with email and password
+      security: []
       requestBody:
         required: true
         content:
@@ -168,11 +221,16 @@ paths:
                     type: string
                   returnTo:
                     type: string
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
         '401':
           $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/auth/session:
     get:
+      tags:
+        - Auth
+      operationId: getSession
       summary: Get current authenticated session
       security:
         - CookieAuth: []
@@ -188,6 +246,8 @@ paths:
                     type: boolean
                   user:
                     $ref: '#/components/schemas/SessionUser'
+                  csrfToken:
+                    type: string
                   idleExpiresAt:
                     type: string
                     format: date-time
@@ -196,18 +256,28 @@ paths:
                     format: date-time
         '204':
           description: No active session
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/auth/logout:
     post:
+      tags:
+        - Auth
+      operationId: logout
       summary: Logout current session
       security:
         - CookieAuth: []
       responses:
         '204':
           description: Logged out successfully
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/auth/sessions:
     get:
+      tags:
+        - Auth
+      operationId: listSessions
       summary: List user active sessions
       security:
         - CookieAuth: []
@@ -223,9 +293,14 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/SessionItem'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/auth/sessions/{id}:
     delete:
+      tags:
+        - Auth
+      operationId: revokeSession
       summary: Revoke a specific session
       security:
         - CookieAuth: []
@@ -238,19 +313,32 @@ paths:
       responses:
         '204':
           description: Session revoked
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/auth/sessions/revoke-others:
     post:
+      tags:
+        - Auth
+      operationId: revokeOtherSessions
       summary: Revoke all other active sessions
       security:
         - CookieAuth: []
       responses:
         '204':
           description: Other sessions revoked
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/auth/password/code:
     post:
+      tags:
+        - Auth
+      operationId: requestPasswordResetCode
       summary: Request password reset code
+      security: []
       requestBody:
         required: true
         content:
@@ -266,10 +354,27 @@ paths:
       responses:
         '202':
           description: Reset code requested
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: pending
+                  cooldownSeconds:
+                    type: integer
+                    example: 60
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/auth/password/reset:
     post:
+      tags:
+        - Auth
+      operationId: resetPassword
       summary: Reset password with code
+      security: []
       requestBody:
         required: true
         content:
@@ -291,9 +396,14 @@ paths:
       responses:
         '204':
           description: Password reset successfully
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/onboarding:
     post:
+      tags:
+        - Profile
+      operationId: completeOnboarding
       summary: Complete user onboarding
       security:
         - CookieAuth: []
@@ -319,6 +429,8 @@ paths:
                   enum: [zh-CN, en-US]
                 privacy:
                   $ref: '#/components/schemas/PrivacySettings'
+                returnTo:
+                  type: string
       responses:
         '200':
           description: Onboarding completed
@@ -331,11 +443,20 @@ paths:
                     $ref: '#/components/schemas/UserProfile'
                   privacy:
                     $ref: '#/components/schemas/PrivacySettings'
+                  returnTo:
+                    type: string
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
         '409':
           $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/profile:
     get:
+      tags:
+        - Profile
+      operationId: getProfile
       summary: Get current user profile
       security:
         - CookieAuth: []
@@ -346,7 +467,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserProfile'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
     patch:
+      tags:
+        - Profile
+      operationId: updateProfile
       summary: Update user profile
       security:
         - CookieAuth: []
@@ -379,11 +505,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '409':
+          $ref: '#/components/responses/ErrorResponse'
         '412':
           $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/privacy:
     get:
+      tags:
+        - Privacy
+      operationId: getPrivacy
       summary: Get user privacy settings
       security:
         - CookieAuth: []
@@ -394,7 +529,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PrivacySettings'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
     patch:
+      tags:
+        - Privacy
+      operationId: updatePrivacy
       summary: Update user privacy settings
       security:
         - CookieAuth: []
@@ -416,9 +556,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PrivacySettings'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '412':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/public-preview:
     get:
+      tags:
+        - Privacy
+      operationId: getPublicPreview
       summary: Preview own public profile
       security:
         - CookieAuth: []
@@ -429,9 +578,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PublicUserProfile'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/avatar-upload-intents:
     post:
+      tags:
+        - Profile
+      operationId: createAvatarUploadIntent
       summary: Create avatar upload intent
       security:
         - CookieAuth: []
@@ -467,9 +621,16 @@ paths:
                     type: string
                   expiresAt:
                     type: string
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/avatar-upload-intents/{id}/complete:
     post:
+      tags:
+        - Profile
+      operationId: completeAvatarUpload
       summary: Mark avatar upload intent complete
       security:
         - CookieAuth: []
@@ -482,18 +643,34 @@ paths:
       responses:
         '200':
           description: Avatar upload processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserProfile'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/avatar:
     delete:
+      tags:
+        - Profile
+      operationId: deleteAvatar
       summary: Clear current avatar
       security:
         - CookieAuth: []
       responses:
         '204':
           description: Avatar cleared
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/summary:
     get:
+      tags:
+        - Analytics
+      operationId: getPersonalSummary
       summary: Get personal analytics summary (10 core metrics)
       security:
         - CookieAuth: []
@@ -511,9 +688,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PersonalSummary'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/trends/tokens:
     get:
+      tags:
+        - Analytics
+      operationId: getTokenTrends
       summary: Get token trends over time
       security:
         - CookieAuth: []
@@ -546,9 +728,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TrendResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/breakdowns/agents:
     get:
+      tags:
+        - Analytics
+      operationId: getAgentBreakdown
       summary: Get agent usage breakdown
       security:
         - CookieAuth: []
@@ -564,9 +751,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BreakdownResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/breakdowns/models:
     get:
+      tags:
+        - Analytics
+      operationId: getModelBreakdown
       summary: Get model usage breakdown
       security:
         - CookieAuth: []
@@ -582,9 +774,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BreakdownResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/skills:
     get:
+      tags:
+        - Analytics
+      operationId: getPersonalSkills
       summary: Get personal skill rankings
       security:
         - CookieAuth: []
@@ -600,9 +797,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SkillsResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/calendar:
     get:
+      tags:
+        - Analytics
+      operationId: getActivityCalendar
       summary: Get activity calendar
       security:
         - CookieAuth: []
@@ -618,18 +820,55 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CalendarResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/activity:
     get:
+      tags:
+        - Analytics
+      operationId: getActivity
       summary: Get safe activity log (P1)
       security:
         - CookieAuth: []
+      parameters:
+        - name: range
+          in: query
+          schema:
+            type: string
+        - name: agent
+          in: query
+          schema:
+            type: string
+        - name: model
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
       responses:
         '200':
           description: Activity items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/filter-options:
     get:
+      tags:
+        - Analytics
+      operationId: getFilterOptions
       summary: Get available filter options for user
       security:
         - CookieAuth: []
@@ -640,9 +879,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FilterOptions'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/devices:
     get:
+      tags:
+        - Devices
+      operationId: listDevices
       summary: List user registered devices
       security:
         - CookieAuth: []
@@ -658,9 +902,14 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/DeviceItem'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/device-bindings:
     post:
+      tags:
+        - Devices
+      operationId: createDeviceBinding
       summary: Create 8-character Crockford Base32 device binding challenge
       security:
         - CookieAuth: []
@@ -679,9 +928,14 @@ paths:
                     example: 7K9M2P4X
                   expiresAt:
                     type: string
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/device-bindings/{id}:
     delete:
+      tags:
+        - Devices
+      operationId: cancelDeviceBinding
       summary: Cancel binding code
       security:
         - CookieAuth: []
@@ -694,9 +948,16 @@ paths:
       responses:
         '204':
           description: Binding code cancelled
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/devices/{id}:
     patch:
+      tags:
+        - Devices
+      operationId: updateDevice
       summary: Rename device
       security:
         - CookieAuth: []
@@ -720,7 +981,18 @@ paths:
       responses:
         '200':
           description: Device renamed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceItem'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
     delete:
+      tags:
+        - Devices
+      operationId: revokeDevice
       summary: Revoke device
       security:
         - CookieAuth: []
@@ -733,9 +1005,20 @@ paths:
       responses:
         '200':
           description: Device revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceItem'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/devices/{id}/pause:
     post:
+      tags:
+        - Devices
+      operationId: pauseDevice
       summary: Pause device synchronization
       security:
         - CookieAuth: []
@@ -748,9 +1031,20 @@ paths:
       responses:
         '200':
           description: Device paused
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceItem'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/devices/{id}/resume:
     post:
+      tags:
+        - Devices
+      operationId: resumeDevice
       summary: Resume paused device
       security:
         - CookieAuth: []
@@ -763,16 +1057,27 @@ paths:
       responses:
         '200':
           description: Device resumed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceItem'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/exports:
     post:
+      tags:
+        - Exports
+      operationId: createExport
       summary: Create data export job (P1)
       security:
         - CookieAuth: []
       parameters:
         - name: Idempotency-Key
           in: header
-          required: true
+          required: false
           schema:
             type: string
       requestBody:
@@ -797,16 +1102,37 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ExportJob'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
     get:
+      tags:
+        - Exports
+      operationId: listExports
       summary: List export jobs
       security:
         - CookieAuth: []
       responses:
         '200':
           description: Export job list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  exports:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ExportJob'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/exports/{id}:
     get:
+      tags:
+        - Exports
+      operationId: getExport
       summary: Get export job status
       security:
         - CookieAuth: []
@@ -823,9 +1149,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ExportJob'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/exports/{id}/download:
     get:
+      tags:
+        - Exports
+      operationId: downloadExport
       summary: Get short-lived download URL for export
       security:
         - CookieAuth: []
@@ -847,9 +1182,18 @@ paths:
                     type: string
                   expiresAt:
                     type: string
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/deletion-requests:
     post:
+      tags:
+        - Privacy
+      operationId: requestDeletion
       summary: Request data or account deletion
       security:
         - CookieAuth: []
@@ -875,9 +1219,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeletionRequest'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/deletion-requests/{id}:
     get:
+      tags:
+        - Privacy
+      operationId: getDeletionRequest
       summary: Get deletion request status
       security:
         - CookieAuth: []
@@ -894,9 +1245,18 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/DeletionRequest'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/me/deletion-requests/{id}/cancel:
     post:
+      tags:
+        - Privacy
+      operationId: cancelDeletionRequest
       summary: Cancel pending account deletion
       security:
         - CookieAuth: []
@@ -909,10 +1269,28 @@ paths:
       responses:
         '200':
           description: Deletion request cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: cancelled
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/public/users/{handle}:
     get:
+      tags:
+        - Public
+      operationId: getPublicProfile
       summary: Get public user profile
+      security: []
       parameters:
         - name: handle
           in: path
@@ -933,7 +1311,11 @@ paths:
 
   /api/v1/public/users/{handle}/trends:
     get:
+      tags:
+        - Public
+      operationId: getPublicTrends
       summary: Get public token trends
+      security: []
       parameters:
         - name: handle
           in: path
@@ -951,23 +1333,47 @@ paths:
       responses:
         '200':
           description: Trends if allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrendResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/public/users/{handle}/skills:
     get:
+      tags:
+        - Public
+      operationId: getPublicSkills
       summary: Get public skill rankings
+      security: []
       parameters:
         - name: handle
           in: path
           required: true
           schema:
             type: string
+        - name: range
+          in: query
+          schema:
+            type: string
       responses:
         '200':
           description: Skills if allowed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SkillsResponse'
+        '404':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/public/search:
     get:
+      tags:
+        - Public
+      operationId: searchPublic
       summary: Search published public users and agents
+      security: []
       parameters:
         - name: q
           in: query
@@ -995,10 +1401,20 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/SearchAgentResult'
+                  skills:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SearchSkillResult'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/public/leaderboards:
     get:
+      tags:
+        - Public
+      operationId: getLeaderboards
       summary: Get published leaderboard snapshot & entries
+      security: []
       parameters:
         - name: board
           in: query
@@ -1033,10 +1449,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/LeaderboardResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
 
   /api/v1/public/compare:
     get:
+      tags:
+        - Public
+      operationId: compareUsers
       summary: Compare up to 3 public users (P1)
+      security: []
       parameters:
         - name: handles
           in: query
@@ -1047,10 +1469,20 @@ paths:
       responses:
         '200':
           description: User comparison results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompareResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
 
   /v1/installations/claim:
     post:
+      tags:
+        - Collector
+      operationId: claimInstallation
       summary: Collector claims installation using 8-character binding code
+      security: []
       requestBody:
         required: true
         content:
@@ -1102,6 +1534,9 @@ paths:
 
   /v1/installations/register:
     post:
+      tags:
+        - Collector
+      operationId: registerInstallation
       summary: Collector registers installation using short-lived user auth
       security:
         - BearerAuth: []
@@ -1132,6 +1567,19 @@ paths:
       responses:
         '200':
           description: Device registered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  installationId:
+                    type: string
+                  status:
+                    type: string
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/ErrorResponse'
 
 components:
   securitySchemes:
@@ -1142,10 +1590,6 @@ components:
     BearerAuth:
       type: http
       scheme: bearer
-    CsrfToken:
-      type: apiKey
-      in: header
-      name: X-CSRF-Token
 
   responses:
     ErrorResponse:
@@ -1176,6 +1620,11 @@ components:
   schemas:
     SessionUser:
       type: object
+      required:
+        - userId
+        - displayName
+        - onboardingRequired
+        - productState
       properties:
         userId:
           type: string
@@ -1197,6 +1646,12 @@ components:
 
     SessionItem:
       type: object
+      required:
+        - sessionId
+        - sessionStatus
+        - lastSeenAt
+        - createdAt
+        - absoluteExpiresAt
       properties:
         sessionId:
           type: string
@@ -1217,6 +1672,12 @@ components:
 
     UserProfile:
       type: object
+      required:
+        - userId
+        - displayName
+        - accountStatus
+        - leaderboardVisibility
+        - profileVersion
       properties:
         userId:
           type: string
@@ -1244,6 +1705,17 @@ components:
 
     PrivacySettings:
       type: object
+      required:
+        - userId
+        - publicProfileEnabled
+        - showBio
+        - showTokenTotal
+        - showTrends
+        - showActivityCalendar
+        - showAgentBreakdown
+        - showSkillRanking
+        - showAchievements
+        - privacyVersion
       properties:
         userId:
           type: string
@@ -1268,9 +1740,12 @@ components:
 
     PublicUserProfile:
       type: object
+      required:
+        - handle
+        - displayName
+        - generatedAt
+        - projectionVersion
       properties:
-        userId:
-          type: string
         handle:
           type: string
         displayName:
@@ -1281,8 +1756,33 @@ components:
         bio:
           type: string
           nullable: true
-        profileStatus:
+        rank:
+          type: integer
+          nullable: true
+        rankDelta:
+          type: integer
+          nullable: true
+        percentile:
+          type: number
+          nullable: true
+        tokenTotal:
           type: string
+          nullable: true
+        activeDays:
+          type: integer
+          nullable: true
+        currentStreak:
+          type: integer
+          nullable: true
+        dataWatermarkAt:
+          type: string
+          format: date-time
+          nullable: true
+        generatedAt:
+          type: string
+          format: date-time
+        projectionVersion:
+          type: integer
         showBio:
           type: boolean
         showTokenTotal:
@@ -1297,148 +1797,323 @@ components:
           type: boolean
         showAchievements:
           type: boolean
-        projectionVersion:
-          type: integer
+
+    TimeRange:
+      type: object
+      required:
+        - key
+        - from
+        - to
+        - timezone
+      properties:
+        key:
+          type: string
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        timezone:
+          type: string
+
+    MetricCost:
+      type: object
+      required:
+        - supported
+      properties:
+        amount:
+          type: string
+          nullable: true
+        currency:
+          type: string
+          nullable: true
+        supported:
+          type: boolean
+
+    MetricBigInt:
+      type: object
+      required:
+        - supported
+      properties:
+        value:
+          type: string
+          nullable: true
+        supported:
+          type: boolean
+
+    MetricDecimal:
+      type: object
+      required:
+        - supported
+      properties:
+        value:
+          type: string
+          nullable: true
+        supported:
+          type: boolean
 
     PersonalSummary:
       type: object
+      required:
+        - range
+        - metrics
+        - ranking
+        - sync
       properties:
         range:
-          type: object
+          $ref: '#/components/schemas/TimeRange'
         metrics:
           type: object
+          required:
+            - estimatedCost
+            - totalTokens
+            - generatedCodeLines
+            - tokensPerCodeLine
+            - inputContextTokens
+            - outputTokens
+            - cacheHitRate
+            - activeDurationMs
+            - messageCount
+            - userMessageCount
           properties:
             estimatedCost:
-              type: object
-              properties:
-                amount:
-                  type: string
-                currency:
-                  type: string
-                supported:
-                  type: boolean
+              $ref: '#/components/schemas/MetricCost'
             totalTokens:
-              type: object
-              properties:
-                value:
-                  type: string
-                supported:
-                  type: boolean
+              $ref: '#/components/schemas/MetricBigInt'
             generatedCodeLines:
-              type: object
-              properties:
-                value:
-                  type: string
-                supported:
-                  type: boolean
+              $ref: '#/components/schemas/MetricBigInt'
             tokensPerCodeLine:
-              type: object
-              properties:
-                value:
-                  type: string
-                supported:
-                  type: boolean
+              $ref: '#/components/schemas/MetricDecimal'
             inputContextTokens:
-              type: object
-              properties:
-                value:
-                  type: string
-                supported:
-                  type: boolean
+              $ref: '#/components/schemas/MetricBigInt'
             outputTokens:
-              type: object
-              properties:
-                value:
-                  type: string
-                supported:
-                  type: boolean
+              $ref: '#/components/schemas/MetricBigInt'
             cacheHitRate:
-              type: object
-              properties:
-                value:
-                  type: string
-                supported:
-                  type: boolean
+              $ref: '#/components/schemas/MetricDecimal'
             activeDurationMs:
-              type: object
-              properties:
-                value:
-                  type: string
-                supported:
-                  type: boolean
+              $ref: '#/components/schemas/MetricBigInt'
             messageCount:
-              type: object
-              properties:
-                value:
-                  type: string
-                supported:
-                  type: boolean
+              $ref: '#/components/schemas/MetricBigInt'
             userMessageCount:
-              type: object
-              properties:
-                value:
-                  type: string
-                supported:
-                  type: boolean
+              $ref: '#/components/schemas/MetricBigInt'
         ranking:
           type: object
+          properties:
+            visibility:
+              type: string
+            rank:
+              type: integer
+              nullable: true
+            delta:
+              type: integer
+              nullable: true
+            percentile:
+              type: number
+              nullable: true
         sync:
           type: object
+          properties:
+            lastCommittedAt:
+              type: string
+              format: date-time
+              nullable: true
+            pendingLocalCount:
+              type: integer
+              nullable: true
         dataWatermarkAt:
           type: string
+          format: date-time
+          nullable: true
         aggregationVersion:
           type: integer
 
+    TrendPoint:
+      type: object
+      required:
+        - date
+      properties:
+        date:
+          type: string
+        tokenTotal:
+          type: string
+          nullable: true
+        inputTokens:
+          type: string
+          nullable: true
+        outputTokens:
+          type: string
+          nullable: true
+        cacheReadTokens:
+          type: string
+          nullable: true
+        cacheWriteTokens:
+          type: string
+          nullable: true
+        reasoningTokens:
+          type: string
+          nullable: true
+
     TrendResponse:
       type: object
+      required:
+        - range
+        - mode
+        - granularity
+        - points
       properties:
         range:
-          type: object
+          $ref: '#/components/schemas/TimeRange'
         mode:
           type: string
+        agentId:
+          type: string
+          nullable: true
+        providerId:
+          type: string
+          nullable: true
+        modelId:
+          type: string
+          nullable: true
         granularity:
           type: string
         points:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/TrendPoint'
+        dataWatermarkAt:
+          type: string
+          format: date-time
+          nullable: true
+        aggregationVersion:
+          type: integer
+
+    BreakdownItem:
+      type: object
+      required:
+        - key
+        - label
+        - tokenTotal
+        - percentage
+      properties:
+        key:
+          type: string
+        label:
+          type: string
+        tokenTotal:
+          type: string
+        percentage:
+          type: number
 
     BreakdownResponse:
       type: object
+      required:
+        - range
+        - items
       properties:
         range:
-          type: object
+          $ref: '#/components/schemas/TimeRange'
         items:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/BreakdownItem'
+        dataWatermarkAt:
+          type: string
+          format: date-time
+          nullable: true
+        aggregationVersion:
+          type: integer
+
+    SkillItem:
+      type: object
+      required:
+        - skillId
+        - skillPublicName
+        - useCount
+        - activeDays
+      properties:
+        skillId:
+          type: string
+        skillPublicName:
+          type: string
+        useCount:
+          type: string
+        activeDays:
+          type: integer
+        successRate:
+          type: number
+          nullable: true
+        previousDeltaPct:
+          type: number
+          nullable: true
 
     SkillsResponse:
       type: object
+      required:
+        - range
+        - skills
       properties:
         range:
-          type: object
+          $ref: '#/components/schemas/TimeRange'
         skills:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/SkillItem'
+        dataWatermarkAt:
+          type: string
+          format: date-time
+          nullable: true
+        aggregationVersion:
+          type: integer
+
+    CalendarDay:
+      type: object
+      required:
+        - date
+        - active
+        - level
+        - tokenTotal
+      properties:
+        date:
+          type: string
+        active:
+          type: boolean
+        level:
+          type: integer
+        tokenTotal:
+          type: string
 
     CalendarResponse:
       type: object
+      required:
+        - days
+        - currentStreak
+        - longestStreak
+        - totalActiveDays
       properties:
         days:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/CalendarDay'
         currentStreak:
           type: integer
         longestStreak:
           type: integer
         totalActiveDays:
           type: integer
+        dataWatermarkAt:
+          type: string
+          format: date-time
+          nullable: true
+        aggregationVersion:
+          type: integer
 
     FilterOptions:
       type: object
+      required:
+        - agents
+        - providers
+        - models
       properties:
         agents:
           type: array
@@ -1455,6 +2130,13 @@ components:
 
     DeviceItem:
       type: object
+      required:
+        - installationId
+        - osType
+        - architecture
+        - collectorVersion
+        - installationStatus
+        - registeredAt
       properties:
         installationId:
           type: string
@@ -1474,18 +2156,28 @@ components:
           type: string
         disabledAt:
           type: string
+          format: date-time
           nullable: true
         disabledReason:
           type: string
           nullable: true
         registeredAt:
           type: string
+          format: date-time
         lastSeenAt:
           type: string
+          format: date-time
           nullable: true
 
     ExportJob:
       type: object
+      required:
+        - exportId
+        - userId
+        - exportScope
+        - exportFormat
+        - jobStatus
+        - createdAt
       properties:
         exportId:
           type: string
@@ -1495,30 +2187,92 @@ components:
           type: string
         exportScope:
           type: string
+          enum: [summary, activity, all_aggregates]
         exportFormat:
           type: string
+          enum: [csv, json]
+        filter:
+          type: object
         jobStatus:
           type: string
+          enum: [pending, running, completed, failed, expired, cancelled]
+        attemptCount:
+          type: integer
+        fileSize:
+          type: integer
+          nullable: true
+        downloadUrl:
+          type: string
+          nullable: true
+        expiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        startedAt:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
 
     DeletionRequest:
       type: object
+      required:
+        - requestId
+        - deletionScope
+        - requestStatus
+        - phase
+        - requestedAt
       properties:
         requestId:
           type: string
         userId:
           type: string
+          nullable: true
         deletionScope:
           type: string
+          enum: [account, installation, time_range, all_usage]
+        scopeFilter:
+          type: object
         requestStatus:
           type: string
+          enum: [pending, running, completed, failed, cancelled]
         phase:
           type: string
+        progressCursor:
+          type: integer
         cancelBefore:
+          type: string
+          format: date-time
+          nullable: true
+        cancelledAt:
+          type: string
+          format: date-time
+          nullable: true
+        requestedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        auditReference:
           type: string
           nullable: true
 
     SearchUserResult:
       type: object
+      required:
+        - handle
+        - displayName
       properties:
         handle:
           type: string
@@ -1536,6 +2290,9 @@ components:
 
     SearchAgentResult:
       type: object
+      required:
+        - agentId
+        - name
       properties:
         agentId:
           type: string
@@ -1544,8 +2301,57 @@ components:
         description:
           type: string
 
+    SearchSkillResult:
+      type: object
+      required:
+        - skillId
+        - skillPublicName
+        - useCount
+        - publicUserCount
+        - activeDays
+      properties:
+        skillId:
+          type: string
+        skillPublicName:
+          type: string
+        useCount:
+          type: string
+        publicUserCount:
+          type: integer
+        activeDays:
+          type: integer
+
+    LeaderboardEntry:
+      type: object
+      required:
+        - rankNo
+        - handle
+        - displayName
+        - metricValue
+      properties:
+        rankNo:
+          type: integer
+        handle:
+          type: string
+        displayName:
+          type: string
+        avatarUrl:
+          type: string
+          nullable: true
+        metricValue:
+          type: string
+        rankDelta:
+          type: integer
+          nullable: true
+
     LeaderboardResponse:
       type: object
+      required:
+        - snapshotId
+        - boardKey
+        - window
+        - metric
+        - entries
       properties:
         snapshotId:
           type: string
@@ -1558,4 +2364,72 @@ components:
         entries:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/LeaderboardEntry'
+        nextCursor:
+          type: string
+          nullable: true
+        dataWatermarkAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    CompareUserItem:
+      type: object
+      required:
+        - handle
+        - visible
+      properties:
+        handle:
+          type: string
+        displayName:
+          type: string
+          nullable: true
+        avatarUrl:
+          type: string
+          nullable: true
+        visible:
+          type: boolean
+        tokenTotal:
+          type: string
+          nullable: true
+        codeLinesTotal:
+          type: string
+          nullable: true
+        rank:
+          type: integer
+          nullable: true
+        percentile:
+          type: number
+          nullable: true
+        activeDays:
+          type: integer
+          nullable: true
+        currentStreak:
+          type: integer
+          nullable: true
+        agentBreakdown:
+          type: array
+          items:
+            $ref: '#/components/schemas/BreakdownItem'
+        skillRanking:
+          type: array
+          items:
+            $ref: '#/components/schemas/SkillItem'
+        dataWatermarkAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    CompareResponse:
+      type: object
+      required:
+        - users
+        - generatedAt
+      properties:
+        users:
+          type: array
+          items:
+            $ref: '#/components/schemas/CompareUserItem'
+        generatedAt:
+          type: string
+          format: date-time

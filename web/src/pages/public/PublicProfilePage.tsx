@@ -11,7 +11,33 @@ import { AgentBreakdown } from '@/components/analytics/AgentBreakdown';
 import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
 import { SkillRanking } from '@/components/analytics/SkillRanking';
 import { api, ApiError } from '@/api/client';
-import type { PublicUserProfile } from '@/types/api';
+import type { PublicUserProfile, TokenTrendPoint, SkillItem } from '@/types/api';
+
+function formatNumber(val: string | null | undefined): string {
+  if (!val) return '—';
+  const num = parseFloat(val);
+  if (isNaN(num)) return val;
+  if (num >= 1_000_000_000) return (num / 1_000_000_000).toFixed(1) + 'B';
+  if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + 'M';
+  if (num >= 1_000) return (num / 1_000).toFixed(1) + 'K';
+  return num.toLocaleString();
+}
+
+function formatRelativeTime(dateStr: string | null | undefined, updatedAgoText: string, justNowText: string): string {
+  if (!dateStr) return '';
+  const date = new Date(dateStr);
+  const diffMs = Date.now() - date.getTime();
+  if (diffMs < 0 || isNaN(diffMs)) {
+    return date.toLocaleDateString();
+  }
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return `${updatedAgoText} ${justNowText}`;
+  if (diffMins < 60) return `${updatedAgoText} ${diffMins}m`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${updatedAgoText} ${diffHours}h`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${updatedAgoText} ${diffDays}d`;
+}
 
 export const PublicProfilePage: React.FC = () => {
   const { handle } = useParams<{ handle: string }>();
@@ -20,6 +46,8 @@ export const PublicProfilePage: React.FC = () => {
   const navigate = useNavigate();
 
   const [profile, setProfile] = useState<PublicUserProfile | null>(null);
+  const [trends, setTrends] = useState<TokenTrendPoint[]>([]);
+  const [skills, setSkills] = useState<SkillItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | Error | null>(null);
 
@@ -28,8 +56,30 @@ export const PublicProfilePage: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      const res = await api.getPublicProfile(handle);
-      setProfile(res);
+
+      // Fetch profile, trends, and skills separately
+      const [profileRes, trendsRes, skillsRes] = await Promise.all([
+        api.getPublicProfile(handle),
+        api.getPublicTokenTrends(handle, { range: '30d' }).catch(() => null),
+        api.getPublicSkills(handle, '30d').catch(() => null),
+      ]);
+
+      setProfile(profileRes);
+      if (trendsRes && (trendsRes.points || trendsRes.trends)) {
+        setTrends(trendsRes.points || trendsRes.trends || []);
+      } else if (profileRes.tokenTrend) {
+        setTrends(profileRes.tokenTrend);
+      } else {
+        setTrends([]);
+      }
+
+      if (skillsRes && (skillsRes.skills || skillsRes.items)) {
+        setSkills(skillsRes.skills || skillsRes.items || []);
+      } else if (profileRes.skillRanking) {
+        setSkills(profileRes.skillRanking);
+      } else {
+        setSkills([]);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err : new Error(String(err)));
     } finally {
@@ -57,7 +107,13 @@ export const PublicProfilePage: React.FC = () => {
 
   const initials = profile.displayName
     ? profile.displayName.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase()
-    : 'MB';
+    : 'TD';
+
+  const updatedTimeDisplay = formatRelativeTime(
+    profile.generatedAt || profile.dataWatermarkAt,
+    t('publicProfile.updatedAgo'),
+    t('dashboard.justNow')
+  );
 
   return (
     <div>
@@ -113,7 +169,7 @@ export const PublicProfilePage: React.FC = () => {
             }}
           >
             {profile.avatarUrl ? (
-              <img src={profile.avatarUrl} alt={profile.displayName} />
+              <img src={profile.avatarUrl} alt={profile.displayName} style={{ width: '100%', height: '100%', borderRadius: '50%' }} />
             ) : (
               <span>{initials}</span>
             )}
@@ -131,9 +187,9 @@ export const PublicProfilePage: React.FC = () => {
                 {profile.bio}
               </p>
             )}
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <Badge variant="lime">{t('publicProfile.publicLeaderboardTag')}</Badge>
-              <Badge>{t('publicProfile.updatedAgo')} 4m</Badge>
+              {updatedTimeDisplay && <Badge>{updatedTimeDisplay}</Badge>}
             </div>
           </div>
         </div>
@@ -149,19 +205,19 @@ export const PublicProfilePage: React.FC = () => {
           <div>
             <small style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t('metrics.totalTokens')}</small>
             <strong className="mono-num" style={{ display: 'block', fontSize: 22, marginTop: 4 }}>
-              {profile.tokenTotal || '—'}
+              {formatNumber(profile.tokenTotal)}
             </strong>
           </div>
           <div>
             <small style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t('metrics.generatedCodeLines')}</small>
             <strong className="mono-num" style={{ display: 'block', fontSize: 22, marginTop: 4 }}>
-              {profile.codeLinesTotal || '—'}
+              {formatNumber(profile.codeLinesTotal)}
             </strong>
           </div>
           <div>
-            <small style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t('metrics.estimatedCost')}</small>
+            <small style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t('metrics.activeStreak')}</small>
             <strong className="mono-num" style={{ display: 'block', fontSize: 22, marginTop: 4 }}>
-              {profile.estimatedCostTotal || '—'}
+              {profile.currentStreak !== null && profile.currentStreak !== undefined ? `${profile.currentStreak} ${t('metrics.days')}` : '—'}
             </strong>
           </div>
         </div>
@@ -180,7 +236,7 @@ export const PublicProfilePage: React.FC = () => {
             </div>
           </div>
 
-          <TokenTrendChart trends={profile.tokenTrend || []} />
+          <TokenTrendChart trends={trends} />
         </div>
 
         {/* Global Rank Card */}
@@ -198,7 +254,9 @@ export const PublicProfilePage: React.FC = () => {
               {profile.rank ? `#${profile.rank}` : '—'}
             </strong>
             <span style={{ color: 'var(--lime)', fontWeight: 700, marginBottom: 8, fontSize: 13 }}>
-              {profile.percentile ? profile.percentile : '—'}
+              {profile.percentile !== null && profile.percentile !== undefined ? (
+                typeof profile.percentile === 'number' ? `Top ${(100 - profile.percentile).toFixed(1)}%` : String(profile.percentile)
+              ) : '—'}
             </span>
           </div>
 
@@ -210,8 +268,10 @@ export const PublicProfilePage: React.FC = () => {
             <div
               className="progress-fill"
               style={{
-                width: profile.percentile && profile.percentile.includes('%')
-                  ? profile.percentile.replace(/[^0-9.]/g, '') + '%'
+                width: profile.percentile
+                  ? typeof profile.percentile === 'number'
+                    ? `${profile.percentile}%`
+                    : `${String(profile.percentile).replace(/[^0-9.]/g, '')}%`
                   : '100%',
               }}
             />
@@ -253,9 +313,9 @@ export const PublicProfilePage: React.FC = () => {
                 {t('dashboard.skillRankingSub')}
               </p>
             </div>
-            <Badge variant="lime">Top 3</Badge>
+            {skills.length > 0 && <Badge variant="lime">Top {skills.length}</Badge>}
           </div>
-          <SkillRanking skills={profile.skillRanking || []} />
+          <SkillRanking skills={skills} />
         </div>
       </div>
     </div>

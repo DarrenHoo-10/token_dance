@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"crypto/hmac"
+	"errors"
 	"fmt"
 	"net/mail"
 	"net/url"
@@ -13,14 +14,17 @@ import (
 	"tokendance/internal/config"
 	"tokendance/internal/crypto"
 	"tokendance/internal/domain"
+	emailpkg "tokendance/internal/email"
 	"tokendance/internal/store"
 )
 
 type Service struct {
-	store  store.AuthStore
-	pStore store.ProfileStore
-	cfg    *config.Config
-	clk    clock.Clock
+	store     store.AuthStore
+	pStore    store.ProfileStore
+	cfg       *config.Config
+	clk       clock.Clock
+	cipher    *crypto.AEADCipher
+	emailSink *emailpkg.DeliverySink
 
 	hmacKey        []byte
 	dummyArgonHash string
@@ -39,14 +43,56 @@ func NewService(st store.Store, cfg *config.Config, clk clock.Clock) *Service {
 	}
 	dummyHash, _ := crypto.HashPassword("tokendance-dummy-timing-password-constant", params)
 
+	var cipher *crypto.AEADCipher
+	if keyBytes, err := config.ParseEncryptionKey(cfg.EncryptionKey); err == nil {
+		cipher, _ = crypto.NewAEADCipher(keyBytes[:], cfg.EncryptionKeyVersion)
+	}
+
+	var sink *emailpkg.DeliverySink
+	if cfg.Environment != "production" {
+		sink = emailpkg.DefaultSink
+	}
+
 	return &Service{
 		store:          st.Auth(),
 		pStore:         st.Profile(),
 		cfg:            cfg,
 		clk:            clk,
+		cipher:         cipher,
+		emailSink:      sink,
 		hmacKey:        key,
 		dummyArgonHash: dummyHash,
 	}
+}
+
+func (s *Service) SetEmailSink(sink *emailpkg.DeliverySink) {
+	s.emailSink = sink
+}
+
+func (s *Service) EmailSink() *emailpkg.DeliverySink {
+	return s.emailSink
+}
+
+func (s *Service) Cipher() *crypto.AEADCipher {
+	return s.cipher
+}
+
+func (s *Service) IsProduction() bool {
+	return s.cfg != nil && s.cfg.Environment == "production"
+}
+
+func (s *Service) DecryptUserEmail(u *domain.User) (string, error) {
+	if u == nil || len(u.EmailCiphertext) == 0 {
+		return "", nil
+	}
+	if s.cipher == nil {
+		return string(u.EmailCiphertext), nil
+	}
+	plain, err := s.cipher.Decrypt(u.EmailCiphertext, []byte("users.email"))
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt user email: %w", err)
+	}
+	return string(plain), nil
 }
 
 // NormalizeEmail performs standard email normalization
@@ -182,9 +228,15 @@ func (s *Service) RequestRegistrationCode(ctx context.Context, email, locale str
 		return nil
 	}
 
-	code, err := crypto.GenerateSixDigitCode()
-	if err != nil {
-		return domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to generate verification code", nil, err)
+	code := ""
+	if s.cfg.Environment != "production" && s.cfg.TestAuthCode != "" {
+		code = s.cfg.TestAuthCode
+	} else {
+		var err error
+		code, err = crypto.GenerateSixDigitCode()
+		if err != nil {
+			return domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to generate verification code", nil, err)
+		}
 	}
 	codeHash := s.ComputeTokenHash(code)
 
@@ -193,11 +245,24 @@ func (s *Service) RequestRegistrationCode(ctx context.Context, email, locale str
 	emailID, _ := crypto.GenerateOpaqueToken(13)
 	emailID = "eml_" + emailID
 
+	var emailCiphertext []byte
+	var emailKeyVersion uint16 = 1
+	if s.cipher != nil {
+		emailKeyVersion = s.cipher.KeyVersion()
+		ct, err := s.cipher.Encrypt([]byte(normalized), []byte("email_challenges.email"))
+		if err != nil {
+			return domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to encrypt email challenge", nil, err)
+		}
+		emailCiphertext = ct
+	} else {
+		emailCiphertext = []byte(normalized)
+	}
+
 	challenge := domain.EmailChallenge{
 		ChallengeID:     challengeID,
 		EmailLookupHash: emailHash,
-		EmailCiphertext: []byte(normalized), // In memory/prototype
-		EmailKeyVersion: 1,
+		EmailCiphertext: emailCiphertext,
+		EmailKeyVersion: emailKeyVersion,
 		ChallengeType:   domain.ChallengeTypeRegister,
 		CodeHash:        codeHash,
 		CodeKeyVersion:  1,
@@ -212,15 +277,36 @@ func (s *Service) RequestRegistrationCode(ctx context.Context, email, locale str
 
 	idempotencyKey := crypto.HMACSHA256(s.hmacKey, []byte(challengeID+now.Format(time.RFC3339)))
 
+	payloadJSON := fmt.Sprintf(`{"code":"%s"}`, code)
+	var recipientCiphertext, payloadCiphertext []byte
+	var outboxKeyVersion uint16 = 1
+	if s.cipher != nil {
+		outboxKeyVersion = s.cipher.KeyVersion()
+		rcptCT, err := s.cipher.Encrypt([]byte(normalized), []byte("email_outbox.recipient"))
+		if err != nil {
+			return domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to encrypt outbox recipient", nil, err)
+		}
+		recipientCiphertext = rcptCT
+
+		payloadCT, err := s.cipher.Encrypt([]byte(payloadJSON), []byte("email_outbox.payload"))
+		if err != nil {
+			return domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to encrypt outbox payload", nil, err)
+		}
+		payloadCiphertext = payloadCT
+	} else {
+		recipientCiphertext = []byte(normalized)
+		payloadCiphertext = []byte(payloadJSON)
+	}
+
 	outbox := domain.EmailOutbox{
 		EmailID:              emailID,
 		ChallengeID:          &challengeID,
 		IdempotencyKey:       idempotencyKey,
 		TemplateKey:          "auth.register_code",
 		Locale:               locale,
-		RecipientCiphertext:  []byte(normalized),
-		PayloadCiphertext:    []byte(fmt.Sprintf(`{"code":"%s"}`, code)),
-		EncryptionKeyVersion: 1,
+		RecipientCiphertext:  recipientCiphertext,
+		PayloadCiphertext:    payloadCiphertext,
+		EncryptionKeyVersion: outboxKeyVersion,
 		DeliveryStatus:       "pending",
 		AttemptCount:         0,
 		NextAttemptAt:        now,
@@ -231,6 +317,17 @@ func (s *Service) RequestRegistrationCode(ctx context.Context, email, locale str
 
 	if _, err := s.store.CreateOrReplaceEmailChallenge(ctx, challenge, outbox); err != nil {
 		return domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to create email challenge", nil, err)
+	}
+
+	if s.emailSink != nil {
+		_, _ = s.emailSink.Send(ctx, emailpkg.Message{
+			EmailID:     emailID,
+			Recipient:   normalized,
+			TemplateKey: "auth.register_code",
+			Locale:      locale,
+			PayloadJSON: payloadJSON,
+			CreatedAt:   now,
+		})
 	}
 
 	return nil
@@ -305,11 +402,22 @@ func (s *Service) CompleteRegistration(ctx context.Context, email, code, passwor
 
 	subjectHash := crypto.SHA256([]byte("email:" + normalized))
 
+	var userEmailCiphertext []byte
+	if s.cipher != nil {
+		ct, err := s.cipher.Encrypt([]byte(normalized), []byte("users.email"))
+		if err != nil {
+			return nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to encrypt user email", nil, err)
+		}
+		userEmailCiphertext = ct
+	} else {
+		userEmailCiphertext = []byte(normalized)
+	}
+
 	user := domain.User{
 		UserID:                userID,
 		AuthSubjectHash:       subjectHash,
 		EmailLookupHash:       &emailHash,
-		EmailCiphertext:       []byte(normalized),
+		EmailCiphertext:       userEmailCiphertext,
 		DisplayName:           "Token Dancer",
 		AccountStatus:         domain.AccountStatusActive,
 		LeaderboardVisibility: domain.LeaderboardVisibilityPrivate,
@@ -543,9 +651,33 @@ func (s *Service) ListUserSessions(ctx context.Context, userID string) ([]domain
 	return s.store.ListUserSessions(ctx, userID)
 }
 
+func (s *Service) Config() *config.Config {
+	return s.cfg
+}
+
+func (s *Service) RotateCSRFToken(ctx context.Context, sessionID string) (string, error) {
+	csrfToken, err := crypto.GenerateOpaqueToken(32)
+	if err != nil {
+		return "", err
+	}
+	csrfTokenHash := s.ComputeTokenHash(csrfToken)
+	now := s.clk.Now()
+	if err := s.store.RotateSessionCSRF(ctx, sessionID, csrfTokenHash, now); err != nil {
+		return "", err
+	}
+	return csrfToken, nil
+}
+
 func (s *Service) RevokeSessionByID(ctx context.Context, sessionID string, userID string) error {
 	now := s.clk.Now()
-	return s.store.RevokeSession(ctx, sessionID, "user_revoked", now)
+	err := s.store.RevokeUserSession(ctx, sessionID, userID, "logout", now)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return domain.NewAppError(404, "RESOURCE_NOT_FOUND", "auth.sessionNotFound", "session not found", nil, err)
+		}
+		return domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to revoke session", nil, err)
+	}
+	return nil
 }
 
 func (s *Service) RequestPasswordReset(ctx context.Context, email string) error {
@@ -563,9 +695,15 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) error 
 		return nil
 	}
 
-	code, err := crypto.GenerateSixDigitCode()
-	if err != nil {
-		return domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to generate code", nil, err)
+	code := ""
+	if s.cfg.Environment != "production" && s.cfg.TestAuthCode != "" {
+		code = s.cfg.TestAuthCode
+	} else {
+		var err error
+		code, err = crypto.GenerateSixDigitCode()
+		if err != nil {
+			return domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to generate code", nil, err)
+		}
 	}
 	codeHash := s.ComputeTokenHash(code)
 
@@ -574,12 +712,25 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) error 
 	emailID, _ := crypto.GenerateOpaqueToken(13)
 	emailID = "eml_" + emailID
 
+	var emailCiphertext []byte
+	var emailKeyVersion uint16 = 1
+	if s.cipher != nil {
+		emailKeyVersion = s.cipher.KeyVersion()
+		ct, err := s.cipher.Encrypt([]byte(normalized), []byte("email_challenges.email"))
+		if err != nil {
+			return domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to encrypt email challenge", nil, err)
+		}
+		emailCiphertext = ct
+	} else {
+		emailCiphertext = []byte(normalized)
+	}
+
 	challenge := domain.EmailChallenge{
 		ChallengeID:     challengeID,
 		UserID:          &user.UserID,
 		EmailLookupHash: emailHash,
-		EmailCiphertext: []byte(normalized),
-		EmailKeyVersion: 1,
+		EmailCiphertext: emailCiphertext,
+		EmailKeyVersion: emailKeyVersion,
 		ChallengeType:   domain.ChallengeTypePasswordReset,
 		CodeHash:        codeHash,
 		CodeKeyVersion:  1,
@@ -594,6 +745,27 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) error 
 
 	idempotencyKey := crypto.HMACSHA256(s.hmacKey, []byte(challengeID+now.Format(time.RFC3339)))
 
+	payloadJSON := fmt.Sprintf(`{"code":"%s"}`, code)
+	var recipientCiphertext, payloadCiphertext []byte
+	var outboxKeyVersion uint16 = 1
+	if s.cipher != nil {
+		outboxKeyVersion = s.cipher.KeyVersion()
+		rcptCT, err := s.cipher.Encrypt([]byte(normalized), []byte("email_outbox.recipient"))
+		if err != nil {
+			return domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to encrypt outbox recipient", nil, err)
+		}
+		recipientCiphertext = rcptCT
+
+		payloadCT, err := s.cipher.Encrypt([]byte(payloadJSON), []byte("email_outbox.payload"))
+		if err != nil {
+			return domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to encrypt outbox payload", nil, err)
+		}
+		payloadCiphertext = payloadCT
+	} else {
+		recipientCiphertext = []byte(normalized)
+		payloadCiphertext = []byte(payloadJSON)
+	}
+
 	outbox := domain.EmailOutbox{
 		EmailID:              emailID,
 		UserID:               &user.UserID,
@@ -601,9 +773,9 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) error 
 		IdempotencyKey:       idempotencyKey,
 		TemplateKey:          "auth.password_reset_code",
 		Locale:               user.Locale,
-		RecipientCiphertext:  []byte(normalized),
-		PayloadCiphertext:    []byte(fmt.Sprintf(`{"code":"%s"}`, code)),
-		EncryptionKeyVersion: 1,
+		RecipientCiphertext:  recipientCiphertext,
+		PayloadCiphertext:    payloadCiphertext,
+		EncryptionKeyVersion: outboxKeyVersion,
 		DeliveryStatus:       "pending",
 		NextAttemptAt:        now,
 		ExpiresAt:            now.Add(s.cfg.AuthCodeTTL),
@@ -612,6 +784,18 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) error 
 	}
 
 	_, _ = s.store.CreateOrReplaceEmailChallenge(ctx, challenge, outbox)
+
+	if s.emailSink != nil {
+		_, _ = s.emailSink.Send(ctx, emailpkg.Message{
+			EmailID:     emailID,
+			Recipient:   normalized,
+			TemplateKey: "auth.password_reset_code",
+			Locale:      user.Locale,
+			PayloadJSON: payloadJSON,
+			CreatedAt:   now,
+		})
+	}
+
 	return nil
 }
 
@@ -626,33 +810,8 @@ func (s *Service) ResetPassword(ctx context.Context, email, code, newPassword st
 	}
 
 	emailHash := s.ComputeEmailLookupHash(normalized)
+	codeHash := s.ComputeTokenHash(strings.TrimSpace(code))
 	now := s.clk.Now()
-
-	user, cred, err := s.store.FindUserByEmailHash(ctx, emailHash)
-	if err != nil {
-		return domain.NewAppError(400, "AUTH_INVALID_CREDENTIALS", "auth.challengeNotFound", "invalid or expired verification code", nil, nil)
-	}
-
-	challenge, err := s.store.FindPendingEmailChallenge(ctx, domain.ChallengeTypePasswordReset, emailHash)
-	if err != nil {
-		return domain.NewAppError(400, "AUTH_INVALID_CREDENTIALS", "auth.challengeNotFound", "invalid or expired verification code", nil, nil)
-	}
-
-	if now.After(challenge.ExpiresAt) {
-		_ = s.store.UpdateEmailChallengeAttempts(ctx, challenge.ChallengeID, challenge.AttemptCount, domain.ChallengeStatusExpired)
-		return domain.NewAppError(400, "AUTH_INVALID_CREDENTIALS", "auth.codeExpired", "verification code expired", nil, nil)
-	}
-
-	expectedCodeHash := s.ComputeTokenHash(strings.TrimSpace(code))
-	if !hmac.Equal(expectedCodeHash[:], challenge.CodeHash[:]) {
-		newAttempts := challenge.AttemptCount + 1
-		newStatus := domain.ChallengeStatusPending
-		if newAttempts >= challenge.MaxAttempts {
-			newStatus = domain.ChallengeStatusLocked
-		}
-		_ = s.store.UpdateEmailChallengeAttempts(ctx, challenge.ChallengeID, newAttempts, newStatus)
-		return domain.NewAppError(400, "AUTH_INVALID_CREDENTIALS", "auth.invalidCode", "invalid verification code", nil, nil)
-	}
 
 	params := crypto.DefaultArgon2Params
 	if s.cfg.Argon2MemoryKiB <= 1024 {
@@ -663,16 +822,31 @@ func (s *Service) ResetPassword(ctx context.Context, email, code, newPassword st
 		return domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to hash password", nil, err)
 	}
 
+	// Fetch current credential version
+	_, cred, err := s.store.FindUserByEmailHash(ctx, emailHash)
+	var newVersion uint32 = 1
+	if err == nil && cred != nil {
+		newVersion = cred.CredentialVersion + 1
+	}
+
 	eventID, _ := crypto.GenerateOpaqueToken(13)
 	event := domain.UserSecurityEvent{
 		EventID:   "sev_" + eventID,
-		UserID:    &user.UserID,
 		EventType: "password_reset",
 		Outcome:   "success",
 		CreatedAt: now,
 	}
 
-	if err := s.store.ResetPasswordTx(ctx, user.UserID, challenge.ChallengeID, newHash, cred.CredentialVersion+1, event, now); err != nil {
+	if err := s.store.ResetPasswordTx(ctx, emailHash, codeHash, newHash, newVersion, event, now); err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return domain.NewAppError(400, "AUTH_INVALID_CREDENTIALS", "auth.challengeNotFound", "invalid or expired verification code", nil, nil)
+		}
+		if errors.Is(err, domain.ErrChallengeExpired) {
+			return domain.NewAppError(400, "AUTH_INVALID_CREDENTIALS", "auth.codeExpired", "verification code expired", nil, nil)
+		}
+		if errors.Is(err, domain.ErrChallengeInvalid) || errors.Is(err, domain.ErrChallengeLocked) {
+			return domain.NewAppError(400, "AUTH_INVALID_CREDENTIALS", "auth.invalidCode", "invalid verification code", nil, nil)
+		}
 		return domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to reset password", nil, err)
 	}
 

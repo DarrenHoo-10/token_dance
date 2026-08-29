@@ -223,10 +223,25 @@ func (s *deviceStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 		return nil, domain.ErrChallengeExpired
 	}
 
-	// Verify user active
+	// Verify authorizing session is active and not expired
+	var sessStatus string
+	var idleExp, absExp time.Time
+	err = tx.QueryRowContext(ctx, "SELECT session_status, idle_expires_at, absolute_expires_at FROM user_sessions WHERE session_id = ? FOR UPDATE", sessionID).Scan(&sessStatus, &idleExp, &absExp)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrChallengeInvalid
+		}
+		return nil, fmt.Errorf("failed to lock authorizing session: %w", err)
+	}
+	if sessStatus != string(domain.SessionStatusActive) || now.After(idleExp) || now.After(absExp) {
+		return nil, domain.ErrChallengeInvalid
+	}
+
+	// Verify user active and onboarding completed
 	var accountStatus string
-	err = tx.QueryRowContext(ctx, "SELECT account_status FROM users WHERE user_id = ? FOR UPDATE", userID).Scan(&accountStatus)
-	if err != nil || accountStatus != string(domain.AccountStatusActive) {
+	var onboardingCompletedAt sql.NullTime
+	err = tx.QueryRowContext(ctx, "SELECT account_status, onboarding_completed_at FROM users WHERE user_id = ? FOR UPDATE", userID).Scan(&accountStatus, &onboardingCompletedAt)
+	if err != nil || accountStatus != string(domain.AccountStatusActive) || !onboardingCompletedAt.Valid {
 		return nil, domain.ErrForbidden
 	}
 
@@ -422,8 +437,26 @@ func (s *deviceStore) UpdateInstallationName(ctx context.Context, installationID
 }
 
 func (s *deviceStore) PauseInstallation(ctx context.Context, installationID, userID string, reason string, now time.Time) (*domain.Installation, error) {
-	inst, err := s.GetInstallation(ctx, installationID, userID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return nil, fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	query := `
+		SELECT installation_id, user_id, device_public_key, device_name,
+		       os_type, os_version, architecture, collector_version,
+		       installation_status, disabled_at, disabled_reason,
+		       status_version, registered_at, last_seen_at, revoked_at, updated_at
+		FROM installations
+		WHERE installation_id = ? AND user_id = ?
+		FOR UPDATE`
+
+	inst, err := s.scanInstallationRow(tx.QueryRowContext(ctx, query, installationID, userID))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
 		return nil, err
 	}
 
@@ -431,25 +464,48 @@ func (s *deviceStore) PauseInstallation(ctx context.Context, installationID, use
 		return nil, domain.ErrDeviceRevoked
 	}
 	if inst.InstallationStatus == domain.InstallationStatusDisabled {
+		_ = tx.Commit()
 		return inst, nil
 	}
 
-	query := `
+	updateSQL := `
 		UPDATE installations
 		SET installation_status = 'disabled', disabled_at = ?, disabled_reason = ?,
 		    status_version = status_version + 1, updated_at = ?
 		WHERE installation_id = ? AND user_id = ?`
 
-	if _, err := s.db.ExecContext(ctx, query, now, reason, now, installationID, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, updateSQL, now, reason, now, installationID, userID); err != nil {
 		return nil, fmt.Errorf("failed to pause installation: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 
 	return s.GetInstallation(ctx, installationID, userID)
 }
 
 func (s *deviceStore) ResumeInstallation(ctx context.Context, installationID, userID string, now time.Time) (*domain.Installation, error) {
-	inst, err := s.GetInstallation(ctx, installationID, userID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return nil, fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	query := `
+		SELECT installation_id, user_id, device_public_key, device_name,
+		       os_type, os_version, architecture, collector_version,
+		       installation_status, disabled_at, disabled_reason,
+		       status_version, registered_at, last_seen_at, revoked_at, updated_at
+		FROM installations
+		WHERE installation_id = ? AND user_id = ?
+		FOR UPDATE`
+
+	inst, err := s.scanInstallationRow(tx.QueryRowContext(ctx, query, installationID, userID))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
 		return nil, err
 	}
 
@@ -457,49 +513,83 @@ func (s *deviceStore) ResumeInstallation(ctx context.Context, installationID, us
 		return nil, domain.ErrDeviceRevoked
 	}
 	if inst.InstallationStatus == domain.InstallationStatusActive {
+		_ = tx.Commit()
 		return inst, nil
 	}
 	if inst.DisabledReason != nil && *inst.DisabledReason != "user_paused" {
 		return nil, domain.ErrForbidden
 	}
 
-	query := `
+	updateSQL := `
 		UPDATE installations
 		SET installation_status = 'active', disabled_at = NULL, disabled_reason = NULL,
 		    status_version = status_version + 1, updated_at = ?
 		WHERE installation_id = ? AND user_id = ?`
 
-	if _, err := s.db.ExecContext(ctx, query, now, installationID, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, updateSQL, now, installationID, userID); err != nil {
 		return nil, fmt.Errorf("failed to resume installation: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 
 	return s.GetInstallation(ctx, installationID, userID)
 }
 
 func (s *deviceStore) RevokeInstallation(ctx context.Context, installationID, userID string, now time.Time) (*domain.Installation, error) {
-	inst, err := s.GetInstallation(ctx, installationID, userID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		return nil, fmt.Errorf("failed to begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	query := `
+		SELECT installation_id, user_id, device_public_key, device_name,
+		       os_type, os_version, architecture, collector_version,
+		       installation_status, disabled_at, disabled_reason,
+		       status_version, registered_at, last_seen_at, revoked_at, updated_at
+		FROM installations
+		WHERE installation_id = ? AND user_id = ?
+		FOR UPDATE`
+
+	inst, err := s.scanInstallationRow(tx.QueryRowContext(ctx, query, installationID, userID))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
 		return nil, err
 	}
 
 	if inst.InstallationStatus == domain.InstallationStatusRevoked {
+		_ = tx.Commit()
 		return inst, nil
 	}
 
-	query := `
+	updateSQL := `
 		UPDATE installations
 		SET installation_status = 'revoked', revoked_at = ?,
 		    status_version = status_version + 1, updated_at = ?
 		WHERE installation_id = ? AND user_id = ?`
 
-	if _, err := s.db.ExecContext(ctx, query, now, now, installationID, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, updateSQL, now, now, installationID, userID); err != nil {
 		return nil, fmt.Errorf("failed to revoke installation: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 
 	return s.GetInstallation(ctx, installationID, userID)
 }
 
 func (s *deviceStore) AuthorizeIngest(ctx context.Context, installationID string) (*domain.Installation, *domain.User, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to begin ingest tx: %w", err)
+	}
+	defer tx.Rollback()
+
 	query := `
 		SELECT i.installation_id, i.user_id, i.device_public_key, i.device_name,
 		       i.os_type, i.os_version, i.architecture, i.collector_version,
@@ -513,17 +603,78 @@ func (s *deviceStore) AuthorizeIngest(ctx context.Context, installationID string
 		FROM installations i
 		JOIN users u ON i.user_id = u.user_id
 		WHERE i.installation_id = ?
-		LIMIT 1`
+		FOR UPDATE`
 
+	inst, u, err := s.scanIngestAuthRow(tx.QueryRowContext(ctx, query, installationID))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, domain.ErrNotFound
+		}
+		return nil, nil, fmt.Errorf("failed to authorize ingest: %w", err)
+	}
+
+	if inst.InstallationStatus == domain.InstallationStatusRevoked {
+		return nil, nil, domain.ErrDeviceRevoked
+	}
+	if inst.InstallationStatus == domain.InstallationStatusDisabled {
+		return nil, nil, domain.ErrDeviceDisabled
+	}
+	if u.AccountStatus != domain.AccountStatusActive {
+		return nil, nil, domain.ErrAccountSuspended
+	}
+
+	_ = tx.Commit()
+	return inst, u, nil
+}
+
+func (s *deviceStore) scanInstallationRow(row *sql.Row) (*domain.Installation, error) {
 	var inst domain.Installation
-	var u domain.User
-	var pubKey, authSubHash, emailHash []byte
+	var pubKey []byte
 	var devName, osVer, disReason sql.NullString
 	var disAt, lastSeen, revokedAt sql.NullTime
-	var handle, avatarURL, avatarObjID, bio sql.NullString
-	var emailVerifiedAt, onboardingCompletedAt, publicProfileUpdatedAt, deletedAt sql.NullTime
 
-	err := s.db.QueryRowContext(ctx, query, installationID).Scan(
+	err := row.Scan(
+		&inst.InstallationID,
+		&inst.UserID,
+		&pubKey,
+		&devName,
+		&inst.OSType,
+		&osVer,
+		&inst.Architecture,
+		&inst.CollectorVersion,
+		&inst.InstallationStatus,
+		&disAt,
+		&disReason,
+		&inst.StatusVersion,
+		&inst.RegisteredAt,
+		&lastSeen,
+		&revokedAt,
+		&inst.UpdatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	inst.DevicePublicKey = scanBytes32(pubKey)
+	inst.DeviceName = ptrFromNullString(devName)
+	inst.OSVersion = ptrFromNullString(osVer)
+	inst.DisabledReason = ptrFromNullString(disReason)
+	inst.DisabledAt = ptrFromNullTime(disAt)
+	inst.LastSeenAt = ptrFromNullTime(lastSeen)
+	inst.RevokedAt = ptrFromNullTime(revokedAt)
+
+	return &inst, nil
+}
+
+func (s *deviceStore) scanIngestAuthRow(row *sql.Row) (*domain.Installation, *domain.User, error) {
+	var inst domain.Installation
+	var u domain.User
+	var pubKey []byte
+	var devName, osVer, disReason, avatarURL, avatarObjID, bio, handle sql.NullString
+	var disAt, lastSeen, revokedAt, emailVerifiedAt, onboardingCompletedAt, publicProfileUpdatedAt, deletedAt sql.NullTime
+	var authSubHash, emailHash []byte
+
+	err := row.Scan(
 		&inst.InstallationID,
 		&inst.UserID,
 		&pubKey,
@@ -561,20 +712,7 @@ func (s *deviceStore) AuthorizeIngest(ctx context.Context, installationID string
 		&deletedAt,
 	)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, nil, domain.ErrNotFound
-		}
-		return nil, nil, fmt.Errorf("failed to authorize ingest: %w", err)
-	}
-
-	if inst.InstallationStatus == domain.InstallationStatusRevoked {
-		return nil, nil, domain.ErrDeviceRevoked
-	}
-	if inst.InstallationStatus == domain.InstallationStatusDisabled {
-		return nil, nil, domain.ErrDeviceDisabled
-	}
-	if u.AccountStatus != domain.AccountStatusActive {
-		return nil, nil, domain.ErrAccountSuspended
+		return nil, nil, err
 	}
 
 	inst.DevicePublicKey = scanBytes32(pubKey)

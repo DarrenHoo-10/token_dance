@@ -125,8 +125,8 @@ export const DevicesSettingsPage: React.FC = () => {
 
         {devices.length === 0 ? (
           <EmptyState
-            title="No connected devices"
-            description="Install TokenDance Collector on your workstation to start synchronizing AI coding metrics."
+            title={t('settings.noDevicesTitle')}
+            description={t('settings.noDevicesDesc')}
             actionText={t('settings.connectDevice')}
             onAction={handleCreateBindCode}
           />
@@ -166,7 +166,7 @@ export const DevicesSettingsPage: React.FC = () => {
 
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <strong style={{ fontSize: 14 }}>{device.deviceName}</strong>
+                      <strong style={{ fontSize: 14 }}>{device.deviceName || device.installationId}</strong>
                       <Badge
                         variant={
                           device.installationStatus === 'active'
@@ -181,10 +181,10 @@ export const DevicesSettingsPage: React.FC = () => {
                     </div>
 
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                      {device.osType} {device.osVersion} · Collector {device.collectorVersion} ·{' '}
+                      {device.osType} {device.osVersion || ''} · Collector {device.collectorVersion} ·{' '}
                       {t('settings.lastSeen')}:{' '}
                       <span className="mono-num">
-                        {device.lastSeenAt ? new Date(device.lastSeenAt).toLocaleString() : 'Never'}
+                        {device.lastSeenAt ? new Date(device.lastSeenAt).toLocaleString() : t('settings.never')}
                       </span>
                     </div>
                   </div>
@@ -247,26 +247,27 @@ export const DevicesSettingsPage: React.FC = () => {
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
-              padding: '16px 32px',
-              borderRadius: 'var(--radius-lg)',
+              gap: 12,
+              padding: '16px 28px',
               backgroundColor: 'var(--bg-dark)',
               color: 'var(--lime)',
-              fontFamily: 'var(--font-mono)',
-              fontSize: 28,
+              borderRadius: 'var(--radius-md)',
+              fontSize: 32,
               fontWeight: 800,
-              letterSpacing: '0.15em',
+              letterSpacing: '0.18em',
+              fontFamily: 'monospace',
               cursor: 'pointer',
               marginBottom: 16,
-              border: '2px dashed var(--lime-border)',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
             }}
-            title="Click to copy"
           >
-            {challenge?.code || '••••••••'}
+            <span>{challenge?.code}</span>
+            <span style={{ fontSize: 16 }}>📋</span>
           </div>
 
-          <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>
-            🕒 {t('settings.bindCodeExpiresIn')}
-          </div>
+          <p style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
+            {t('settings.bindCodeExpiresIn')}
+          </p>
         </div>
       </Modal>
     </div>

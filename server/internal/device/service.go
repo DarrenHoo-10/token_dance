@@ -2,8 +2,12 @@ package device
 
 import (
 	"context"
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"strings"
+	"time"
 
 	"tokendance/internal/clock"
 	"tokendance/internal/config"
@@ -13,9 +17,10 @@ import (
 )
 
 type Service struct {
-	store store.DeviceStore
-	cfg   *config.Config
-	clk   clock.Clock
+	store     store.DeviceStore
+	authStore store.AuthStore
+	cfg       *config.Config
+	clk       clock.Clock
 }
 
 func NewService(st store.Store, cfg *config.Config, clk clock.Clock) *Service {
@@ -23,10 +28,123 @@ func NewService(st store.Store, cfg *config.Config, clk clock.Clock) *Service {
 		clk = clock.RealClock{}
 	}
 	return &Service{
-		store: st.Device(),
-		cfg:   cfg,
-		clk:   clk,
+		store:     st.Device(),
+		authStore: st.Auth(),
+		cfg:       cfg,
+		clk:       clk,
 	}
+}
+
+type DeviceGrantClaims struct {
+	UserID    string `json:"userId"`
+	SessionID string `json:"sessionId"`
+	Scope     string `json:"scope"`
+	ExpiresAt int64  `json:"exp"`
+}
+
+type DeviceGrantResult struct {
+	GrantToken string `json:"grantToken"`
+	ExpiresAt  string `json:"expiresAt"`
+}
+
+func (s *Service) CreateDeviceGrant(ctx context.Context, userID, sessionID string) (*DeviceGrantResult, error) {
+	u, err := s.authStore.FindUserByID(ctx, userID)
+	if err != nil || u.AccountStatus != domain.AccountStatusActive || u.OnboardingCompletedAt == nil {
+		return nil, domain.NewAppError(403, "ACCOUNT_ACTION_NOT_ALLOWED", "auth.onboardingRequired", "active user with completed onboarding required", nil, domain.ErrForbidden)
+	}
+
+	now := s.clk.Now()
+	exp := now.Add(5 * time.Minute)
+
+	claims := DeviceGrantClaims{
+		UserID:    userID,
+		SessionID: sessionID,
+		Scope:     "installation:register",
+		ExpiresAt: exp.Unix(),
+	}
+
+	claimsBytes, err := json.Marshal(claims)
+	if err != nil {
+		return nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to serialize grant claims", nil, err)
+	}
+
+	payloadB64 := base64.RawURLEncoding.EncodeToString(claimsBytes)
+	grantKey := crypto.HMACSHA256([]byte(s.cfg.HMACSecret), []byte("tokendance:device_grant_key"))
+	sig := crypto.HMACSHA256(grantKey[:], []byte(payloadB64))
+	sigB64 := base64.RawURLEncoding.EncodeToString(sig[:])
+
+	token := "dgt_" + payloadB64 + "." + sigB64
+	return &DeviceGrantResult{
+		GrantToken: token,
+		ExpiresAt:  exp.Format(time.RFC3339),
+	}, nil
+}
+
+func (s *Service) ValidateDeviceGrant(ctx context.Context, grantToken string) (string, string, error) {
+	if !strings.HasPrefix(grantToken, "dgt_") {
+		return "", "", domain.NewAppError(401, "AUTH_INVALID_GRANT_SCOPE", "auth.invalidGrantScope", "scoped grant required (dgt_...); web session bearer not permitted", nil, domain.ErrUnauthorized)
+	}
+
+	raw := strings.TrimPrefix(grantToken, "dgt_")
+	parts := strings.Split(raw, ".")
+	if len(parts) != 2 {
+		return "", "", domain.NewAppError(401, "AUTH_INVALID_GRANT", "auth.invalidGrant", "invalid grant token format", nil, domain.ErrUnauthorized)
+	}
+
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return "", "", domain.NewAppError(401, "AUTH_INVALID_GRANT", "auth.invalidGrant", "invalid grant payload", nil, domain.ErrUnauthorized)
+	}
+
+	sigBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil || len(sigBytes) != 32 {
+		return "", "", domain.NewAppError(401, "AUTH_INVALID_GRANT", "auth.invalidGrant", "invalid grant signature", nil, domain.ErrUnauthorized)
+	}
+
+	grantKey := crypto.HMACSHA256([]byte(s.cfg.HMACSecret), []byte("tokendance:device_grant_key"))
+	expectedSig := crypto.HMACSHA256(grantKey[:], []byte(parts[0]))
+	if subtle.ConstantTimeCompare(sigBytes, expectedSig[:]) != 1 {
+		return "", "", domain.NewAppError(401, "AUTH_INVALID_GRANT", "auth.invalidGrant", "grant signature mismatch", nil, domain.ErrUnauthorized)
+	}
+
+	var claims DeviceGrantClaims
+	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
+		return "", "", domain.NewAppError(401, "AUTH_INVALID_GRANT", "auth.invalidGrant", "failed to parse grant claims", nil, domain.ErrUnauthorized)
+	}
+
+	if claims.Scope != "installation:register" {
+		return "", "", domain.NewAppError(401, "AUTH_INVALID_GRANT_SCOPE", "auth.invalidGrantScope", "scoped grant required with installation:register scope", nil, domain.ErrUnauthorized)
+	}
+
+	now := s.clk.Now()
+	if now.Unix() > claims.ExpiresAt {
+		return "", "", domain.NewAppError(401, "AUTH_INVALID_GRANT", "auth.grantExpired", "grant token expired", nil, domain.ErrUnauthorized)
+	}
+
+	// Verify user active & onboarding completed
+	u, err := s.authStore.FindUserByID(ctx, claims.UserID)
+	if err != nil || u.AccountStatus != domain.AccountStatusActive || u.OnboardingCompletedAt == nil {
+		return "", "", domain.NewAppError(403, "ACCOUNT_ACTION_NOT_ALLOWED", "auth.onboardingRequired", "active user with completed onboarding required", nil, domain.ErrForbidden)
+	}
+
+	// Verify authorizing session is active
+	sessions, err := s.authStore.ListUserSessions(ctx, claims.UserID)
+	if err != nil {
+		return "", "", domain.NewAppError(401, "AUTH_INVALID_GRANT", "auth.invalidGrant", "failed to list sessions for grant", nil, domain.ErrUnauthorized)
+	}
+
+	var sessValid bool
+	for _, sess := range sessions {
+		if sess.SessionID == claims.SessionID && sess.SessionStatus == domain.SessionStatusActive && now.Before(sess.AbsoluteExpiresAt) && now.Before(sess.IdleExpiresAt) {
+			sessValid = true
+			break
+		}
+	}
+	if !sessValid {
+		return "", "", domain.NewAppError(401, "AUTH_INVALID_GRANT", "auth.grantSessionExpired", "grant authorizing session revoked or expired", nil, domain.ErrUnauthorized)
+	}
+
+	return claims.UserID, claims.SessionID, nil
 }
 
 func (s *Service) ListDevices(ctx context.Context, userID string) ([]domain.Installation, error) {

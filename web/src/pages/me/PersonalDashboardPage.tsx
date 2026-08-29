@@ -18,9 +18,9 @@ import { api, ApiError } from '@/api/client';
 import type {
   PersonalSummary,
   TokenTrendsResponse,
-  AgentBreakdownItem,
-  SkillMetricItem,
-  ActivityCalendarDay,
+  BreakdownItem,
+  SkillItem,
+  CalendarDay,
   FilterOptionsResponse,
 } from '@/types/api';
 
@@ -30,24 +30,24 @@ export const PersonalDashboardPage: React.FC = () => {
   const { showToast } = useNotification();
   const navigate = useNavigate();
 
-  const [range, setRange] = useState<string>('30d');
-  const [selectedAgent, setSelectedAgent] = useState<string>('all');
-  const [selectedModel, setSelectedModel] = useState<string>('all');
-
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<ApiError | Error | null>(null);
+  const [range, setRange] = useState('30d');
+  const [selectedAgent, setSelectedAgent] = useState('all');
+  const [selectedModel, setSelectedModel] = useState('all');
 
   const [summary, setSummary] = useState<PersonalSummary | null>(null);
   const [trends, setTrends] = useState<TokenTrendsResponse | null>(null);
-  const [agentBreakdowns, setAgentBreakdowns] = useState<AgentBreakdownItem[]>([]);
-  const [skills, setSkills] = useState<SkillMetricItem[]>([]);
-  const [calendarDays, setCalendarDays] = useState<ActivityCalendarDay[]>([]);
+  const [agentBreakdowns, setAgentBreakdowns] = useState<BreakdownItem[]>([]);
+  const [skills, setSkills] = useState<SkillItem[]>([]);
+  const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
   const [calendarStreak, setCalendarStreak] = useState<number>(0);
   const [filterOptions, setFilterOptions] = useState<FilterOptionsResponse>({
     agents: [],
     providers: [],
     models: [],
   });
+
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<ApiError | Error | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -70,13 +70,13 @@ export const PersonalDashboardPage: React.FC = () => {
       setSummary(summaryRes);
       setTrends(trendsRes);
       setAgentBreakdowns(agentsRes.items || []);
-      setSkills(skillsRes.items || []);
+      setSkills(skillsRes.skills || (skillsRes as unknown as { items: SkillItem[] }).items || []);
       setCalendarDays(calRes.days || []);
       setCalendarStreak(calRes.currentStreak || 0);
       setFilterOptions(filterRes);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        // Will be caught by auth gate
+        // Handled by auth gate
       } else {
         setError(err instanceof ApiError ? err : new Error(String(err)));
       }
@@ -111,6 +111,8 @@ export const PersonalDashboardPage: React.FC = () => {
   if (error && !summary) {
     return <ErrorState error={error} onRetry={fetchData} />;
   }
+
+  const syncStatus = summary?.sync?.status || (summary?.sync?.lastCommittedAt ? 'healthy' : 'unknown');
 
   return (
     <div>
@@ -304,7 +306,7 @@ export const PersonalDashboardPage: React.FC = () => {
           <SyncStatusCard
             lastCommittedAt={summary?.sync?.lastCommittedAt || null}
             pendingLocalCount={summary?.sync?.pendingLocalCount ?? null}
-            status={summary?.sync?.status || 'healthy'}
+            status={syncStatus}
           />
         </div>
       </div>

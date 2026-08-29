@@ -325,6 +325,57 @@ func (r *Runner) RunMigrations(ctx context.Context) error {
 	return nil
 }
 
+// ValidateSchemaCompatibility verifies all embedded migrations have been applied with matching checksums
+// without executing any DDL statements or modifying database state.
+func (r *Runner) ValidateSchemaCompatibility(ctx context.Context) error {
+	if r.db == nil {
+		return nil
+	}
+
+	if len(r.migrations) == 0 {
+		if err := r.LoadFromEmbed(); err != nil {
+			return fmt.Errorf("failed to load migration definitions: %w", err)
+		}
+	}
+
+	if err := r.db.PingContext(ctx); err != nil {
+		return fmt.Errorf("database ping failed: %w", err)
+	}
+
+	rows, err := r.db.QueryContext(ctx, "SELECT version, checksum_sha256 FROM schema_migrations ORDER BY version ASC")
+	if err != nil {
+		return fmt.Errorf("schema_migrations table does not exist or database is not migrated: %w", err)
+	}
+	defer rows.Close()
+
+	applied := make(map[string][32]byte)
+	for rows.Next() {
+		var ver string
+		var chk []byte
+		if err := rows.Scan(&ver, &chk); err != nil {
+			return fmt.Errorf("failed scanning schema_migrations row: %w", err)
+		}
+		var sum [32]byte
+		copy(sum[:], chk)
+		applied[ver] = sum
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("error reading schema_migrations rows: %w", err)
+	}
+
+	for _, m := range r.migrations {
+		prevSum, ok := applied[m.Version]
+		if !ok {
+			return fmt.Errorf("database schema missing required migration %s (%s)", m.Version, m.Filename)
+		}
+		if prevSum != m.Checksum {
+			return fmt.Errorf("schema checksum mismatch for migration %s: applied %x != expected %x", m.Version, prevSum, m.Checksum)
+		}
+	}
+
+	return nil
+}
+
 // ResetCleanSchema drops all application tables for clean test setup
 func (r *Runner) ResetCleanSchema(ctx context.Context) error {
 	if r.db == nil {

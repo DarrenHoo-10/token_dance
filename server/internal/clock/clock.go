@@ -42,3 +42,7 @@ func (m *MockClock) Add(d time.Duration) time.Time {
 	m.now = m.now.Add(d)
 	return m.now
 }
+
+func (m *MockClock) Advance(d time.Duration) time.Time {
+	return m.Add(d)
+}

@@ -533,6 +533,15 @@ func TestUSR008_MandatoryOnboardingRouteGate(t *testing.T) {
 		t.Fatalf("expected 200 on /auth/session, got %d", recSess.Code)
 	}
 
+	var sessResp struct {
+		CSRFToken string `json:"csrfToken"`
+	}
+	_ = json.Unmarshal(recSess.Body.Bytes(), &sessResp)
+	csrfToken := sessResp.CSRFToken
+	if csrfToken == "" {
+		csrfToken = regResp.CSRFToken
+	}
+
 	// 4. Complete Onboarding with returnTo
 	onboardBody, _ := json.Marshal(map[string]interface{}{
 		"displayName": "New Pilot",
@@ -546,7 +555,7 @@ func TestUSR008_MandatoryOnboardingRouteGate(t *testing.T) {
 	})
 	reqOnboard := httptest.NewRequest(http.MethodPost, "/api/v1/me/onboarding", bytes.NewReader(onboardBody))
 	reqOnboard.Header.Set("Content-Type", "application/json")
-	reqOnboard.Header.Set("X-CSRF-Token", regResp.CSRFToken)
+	reqOnboard.Header.Set("X-CSRF-Token", csrfToken)
 	reqOnboard.AddCookie(cookie)
 	recOnboard := httptest.NewRecorder()
 	router.ServeHTTP(recOnboard, reqOnboard)
@@ -927,7 +936,18 @@ func TestUSR022_AvatarValidationAndPixelBombProtection(t *testing.T) {
 		t.Fatalf("expected 404 for cross-user completing another's upload object, got %d", recCrossUser.Code)
 	}
 
-	// 5. User 1 completes own avatar intent -> SUCCEEDS and switches avatar pointer
+	// 5. Seed valid PNG image data into storage to simulate successful client upload
+	validPNG := []byte{
+		0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+		0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+		0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+		0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+		0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+	}
+	_ = testStorage.PutObject(context.Background(), "users/"+userID1+"/avatars/"+intentResp.ObjectID, bytes.NewReader(validPNG), int64(len(validPNG)), "image/png")
+
+	// 6. User 1 completes own avatar intent -> SUCCEEDS and switches avatar pointer
 	reqComplete := httptest.NewRequest(http.MethodPost, "/api/v1/me/avatar-upload-intents/"+intentResp.ObjectID+"/complete", nil)
 	reqComplete.Header.Set("X-CSRF-Token", csrfToken1)
 	reqComplete.AddCookie(cookie1)

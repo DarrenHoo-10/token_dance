@@ -1,10 +1,10 @@
 // TokenDance API Types
-// Aligned with docs/tokendance-user-system-technical-design.md
+// Canonical types aligned with server/api/openapi/tokendance-user-v1.yaml
 
 export type Locale = 'zh-CN' | 'en-US';
 
 export type AccountStatus = 'active' | 'suspended' | 'deletion_pending' | 'deleted';
-export type ProductState = 'email_unverified' | 'new' | 'active_private' | 'active_public' | 'suspended' | 'deletion_pending';
+export type ProductState = 'email_unverified' | 'new' | 'active_private' | 'active_public' | 'suspended' | 'deletion_pending' | 'deleted';
 export type LeaderboardVisibility = 'private' | 'team' | 'public';
 export type InstallationStatus = 'active' | 'disabled' | 'revoked';
 export type ExportJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'expired' | 'cancelled';
@@ -52,7 +52,6 @@ export interface OnboardingResponse {
   user: UserProfile;
   privacy: PrivacySettings;
   returnTo?: string;
-  // Fallback for profile alias
   profile?: UserProfile;
 }
 
@@ -60,6 +59,7 @@ export interface LoginRequest {
   email: string;
   password?: string;
   returnTo?: string;
+  deviceLabel?: string;
 }
 
 export interface RegisterCodeRequest {
@@ -87,8 +87,10 @@ export interface PasswordResetRequest {
 export interface ActiveSession {
   sessionId: string;
   deviceLabel: string | null;
-  isCurrent: boolean;
-  idleExpiresAt: string;
+  sessionStatus?: string;
+  isCurrent?: boolean;
+  lastSeenAt?: string;
+  idleExpiresAt?: string;
   absoluteExpiresAt: string;
   createdAt: string;
 }
@@ -99,10 +101,13 @@ export interface UserProfile {
   displayName: string;
   handle: string | null;
   avatarUrl: string | null;
-  bio: string | null;
-  timezone: string;
+  bio?: string | null;
+  timezone?: string;
+  timezoneName?: string;
   locale: Locale;
-  onboardingCompletedAt: string | null;
+  accountStatus?: AccountStatus;
+  leaderboardVisibility?: LeaderboardVisibility;
+  onboardingCompletedAt?: string | null;
   profileVersion: number;
 }
 
@@ -115,8 +120,9 @@ export interface UpdateProfileRequest {
 }
 
 export interface PrivacySettings {
+  userId?: string;
   publicProfileEnabled: boolean;
-  leaderboardVisibility: LeaderboardVisibility;
+  leaderboardVisibility?: LeaderboardVisibility;
   showBio: boolean;
   showTokenTotal: boolean;
   showTrends: boolean;
@@ -142,11 +148,11 @@ export interface UpdatePrivacyRequest {
 export interface OnboardingRequest {
   displayName: string;
   handle: string;
-  timezone: string;
-  locale: Locale;
+  timezone?: string;
+  locale?: Locale;
   privacy: {
     publicProfileEnabled: boolean;
-    leaderboardVisibility: LeaderboardVisibility;
+    leaderboardVisibility?: LeaderboardVisibility;
   };
   returnTo?: string;
 }
@@ -158,6 +164,13 @@ export interface AvatarUploadIntentResponse {
 }
 
 // Personal Analytics & Metrics
+export interface TimeRange {
+  key: string;
+  from: string;
+  to: string;
+  timezone: string;
+}
+
 export interface MetricValue {
   value: string | null;
   supported: boolean;
@@ -166,7 +179,7 @@ export interface MetricValue {
 
 export interface CostMetricValue {
   amount: string | null;
-  currency: string;
+  currency: string | null;
   supported: boolean;
   status?: string;
 }
@@ -184,101 +197,143 @@ export interface PersonalSummaryMetrics {
   userMessageCount: MetricValue;
 }
 
+export interface PersonalSummaryRanking {
+  visibility?: LeaderboardVisibility | string;
+  rank: number | null;
+  delta?: number | null;
+  percentile: number | string | null;
+}
+
+export interface PersonalSummarySync {
+  lastCommittedAt: string | null;
+  pendingLocalCount: number | null;
+  status?: 'healthy' | 'warning' | 'delayed' | 'unknown';
+}
+
 export interface PersonalSummary {
-  range: {
-    key: string;
-    from: string;
-    to: string;
-    timezone: string;
-  };
+  range: TimeRange;
   metrics: PersonalSummaryMetrics;
-  ranking: {
-    visibility: LeaderboardVisibility;
-    rank: number | null;
-    delta: number | null;
-    percentile: string | null;
-  };
-  sync: {
-    lastCommittedAt: string | null;
-    pendingLocalCount: number | null;
-    status?: 'healthy' | 'warning' | 'delayed';
-  };
-  dataWatermarkAt: string;
+  ranking: PersonalSummaryRanking;
+  sync: PersonalSummarySync;
+  dataWatermarkAt?: string | null;
   aggregationVersion: number;
 }
 
-export interface TokenTrendItem {
+export interface TokenTrendPoint {
   date: string;
-  tokenTotal?: string;
-  inputTokens?: string;
-  outputTokens?: string;
-  cacheReadTokens?: string;
-  cacheWriteTokens?: string;
-  reasoningTokens?: string;
+  tokenTotal?: string | null;
+  inputTokens?: string | null;
+  outputTokens?: string | null;
+  cacheReadTokens?: string | null;
+  cacheWriteTokens?: string | null;
+  reasoningTokens?: string | null;
 }
 
+export type TokenTrendItem = TokenTrendPoint;
+
 export interface TokenTrendsResponse {
+  range?: TimeRange;
   from?: string;
   to?: string;
   timezone?: string;
   granularity?: string;
   agent?: string;
+  agentId?: string | null;
+  providerId?: string | null;
   model?: string;
+  modelId?: string | null;
   mode?: string;
-  trends?: TokenTrendItem[];
-  points?: TokenTrendItem[];
-  dataWatermarkAt?: string;
+  trends?: TokenTrendPoint[];
+  points?: TokenTrendPoint[];
+  dataWatermarkAt?: string | null;
+  aggregationVersion?: number;
+  visible?: boolean;
+}
+
+export interface BreakdownItem {
+  key: string;
+  label: string;
+  tokenTotal: string;
+  percentage: number;
+}
+
+export type AgentBreakdownItem = BreakdownItem & {
+  agentId?: string;
+  displayName?: string;
+};
+
+export type ModelBreakdownItem = BreakdownItem & {
+  providerId?: string;
+  modelId?: string;
+  displayName?: string;
+};
+
+export interface BreakdownResponse {
+  range?: TimeRange;
+  items: BreakdownItem[];
+  dataWatermarkAt?: string | null;
   aggregationVersion?: number;
 }
 
-export interface AgentBreakdownItem {
-  agentId: string;
-  displayName: string;
-  tokenTotal: string;
-  percentage: number;
-  sessionCount?: number;
-  activeDays?: number;
-}
-
-export interface ModelBreakdownItem {
-  providerId: string;
-  modelId: string;
-  displayName: string;
-  tokenTotal: string;
-  percentage: number;
-  inputPercentage?: number;
-  outputPercentage?: number;
-}
-
-export interface SkillMetricItem {
-  rankNo: number;
-  skillKey?: string;
+export interface SkillItem {
+  skillId: string;
   skillPublicName: string;
-  useCount: number;
-  successCount?: number;
+  useCount: string;
   activeDays: number;
+  successRate?: number | null;
+  previousDeltaPct?: number | null;
+  // UI convenience
+  rankNo?: number;
   durationMs?: number;
-  deltaPercent?: number;
 }
 
-export interface ActivityCalendarDay {
+export type SkillMetricItem = SkillItem;
+
+export interface SkillsResponse {
+  range?: TimeRange;
+  skills: SkillItem[];
+  dataWatermarkAt?: string | null;
+  aggregationVersion?: number;
+  visible?: boolean;
+  // Fallback alias
+  items?: SkillItem[];
+}
+
+export interface CalendarDay {
   date: string;
+  active?: boolean;
+  level: number;
   tokenTotal: string;
-  level: 0 | 1 | 2 | 3 | 4;
-  activeDurationMs?: number;
+}
+
+export type ActivityCalendarDay = CalendarDay;
+
+export interface CalendarResponse {
+  days: CalendarDay[];
+  currentStreak: number;
+  longestStreak: number;
+  totalActiveDays: number;
+  dataWatermarkAt?: string | null;
+  aggregationVersion?: number;
 }
 
 export interface ActivityRow {
-  occurredAt: string;
-  agentId: string;
-  modelId: string;
-  tokenTotal: string;
-  inputTokens: string;
-  outputTokens: string;
-  sessionCount: number;
-  turnCount: number;
-  deviceName: string;
-  syncStatus: 'normal' | 'delayed';
+  occurredAt?: string;
+  agentId?: string;
+  modelId?: string;
+  tokenTotal?: string;
+  inputTokens?: string;
+  outputTokens?: string;
+  sessionCount?: number;
+  turnCount?: number;
+  deviceName?: string;
+  syncStatus?: 'normal' | 'delayed' | string;
+}
+
+export interface ActivityResponse {
+  items: ActivityRow[];
+  rows?: ActivityRow[];
+  nextCursor?: string | null;
 }
 
 export interface FilterOptionsResponse {
@@ -290,19 +345,22 @@ export interface FilterOptionsResponse {
 // Devices
 export interface CollectorDevice {
   installationId: string;
-  deviceName: string;
+  deviceName: string | null;
   osType: string;
-  osVersion: string;
+  osVersion: string | null;
   architecture: string;
   collectorVersion: string;
   installationStatus: InstallationStatus;
   registeredAt: string;
   lastSeenAt: string | null;
-  disabledAt: string | null;
-  disabledReason: string | null;
-  statusVersion: number;
-  adapterHealth: 'healthy' | 'warning' | 'error';
-  recentBatchesCount?: number;
+  disabledAt?: string | null;
+  disabledReason?: string | null;
+  statusVersion?: number;
+  adapterHealth?: 'healthy' | 'warning' | 'error';
+}
+
+export interface DeviceListResponse {
+  devices: CollectorDevice[];
 }
 
 export interface DeviceBindingChallengeResponse {
@@ -313,39 +371,58 @@ export interface DeviceBindingChallengeResponse {
 
 export interface ClaimInstallationRequest {
   code: string;
-  devicePublicKey: string;
-  deviceName: string;
-  osType: string;
-  osVersion: string;
+  publicKey: string;
+  deviceName?: string | null;
+  osType: 'windows' | 'macos' | 'linux' | string;
+  osVersion?: string | null;
   architecture: string;
   collectorVersion: string;
+  // Deprecated alias
+  devicePublicKey?: string;
 }
 
 export interface ClaimInstallationResponse {
   installationId: string;
-  uploadPolicy: {
-    maxBatchBytes: number;
-    ingestEndpoint: string;
+  status?: string;
+  uploadPolicy?: {
+    maxBatchEvents?: number;
+    minIntervalSec?: number;
+    maxBatchBytes?: number;
+    ingestEndpoint?: string;
   };
 }
 
 // Exports & Deletions
 export interface ExportJob {
   exportId: string;
+  userId?: string;
+  idempotencyKey?: string;
+  exportScope: string;
+  exportFormat: string;
+  filter?: Record<string, unknown>;
   jobStatus: ExportJobStatus;
-  scope: string;
-  format: string;
+  attemptCount?: number;
+  fileSize?: number | null;
+  downloadUrl?: string | null;
+  expiresAt?: string | null;
+  startedAt?: string | null;
+  completedAt?: string | null;
   createdAt: string;
-  completedAt: string | null;
-  expiresAt: string | null;
-  objectKey?: string;
+  updatedAt?: string;
+  // Aliases for compatibility
+  scope?: string;
+  format?: string;
   fileSizeBytes?: number;
-  checksum?: string;
+}
+
+export interface ExportListResponse {
+  exports: ExportJob[];
+  jobs?: ExportJob[];
 }
 
 export interface CreateExportRequest {
   scope?: string;
-  format?: 'csv' | 'json';
+  format?: 'csv' | 'json' | string;
   filter?: Record<string, unknown>;
   rangeKey?: string;
   from?: string;
@@ -359,122 +436,154 @@ export interface ExportDownloadResponse {
 
 export interface DeletionRequest {
   requestId: string;
-  deletionScope?: DeletionScope;
-  scope?: DeletionScope;
-  targetId?: string | null;
+  userId?: string | null;
+  deletionScope: DeletionScope | string;
+  scopeFilter?: Record<string, unknown>;
   requestStatus: DeletionRequestStatus;
-  createdAt: string;
-  cancelBefore: string | null;
-  completedAt: string | null;
+  phase?: string;
+  progressCursor?: number;
+  cancelBefore?: string | null;
+  cancelledAt?: string | null;
+  requestedAt?: string;
+  completedAt?: string | null;
+  auditReference?: string | null;
+  // Compatibility aliases
+  scope?: DeletionScope;
+  createdAt?: string;
   details?: Record<string, unknown>;
 }
 
 export interface CreateDeletionRequest {
-  scope?: DeletionScope;
-  deletionScope?: DeletionScope;
+  scope?: DeletionScope | string;
+  deletionScope?: DeletionScope | string;
   targetId?: string;
   confirmation: boolean | string;
 }
 
 // Public & Community
 export interface PublicUserProfile {
+  userId?: string;
   handle: string;
   displayName: string;
   avatarUrl: string | null;
-  bio: string | null;
-  rank: number | null;
-  rankDelta: number | null;
-  percentile: string | null;
-  tokenTotal: string | null;
+  bio?: string | null;
+  profileStatus?: string;
+  rank?: number | null;
+  rankDelta?: number | null;
+  percentile?: number | string | null;
+  tokenTotal?: string | null;
+  activeDays?: number | null;
+  currentStreak?: number | null;
+  dataWatermarkAt?: string | null;
+  generatedAt: string;
+  projectionVersion: number;
+  showBio?: boolean;
+  showTokenTotal?: boolean;
+  showTrends?: boolean;
+  showActivityCalendar?: boolean;
+  showAgentBreakdown?: boolean;
+  showSkillRanking?: boolean;
+  showAchievements?: boolean;
+  // Aliases for display
   codeLinesTotal?: string | null;
   estimatedCostTotal?: string | null;
-  activeDays: number | null;
-  currentStreak: number | null;
-  tokenTrend?: TokenTrendItem[];
-  activityCalendar?: ActivityCalendarDay[];
+  tokenTrend?: TokenTrendPoint[];
+  activityCalendar?: CalendarDay[];
   agentBreakdown?: AgentBreakdownItem[];
-  skillRanking?: SkillMetricItem[];
-  dataWatermarkAt: string;
-  generatedAt: string;
+  skillRanking?: SkillItem[];
 }
 
 export interface SearchUserResult {
   handle: string;
   displayName: string;
   avatarUrl: string | null;
-  bio: string | null;
-  rank: number | null;
-  tokenTotal: string;
+  bio?: string | null;
+  rank?: number | null;
+  tokenTotal?: string;
   topAgent?: string;
 }
 
 export interface SearchAgentResult {
   agentId: string;
-  displayName: string;
-  developerCount: string;
-  tokenTotal30d: string;
-  tags: string[];
+  name: string;
+  description?: string;
+  // Compatibility aliases
+  displayName?: string;
+  developerCount?: string;
+  tokenTotal30d?: string;
+  tags?: string[];
 }
 
 export interface SearchSkillResult {
+  skillId: string;
   skillPublicName: string;
-  useCount: number;
-  userCount: number;
-  growthDelta: number;
-  tags: string[];
+  useCount: string | number;
+  publicUserCount: number;
+  activeDays: number;
+  // Compatibility aliases
+  userCount?: number;
+  growthDelta?: number;
+  tags?: string[];
 }
 
 export interface SearchResponse {
-  query: string;
   users: SearchUserResult[];
   agents: SearchAgentResult[];
-  skills: SearchSkillResult[];
-  totalCount: number;
+  skills?: SearchSkillResult[];
+  query?: string;
+  totalCount?: number;
 }
 
 export interface LeaderboardEntry {
   rankNo: number;
-  rankDelta?: number;
   handle: string;
   displayName: string;
   avatarUrl: string | null;
   metricValue: string;
-  formattedMetric: string;
+  rankDelta?: number | null;
+  formattedMetric?: string;
   topAgent?: string;
   activeDays?: number;
 }
 
 export interface LeaderboardResponse {
+  snapshotId: string;
   boardKey: string;
   window: string;
   metric: string;
-  agent: string;
-  snapshotId: string;
-  generatedAt: string;
   entries: LeaderboardEntry[];
-  nextCursor: string | null;
-  totalEntries: number;
+  nextCursor?: string | null;
+  dataWatermarkAt?: string | null;
+  // Aliases
+  agent?: string;
+  generatedAt?: string;
+  totalEntries?: number;
 }
 
-export interface UserComparisonItem {
+export interface CompareUserItem {
   handle: string;
-  displayName: string;
-  avatarUrl: string | null;
+  displayName?: string | null;
+  avatarUrl?: string | null;
   visible: boolean;
-  rank: number | null;
-  tokenTotal: string | null;
-  codeLinesTotal: string | null;
-  activeDays: number | null;
-  currentStreak: number | null;
-  topAgent: string | null;
+  tokenTotal?: string | null;
+  rank?: number | null;
+  percentile?: number | string | null;
+  dataWatermarkAt?: string | null;
+  // Extra fields
+  codeLinesTotal?: string | null;
+  activeDays?: number | null;
+  currentStreak?: number | null;
+  topAgent?: string | null;
   agentBreakdown?: AgentBreakdownItem[];
-  skillRanking?: SkillMetricItem[];
-  dataWatermarkAt?: string;
+  skillRanking?: SkillItem[];
 }
 
-export interface UserComparisonResponse {
-  range: string;
-  metric: string;
-  users: UserComparisonItem[];
+export interface CompareResponse {
+  users: CompareUserItem[];
   generatedAt: string;
+  range?: string;
+  metric?: string;
 }
+
+export type UserComparisonItem = CompareUserItem;
+export type UserComparisonResponse = CompareResponse;

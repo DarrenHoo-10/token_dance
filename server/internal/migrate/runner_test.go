@@ -237,3 +237,51 @@ func TestMigrationRunnerIntegration_RejectDirtyBaseline(t *testing.T) {
 		t.Fatalf("expected 0002 to not be recorded when dirty baseline fails")
 	}
 }
+
+func TestValidateSchemaCompatibility(t *testing.T) {
+	db := getTestMySQLDB(t)
+	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
+	defer func() {
+		_, _ = db.Exec("SELECT RELEASE_LOCK('tokendance_global_test_lock')")
+		db.Close()
+	}()
+
+	ctx := context.Background()
+	runner := NewRunner(db)
+
+	if err := runner.ResetCleanSchema(ctx); err != nil {
+		t.Fatalf("failed to reset clean schema: %v", err)
+	}
+
+	// 1. Unmigrated DB should fail compatibility check
+	if err := runner.ValidateSchemaCompatibility(ctx); err == nil {
+		t.Fatalf("expected unmigrated database to fail schema compatibility check")
+	}
+
+	// 2. Run migrations
+	if err := runner.RunMigrations(ctx); err != nil {
+		t.Fatalf("failed to run migrations: %v", err)
+	}
+
+	// 3. Fully migrated DB should pass compatibility check
+	if err := runner.ValidateSchemaCompatibility(ctx); err != nil {
+		t.Fatalf("expected migrated database to pass compatibility check: %v", err)
+	}
+
+	// 4. In-memory runner (db=nil) should pass compatibility check
+	nilRunner := NewRunner(nil)
+	if err := nilRunner.ValidateSchemaCompatibility(ctx); err != nil {
+		t.Fatalf("expected in-memory runner to pass compatibility check: %v", err)
+	}
+
+	// 5. Tampered checksum in schema_migrations should fail compatibility check
+	_, err := db.ExecContext(ctx, "UPDATE schema_migrations SET checksum_sha256 = UNHEX(SHA2('tampered', 256)) WHERE version = '0001'")
+	if err != nil {
+		t.Fatalf("failed to tamper checksum: %v", err)
+	}
+
+	if err := runner.ValidateSchemaCompatibility(ctx); err == nil {
+		t.Fatalf("expected tampered checksum to fail schema compatibility check")
+	}
+}
+

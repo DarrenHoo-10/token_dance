@@ -11,6 +11,10 @@ import (
 
 	"tokendance/internal/clock"
 	"tokendance/internal/config"
+	"tokendance/internal/crypto"
+	"tokendance/internal/email"
+	"tokendance/internal/migrate"
+	"tokendance/internal/provider"
 	"tokendance/internal/store/mysql"
 	"tokendance/internal/worker"
 )
@@ -22,6 +26,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("Fatal configuration error: %v", err)
 	}
+
+	keyBytes, err := config.ParseEncryptionKey(cfg.EncryptionKey)
+	if err != nil {
+		log.Fatalf("Fatal encryption key error: %v", err)
+	}
+	cipher, err := crypto.NewAEADCipher(keyBytes[:], cfg.EncryptionKeyVersion)
+	if err != nil {
+		log.Fatalf("Fatal cipher initialization error: %v", err)
+	}
+
+	var emailProvider email.Provider = email.DefaultSink
 
 	clk := clock.RealClock{}
 	var db *sql.DB
@@ -43,7 +58,18 @@ func main() {
 		db = dbConn
 		defer db.Close()
 
-		wrk = worker.NewWorker(db, clk)
+		// Validate schema compatibility without running DDL
+		migRunner := migrate.NewRunner(db)
+		ctxCheck, cancelCheck := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := migRunner.ValidateSchemaCompatibility(ctxCheck); err != nil {
+			cancelCheck()
+			log.Fatalf("Fatal database schema compatibility check failed: %v", err)
+		}
+		cancelCheck()
+		log.Println("Database schema compatibility verified for worker.")
+
+		storage := provider.NewMemoryObjectStorage("")
+		wrk = worker.NewWorkerWithFull(db, clk, cipher, emailProvider, storage)
 		log.Printf("Worker registered with durable lease ID: %s", wrk.WorkerID())
 	} else {
 		if cfg.Environment == "production" {

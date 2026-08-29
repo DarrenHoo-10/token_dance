@@ -24,4 +24,16 @@
 
 后端实现采用 OpenAPI 作为前后端契约事实源；未登录 Session 固定为 `204`。公共缓存不得脱离 MySQL 当前投影状态直接返回。设备 revoke/pause 与 ingest 使用相同 installation 行锁顺序。Worker 使用数据库时间、租约和条件更新 fencing。Migration runner 不声称 MySQL DDL 可事务回滚，提供 advisory lock、checksum 和部分失败阻断。Collector 浏览器授权补充短期、installation-scoped grant，禁止复用 Web Session Cookie 作为 bearer。
 
+## 独立 reviewer 第一轮结论
+
+Reviewer `01a04eb7-211a-7211-aef1-bf2bb62d0602`（`sol-medium`）拒绝集成，确认绿色测试包含 memory-only/test-theater 路径。关键问题包括：PII/验证码伪“密文”、不安全重复 Cookie/默认共享密钥、Session IDOR、删除/导出/邮件/媒体 Worker 占位实现、公共榜单隐私泄露、MySQL analytics 使用错误列并伪造结果、CSRF reload 失效、密码重置竞态、设备授权与 ingest 锁序缺失、Go/OpenAPI/Web 契约漂移及中英文/returnTo 问题。
+
+| 角色 | 子代理 ID | 工具模型 slug | 修复范围 | 状态 |
+| --- | --- | --- | --- | --- |
+| Implementer-fix | `01a04ec2-894a-7d23-9465-5eafcd6f11d4` | `gemini-3.7` | AEAD 密钥、邮件本地/Provider 边界、独立 migrate 入口 | 运行中 |
+| Implementer-fix | `01a04ec3-6bc5-7791-aba1-1f6bf6aeb8ce` | `gemini-3.7` | Auth/Session/CSRF/Device/Grant/Ingest/Onboarding 安全 | 运行中 |
+| Implementer-fix | `01a04ec3-6bcd-7443-bd84-583d824431e7` | `gemini-3.7` | MySQL analytics、公开榜单/compare 隐私与 DTO | 运行中 |
+| Implementer-fix | `01a04ec3-6bd3-7db3-88e4-07d0b866afd6` | `gemini-3.7` | Worker/Email/Export/Deletion/Media 真实 Provider 和 fencing | 运行中 |
+| Implementer-fix | `01a04ec3-6bda-77e1-9188-e6bb87684d5d` | `gemini-3.7` | OpenAPI lint、生成/校验客户端、Web 契约/本地化/returnTo | 运行中 |
+
 后续集成、复审、fallback 和最终 reviewer 结论继续追加到本文件。

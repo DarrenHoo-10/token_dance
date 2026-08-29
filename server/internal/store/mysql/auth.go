@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"context"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -489,12 +490,16 @@ func (s *authStore) FindUserByID(ctx context.Context, userID string) (*domain.Us
 
 func (s *authStore) RecordLoginFailure(ctx context.Context, userID string, failedCount uint16, lockedUntil *time.Time, event domain.UserSecurityEvent) error {
 	now := time.Now().UTC()
+	lockUntilVal := nullTimeFromPtr(lockedUntil)
 	query := `
 		UPDATE user_password_credentials
-		SET failed_login_count = ?, locked_until = ?, last_failed_login_at = ?, updated_at = ?
+		SET failed_login_count = failed_login_count + 1,
+		    locked_until = CASE WHEN failed_login_count + 1 >= 10 THEN ? ELSE locked_until END,
+		    last_failed_login_at = ?,
+		    updated_at = ?
 		WHERE user_id = ?`
 
-	if _, err := s.db.ExecContext(ctx, query, failedCount, nullTimeFromPtr(lockedUntil), now, now, userID); err != nil {
+	if _, err := s.db.ExecContext(ctx, query, lockUntilVal, now, now, userID); err != nil {
 		return fmt.Errorf("failed to record login failure: %w", err)
 	}
 
@@ -717,6 +722,46 @@ func (s *authStore) RevokeSession(ctx context.Context, sessionID string, reason 
 	return nil
 }
 
+func (s *authStore) RevokeUserSession(ctx context.Context, sessionID string, userID string, reason string, now time.Time) error {
+	query := `
+		UPDATE user_sessions
+		SET session_status = 'revoked', revoked_at = ?, revoke_reason = ?, updated_at = ?
+		WHERE session_id = ? AND user_id = ? AND session_status = 'active'`
+
+	res, err := s.db.ExecContext(ctx, query, now, reason, now, sessionID, userID)
+	if err != nil {
+		return fmt.Errorf("failed to revoke user session: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+func (s *authStore) RotateSessionCSRF(ctx context.Context, sessionID string, newCSRFHash [32]byte, now time.Time) error {
+	query := `
+		UPDATE user_sessions
+		SET csrf_token_hash = ?, updated_at = ?
+		WHERE session_id = ? AND session_status = 'active'`
+
+	res, err := s.db.ExecContext(ctx, query, bytes32Slice(newCSRFHash), now, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to rotate session csrf: %w", err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
 func (s *authStore) RevokeOtherSessions(ctx context.Context, userID, currentSessionID string, reason string, now time.Time, event domain.UserSecurityEvent) error {
 	query := `
 		UPDATE user_sessions
@@ -794,14 +839,78 @@ func (s *authStore) ListUserSessions(ctx context.Context, userID string) ([]doma
 	return list, nil
 }
 
-func (s *authStore) ResetPasswordTx(ctx context.Context, userID string, challengeID string, newHash string, newVersion uint32, event domain.UserSecurityEvent, now time.Time) error {
+func (s *authStore) ResetPasswordTx(ctx context.Context, emailLookupHash [32]byte, codeHash [32]byte, newHash string, newVersion uint32, event domain.UserSecurityEvent, now time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("failed to begin tx: %w", err)
 	}
 	defer tx.Rollback()
 
-	// Mark challenge consumed
+	// 1. Lock pending challenge row
+	queryChallenge := `
+		SELECT challenge_id, user_id, code_hash, challenge_status, attempt_count, max_attempts, expires_at
+		FROM email_challenges
+		WHERE email_lookup_hash = ? AND challenge_type = 'password_reset' AND challenge_status = 'pending'
+		FOR UPDATE`
+
+	var challengeID string
+	var userID sql.NullString
+	var storedCodeHash []byte
+	var chStatus string
+	var attemptCount, maxAttempts uint16
+	var expiresAt time.Time
+
+	err = tx.QueryRowContext(ctx, queryChallenge, bytes32Slice(emailLookupHash)).Scan(
+		&challengeID,
+		&userID,
+		&storedCodeHash,
+		&chStatus,
+		&attemptCount,
+		&maxAttempts,
+		&expiresAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		return fmt.Errorf("failed to lock challenge: %w", err)
+	}
+
+	if !userID.Valid || userID.String == "" {
+		return domain.ErrNotFound
+	}
+
+	// 2. Check expiration
+	if now.After(expiresAt) {
+		updateExpiredSQL := `
+			UPDATE email_challenges
+			SET challenge_status = 'expired', updated_at = ?
+			WHERE challenge_id = ?`
+		_, _ = tx.ExecContext(ctx, updateExpiredSQL, now, challengeID)
+		_ = tx.Commit()
+		return domain.ErrChallengeExpired
+	}
+
+	// 3. Constant-time compare code
+	if subtle.ConstantTimeCompare(codeHash[:], storedCodeHash) != 1 {
+		newAttempts := attemptCount + 1
+		newStatus := "pending"
+		if newAttempts >= maxAttempts {
+			newStatus = "locked"
+		}
+		updateAttemptsSQL := `
+			UPDATE email_challenges
+			SET attempt_count = ?, challenge_status = ?, updated_at = ?
+			WHERE challenge_id = ?`
+		_, _ = tx.ExecContext(ctx, updateAttemptsSQL, newAttempts, newStatus, now, challengeID)
+		_ = tx.Commit()
+		if newStatus == "locked" {
+			return domain.ErrChallengeLocked
+		}
+		return domain.ErrChallengeInvalid
+	}
+
+	// 4. Mark challenge consumed
 	updateChallengeSQL := `
 		UPDATE email_challenges
 		SET challenge_status = 'consumed', consumed_at = ?, updated_at = ?
@@ -810,13 +919,13 @@ func (s *authStore) ResetPasswordTx(ctx context.Context, userID string, challeng
 		return fmt.Errorf("failed to consume challenge on reset: %w", err)
 	}
 
-	// Update credentials
+	// 5. Update credentials
 	updateCredSQL := `
 		UPDATE user_password_credentials
 		SET password_hash = ?, credential_version = ?, password_changed_at = ?,
 		    failed_login_count = 0, locked_until = NULL, updated_at = ?
 		WHERE user_id = ?`
-	res, err := tx.ExecContext(ctx, updateCredSQL, newHash, newVersion, now, now, userID)
+	res, err := tx.ExecContext(ctx, updateCredSQL, newHash, newVersion, now, now, userID.String)
 	if err != nil {
 		return fmt.Errorf("failed to update credentials: %w", err)
 	}
@@ -828,16 +937,17 @@ func (s *authStore) ResetPasswordTx(ctx context.Context, userID string, challeng
 		return domain.ErrNotFound
 	}
 
-	// Revoke all active sessions
+	// 6. Revoke all active sessions
 	revokeAllSQL := `
 		UPDATE user_sessions
 		SET session_status = 'revoked', revoked_at = ?, revoke_reason = 'password_reset', updated_at = ?
 		WHERE user_id = ? AND session_status = 'active'`
-	if _, err := tx.ExecContext(ctx, revokeAllSQL, now, now, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, revokeAllSQL, now, now, userID.String); err != nil {
 		return fmt.Errorf("failed to revoke sessions on password reset: %w", err)
 	}
 
 	if event.EventID != "" {
+		event.UserID = &userID.String
 		insertSecurityEvent(ctx, tx, event)
 	}
 

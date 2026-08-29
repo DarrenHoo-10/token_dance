@@ -469,6 +469,13 @@ func TestMySQL_DeviceAndExportLifecycle(t *testing.T) {
 		t.Fatalf("failed registration: %v", err)
 	}
 
+	// Complete onboarding so user is ready to bind devices
+	prof := st.Profile()
+	_, _, err = prof.CompleteOnboardingTx(ctx, userID, "alexdev", "Alex Developer", "UTC", "en-US", domain.UserPrivacySettings{UserID: userID}, domain.UserSecurityEvent{EventID: "sev_onb", CreatedAt: now}, now)
+	if err != nil {
+		t.Fatalf("failed onboarding: %v", err)
+	}
+
 	// 1. Create binding challenge
 	bindingCodeHash := crypto.SHA256([]byte("ABCD2345"))
 	sKey := "ses_03dev"

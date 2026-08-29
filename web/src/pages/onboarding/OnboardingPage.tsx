@@ -17,7 +17,7 @@ export const OnboardingPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  const returnTo = searchParams.get('return_to') || '/me';
+  const rawReturnTo = searchParams.get('return_to');
 
   const [displayName, setDisplayName] = useState(user?.displayName || '');
   const [handle, setHandle] = useState(user?.handle || '');
@@ -53,7 +53,7 @@ export const OnboardingPage: React.FC = () => {
           publicProfileEnabled: isPublic,
           leaderboardVisibility: isPublic ? 'public' : 'private',
         },
-        returnTo,
+        returnTo: rawReturnTo || undefined,
       });
 
       setLocale(selectedLocale);
@@ -71,7 +71,8 @@ export const OnboardingPage: React.FC = () => {
       await refreshSession();
 
       showToast(t('common.saved'), 'success');
-      navigate(returnTo);
+      const destination = res.returnTo || '/me';
+      navigate(destination);
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(t(err.messageKey) || err.message);
@@ -124,124 +125,91 @@ export const OnboardingPage: React.FC = () => {
         </div>
       </header>
 
-      {/* Main split onboarding card */}
+      {/* Main card grid */}
       <div
-        className="panel"
         style={{
           width: '100%',
           maxWidth: 1040,
-          padding: 0,
-          overflow: 'hidden',
           display: 'grid',
           gridTemplateColumns: '320px 1fr',
+          gap: 24,
         }}
       >
-        {/* Rail */}
+        {/* Left Step Rail */}
         <aside
           style={{
-            backgroundColor: 'var(--bg-dark)',
-            color: 'var(--text-inverse)',
-            padding: '36px 32px',
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-light)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '32px 24px',
             display: 'flex',
             flexDirection: 'column',
             justifyContent: 'space-between',
           }}
         >
           <div>
-            <p className="eyebrow" style={{ color: 'var(--lime)' }}>
-              {t('onboarding.railTitle')}
-            </p>
-            <h2 style={{ fontSize: 24, color: 'white', marginTop: 4 }}>
-              {t('onboarding.railHeadline')}
-            </h2>
-            <p style={{ color: '#abb4ac', fontSize: 13, marginTop: 8, lineHeight: 1.5 }}>
+            <p className="eyebrow">{t('onboarding.railTitle')}</p>
+            <h2 style={{ fontSize: 22, marginTop: 4, lineHeight: 1.2 }}>{t('onboarding.railHeadline')}</h2>
+            <p className="text-muted" style={{ fontSize: 13, marginTop: 8 }}>
               {t('onboarding.railSub')}
             </p>
 
-            <div style={{ marginTop: 40, display: 'flex', flexDirection: 'column', gap: 20 }}>
-              {/* Step 1 */}
-              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                <div
-                  style={{
-                    width: 26,
-                    height: 26,
-                    borderRadius: 6,
-                    backgroundColor: '#273129',
-                    color: 'var(--lime)',
-                    display: 'grid',
-                    placeItems: 'center',
-                    fontSize: 12,
-                    fontWeight: 700,
-                  }}
-                >
-                  ✓
-                </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 32 }}>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                <span className="badge badge-good">✓</span>
                 <div>
-                  <strong style={{ fontSize: 13, color: '#d0d8d1' }}>{t('onboarding.step1')}</strong>
-                  <div style={{ fontSize: 11, color: '#7a857b' }}>{t('onboarding.step1Desc')}</div>
+                  <strong style={{ fontSize: 13 }}>{t('onboarding.step1')}</strong>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('onboarding.step1Desc')}</div>
                 </div>
               </div>
 
-              {/* Step 2 (Active) */}
-              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                <div
-                  style={{
-                    width: 26,
-                    height: 26,
-                    borderRadius: 6,
-                    backgroundColor: 'var(--lime)',
-                    color: '#111512',
-                    display: 'grid',
-                    placeItems: 'center',
-                    fontSize: 12,
-                    fontWeight: 800,
-                  }}
-                >
-                  2
-                </div>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                <span className="badge badge-lime">2</span>
                 <div>
-                  <strong style={{ fontSize: 13, color: 'white' }}>{t('onboarding.step2')}</strong>
-                  <div style={{ fontSize: 11, color: '#a0aaa1' }}>{t('onboarding.step2Desc')}</div>
+                  <strong style={{ fontSize: 13 }}>{t('onboarding.step2')}</strong>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('onboarding.step2Desc')}</div>
                 </div>
               </div>
 
-              {/* Step 3 */}
-              <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                <div
-                  style={{
-                    width: 26,
-                    height: 26,
-                    borderRadius: 6,
-                    border: '1px solid #3c483f',
-                    color: '#889289',
-                    display: 'grid',
-                    placeItems: 'center',
-                    fontSize: 12,
-                    fontWeight: 700,
-                  }}
-                >
-                  3
-                </div>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                <span className="badge" style={{ backgroundColor: 'var(--border-light)' }}>3</span>
                 <div>
-                  <strong style={{ fontSize: 13, color: '#889289' }}>{t('onboarding.step3')}</strong>
-                  <div style={{ fontSize: 11, color: '#687269' }}>{t('onboarding.step3Desc')}</div>
+                  <strong style={{ fontSize: 13 }}>{t('onboarding.step3')}</strong>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('onboarding.step3Desc')}</div>
                 </div>
               </div>
             </div>
           </div>
 
-          <div style={{ fontSize: 11, color: '#7e887f', borderTop: '1px solid var(--border-dark)', paddingTop: 16 }}>
-            {t('auth.privacyPledge')} {t('auth.privacyPledgeDesc')}
+          <div
+            style={{
+              padding: '16px',
+              backgroundColor: 'var(--bg-subtle)',
+              borderRadius: 'var(--radius-sm)',
+              fontSize: 11,
+              color: 'var(--text-muted)',
+              lineHeight: 1.5,
+            }}
+          >
+            🔒 {t('onboarding.consentNotice')}
           </div>
         </aside>
 
-        {/* Main form */}
-        <div style={{ padding: '40px 48px' }}>
-          <p className="eyebrow">{t('onboarding.step2')}</p>
-          <h1 style={{ fontSize: 28, marginBottom: 4 }}>{t('onboarding.headline')}</h1>
-          <p className="text-muted" style={{ fontSize: 13, marginBottom: 28 }}>
-            {t('onboarding.subheadline')}
-          </p>
+        {/* Right Form Card */}
+        <main
+          style={{
+            backgroundColor: 'var(--bg-surface)',
+            border: '1px solid var(--border-light)',
+            borderRadius: 'var(--radius-lg)',
+            padding: '36px',
+          }}
+        >
+          <div style={{ marginBottom: 28 }}>
+            <h1 style={{ fontSize: 24 }}>{t('onboarding.headline')}</h1>
+            <p className="text-muted" style={{ fontSize: 13, marginTop: 4 }}>
+              {t('onboarding.subheadline')}
+            </p>
+          </div>
 
           {errorMessage && (
             <div
@@ -249,7 +217,7 @@ export const OnboardingPage: React.FC = () => {
                 backgroundColor: 'var(--danger-bg)',
                 border: '1px solid var(--danger-border)',
                 color: 'var(--danger)',
-                padding: '10px 14px',
+                padding: '12px 16px',
                 borderRadius: 'var(--radius-sm)',
                 fontSize: 12,
                 marginBottom: 20,
@@ -260,25 +228,27 @@ export const OnboardingPage: React.FC = () => {
           )}
 
           <form onSubmit={handleSubmit}>
-            {/* Avatar row */}
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 16,
-                padding: '12px 16px',
-                border: '1px solid var(--border-light)',
-                borderRadius: 'var(--radius-md)',
-                backgroundColor: 'var(--bg-subtle)',
-                marginBottom: 20,
-              }}
-            >
-              <div className="avatar" style={{ width: 48, height: 48, fontSize: 16 }}>
+            {/* Avatar & Display Name */}
+            <div style={{ display: 'flex', gap: 20, alignItems: 'center', marginBottom: 24 }}>
+              <div
+                className="avatar"
+                style={{
+                  width: 64,
+                  height: 64,
+                  fontSize: 20,
+                  backgroundColor: 'var(--bg-dark)',
+                  color: 'var(--lime)',
+                  border: '2px solid var(--lime-border)',
+                }}
+              >
                 {initials}
               </div>
+
               <div>
-                <strong style={{ fontSize: 13 }}>{t('onboarding.avatarLabel')}</strong>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t('onboarding.avatarHint')}</div>
+                <label className="form-label">{t('onboarding.avatarLabel')}</label>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  {t('onboarding.avatarHint')}
+                </div>
               </div>
             </div>
 
@@ -293,8 +263,8 @@ export const OnboardingPage: React.FC = () => {
 
               <Input
                 label={t('onboarding.handleLabel')}
-                placeholder="darrenhoo"
                 prefix="@"
+                placeholder="developer_handle"
                 value={handle}
                 onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
                 hint={t('onboarding.handleHint')}
@@ -302,29 +272,29 @@ export const OnboardingPage: React.FC = () => {
               />
             </div>
 
-            <div className="form-group" style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 16 }}>
               <label className="form-label">{t('onboarding.bioLabel')}</label>
               <textarea
-                className="form-input"
-                style={{ height: 68, padding: '8px 14px', resize: 'vertical' }}
-                placeholder={t('onboarding.bioPlaceholder')}
                 value={bio}
                 onChange={(e) => setBio(e.target.value)}
-                maxLength={280}
+                placeholder={t('onboarding.bioPlaceholder')}
+                className="form-input"
+                style={{ height: 72, padding: '8px 12px', resize: 'vertical' }}
               />
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 28 }}>
               <Select
                 label={t('onboarding.timezoneLabel')}
                 value={timezone}
                 onChange={(e) => setTimezone(e.target.value)}
                 options={[
-                  { value: 'Asia/Shanghai', label: 'Asia / Shanghai (UTC+8)' },
-                  { value: 'America/New_York', label: 'America / New York (EST)' },
-                  { value: 'America/Los_Angeles', label: 'America / Los Angeles (PST)' },
-                  { value: 'Europe/London', label: 'Europe / London (UTC+0)' },
-                  { value: 'UTC', label: 'UTC (Coordinated Universal Time)' },
+                  { value: 'Asia/Shanghai', label: 'Asia/Shanghai (UTC+8)' },
+                  { value: 'Asia/Tokyo', label: 'Asia/Tokyo (UTC+9)' },
+                  { value: 'America/Los_Angeles', label: 'America/Los_Angeles (PT)' },
+                  { value: 'America/New_York', label: 'America/New_York (ET)' },
+                  { value: 'Europe/London', label: 'Europe/London (UTC+0)' },
+                  { value: 'UTC', label: 'UTC' },
                 ]}
               />
 
@@ -333,30 +303,34 @@ export const OnboardingPage: React.FC = () => {
                 value={selectedLocale}
                 onChange={(e) => setSelectedLocale(e.target.value as Locale)}
                 options={[
-                  { value: 'zh-CN', label: '简体中文 (zh-CN)' },
-                  { value: 'en-US', label: 'English (en-US)' },
+                  { value: 'zh-CN', label: '简体中文' },
+                  { value: 'en-US', label: 'English (US)' },
                 ]}
               />
             </div>
 
-            {/* Visibility Choice */}
-            <div style={{ marginTop: 8, marginBottom: 20 }}>
-              <label className="form-label">{t('onboarding.step3')}</label>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 6 }}>
+            {/* Visibility Mode Selector */}
+            <div style={{ marginBottom: 28 }}>
+              <label className="form-label" style={{ marginBottom: 10 }}>
+                {t('onboarding.step3')}
+              </label>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
                 <div
                   onClick={() => setIsPublic(false)}
                   style={{
-                    padding: 16,
+                    padding: '16px',
                     borderRadius: 'var(--radius-md)',
-                    border: `1.5px solid ${!isPublic ? 'var(--text-main)' : 'var(--border-light)'}`,
-                    backgroundColor: !isPublic ? 'var(--bg-subtle)' : 'var(--bg-surface)',
+                    border: !isPublic ? '2px solid var(--lime-border)' : '1px solid var(--border-light)',
+                    backgroundColor: !isPublic ? 'var(--lime-subtle)' : 'var(--bg-surface)',
                     cursor: 'pointer',
                   }}
                 >
-                  <strong style={{ fontSize: 13, display: 'block', marginBottom: 4 }}>
-                    {t('onboarding.choicePrivateTitle')}
-                  </strong>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, lineHeight: 1.4 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong style={{ fontSize: 13 }}>{t('onboarding.choicePrivateTitle')}</strong>
+                    {!isPublic && <span className="badge badge-lime">✓</span>}
+                  </div>
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, margin: 0 }}>
                     {t('onboarding.choicePrivateDesc')}
                   </p>
                 </div>
@@ -364,44 +338,29 @@ export const OnboardingPage: React.FC = () => {
                 <div
                   onClick={() => setIsPublic(true)}
                   style={{
-                    padding: 16,
+                    padding: '16px',
                     borderRadius: 'var(--radius-md)',
-                    border: `1.5px solid ${isPublic ? 'var(--lime-border)' : 'var(--border-light)'}`,
-                    backgroundColor: isPublic ? 'var(--lime-bg)' : 'var(--bg-surface)',
+                    border: isPublic ? '2px solid var(--lime-border)' : '1px solid var(--border-light)',
+                    backgroundColor: isPublic ? 'var(--lime-subtle)' : 'var(--bg-surface)',
                     cursor: 'pointer',
                   }}
                 >
-                  <strong style={{ fontSize: 13, display: 'block', marginBottom: 4 }}>
-                    {t('onboarding.choicePublicTitle')}
-                  </strong>
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', margin: 0, lineHeight: 1.4 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <strong style={{ fontSize: 13 }}>{t('onboarding.choicePublicTitle')}</strong>
+                    {isPublic && <span className="badge badge-lime">✓</span>}
+                  </div>
+                  <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, margin: 0 }}>
                     {t('onboarding.choicePublicDesc')}
                   </p>
                 </div>
               </div>
             </div>
 
-            <div
-              style={{
-                padding: '12px 16px',
-                borderRadius: 'var(--radius-md)',
-                backgroundColor: 'var(--bg-subtle)',
-                fontSize: 11,
-                color: 'var(--text-muted)',
-                lineHeight: 1.5,
-                marginBottom: 24,
-              }}
-            >
-              ℹ {t('onboarding.consentNotice')}
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-              <Button type="submit" variant="dark" loading={loading} style={{ minWidth: 160 }}>
-                {t('onboarding.saveAndContinue')}
-              </Button>
-            </div>
+            <Button type="submit" variant="primary" size="lg" loading={loading} style={{ width: '100%' }}>
+              {t('onboarding.saveAndContinue')}
+            </Button>
           </form>
-        </div>
+        </main>
       </div>
     </div>
   );

@@ -39,9 +39,11 @@ type AuthStore interface {
 	CreateSessionTx(ctx context.Context, session domain.UserSession, event domain.UserSecurityEvent) (*domain.UserSession, error)
 	ResolveSession(ctx context.Context, tokenHash [32]byte, now time.Time) (*domain.UserSession, *domain.User, error)
 	RevokeSession(ctx context.Context, sessionID string, reason string, now time.Time) error
+	RevokeUserSession(ctx context.Context, sessionID string, userID string, reason string, now time.Time) error
 	RevokeOtherSessions(ctx context.Context, userID, currentSessionID string, reason string, now time.Time, event domain.UserSecurityEvent) error
 	ListUserSessions(ctx context.Context, userID string) ([]domain.UserSession, error)
-	ResetPasswordTx(ctx context.Context, userID string, challengeID string, newHash string, newVersion uint32, event domain.UserSecurityEvent, now time.Time) error
+	ResetPasswordTx(ctx context.Context, emailLookupHash [32]byte, codeHash [32]byte, newHash string, newVersion uint32, event domain.UserSecurityEvent, now time.Time) error
+	RotateSessionCSRF(ctx context.Context, sessionID string, newCSRFHash [32]byte, now time.Time) error
 	TouchSessionLastSeen(ctx context.Context, sessionID string, now time.Time) error
 }
 
@@ -106,8 +108,18 @@ type LeaderboardStore interface {
 	GetLeaderboard(ctx context.Context, boardKey, window, metric string, cursor *string, limit int) (*domain.LeaderboardResponse, error)
 }
 
+type AvatarReadyMeta struct {
+	ByteSize      uint64
+	ContentSha256 [32]byte
+	ImageWidth    uint32
+	ImageHeight   uint32
+	ContentType   string
+}
+
 type MediaStore interface {
 	CreateAvatarUploadIntent(ctx context.Context, obj domain.UserUploadObject) (*domain.UserUploadObject, error)
-	CompleteAvatarUploadIntent(ctx context.Context, objectID, userID string, now time.Time) (*domain.UserUploadObject, error)
+	GetUploadObject(ctx context.Context, objectID, userID string) (*domain.UserUploadObject, error)
+	UpdateUploadObjectStatus(ctx context.Context, objectID string, status domain.UploadStatus, errorCode *string, now time.Time) error
+	CompleteAvatarUploadIntent(ctx context.Context, objectID, userID string, meta AvatarReadyMeta, now time.Time) (*domain.UserUploadObject, error)
 	ClearAvatar(ctx context.Context, userID string, now time.Time) error
 }

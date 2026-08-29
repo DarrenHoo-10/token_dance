@@ -1,9 +1,16 @@
 import React from 'react';
-import type { SkillMetricItem } from '@/types/api';
+import type { SkillItem } from '@/types/api';
 import { useLocale } from '@/context/LocaleContext';
 
 export interface SkillRankingProps {
-  skills: SkillMetricItem[];
+  skills: SkillItem[];
+}
+
+function formatCount(val: string | number | undefined): string {
+  if (val === undefined || val === null) return '0';
+  const num = typeof val === 'number' ? val : parseFloat(val);
+  if (isNaN(num)) return String(val);
+  return num.toLocaleString();
 }
 
 export const SkillRanking: React.FC<SkillRankingProps> = ({ skills }) => {
@@ -20,7 +27,7 @@ export const SkillRanking: React.FC<SkillRankingProps> = ({ skills }) => {
   return (
     <div className="skill-table">
       {skills.slice(0, 5).map((skill, idx) => (
-        <div key={skill.skillKey || skill.skillPublicName + idx} className="skill-row">
+        <div key={skill.skillId || skill.skillPublicName + idx} className="skill-row">
           <span className="skill-rank-badge">{skill.rankNo || idx + 1}</span>
           <div>
             <div style={{ fontWeight: 700, fontSize: 12 }}>{skill.skillPublicName}</div>
@@ -30,7 +37,7 @@ export const SkillRanking: React.FC<SkillRankingProps> = ({ skills }) => {
           </div>
           <div style={{ textAlign: 'right' }}>
             <strong className="mono-num" style={{ fontSize: 13 }}>
-              {skill.useCount.toLocaleString()}
+              {formatCount(skill.useCount)}
             </strong>
           </div>
         </div>

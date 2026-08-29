@@ -7,6 +7,16 @@ import { EmptyState } from '@/components/states/EmptyState';
 import { api, ApiError } from '@/api/client';
 import type { LeaderboardResponse } from '@/types/api';
 
+function formatMetric(val: string | undefined): string {
+  if (!val) return '—';
+  const num = parseFloat(val);
+  if (isNaN(num)) return val;
+  if (num >= 1_000_000_000) return (num / 1_000_000_000).toFixed(1) + 'B';
+  if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + 'M';
+  if (num >= 1_000) return (num / 1_000).toFixed(1) + 'K';
+  return num.toLocaleString();
+}
+
 export const LeaderboardPage: React.FC = () => {
   const { t } = useLocale();
   const navigate = useNavigate();
@@ -187,13 +197,13 @@ export const LeaderboardPage: React.FC = () => {
                     </div>
                   </td>
                   <td style={{ padding: '14px 20px', textAlign: 'right', fontWeight: 800 }} className="mono-num">
-                    {entry.formattedMetric}
+                    {entry.formattedMetric || formatMetric(entry.metricValue)}
                   </td>
                   <td style={{ padding: '14px 20px', color: 'var(--text-muted)' }}>
                     {entry.topAgent || '—'}
                   </td>
                   <td style={{ padding: '14px 20px', textAlign: 'right' }} className="mono-num">
-                    {entry.activeDays || '—'} {t('metrics.days')}
+                    {entry.activeDays !== undefined && entry.activeDays !== null ? `${entry.activeDays} ${t('metrics.days')}` : '—'}
                   </td>
                 </tr>
               ))}

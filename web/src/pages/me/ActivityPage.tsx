@@ -9,6 +9,13 @@ import { Badge } from '@/components/common/Badge';
 import { api, ApiError } from '@/api/client';
 import type { ActivityRow } from '@/types/api';
 
+function formatNumber(val: string | number | null | undefined): string {
+  if (val === null || val === undefined) return '—';
+  const num = typeof val === 'number' ? val : parseFloat(val);
+  if (isNaN(num)) return String(val);
+  return num.toLocaleString();
+}
+
 export const ActivityPage: React.FC = () => {
   const { authenticated, loading: authLoading } = useAuth();
   const { t } = useLocale();
@@ -28,7 +35,7 @@ export const ActivityPage: React.FC = () => {
         agent: agent !== 'all' ? agent : undefined,
         limit: 50,
       });
-      setRows(res.rows || []);
+      setRows(res.items || res.rows || []);
     } catch (err) {
       setError(err instanceof ApiError ? err : new Error(String(err)));
     } finally {
@@ -106,13 +113,13 @@ export const ActivityPage: React.FC = () => {
           <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 12 }}>
             <thead>
               <tr style={{ backgroundColor: 'var(--bg-subtle)', borderBottom: '1px solid var(--border-light)' }}>
-                <th style={{ padding: '12px 16px', fontWeight: 700 }}>Timestamp</th>
-                <th style={{ padding: '12px 16px', fontWeight: 700 }}>Agent</th>
-                <th style={{ padding: '12px 16px', fontWeight: 700 }}>Model</th>
-                <th style={{ padding: '12px 16px', fontWeight: 700 }}>Total Tokens</th>
-                <th style={{ padding: '12px 16px', fontWeight: 700 }}>Input / Output</th>
-                <th style={{ padding: '12px 16px', fontWeight: 700 }}>Device</th>
-                <th style={{ padding: '12px 16px', fontWeight: 700 }}>Status</th>
+                <th style={{ padding: '12px 16px', fontWeight: 700 }}>{t('activity.timestamp')}</th>
+                <th style={{ padding: '12px 16px', fontWeight: 700 }}>{t('activity.agent')}</th>
+                <th style={{ padding: '12px 16px', fontWeight: 700 }}>{t('activity.model')}</th>
+                <th style={{ padding: '12px 16px', fontWeight: 700 }}>{t('activity.totalTokens')}</th>
+                <th style={{ padding: '12px 16px', fontWeight: 700 }}>{t('activity.inputOutput')}</th>
+                <th style={{ padding: '12px 16px', fontWeight: 700 }}>{t('activity.device')}</th>
+                <th style={{ padding: '12px 16px', fontWeight: 700 }}>{t('activity.status')}</th>
               </tr>
             </thead>
             <tbody>
@@ -121,24 +128,24 @@ export const ActivityPage: React.FC = () => {
                   key={i}
                   style={{
                     borderBottom: '1px solid var(--border-light)',
-                    backgroundColor: i % 2 === 0 ? 'var(--bg-surface)' : 'var(--bg-subtle)',
                   }}
+                  className="table-hover-row"
                 >
-                  <td style={{ padding: '12px 16px', fontFamily: 'var(--font-mono)' }}>
-                    {new Date(r.occurredAt).toLocaleString()}
+                  <td style={{ padding: '12px 16px' }} className="mono-num">
+                    {r.occurredAt ? new Date(r.occurredAt).toLocaleString() : '—'}
                   </td>
-                  <td style={{ padding: '12px 16px', fontWeight: 600 }}>{r.agentId}</td>
-                  <td style={{ padding: '12px 16px', color: 'var(--text-muted)' }}>{r.modelId}</td>
+                  <td style={{ padding: '12px 16px', fontWeight: 600 }}>{r.agentId || '—'}</td>
+                  <td style={{ padding: '12px 16px', color: 'var(--text-muted)' }}>{r.modelId || '—'}</td>
                   <td style={{ padding: '12px 16px', fontWeight: 700 }} className="mono-num">
-                    {parseInt(r.tokenTotal, 10).toLocaleString()}
+                    {formatNumber(r.tokenTotal)}
                   </td>
                   <td style={{ padding: '12px 16px', color: 'var(--text-muted)' }} className="mono-num">
-                    {r.inputTokens} / {r.outputTokens}
+                    {formatNumber(r.inputTokens)} / {formatNumber(r.outputTokens)}
                   </td>
-                  <td style={{ padding: '12px 16px' }}>{r.deviceName}</td>
+                  <td style={{ padding: '12px 16px' }}>{r.deviceName || '—'}</td>
                   <td style={{ padding: '12px 16px' }}>
                     <Badge variant={r.syncStatus === 'normal' ? 'good' : 'warning'}>
-                      {r.syncStatus}
+                      {r.syncStatus || 'normal'}
                     </Badge>
                   </td>
                 </tr>

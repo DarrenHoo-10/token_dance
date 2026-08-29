@@ -29,11 +29,65 @@ func (s *profileStore) CompleteOnboardingTx(ctx context.Context, userID string, 
 
 	handle = strings.ToLower(strings.TrimSpace(handle))
 
-	// Lock user
-	auth := &authStore{db: s.db}
-	u, err := auth.FindUserByID(ctx, userID)
+	// Lock user FOR UPDATE
+	var u domain.User
+	var authSubHash, emailHash []byte
+	var currentHandle, currentDisplayName, avatarURL, avatarObjID, bio sql.NullString
+	var emailVerifiedAt, onboardingCompletedAt, publicProfileUpdatedAt, deletedAt sql.NullTime
+
+	queryUser := `
+		SELECT user_id, auth_subject_hash, email_lookup_hash, email_ciphertext,
+		       handle, email_verified_at, display_name, avatar_url, avatar_object_id,
+		       bio, account_status, leaderboard_visibility, timezone_name, locale,
+		       onboarding_completed_at, profile_version, public_profile_updated_at,
+		       created_at, updated_at, deleted_at
+		FROM users
+		WHERE user_id = ?
+		FOR UPDATE`
+
+	err = tx.QueryRowContext(ctx, queryUser, userID).Scan(
+		&u.UserID,
+		&authSubHash,
+		&emailHash,
+		&u.EmailCiphertext,
+		&currentHandle,
+		&emailVerifiedAt,
+		&currentDisplayName,
+		&avatarURL,
+		&avatarObjID,
+		&bio,
+		&u.AccountStatus,
+		&u.LeaderboardVisibility,
+		&u.TimezoneName,
+		&u.Locale,
+		&onboardingCompletedAt,
+		&u.ProfileVersion,
+		&publicProfileUpdatedAt,
+		&u.CreatedAt,
+		&u.UpdatedAt,
+		&deletedAt,
+	)
 	if err != nil {
-		return nil, nil, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, domain.ErrNotFound
+		}
+		return nil, nil, fmt.Errorf("failed to lock user for onboarding: %w", err)
+	}
+
+	u.AuthSubjectHash = scanBytes32(authSubHash)
+	u.EmailLookupHash = scanBytes32Ptr(emailHash)
+	u.Handle = ptrFromNullString(currentHandle)
+	u.EmailVerifiedAt = ptrFromNullTime(emailVerifiedAt)
+	u.DisplayName = currentDisplayName.String
+	u.AvatarURL = ptrFromNullString(avatarURL)
+	u.AvatarObjectID = ptrFromNullString(avatarObjID)
+	u.Bio = ptrFromNullString(bio)
+	u.OnboardingCompletedAt = ptrFromNullTime(onboardingCompletedAt)
+	u.PublicProfileUpdatedAt = ptrFromNullTime(publicProfileUpdatedAt)
+	u.DeletedAt = ptrFromNullTime(deletedAt)
+
+	if u.AccountStatus != domain.AccountStatusActive {
+		return nil, nil, domain.ErrAccountSuspended
 	}
 
 	// Check handle availability
@@ -45,15 +99,21 @@ func (s *profileStore) CompleteOnboardingTx(ctx context.Context, userID string, 
 		return nil, nil, domain.ErrHandleTaken
 	}
 
-	// Update user
+	// Determine leaderboard visibility
+	visibility := domain.LeaderboardVisibilityPrivate
+	if privacy.PublicProfileEnabled {
+		visibility = domain.LeaderboardVisibilityPublic
+	}
+
+	// Update user with FOR UPDATE lock protection and visibility
 	newProfileVer := u.ProfileVersion + 1
 	updateUserSQL := `
 		UPDATE users
 		SET handle = ?, display_name = ?, timezone_name = ?, locale = ?,
-		    onboarding_completed_at = ?, profile_version = ?, updated_at = ?
+		    leaderboard_visibility = ?, onboarding_completed_at = ?, profile_version = ?, updated_at = ?
 		WHERE user_id = ?`
 
-	if _, err := tx.ExecContext(ctx, updateUserSQL, handle, displayName, timezone, locale, now, newProfileVer, now, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, updateUserSQL, handle, displayName, timezone, locale, visibility, now, newProfileVer, now, userID); err != nil {
 		return nil, nil, fmt.Errorf("failed to update user onboarding: %w", err)
 	}
 
@@ -105,9 +165,9 @@ func (s *profileStore) CompleteOnboardingTx(ctx context.Context, userID string, 
 		publishedAt = &now
 	}
 
-	var bio *string
+	var pubBio *string
 	if privacy.ShowBio {
-		bio = u.Bio
+		pubBio = u.Bio
 	}
 
 	upsertPublicProfileSQL := `
@@ -142,7 +202,7 @@ func (s *profileStore) CompleteOnboardingTx(ctx context.Context, userID string, 
 		handle,
 		displayName,
 		nullStringFromPtr(u.AvatarURL),
-		nullStringFromPtr(bio),
+		nullStringFromPtr(pubBio),
 		profileStatus,
 		privacy.ShowBio,
 		privacy.ShowTokenTotal,
@@ -181,7 +241,7 @@ func (s *profileStore) CompleteOnboardingTx(ctx context.Context, userID string, 
 	pCopy.PrivacyVersion = newPrivacyVer
 	pCopy.UpdatedAt = now
 
-	return u, &pCopy, nil
+	return &u, &pCopy, nil
 }
 
 func (s *profileStore) UpdateProfileTx(ctx context.Context, userID string, displayName *string, handle *string, bio *string, timezone *string, locale *string, expectedVersion uint64, event domain.UserSecurityEvent, now time.Time) (*domain.User, error) {

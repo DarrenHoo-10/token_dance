@@ -1,6 +1,9 @@
 package httpapi
 
 import (
+	"context"
+	"time"
+
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 
@@ -26,10 +29,7 @@ func NewRouter(
 	searchService *search.Service,
 	leaderboardService *leaderboard.Service,
 ) *chi.Mux {
-	r := chi.NewRouter()
-
-	mw := NewMiddleware(authService)
-	handlers := NewHandlers(
+	return NewRouterWithReadiness(
 		authService,
 		profileService,
 		privacyService,
@@ -39,6 +39,36 @@ func NewRouter(
 		mediaService,
 		searchService,
 		leaderboardService,
+		nil,
+	)
+}
+
+func NewRouterWithReadiness(
+	authService *auth.Service,
+	profileService *profile.Service,
+	privacyService *privacy.Service,
+	analyticsService *analytics.Service,
+	deviceService *device.Service,
+	exportService *export.Service,
+	mediaService *media.Service,
+	searchService *search.Service,
+	leaderboardService *leaderboard.Service,
+	readinessChecker func(ctx context.Context) error,
+) *chi.Mux {
+	r := chi.NewRouter()
+
+	mw := NewMiddleware(authService)
+	handlers := NewHandlersWithReadiness(
+		authService,
+		profileService,
+		privacyService,
+		analyticsService,
+		deviceService,
+		exportService,
+		mediaService,
+		searchService,
+		leaderboardService,
+		readinessChecker,
 	)
 
 	// Global Middlewares
@@ -54,14 +84,18 @@ func NewRouter(
 
 	// Collector /v1 endpoints
 	r.Route("/v1", func(cr chi.Router) {
+		cr.Use(mw.RateLimit(120, time.Minute))
 		cr.Post("/installations/claim", handlers.ClaimInstallation)
 		cr.Post("/installations/register", handlers.RegisterInstallation)
+		cr.Post("/telemetry/batches", handlers.IngestTelemetry)
+		cr.Post("/telemetry/ingest", handlers.IngestTelemetry)
 	})
 
 	// User Web API /api/v1
 	r.Route("/api/v1", func(api chi.Router) {
 		// Public Auth routes
 		api.Route("/auth", func(ar chi.Router) {
+			ar.Use(mw.RateLimit(60, time.Minute))
 			ar.Post("/register/code", handlers.RequestRegisterCode)
 			ar.Post("/register", handlers.Register)
 			ar.Post("/login", handlers.Login)
@@ -122,6 +156,7 @@ func NewRouter(
 			// Devices
 			mr.Get("/devices", handlers.ListDevices)
 			mr.With(mw.RequireCSRF).Post("/device-bindings", handlers.CreateDeviceBinding)
+			mr.With(mw.RequireCSRF).Post("/device-grants", handlers.CreateDeviceGrant)
 			mr.With(mw.RequireCSRF).Delete("/device-bindings/{id}", handlers.CancelDeviceBinding)
 			mr.With(mw.RequireCSRF).Patch("/devices/{id}", handlers.UpdateDevice)
 			mr.With(mw.RequireCSRF).Post("/devices/{id}/pause", handlers.PauseDevice)

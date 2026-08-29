@@ -4,7 +4,7 @@ import { useLocale } from '@/context/LocaleContext';
 export interface SyncStatusCardProps {
   lastCommittedAt: string | null;
   pendingLocalCount: number | null;
-  status?: 'healthy' | 'warning' | 'delayed';
+  status?: 'healthy' | 'warning' | 'delayed' | 'unknown' | string;
 }
 
 function timeAgo(dateStr: string | null): string {
@@ -22,20 +22,52 @@ function timeAgo(dateStr: string | null): string {
 export const SyncStatusCard: React.FC<SyncStatusCardProps> = ({
   lastCommittedAt,
   pendingLocalCount,
-  status = 'healthy',
+  status,
 }) => {
   const { t } = useLocale();
+
+  // If status is not explicitly passed, do not default to healthy:
+  // if lastCommittedAt is present, assume healthy, otherwise unknown.
+  const resolvedStatus = status || (lastCommittedAt ? 'healthy' : 'unknown');
+
+  const getBadgeClass = () => {
+    switch (resolvedStatus) {
+      case 'healthy':
+        return 'badge-good';
+      case 'warning':
+        return 'badge-warning';
+      case 'delayed':
+      case 'failed':
+      case 'error':
+        return 'badge-danger';
+      case 'unknown':
+      default:
+        return 'badge';
+    }
+  };
+
+  const getStatusText = () => {
+    switch (resolvedStatus) {
+      case 'healthy':
+        return t('common.healthy');
+      case 'warning':
+        return t('common.warning');
+      case 'delayed':
+      case 'failed':
+      case 'error':
+        return t('common.failed');
+      case 'unknown':
+      default:
+        return t('common.unknown');
+    }
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 8, borderBottom: '1px solid var(--border-light)', fontSize: 12 }}>
         <span>{t('dashboard.syncStatus')}</span>
-        <span
-          className={`badge ${
-            status === 'healthy' ? 'badge-good' : status === 'warning' ? 'badge-warning' : 'badge-danger'
-          }`}
-        >
-          {status === 'healthy' ? t('common.healthy') : status === 'warning' ? t('common.warning') : t('common.failed')}
+        <span className={`badge ${getBadgeClass()}`}>
+          {getStatusText()}
         </span>
       </div>
 

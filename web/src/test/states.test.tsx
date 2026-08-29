@@ -48,7 +48,7 @@ describe('State Components Tests', () => {
   it('renders UnauthorizedState with sign in button', () => {
     render(
       <LocaleProvider>
-        <MemoryRouter>
+        <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <UnauthorizedState />
         </MemoryRouter>
       </LocaleProvider>

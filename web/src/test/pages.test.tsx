@@ -22,7 +22,7 @@ function renderWithProviders(ui: React.ReactElement, initialRoute = '/') {
     <LocaleProvider>
       <NotificationProvider>
         <AuthProvider>
-          <MemoryRouter initialEntries={[initialRoute]}>
+          <MemoryRouter initialEntries={[initialRoute]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             {ui}
           </MemoryRouter>
         </AuthProvider>
@@ -42,11 +42,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         boardKey: 'global',
         window: '30d',
         metric: 'tokens',
-        agent: 'all',
         snapshotId: 'snp_123',
-        generatedAt: new Date().toISOString(),
-        totalEntries: 2,
-        nextCursor: null,
         entries: [
           {
             rankNo: 1,
@@ -55,7 +51,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
             displayName: 'Alice Engineer',
             avatarUrl: null,
             metricValue: '500000000',
-            formattedMetric: '500M',
+            formattedMetric: '500.0M',
             topAgent: 'Claude Code',
             activeDays: 30,
           },
@@ -70,6 +66,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         expect(screen.getByText('Alice Engineer')).toBeInTheDocument();
         expect(screen.getByText('@alice')).toBeInTheDocument();
         expect(screen.getByText('#1')).toBeInTheDocument();
+        expect(screen.getByText('500.0M')).toBeInTheDocument();
       });
     });
 
@@ -78,11 +75,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         boardKey: 'global',
         window: '30d',
         metric: 'tokens',
-        agent: 'all',
         snapshotId: 'snp_empty',
-        generatedAt: new Date().toISOString(),
-        totalEntries: 0,
-        nextCursor: null,
         entries: [],
       });
 
@@ -100,13 +93,9 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
           boardKey: 'global',
           window: '30d',
           metric: 'tokens',
-          agent: 'all',
           snapshotId: 'snp_retry',
-          generatedAt: new Date().toISOString(),
-          totalEntries: 1,
-          nextCursor: null,
           entries: [
-            { rankNo: 1, handle: 'bob', displayName: 'Bob Dev', avatarUrl: null, metricValue: '1000', formattedMetric: '1K' },
+            { rankNo: 1, handle: 'bob', displayName: 'Bob Dev', avatarUrl: null, metricValue: '1000', formattedMetric: '1.0K' },
           ],
         });
 
@@ -129,13 +118,11 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
   describe('ExplorePage', () => {
     it('executes search and displays user and agent results', async () => {
       vi.spyOn(api, 'searchPublic').mockResolvedValue({
-        query: 'claude',
-        totalCount: 2,
         users: [
           { handle: 'dev1', displayName: 'Dev One', avatarUrl: null, bio: 'Coding', rank: 5, tokenTotal: '100M', topAgent: 'Claude Code' },
         ],
         agents: [
-          { agentId: 'claude-code', displayName: 'Claude Code', developerCount: '10K', tokenTotal30d: '1T', tags: ['agent'] },
+          { agentId: 'claude-code', name: 'Claude Code', displayName: 'Claude Code', developerCount: '10K', tokenTotal30d: '1T', tags: ['agent'] },
         ],
         skills: [],
       });
@@ -162,32 +149,40 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
   });
 
   describe('PublicProfilePage', () => {
-    it('loads public profile and renders details', async () => {
-      vi.spyOn(api, 'getPublicProfile').mockResolvedValue({
+    it('loads public profile and renders details, fetching trends and skills separately', async () => {
+      const getProfileSpy = vi.spyOn(api, 'getPublicProfile').mockResolvedValue({
         handle: 'maxbauer',
         displayName: 'Max Bauer',
         avatarUrl: null,
         bio: 'Building with AI',
         rank: 1,
         rankDelta: 0,
-        percentile: 'Top 0.1%',
-        tokenTotal: '325.7M',
-        codeLinesTotal: '864.2K',
-        estimatedCostTotal: '$1,428.60',
+        percentile: 99.9,
+        tokenTotal: '325700000',
         activeDays: 28,
         currentStreak: 23,
-        dataWatermarkAt: new Date().toISOString(),
-        generatedAt: new Date().toISOString(),
-        tokenTrend: [],
-        agentBreakdown: [],
-        skillRanking: [],
+        dataWatermarkAt: '2026-08-30T10:00:00Z',
+        generatedAt: '2026-08-30T10:00:00Z',
+        projectionVersion: 1,
+      });
+
+      const getTrendsSpy = vi.spyOn(api, 'getPublicTokenTrends').mockResolvedValue({
+        points: [
+          { date: '2026-08-30', tokenTotal: '5000000' },
+        ],
+      });
+
+      const getSkillsSpy = vi.spyOn(api, 'getPublicSkills').mockResolvedValue({
+        skills: [
+          { skillId: 'sk_01', skillPublicName: 'test-runner', useCount: '45', activeDays: 10 },
+        ],
       });
 
       render(
         <LocaleProvider>
           <NotificationProvider>
             <AuthProvider>
-              <MemoryRouter initialEntries={['/u/maxbauer']}>
+              <MemoryRouter initialEntries={['/u/maxbauer']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
                 <Routes>
                   <Route path="/u/:handle" element={<PublicProfilePage />} />
                 </Routes>
@@ -198,11 +193,15 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       );
 
       await waitFor(() => {
+        expect(getProfileSpy).toHaveBeenCalledWith('maxbauer');
+        expect(getTrendsSpy).toHaveBeenCalledWith('maxbauer', { range: '30d' });
+        expect(getSkillsSpy).toHaveBeenCalledWith('maxbauer', '30d');
         expect(screen.getAllByText('Max Bauer').length).toBeGreaterThanOrEqual(1);
         expect(screen.getByText('@maxbauer')).toBeInTheDocument();
         expect(screen.getByText('Building with AI')).toBeInTheDocument();
         expect(screen.getByText('#1')).toBeInTheDocument();
-        expect(screen.getByText('Top 0.1%')).toBeInTheDocument();
+        expect(screen.getByText('325.7M')).toBeInTheDocument();
+        expect(screen.getByText('test-runner')).toBeInTheDocument();
       });
     });
 
@@ -215,7 +214,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         <LocaleProvider>
           <NotificationProvider>
             <AuthProvider>
-              <MemoryRouter initialEntries={['/u/unknown_user']}>
+              <MemoryRouter initialEntries={['/u/unknown_user']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
                 <Routes>
                   <Route path="/u/:handle" element={<PublicProfilePage />} />
                 </Routes>
@@ -233,11 +232,11 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
   });
 
   describe('ComparePage', () => {
-    it('renders comparison data for selected handles', async () => {
+    it('renders comparison data for selected handles including invisible users without crashing', async () => {
       vi.spyOn(api, 'compareUsers').mockResolvedValue({
         range: '30d',
         metric: 'tokens',
-        generatedAt: new Date().toISOString(),
+        generatedAt: '2026-08-30T10:00:00Z',
         users: [
           {
             handle: 'user1',
@@ -245,33 +244,25 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
             avatarUrl: null,
             visible: true,
             rank: 1,
-            tokenTotal: '100M',
-            codeLinesTotal: '50K',
+            tokenTotal: '100000000',
+            codeLinesTotal: '50000',
             activeDays: 20,
             currentStreak: 15,
             topAgent: 'Codex',
           },
           {
-            handle: 'user2',
-            displayName: 'User Two',
-            avatarUrl: null,
+            handle: 'invisible_dev',
             visible: false,
-            rank: null,
-            tokenTotal: null,
-            codeLinesTotal: null,
-            activeDays: null,
-            currentStreak: null,
-            topAgent: null,
           },
         ],
       });
 
-      renderWithProviders(<ComparePage />, '/compare?handles=user1,user2');
+      renderWithProviders(<ComparePage />, '/compare?handles=user1,invisible_dev');
 
       await waitFor(() => {
         expect(screen.getByText('User One')).toBeInTheDocument();
         expect(screen.getByText('@user1')).toBeInTheDocument();
-        expect(screen.getByText('User Two')).toBeInTheDocument();
+        expect(screen.getByText('@invisible_dev')).toBeInTheDocument();
         expect(screen.getByText('该用户未公开此项数据')).toBeInTheDocument();
       });
     });
@@ -300,7 +291,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       });
     });
 
-    it('renders activity rows when authenticated', async () => {
+    it('renders activity items when authenticated', async () => {
       vi.spyOn(api, 'getSession').mockResolvedValue({
         authenticated: true,
         user: {
@@ -315,7 +306,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       });
 
       vi.spyOn(api, 'getActivityRows').mockResolvedValue({
-        rows: [
+        items: [
           {
             occurredAt: '2026-08-30T10:00:00Z',
             agentId: 'claude-code',
@@ -329,7 +320,6 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
             syncStatus: 'normal',
           },
         ],
-        nextCursor: null,
       });
 
       renderWithProviders(<ActivityPage />, '/me/activity');
@@ -394,7 +384,6 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
 
       await waitFor(() => {
         expect(updatePrivacySpy).toHaveBeenCalled();
-        // refreshSession was triggered to update shared productState
         expect(getSessionSpy).toHaveBeenCalledTimes(2);
       });
     });
@@ -487,7 +476,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
   });
 
   describe('Exports & Deletions Settings', () => {
-    it('creates export job and lists jobs', async () => {
+    it('creates export job and lists jobs from exports array', async () => {
       vi.spyOn(api, 'getSession').mockResolvedValue({
         authenticated: true,
         user: {
@@ -503,19 +492,19 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
 
       const getExportsSpy = vi.spyOn(api, 'getExports')
         .mockResolvedValueOnce({
-          jobs: [],
+          exports: [],
         })
         .mockResolvedValueOnce({
-          jobs: [
+          exports: [
             {
               exportId: 'exp_1',
               jobStatus: 'completed',
-              scope: 'all_aggregates',
-              format: 'csv',
-              createdAt: new Date().toISOString(),
-              completedAt: new Date().toISOString(),
+              exportScope: 'all_aggregates',
+              exportFormat: 'csv',
+              createdAt: '2026-08-30T10:00:00Z',
+              completedAt: '2026-08-30T10:01:00Z',
               expiresAt: null,
-              fileSizeBytes: 2048,
+              fileSize: 2048,
             },
           ],
         });
@@ -523,9 +512,9 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       const createExportSpy = vi.spyOn(api, 'createExport').mockResolvedValue({
         exportId: 'exp_1',
         jobStatus: 'pending',
-        scope: 'all_aggregates',
-        format: 'csv',
-        createdAt: new Date().toISOString(),
+        exportScope: 'all_aggregates',
+        exportFormat: 'csv',
+        createdAt: '2026-08-30T10:00:00Z',
         completedAt: null,
         expiresAt: null,
       });
@@ -541,6 +530,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       await waitFor(() => {
         expect(createExportSpy).toHaveBeenCalled();
         expect(getExportsSpy).toHaveBeenCalledTimes(2);
+        expect(screen.getByText(/CSV 导出/)).toBeInTheDocument();
       });
     });
   });
@@ -646,23 +636,29 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       });
 
       vi.spyOn(api, 'getAgentBreakdowns').mockResolvedValue({
+        range: { key: '30d', from: '2026-08-01', to: '2026-08-30', timezone: 'UTC' },
         items: [
-          { agentId: 'claude-code', displayName: 'Claude Code', tokenTotal: '35000000', percentage: 70 },
-          { agentId: 'codex', displayName: 'Codex', tokenTotal: '15000000', percentage: 30 },
+          { key: 'claude-code', label: 'Claude Code', tokenTotal: '35000000', percentage: 70 },
+          { key: 'codex', label: 'Codex', tokenTotal: '15000000', percentage: 30 },
         ],
+        aggregationVersion: 1,
       });
 
       vi.spyOn(api, 'getPersonalSkills').mockResolvedValue({
-        items: [
-          { rankNo: 1, skillPublicName: 'code-review', useCount: 150, activeDays: 10 },
+        skills: [
+          { skillId: 'sk_01', skillPublicName: 'code-review', useCount: '150', activeDays: 10 },
         ],
+        aggregationVersion: 1,
       });
 
       vi.spyOn(api, 'getActivityCalendar').mockResolvedValue({
         days: [
-          { date: '2026-08-30', tokenTotal: '3000000', level: 4 },
+          { date: '2026-08-30', tokenTotal: '3000000', level: 4, active: true },
         ],
         currentStreak: 5,
+        longestStreak: 10,
+        totalActiveDays: 20,
+        aggregationVersion: 1,
       });
 
       vi.spyOn(api, 'getFilterOptions').mockResolvedValue({
@@ -679,7 +675,6 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         expect(screen.getByText('50.0M')).toBeInTheDocument();
         expect(screen.getByText('Claude Code')).toBeInTheDocument();
         expect(screen.getByText('code-review')).toBeInTheDocument();
-        // pendingLocalCount is null -> renders 未知
         expect(screen.getByText('未知')).toBeInTheDocument();
       });
     });
@@ -702,9 +697,9 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         new ApiError(500, { code: 'HTTP_500', messageKey: 'errors.http_500' })
       );
       vi.spyOn(api, 'getTokenTrends').mockResolvedValue({ points: [] });
-      vi.spyOn(api, 'getAgentBreakdowns').mockResolvedValue({ items: [] });
-      vi.spyOn(api, 'getPersonalSkills').mockResolvedValue({ items: [] });
-      vi.spyOn(api, 'getActivityCalendar').mockResolvedValue({ days: [], currentStreak: 0 });
+      vi.spyOn(api, 'getAgentBreakdowns').mockResolvedValue({ range: { key: '30d', from: '', to: '', timezone: 'UTC' }, items: [], aggregationVersion: 1 });
+      vi.spyOn(api, 'getPersonalSkills').mockResolvedValue({ skills: [], aggregationVersion: 1 });
+      vi.spyOn(api, 'getActivityCalendar').mockResolvedValue({ days: [], currentStreak: 0, longestStreak: 0, totalActiveDays: 0, aggregationVersion: 1 });
       vi.spyOn(api, 'getFilterOptions').mockResolvedValue({ agents: [], providers: [], models: [] });
 
       renderWithProviders(<PersonalDashboardPage />, '/me');

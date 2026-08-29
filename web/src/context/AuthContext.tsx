@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import type { SessionUser, LoginRequest, RegisterRequest } from '@/types/api';
+import type { SessionUser, LoginRequest, RegisterRequest, AuthResponse } from '@/types/api';
 import { api, ApiError } from '@/api/client';
 import { useLocale } from './LocaleContext';
 
@@ -8,8 +8,8 @@ interface AuthContextType {
   authenticated: boolean;
   loading: boolean;
   error: ApiError | null;
-  login: (data: LoginRequest) => Promise<void>;
-  register: (data: RegisterRequest) => Promise<void>;
+  login: (data: LoginRequest) => Promise<AuthResponse>;
+  register: (data: RegisterRequest) => Promise<AuthResponse>;
   logout: () => Promise<void>;
   refreshSession: () => Promise<void>;
   setUser: React.Dispatch<React.SetStateAction<SessionUser | null>>;
@@ -57,7 +57,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     refreshSession();
   }, [refreshSession]);
 
-  const login = async (data: LoginRequest) => {
+  const login = async (data: LoginRequest): Promise<AuthResponse> => {
     setError(null);
     const res = await api.login(data);
     if (res && res.user) {
@@ -67,9 +67,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLocale(res.user.locale);
       }
     }
+    return res;
   };
 
-  const register = async (data: RegisterRequest) => {
+  const register = async (data: RegisterRequest): Promise<AuthResponse> => {
     setError(null);
     const res = await api.register(data);
     if (res && res.user) {
@@ -79,6 +80,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setLocale(res.user.locale);
       }
     }
+    return res;
   };
 
   const logout = async () => {

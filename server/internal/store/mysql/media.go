@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"tokendance/internal/domain"
+	"tokendance/internal/store"
 )
 
 type mediaStore struct {
@@ -41,7 +42,89 @@ func (s *mediaStore) CreateAvatarUploadIntent(ctx context.Context, obj domain.Us
 	return &oCopy, nil
 }
 
-func (s *mediaStore) CompleteAvatarUploadIntent(ctx context.Context, objectID, userID string, now time.Time) (*domain.UserUploadObject, error) {
+func (s *mediaStore) GetUploadObject(ctx context.Context, objectID, userID string) (*domain.UserUploadObject, error) {
+	query := `
+		SELECT object_id, user_id, object_type, object_key, content_type,
+		       byte_size, content_sha256, image_width, image_height,
+		       upload_status, expires_at, last_error_code, uploaded_at,
+		       ready_at, deleted_at, created_at, updated_at
+		FROM user_upload_objects
+		WHERE object_id = ? AND user_id = ?
+		LIMIT 1`
+
+	var obj domain.UserUploadObject
+	var cType, lastErr sql.NullString
+	var byteSz sql.NullInt64
+	var width, height sql.NullInt64
+	var sha []byte
+	var uploadedAt, readyAt, deletedAt sql.NullTime
+
+	err := s.db.QueryRowContext(ctx, query, objectID, userID).Scan(
+		&obj.ObjectID,
+		&obj.UserID,
+		&obj.ObjectType,
+		&obj.ObjectKey,
+		&cType,
+		&byteSz,
+		&sha,
+		&width,
+		&height,
+		&obj.UploadStatus,
+		&obj.ExpiresAt,
+		&lastErr,
+		&uploadedAt,
+		&readyAt,
+		&deletedAt,
+		&obj.CreatedAt,
+		&obj.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to query upload object: %w", err)
+	}
+
+	obj.ContentType = ptrFromNullString(cType)
+	obj.LastErrorCode = ptrFromNullString(lastErr)
+	obj.ContentSha256 = scanBytes32Ptr(sha)
+	obj.UploadedAt = ptrFromNullTime(uploadedAt)
+	obj.ReadyAt = ptrFromNullTime(readyAt)
+	obj.DeletedAt = ptrFromNullTime(deletedAt)
+	if byteSz.Valid {
+		sz := uint64(byteSz.Int64)
+		obj.ByteSize = &sz
+	}
+	if width.Valid {
+		w := uint32(width.Int64)
+		obj.ImageWidth = &w
+	}
+	if height.Valid {
+		h := uint32(height.Int64)
+		obj.ImageHeight = &h
+	}
+
+	return &obj, nil
+}
+
+func (s *mediaStore) UpdateUploadObjectStatus(ctx context.Context, objectID string, status domain.UploadStatus, errorCode *string, now time.Time) error {
+	query := `
+		UPDATE user_upload_objects
+		SET upload_status = ?, last_error_code = ?, updated_at = ?
+		WHERE object_id = ?`
+
+	res, err := s.db.ExecContext(ctx, query, string(status), nullStringFromPtr(errorCode), now, objectID)
+	if err != nil {
+		return fmt.Errorf("failed to update upload object status: %w", err)
+	}
+	aff, _ := res.RowsAffected()
+	if aff == 0 {
+		return domain.ErrNotFound
+	}
+	return nil
+}
+
+func (s *mediaStore) CompleteAvatarUploadIntent(ctx context.Context, objectID, userID string, meta store.AvatarReadyMeta, now time.Time) (*domain.UserUploadObject, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin complete avatar tx: %w", err)
@@ -62,11 +145,34 @@ func (s *mediaStore) CompleteAvatarUploadIntent(ctx context.Context, objectID, u
 		return nil, fmt.Errorf("failed to lock upload object: %w", err)
 	}
 
+	// Retire previously active avatar uploads for this user
+	_, _ = tx.ExecContext(ctx, `
+		UPDATE user_upload_objects
+		SET upload_status = 'deleted_pending', deleted_at = ?, updated_at = ?
+		WHERE user_id = ? AND object_type = 'avatar' AND object_id != ? AND upload_status = 'ready'`,
+		now, now, userID, objectID)
+
 	updateObjSQL := `
 		UPDATE user_upload_objects
-		SET upload_status = 'ready', ready_at = ?, updated_at = ?
+		SET upload_status = 'ready',
+		    byte_size = ?,
+		    content_sha256 = ?,
+		    image_width = ?,
+		    image_height = ?,
+		    content_type = ?,
+		    ready_at = ?,
+		    updated_at = ?
 		WHERE object_id = ?`
-	if _, err := tx.ExecContext(ctx, updateObjSQL, now, now, objectID); err != nil {
+	if _, err := tx.ExecContext(ctx, updateObjSQL,
+		meta.ByteSize,
+		meta.ContentSha256[:],
+		meta.ImageWidth,
+		meta.ImageHeight,
+		meta.ContentType,
+		now,
+		now,
+		objectID,
+	); err != nil {
 		return nil, fmt.Errorf("failed to mark upload object ready: %w", err)
 	}
 
@@ -93,6 +199,11 @@ func (s *mediaStore) CompleteAvatarUploadIntent(ctx context.Context, objectID, u
 	obj.UploadStatus = domain.UploadStatusReady
 	obj.ReadyAt = &now
 	obj.ObjectKey = objKey
+	obj.ByteSize = &meta.ByteSize
+	obj.ContentSha256 = &meta.ContentSha256
+	obj.ImageWidth = &meta.ImageWidth
+	obj.ImageHeight = &meta.ImageHeight
+	obj.ContentType = &meta.ContentType
 	obj.UpdatedAt = now
 	return &obj, nil
 }

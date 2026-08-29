@@ -4,27 +4,34 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"tokendance/internal/clock"
 	"tokendance/internal/crypto"
 	"tokendance/internal/domain"
+	"tokendance/internal/provider"
 	"tokendance/internal/store"
 )
 
 type Service struct {
-	store store.ExportStore
-	clk   clock.Clock
+	store   store.ExportStore
+	clk     clock.Clock
+	storage provider.ObjectStorage
 }
 
-func NewService(st store.Store, clk clock.Clock) *Service {
+func NewService(st store.Store, clk clock.Clock, storage provider.ObjectStorage) *Service {
 	if clk == nil {
 		clk = clock.RealClock{}
 	}
+	if storage == nil {
+		storage = provider.NewMemoryObjectStorage("")
+	}
 	return &Service{
-		store: st.Export(),
-		clk:   clk,
+		store:   st.Export(),
+		clk:     clk,
+		storage: storage,
 	}
 }
 
@@ -55,12 +62,6 @@ func (s *Service) CreateJob(ctx context.Context, userID string, in CreateExportI
 	exportIDToken, _ := crypto.GenerateOpaqueToken(13)
 	exportID := "exp_" + exportIDToken
 
-	objKey := fmt.Sprintf("exports/%s/%s.%s", userID, exportID, in.Format)
-	fileSha := sha256.Sum256([]byte("dummy-export-data"))
-	fileSize := uint64(1024)
-	completedAt := now
-	expiresAt := now.Add(24 * time.Hour)
-
 	job := domain.DataExportJob{
 		ExportID:       exportID,
 		UserID:         userID,
@@ -69,20 +70,16 @@ func (s *Service) CreateJob(ctx context.Context, userID string, in CreateExportI
 		ExportScope:    in.Scope,
 		ExportFormat:   in.Format,
 		FilterJSON:     in.Filter,
-		JobStatus:      domain.ExportJobStatusCompleted, // In demo / prototype mode marked ready
-		ObjectKey:      &objKey,
-		FileSha256:     &fileSha,
-		FileSize:       &fileSize,
-		StartedAt:      &now,
-		CompletedAt:    &completedAt,
-		ExpiresAt:      &expiresAt,
+		JobStatus:      domain.ExportJobStatusPending,
+		AttemptCount:   0,
+		NextAttemptAt:  now,
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
 
 	created, err := s.store.CreateJob(ctx, job)
 	if err != nil {
-		if err == domain.ErrIdempotencyReused {
+		if errors.Is(err, domain.ErrIdempotencyReused) {
 			return nil, domain.NewAppError(409, "IDEMPOTENCY_KEY_REUSED", "export.idempotencyReused", "idempotency key reused with different request payload", nil, err)
 		}
 		return nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to create export job", nil, err)
@@ -119,7 +116,19 @@ func (s *Service) GetDownloadURL(ctx context.Context, exportID, userID string) (
 	}
 
 	now := s.clk.Now()
-	signedURL := fmt.Sprintf("https://storage.tokendance.dev/%s?token=%s", *job.ObjectKey, exportID)
+	if job.ExpiresAt != nil && now.After(*job.ExpiresAt) {
+		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "export.expired", "export has expired", nil, nil)
+	}
+
+	if job.ObjectKey == nil || *job.ObjectKey == "" {
+		return nil, domain.NewAppError(500, "INTERNAL_ERROR", "export.missingKey", "export object key missing", nil, nil)
+	}
+
+	signedURL, err := s.storage.PresignDownloadURL(ctx, *job.ObjectKey, 60*time.Second)
+	if err != nil {
+		return nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to generate download URL", nil, err)
+	}
+
 	expiresAt := now.Add(60 * time.Second).Format("2006-01-02T15:04:05.000Z")
 
 	return &DownloadResponse{

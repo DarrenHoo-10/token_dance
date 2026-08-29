@@ -1,4 +1,6 @@
 // Real typed HTTP API client for TokenDance targeting /api/v1 and /v1
+// Canonical implementation aligning with server/api/openapi/tokendance-user-v1.yaml
+
 import type {
   ApiErrorDetail,
   ApiErrorResponse,
@@ -19,17 +21,17 @@ import type {
   AvatarUploadIntentResponse,
   PersonalSummary,
   TokenTrendsResponse,
-  AgentBreakdownItem,
-  ModelBreakdownItem,
-  SkillMetricItem,
-  ActivityCalendarDay,
-  ActivityRow,
+  BreakdownResponse,
+  SkillsResponse,
+  CalendarResponse,
+  ActivityResponse,
   FilterOptionsResponse,
   CollectorDevice,
   DeviceBindingChallengeResponse,
   ClaimInstallationRequest,
   ClaimInstallationResponse,
   ExportJob,
+  ExportListResponse,
   CreateExportRequest,
   ExportDownloadResponse,
   DeletionRequest,
@@ -37,7 +39,7 @@ import type {
   PublicUserProfile,
   SearchResponse,
   LeaderboardResponse,
-  UserComparisonResponse,
+  CompareResponse,
 } from '@/types/api';
 
 export class ApiError extends Error {
@@ -225,7 +227,6 @@ class ApiHttpClient {
       method: 'POST',
       body: JSON.stringify(data),
     });
-    // Ensure profile fallback if needed
     if (res.user && !res.profile) {
       res.profile = res.user;
     }
@@ -312,24 +313,24 @@ class ApiHttpClient {
     return this.request<TokenTrendsResponse>(`/me/trends/tokens?${searchParams.toString()}`, { method: 'GET' });
   }
 
-  public async getAgentBreakdowns(range = '30d'): Promise<{ items: AgentBreakdownItem[] }> {
+  public async getAgentBreakdowns(range = '30d'): Promise<BreakdownResponse> {
     const params = new URLSearchParams({ range });
-    return this.request<{ items: AgentBreakdownItem[] }>(`/me/breakdowns/agents?${params.toString()}`, { method: 'GET' });
+    return this.request<BreakdownResponse>(`/me/breakdowns/agents?${params.toString()}`, { method: 'GET' });
   }
 
-  public async getModelBreakdowns(range = '30d'): Promise<{ items: ModelBreakdownItem[] }> {
+  public async getModelBreakdowns(range = '30d'): Promise<BreakdownResponse> {
     const params = new URLSearchParams({ range });
-    return this.request<{ items: ModelBreakdownItem[] }>(`/me/breakdowns/models?${params.toString()}`, { method: 'GET' });
+    return this.request<BreakdownResponse>(`/me/breakdowns/models?${params.toString()}`, { method: 'GET' });
   }
 
-  public async getPersonalSkills(range = '30d'): Promise<{ items: SkillMetricItem[] }> {
+  public async getPersonalSkills(range = '30d'): Promise<SkillsResponse> {
     const params = new URLSearchParams({ range });
-    return this.request<{ items: SkillMetricItem[] }>(`/me/skills?${params.toString()}`, { method: 'GET' });
+    return this.request<SkillsResponse>(`/me/skills?${params.toString()}`, { method: 'GET' });
   }
 
-  public async getActivityCalendar(range = '10w'): Promise<{ days: ActivityCalendarDay[]; currentStreak: number }> {
+  public async getActivityCalendar(range = '10w'): Promise<CalendarResponse> {
     const params = new URLSearchParams({ range });
-    return this.request<{ days: ActivityCalendarDay[]; currentStreak: number }>(`/me/calendar?${params.toString()}`, { method: 'GET' });
+    return this.request<CalendarResponse>(`/me/calendar?${params.toString()}`, { method: 'GET' });
   }
 
   public async getActivityRows(params: {
@@ -338,7 +339,7 @@ class ApiHttpClient {
     model?: string;
     limit?: number;
     cursor?: string;
-  }): Promise<{ rows: ActivityRow[]; nextCursor: string | null }> {
+  }): Promise<ActivityResponse> {
     const searchParams = new URLSearchParams();
     if (params.range) searchParams.set('range', params.range);
     if (params.agent) searchParams.set('agent', params.agent);
@@ -346,7 +347,7 @@ class ApiHttpClient {
     if (params.limit) searchParams.set('limit', params.limit.toString());
     if (params.cursor) searchParams.set('cursor', params.cursor);
 
-    return this.request<{ rows: ActivityRow[]; nextCursor: string | null }>(`/me/activity?${searchParams.toString()}`, { method: 'GET' });
+    return this.request<ActivityResponse>(`/me/activity?${searchParams.toString()}`, { method: 'GET' });
   }
 
   public async getFilterOptions(): Promise<FilterOptionsResponse> {
@@ -381,14 +382,23 @@ class ApiHttpClient {
     return this.request<CollectorDevice>(`/me/devices/${encodeURIComponent(installationId)}/resume`, { method: 'POST' });
   }
 
-  public async revokeDevice(installationId: string): Promise<void> {
-    return this.request<void>(`/me/devices/${encodeURIComponent(installationId)}`, { method: 'DELETE' });
+  public async revokeDevice(installationId: string): Promise<CollectorDevice | void> {
+    return this.request<CollectorDevice | void>(`/me/devices/${encodeURIComponent(installationId)}`, { method: 'DELETE' });
   }
 
   public async claimInstallation(data: ClaimInstallationRequest): Promise<ClaimInstallationResponse> {
+    const payload = {
+      code: data.code,
+      publicKey: data.publicKey || data.devicePublicKey,
+      deviceName: data.deviceName,
+      osType: data.osType,
+      osVersion: data.osVersion,
+      architecture: data.architecture,
+      collectorVersion: data.collectorVersion,
+    };
     return this.request<ClaimInstallationResponse>('/installations/claim', {
       method: 'POST',
-      body: JSON.stringify(data),
+      body: JSON.stringify(payload),
     }, '/v1');
   }
 
@@ -410,8 +420,8 @@ class ApiHttpClient {
     });
   }
 
-  public async getExports(): Promise<{ jobs: ExportJob[] }> {
-    return this.request<{ jobs: ExportJob[] }>('/me/exports', { method: 'GET' });
+  public async getExports(): Promise<ExportListResponse> {
+    return this.request<ExportListResponse>('/me/exports', { method: 'GET' });
   }
 
   public async getExportStatus(exportId: string): Promise<ExportJob> {
@@ -437,8 +447,8 @@ class ApiHttpClient {
     return this.request<DeletionRequest>(`/me/deletion-requests/${encodeURIComponent(requestId)}`, { method: 'GET' });
   }
 
-  public async cancelDeletionRequest(requestId: string): Promise<void> {
-    return this.request<void>(`/me/deletion-requests/${encodeURIComponent(requestId)}/cancel`, { method: 'POST' });
+  public async cancelDeletionRequest(requestId: string): Promise<{ status: string }> {
+    return this.request<{ status: string }>(`/me/deletion-requests/${encodeURIComponent(requestId)}/cancel`, { method: 'POST' });
   }
 
   // --- Public APIs ---
@@ -451,56 +461,56 @@ class ApiHttpClient {
     agent?: string;
     provider?: string;
     model?: string;
-  }): Promise<TokenTrendsResponse> {
+    mode?: string;
+  } = {}): Promise<TokenTrendsResponse> {
     const searchParams = new URLSearchParams();
     if (params.range) searchParams.set('range', params.range);
     if (params.agent) searchParams.set('agent', params.agent);
     if (params.provider) searchParams.set('provider', params.provider);
     if (params.model) searchParams.set('model', params.model);
+    if (params.mode) searchParams.set('mode', params.mode);
 
     return this.request<TokenTrendsResponse>(`/public/users/${encodeURIComponent(handle)}/trends?${searchParams.toString()}`, { method: 'GET' });
   }
 
-  public async getPublicSkills(handle: string): Promise<{ items: SkillMetricItem[] }> {
-    return this.request<{ items: SkillMetricItem[] }>(`/public/users/${encodeURIComponent(handle)}/skills`, { method: 'GET' });
+  public async getPublicSkills(handle: string, range = '30d'): Promise<SkillsResponse> {
+    const searchParams = new URLSearchParams({ range });
+    return this.request<SkillsResponse>(`/public/users/${encodeURIComponent(handle)}/skills?${searchParams.toString()}`, { method: 'GET' });
   }
 
-  public async searchPublic(query: string, filter?: string): Promise<SearchResponse> {
-    const params = new URLSearchParams({ q: query });
-    if (filter) params.set('filter', filter);
+  public async searchPublic(query: string, limit = 20): Promise<SearchResponse> {
+    const params = new URLSearchParams({ q: query, limit: limit.toString() });
     return this.request<SearchResponse>(`/public/search?${params.toString()}`, { method: 'GET' });
   }
 
   public async getLeaderboard(params: {
+    board?: string;
     window?: string;
     metric?: string;
     agent?: string;
     q?: string;
-    from?: string;
-    to?: string;
     cursor?: string;
     limit?: number;
   }): Promise<LeaderboardResponse> {
     const searchParams = new URLSearchParams();
+    if (params.board) searchParams.set('board', params.board);
     if (params.window) searchParams.set('window', params.window);
     if (params.metric) searchParams.set('metric', params.metric);
     if (params.agent) searchParams.set('agent', params.agent);
     if (params.q) searchParams.set('q', params.q);
-    if (params.from) searchParams.set('from', params.from);
-    if (params.to) searchParams.set('to', params.to);
     if (params.cursor) searchParams.set('cursor', params.cursor);
     if (params.limit) searchParams.set('limit', params.limit.toString());
 
     return this.request<LeaderboardResponse>(`/public/leaderboards?${searchParams.toString()}`, { method: 'GET' });
   }
 
-  public async compareUsers(handles: string[], range = '30d', metric = 'tokens'): Promise<UserComparisonResponse> {
+  public async compareUsers(handles: string[], range = '30d', metric = 'tokens'): Promise<CompareResponse> {
     const params = new URLSearchParams({
       handles: handles.join(','),
       range,
       metric,
     });
-    return this.request<UserComparisonResponse>(`/public/compare?${params.toString()}`, { method: 'GET' });
+    return this.request<CompareResponse>(`/public/compare?${params.toString()}`, { method: 'GET' });
   }
 }
 

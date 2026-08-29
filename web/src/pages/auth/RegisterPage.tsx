@@ -15,7 +15,7 @@ export const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  const returnTo = searchParams.get('return_to') || '/onboarding';
+  const rawReturnTo = searchParams.get('return_to');
 
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
@@ -71,9 +71,15 @@ export const RegisterPage: React.FC = () => {
     try {
       setSubmitting(true);
       setErrorMessage(null);
-      await register({ email, code, password, returnTo });
+      const res = await register({
+        email,
+        code,
+        password,
+        returnTo: rawReturnTo || undefined,
+      });
       showToast(t('auth.registerSuccess'), 'success');
-      navigate('/onboarding');
+      const target = res?.returnTo || '/me';
+      navigate(`/onboarding?return_to=${encodeURIComponent(target)}`);
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(t(err.messageKey) || err.message);
@@ -118,20 +124,30 @@ export const RegisterPage: React.FC = () => {
             </p>
             <h1 style={{ fontSize: 48, color: 'white', letterSpacing: '-0.05em', lineHeight: 1.05 }}>
               Create your <br />
-              <span style={{ color: 'var(--lime)' }}>Developer Identity.</span>
+              <span style={{ color: 'var(--lime)' }}>Account.</span>
             </h1>
             <p style={{ marginTop: 20, color: '#b2bbb4', fontSize: 16, lineHeight: 1.6 }}>
-              {t('auth.registerSub')}
+              {t('common.heroSub')}
             </p>
           </div>
         </div>
 
-        <div style={{ borderTop: '1px solid var(--border-dark)', paddingTop: 20, fontSize: 12, color: '#88928a' }}>
-          <span>🔒 {t('auth.privacyPledge')} </span>
-          <span>{t('auth.privacyPledgeDesc')}</span>
+        <div
+          style={{
+            borderTop: '1px solid var(--border-dark)',
+            paddingTop: 24,
+          }}
+        >
+          <strong style={{ display: 'block', color: 'white', fontSize: 14 }}>
+            {t('auth.privacyPledge')}
+          </strong>
+          <p style={{ color: '#88928a', fontSize: 12, marginTop: 6, lineHeight: 1.5 }}>
+            {t('auth.privacyPledgeDesc')}
+          </p>
         </div>
       </aside>
 
+      {/* Right registration form */}
       <main
         style={{
           display: 'flex',
@@ -164,7 +180,7 @@ export const RegisterPage: React.FC = () => {
             }}
           >
             <NavLink
-              to={`/login?return_to=${encodeURIComponent(returnTo)}`}
+              to={rawReturnTo ? `/login?return_to=${encodeURIComponent(rawReturnTo)}` : '/login'}
               style={{ paddingBottom: 8, color: 'var(--text-muted)', fontSize: 13 }}
             >
               {t('auth.tabLogin')}
@@ -192,14 +208,13 @@ export const RegisterPage: React.FC = () => {
                 fontSize: 12,
                 marginBottom: 16,
               }}
-              role="alert"
             >
               {errorMessage}
             </div>
           )}
 
           <form onSubmit={handleSubmit}>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', marginBottom: 16 }}>
               <div style={{ flex: 1 }}>
                 <Input
                   label={t('auth.email')}
@@ -214,8 +229,9 @@ export const RegisterPage: React.FC = () => {
                 type="button"
                 variant="outline"
                 onClick={handleSendCode}
-                disabled={sendingCode || cooldown > 0 || !email}
-                style={{ marginBottom: 16, height: 42 }}
+                loading={sendingCode}
+                disabled={cooldown > 0 || !email}
+                style={{ height: 42, marginBottom: 0, whiteSpace: 'nowrap' }}
               >
                 {cooldown > 0 ? `${cooldown}${t('auth.cooldownSec')}` : t('auth.sendCode')}
               </Button>
@@ -225,7 +241,6 @@ export const RegisterPage: React.FC = () => {
               label={t('auth.code')}
               type="text"
               placeholder={t('auth.codePlaceholder')}
-              maxLength={6}
               value={code}
               onChange={(e) => setCode(e.target.value.trim())}
               required
@@ -240,33 +255,22 @@ export const RegisterPage: React.FC = () => {
               required
             />
 
-            <Button
-              type="submit"
-              variant="dark"
-              loading={submitting}
-              style={{ width: '100%', height: 44, marginTop: 8 }}
-            >
+            <Button type="submit" variant="primary" size="lg" loading={submitting} style={{ width: '100%', marginTop: 8 }}>
               {t('auth.submitRegister')}
             </Button>
           </form>
 
-          <div style={{ marginTop: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
-            <span>{t('auth.alreadyHaveAccount')} </span>
-            <NavLink to={`/login?return_to=${encodeURIComponent(returnTo)}`} style={{ fontWeight: 700, color: 'var(--text-main)' }}>
-              {t('auth.signInLink')}
-            </NavLink>
-          </div>
-
-          <div
+          <p
             style={{
-              marginTop: 28,
               fontSize: 11,
               color: 'var(--text-subtle)',
+              textAlign: 'center',
+              marginTop: 24,
               lineHeight: 1.5,
             }}
           >
             {t('auth.termsNotice')}
-          </div>
+          </p>
         </div>
       </main>
     </div>

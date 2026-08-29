@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"fmt"
 	"sort"
 	"strings"
@@ -253,13 +254,18 @@ func (m *MemoryStore) RecordLoginFailure(ctx context.Context, userID string, fai
 	defer m.mu.Unlock()
 
 	if cred, ok := m.userCredentials[userID]; ok {
-		cred.FailedLoginCount = failedCount
-		cred.LockedUntil = lockedUntil
+		cred.FailedLoginCount++
 		now := time.Now().UTC()
 		cred.LastFailedLoginAt = &now
+		if cred.FailedLoginCount >= 10 {
+			lockTime := now.Add(15 * time.Minute)
+			cred.LockedUntil = &lockTime
+		}
 		cred.UpdatedAt = now
 	}
-	m.securityEvents = append(m.securityEvents, event)
+	if event.EventID != "" {
+		m.securityEvents = append(m.securityEvents, event)
+	}
 	return nil
 }
 
@@ -346,6 +352,34 @@ func (m *MemoryStore) RevokeSession(ctx context.Context, sessionID string, reaso
 	return nil
 }
 
+func (m *MemoryStore) RevokeUserSession(ctx context.Context, sessionID string, userID string, reason string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[sessionID]
+	if !ok || s.UserID != userID || s.SessionStatus != domain.SessionStatusActive {
+		return domain.ErrNotFound
+	}
+	s.SessionStatus = domain.SessionStatusRevoked
+	s.RevokedAt = &now
+	s.RevokeReason = &reason
+	s.UpdatedAt = now
+	return nil
+}
+
+func (m *MemoryStore) RotateSessionCSRF(ctx context.Context, sessionID string, newCSRFHash [32]byte, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[sessionID]
+	if !ok || s.SessionStatus != domain.SessionStatusActive {
+		return domain.ErrNotFound
+	}
+	s.CSRFTokenHash = newCSRFHash
+	s.UpdatedAt = now
+	return nil
+}
+
 func (m *MemoryStore) RevokeOtherSessions(ctx context.Context, userID, currentSessionID string, reason string, now time.Time, event domain.UserSecurityEvent) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -378,18 +412,46 @@ func (m *MemoryStore) ListUserSessions(ctx context.Context, userID string) ([]do
 	return result, nil
 }
 
-func (m *MemoryStore) ResetPasswordTx(ctx context.Context, userID string, challengeID string, newHash string, newVersion uint32, event domain.UserSecurityEvent, now time.Time) error {
+func (m *MemoryStore) ResetPasswordTx(ctx context.Context, emailLookupHash [32]byte, codeHash [32]byte, newHash string, newVersion uint32, event domain.UserSecurityEvent, now time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	cred, ok := m.userCredentials[userID]
-	if !ok {
+	var targetCh *domain.EmailChallenge
+	for _, ch := range m.emailChallenges {
+		if ch.EmailLookupHash == emailLookupHash && ch.ChallengeType == domain.ChallengeTypePasswordReset && ch.ChallengeStatus == domain.ChallengeStatusPending {
+			targetCh = ch
+			break
+		}
+	}
+	if targetCh == nil || targetCh.UserID == nil {
 		return domain.ErrNotFound
 	}
 
-	if ch, ok := m.emailChallenges[challengeID]; ok {
-		ch.ChallengeStatus = domain.ChallengeStatusConsumed
-		ch.ConsumedAt = &now
+	if now.After(targetCh.ExpiresAt) {
+		targetCh.ChallengeStatus = domain.ChallengeStatusExpired
+		targetCh.UpdatedAt = now
+		return domain.ErrChallengeExpired
+	}
+
+	if subtle.ConstantTimeCompare(codeHash[:], targetCh.CodeHash[:]) != 1 {
+		targetCh.AttemptCount++
+		if targetCh.AttemptCount >= targetCh.MaxAttempts {
+			targetCh.ChallengeStatus = domain.ChallengeStatusLocked
+			targetCh.UpdatedAt = now
+			return domain.ErrChallengeLocked
+		}
+		targetCh.UpdatedAt = now
+		return domain.ErrChallengeInvalid
+	}
+
+	targetCh.ChallengeStatus = domain.ChallengeStatusConsumed
+	targetCh.ConsumedAt = &now
+	targetCh.UpdatedAt = now
+
+	userID := *targetCh.UserID
+	cred, ok := m.userCredentials[userID]
+	if !ok {
+		return domain.ErrNotFound
 	}
 
 	cred.PasswordHash = newHash
@@ -409,7 +471,10 @@ func (m *MemoryStore) ResetPasswordTx(ctx context.Context, userID string, challe
 		}
 	}
 
-	m.securityEvents = append(m.securityEvents, event)
+	if event.EventID != "" {
+		event.UserID = &userID
+		m.securityEvents = append(m.securityEvents, event)
+	}
 	return nil
 }
 
@@ -1420,8 +1485,13 @@ func (m *MemoryStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 		return nil, domain.ErrChallengeExpired
 	}
 
+	sess, ok := m.sessions[challenge.SessionID]
+	if !ok || sess.SessionStatus != domain.SessionStatusActive || now.After(sess.AbsoluteExpiresAt) || now.After(sess.IdleExpiresAt) {
+		return nil, domain.ErrChallengeInvalid
+	}
+
 	u, ok := m.users[challenge.UserID]
-	if !ok || u.AccountStatus != domain.AccountStatusActive {
+	if !ok || u.AccountStatus != domain.AccountStatusActive || u.OnboardingCompletedAt == nil {
 		return nil, domain.ErrForbidden
 	}
 
@@ -1804,8 +1874,6 @@ func (m *MemoryStore) GetLeaderboard(ctx context.Context, boardKey, window, metr
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	now := time.Now().UTC()
-
 	key := boardKey + ":" + window + ":" + metric
 	if snap, ok := m.publishedSnapshots[key]; ok {
 		var filteredEntries []domain.LeaderboardEntry
@@ -1841,36 +1909,13 @@ func (m *MemoryStore) GetLeaderboard(ctx context.Context, boardKey, window, metr
 		}, nil
 	}
 
-	var entries []domain.LeaderboardEntry
-	rank := 1
-	for _, pub := range m.publicProfiles {
-		if pub.ProfileStatus == domain.ProfileStatusPublished {
-			u, uOk := m.users[pub.UserID]
-			priv, pOk := m.privacySettings[pub.UserID]
-			if !uOk || !pOk || u.AccountStatus != domain.AccountStatusActive || !priv.PublicProfileEnabled {
-				continue
-			}
-
-			delta := 0
-			entries = append(entries, domain.LeaderboardEntry{
-				RankNo:      rank,
-				Handle:      pub.Handle,
-				DisplayName: pub.DisplayName,
-				AvatarURL:   pub.AvatarURL,
-				MetricValue: "325700000",
-				RankDelta:   &delta,
-			})
-			rank++
-		}
-	}
-
 	return &domain.LeaderboardResponse{
-		SnapshotID:      "snp_01default",
+		SnapshotID:      "",
 		BoardKey:        boardKey,
 		Window:          window,
 		Metric:          metric,
-		Entries:         entries,
-		DataWatermarkAt: &now,
+		Entries:         []domain.LeaderboardEntry{},
+		DataWatermarkAt: nil,
 	}, nil
 }
 
@@ -1885,7 +1930,33 @@ func (m *MemoryStore) CreateAvatarUploadIntent(ctx context.Context, obj domain.U
 	return &oCopy, nil
 }
 
-func (m *MemoryStore) CompleteAvatarUploadIntent(ctx context.Context, objectID, userID string, now time.Time) (*domain.UserUploadObject, error) {
+func (m *MemoryStore) GetUploadObject(ctx context.Context, objectID, userID string) (*domain.UserUploadObject, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	obj, ok := m.uploadObjects[objectID]
+	if !ok || obj.UserID != userID {
+		return nil, domain.ErrNotFound
+	}
+	objCopy := *obj
+	return &objCopy, nil
+}
+
+func (m *MemoryStore) UpdateUploadObjectStatus(ctx context.Context, objectID string, status domain.UploadStatus, errorCode *string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	obj, ok := m.uploadObjects[objectID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	obj.UploadStatus = status
+	obj.LastErrorCode = errorCode
+	obj.UpdatedAt = now
+	return nil
+}
+
+func (m *MemoryStore) CompleteAvatarUploadIntent(ctx context.Context, objectID, userID string, meta store.AvatarReadyMeta, now time.Time) (*domain.UserUploadObject, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1893,7 +1964,22 @@ func (m *MemoryStore) CompleteAvatarUploadIntent(ctx context.Context, objectID, 
 	if !ok || obj.UserID != userID {
 		return nil, domain.ErrNotFound
 	}
+
+	// Retire previously active avatar uploads for this user
+	for _, uo := range m.uploadObjects {
+		if uo.UserID == userID && uo.ObjectType == "avatar" && uo.ObjectID != objectID && uo.UploadStatus == domain.UploadStatusReady {
+			uo.UploadStatus = domain.UploadStatusDeletedPending
+			uo.DeletedAt = &now
+			uo.UpdatedAt = now
+		}
+	}
+
 	obj.UploadStatus = domain.UploadStatusReady
+	obj.ByteSize = &meta.ByteSize
+	obj.ContentSha256 = &meta.ContentSha256
+	obj.ImageWidth = &meta.ImageWidth
+	obj.ImageHeight = &meta.ImageHeight
+	obj.ContentType = &meta.ContentType
 	obj.ReadyAt = &now
 	obj.UpdatedAt = now
 

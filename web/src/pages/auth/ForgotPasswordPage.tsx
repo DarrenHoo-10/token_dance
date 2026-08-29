@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate, useSearchParams } from 'react-router-dom';
 import { useLocale } from '@/context/LocaleContext';
 import { useNotification } from '@/context/NotificationContext';
 import { Input } from '@/components/common/Input';
@@ -11,6 +11,9 @@ export const ForgotPasswordPage: React.FC = () => {
   const { t } = useLocale();
   const { showToast } = useNotification();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  const rawReturnTo = searchParams.get('return_to');
 
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
@@ -28,7 +31,9 @@ export const ForgotPasswordPage: React.FC = () => {
       setErrorMessage(null);
       await api.requestPasswordResetCode({ email });
       showToast(t('auth.codeSent'), 'info');
-      navigate(`/reset-password?email=${encodeURIComponent(email)}`);
+      const params = new URLSearchParams({ email });
+      if (rawReturnTo) params.set('return_to', rawReturnTo);
+      navigate(`/reset-password?${params.toString()}`);
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(t(err.messageKey) || err.message);
@@ -105,7 +110,10 @@ export const ForgotPasswordPage: React.FC = () => {
         </form>
 
         <div style={{ marginTop: 24, textAlign: 'center', fontSize: 12 }}>
-          <NavLink to="/login" style={{ color: 'var(--text-muted)' }}>
+          <NavLink
+            to={rawReturnTo ? `/login?return_to=${encodeURIComponent(rawReturnTo)}` : '/login'}
+            style={{ color: 'var(--text-muted)' }}
+          >
             ← {t('auth.signInLink')}
           </NavLink>
         </div>

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 
 	"tokendance/internal/analytics"
 	"tokendance/internal/auth"
+	"tokendance/internal/crypto"
 	"tokendance/internal/device"
 	"tokendance/internal/domain"
 	"tokendance/internal/export"
@@ -22,15 +24,16 @@ import (
 )
 
 type Handlers struct {
-	auth        *auth.Service
-	profile     *profile.Service
-	privacy     *privacy.Service
-	analytics   *analytics.Service
-	device      *device.Service
-	export      *export.Service
-	media       *media.Service
-	search      *search.Service
-	leaderboard *leaderboard.Service
+	auth             *auth.Service
+	profile          *profile.Service
+	privacy          *privacy.Service
+	analytics        *analytics.Service
+	device           *device.Service
+	export           *export.Service
+	media            *media.Service
+	search           *search.Service
+	leaderboard      *leaderboard.Service
+	readinessChecker func(ctx context.Context) error
 }
 
 func NewHandlers(
@@ -44,16 +47,43 @@ func NewHandlers(
 	searchService *search.Service,
 	leaderboardService *leaderboard.Service,
 ) *Handlers {
+	return NewHandlersWithReadiness(
+		authService,
+		profileService,
+		privacyService,
+		analyticsService,
+		deviceService,
+		exportService,
+		mediaService,
+		searchService,
+		leaderboardService,
+		nil,
+	)
+}
+
+func NewHandlersWithReadiness(
+	authService *auth.Service,
+	profileService *profile.Service,
+	privacyService *privacy.Service,
+	analyticsService *analytics.Service,
+	deviceService *device.Service,
+	exportService *export.Service,
+	mediaService *media.Service,
+	searchService *search.Service,
+	leaderboardService *leaderboard.Service,
+	readinessChecker func(ctx context.Context) error,
+) *Handlers {
 	return &Handlers{
-		auth:        authService,
-		profile:     profileService,
-		privacy:     privacyService,
-		analytics:   analyticsService,
-		device:      deviceService,
-		export:      exportService,
-		media:       mediaService,
-		search:      searchService,
-		leaderboard: leaderboardService,
+		auth:             authService,
+		profile:          profileService,
+		privacy:          privacyService,
+		analytics:        analyticsService,
+		device:           deviceService,
+		export:           exportService,
+		media:            mediaService,
+		search:           searchService,
+		leaderboard:      leaderboardService,
+		readinessChecker: readinessChecker,
 	}
 }
 
@@ -67,10 +97,30 @@ func (h *Handlers) Healthz(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) Readyz(w http.ResponseWriter, r *http.Request) {
+	if h.readinessChecker != nil {
+		if err := h.readinessChecker(r.Context()); err != nil {
+			WriteJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+				"status":    "not_ready",
+				"error":     err.Error(),
+				"timestamp": time.Now().UTC().Format(time.RFC3339),
+			})
+			return
+		}
+	}
 	WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"status":    "ready",
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	})
+}
+
+func decodeJSON(w http.ResponseWriter, r *http.Request, maxBytes int64, dst interface{}) error {
+	r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		return domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid request body: "+err.Error(), nil, err)
+	}
+	return nil
 }
 
 // --- Auth Handlers ---
@@ -82,8 +132,8 @@ type RegisterCodeRequest struct {
 
 func (h *Handlers) RequestRegisterCode(w http.ResponseWriter, r *http.Request) {
 	var req RegisterCodeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid json body", nil, err))
+	if err := decodeJSON(w, r, 1024*1024, &req); err != nil {
+		WriteError(w, r, err)
 		return
 	}
 
@@ -107,8 +157,8 @@ type RegisterRequest struct {
 
 func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 	var req RegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid json body", nil, err))
+	if err := decodeJSON(w, r, 1024*1024, &req); err != nil {
+		WriteError(w, r, err)
 		return
 	}
 
@@ -141,8 +191,8 @@ type LoginRequest struct {
 
 func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 	var req LoginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid json body", nil, err))
+	if err := decodeJSON(w, r, 1024*1024, &req); err != nil {
+		WriteError(w, r, err)
 		return
 	}
 
@@ -178,6 +228,12 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	csrfToken, err := h.auth.RotateCSRFToken(r.Context(), sess.SessionID)
+	if err != nil {
+		WriteError(w, r, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to refresh session csrf", nil, err))
+		return
+	}
+
 	WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"authenticated": true,
 		"user": map[string]interface{}{
@@ -189,6 +245,7 @@ func (h *Handlers) GetSession(w http.ResponseWriter, r *http.Request) {
 			"onboardingRequired": user.OnboardingCompletedAt == nil,
 			"productState":       user.ProductState(),
 		},
+		"csrfToken":         csrfToken,
 		"idleExpiresAt":     sess.IdleExpiresAt.Format(time.RFC3339),
 		"absoluteExpiresAt": sess.AbsoluteExpiresAt.Format(time.RFC3339),
 	})
@@ -266,8 +323,8 @@ type PasswordCodeRequest struct {
 
 func (h *Handlers) RequestPasswordReset(w http.ResponseWriter, r *http.Request) {
 	var req PasswordCodeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid json body", nil, err))
+	if err := decodeJSON(w, r, 1024*1024, &req); err != nil {
+		WriteError(w, r, err)
 		return
 	}
 
@@ -286,8 +343,8 @@ type PasswordResetRequest struct {
 
 func (h *Handlers) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	var req PasswordResetRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid json body", nil, err))
+	if err := decodeJSON(w, r, 1024*1024, &req); err != nil {
+		WriteError(w, r, err)
 		return
 	}
 
@@ -304,8 +361,8 @@ func (h *Handlers) ResetPassword(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) CompleteOnboarding(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	var in profile.OnboardingInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid json body", nil, err))
+	if err := decodeJSON(w, r, 1024*1024, &in); err != nil {
+		WriteError(w, r, err)
 		return
 	}
 
@@ -350,8 +407,8 @@ type UpdateProfileReq struct {
 func (h *Handlers) UpdateProfile(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	var req UpdateProfileReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid json body", nil, err))
+	if err := decodeJSON(w, r, 1024*1024, &req); err != nil {
+		WriteError(w, r, err)
 		return
 	}
 
@@ -411,8 +468,8 @@ type UpdatePrivacyReq struct {
 func (h *Handlers) UpdatePrivacy(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	var req UpdatePrivacyReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid json body", nil, err))
+	if err := decodeJSON(w, r, 1024*1024, &req); err != nil {
+		WriteError(w, r, err)
 		return
 	}
 
@@ -462,8 +519,8 @@ func (h *Handlers) GetPublicPreview(w http.ResponseWriter, r *http.Request) {
 func (h *Handlers) CreateAvatarIntent(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	var in media.CreateAvatarIntentInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid json body", nil, err))
+	if err := decodeJSON(w, r, 1024*1024, &in); err != nil {
+		WriteError(w, r, err)
 		return
 	}
 
@@ -676,8 +733,8 @@ func (h *Handlers) UpdateDevice(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	id := chi.URLParam(r, "id")
 	var req UpdateDeviceReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid json body", nil, err))
+	if err := decodeJSON(w, r, 1024*1024, &req); err != nil {
+		WriteError(w, r, err)
 		return
 	}
 
@@ -725,12 +782,29 @@ func (h *Handlers) RevokeDevice(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, inst)
 }
 
+func (h *Handlers) CreateDeviceGrant(w http.ResponseWriter, r *http.Request) {
+	user := GetUserFromContext(r.Context())
+	sess := GetSessionFromContext(r.Context())
+	if user == nil || sess == nil {
+		WriteError(w, r, domain.NewAppError(401, "AUTH_REQUIRED", "auth.required", "authentication required", nil, domain.ErrUnauthorized))
+		return
+	}
+
+	grant, err := h.device.CreateDeviceGrant(r.Context(), user.UserID, sess.SessionID)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+
+	WriteJSON(w, http.StatusCreated, grant)
+}
+
 // --- Collector /v1 Handlers ---
 
 func (h *Handlers) ClaimInstallation(w http.ResponseWriter, r *http.Request) {
 	var in device.ClaimInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid json body", nil, err))
+	if err := decodeJSON(w, r, 1024*1024, &in); err != nil {
+		WriteError(w, r, err)
 		return
 	}
 
@@ -751,19 +825,30 @@ func (h *Handlers) ClaimInstallation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) RegisterInstallation(w http.ResponseWriter, r *http.Request) {
-	user := GetUserFromContext(r.Context())
-	if user == nil {
-		WriteError(w, r, domain.NewAppError(401, "AUTH_REQUIRED", "auth.required", "authentication required", nil, nil))
+	authHeader := r.Header.Get("Authorization")
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		WriteError(w, r, domain.NewAppError(401, "AUTH_REQUIRED", "auth.grantRequired", "scoped grant required (Bearer dgt_...); web session bearer not permitted", nil, domain.ErrUnauthorized))
+		return
+	}
+	grantToken := strings.TrimPrefix(authHeader, "Bearer ")
+	if !strings.HasPrefix(grantToken, "dgt_") {
+		WriteError(w, r, domain.NewAppError(401, "AUTH_INVALID_GRANT_SCOPE", "auth.invalidGrantScope", "scoped grant required (dgt_...); web session bearer not permitted", nil, domain.ErrUnauthorized))
+		return
+	}
+
+	userID, _, err := h.device.ValidateDeviceGrant(r.Context(), grantToken)
+	if err != nil {
+		WriteError(w, r, err)
 		return
 	}
 
 	var in device.ClaimInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid json body", nil, err))
+	if err := decodeJSON(w, r, 1024*1024, &in); err != nil {
+		WriteError(w, r, err)
 		return
 	}
 
-	inst, err := h.device.RegisterInstallation(r.Context(), user.UserID, in)
+	inst, err := h.device.RegisterInstallation(r.Context(), userID, in)
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -772,6 +857,69 @@ func (h *Handlers) RegisterInstallation(w http.ResponseWriter, r *http.Request) 
 	WriteJSON(w, http.StatusOK, map[string]interface{}{
 		"installationId": inst.InstallationID,
 		"status":         inst.InstallationStatus,
+		"uploadPolicy": map[string]interface{}{
+			"maxBatchEvents": 1000,
+			"minIntervalSec": 10,
+		},
+	})
+}
+
+type TelemetryBatchInput struct {
+	BatchID string `json:"batchId,omitempty"`
+	Events  []struct {
+		EventID    string                 `json:"eventId"`
+		EventType  string                 `json:"eventType"`
+		OccurredAt string                 `json:"occurredAt"`
+		TokenTotal *int64                 `json:"tokenTotal,omitempty"`
+		Metadata   map[string]interface{} `json:"metadata,omitempty"`
+	} `json:"events"`
+}
+
+func (h *Handlers) IngestTelemetry(w http.ResponseWriter, r *http.Request) {
+	authHeader := r.Header.Get("Authorization")
+	var instID string
+	if strings.HasPrefix(authHeader, "Device ") {
+		parts := strings.SplitN(strings.TrimPrefix(authHeader, "Device "), ":", 2)
+		instID = parts[0]
+	} else if instHeader := r.Header.Get("X-Installation-Id"); instHeader != "" {
+		instID = instHeader
+	}
+	if instID == "" {
+		WriteError(w, r, domain.NewAppError(401, "AUTH_REQUIRED", "auth.required", "device authentication required", nil, domain.ErrUnauthorized))
+		return
+	}
+
+	inst, _, err := h.device.AuthorizeIngest(r.Context(), instID)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+
+	var in TelemetryBatchInput
+	if err := decodeJSON(w, r, 512*1024, &in); err != nil {
+		WriteError(w, r, err)
+		return
+	}
+
+	if len(in.Events) > 500 {
+		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "ingest.batchTooLarge", "batch exceeds 500 events limit", nil, domain.ErrInvalidArgument))
+		return
+	}
+
+	batchID := in.BatchID
+	if batchID == "" {
+		token, _ := crypto.GenerateOpaqueToken(13)
+		batchID = "bat_" + token
+	}
+
+	now := time.Now().UTC()
+	WriteJSON(w, http.StatusOK, map[string]interface{}{
+		"batchId":        batchID,
+		"installationId": inst.InstallationID,
+		"accepted":       len(in.Events),
+		"duplicates":     0,
+		"rejected":       []string{},
+		"serverTime":     now.Format(time.RFC3339),
 	})
 }
 
@@ -788,8 +936,8 @@ func (h *Handlers) CreateExport(w http.ResponseWriter, r *http.Request) {
 	idempKey := r.Header.Get("Idempotency-Key")
 
 	var req CreateExportReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid json body", nil, err))
+	if err := decodeJSON(w, r, 1024*1024, &req); err != nil {
+		WriteError(w, r, err)
 		return
 	}
 
@@ -852,8 +1000,8 @@ type CreateDeletionReq struct {
 func (h *Handlers) RequestDeletion(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	var req CreateDeletionReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, r, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidBody", "invalid json body", nil, err))
+	if err := decodeJSON(w, r, 1024*1024, &req); err != nil {
+		WriteError(w, r, err)
 		return
 	}
 
@@ -907,12 +1055,17 @@ func (h *Handlers) GetPublicProfile(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("ETag", `"`+strconv.FormatUint(pub.ProjectionVersion, 10)+`"`)
 	now := time.Now().UTC()
+
+	var bioPtr *string
+	if pub.ShowBio && pub.Bio != nil {
+		bioPtr = pub.Bio
+	}
+
 	dto := domain.PublicProfileDTO{
 		Handle:               pub.Handle,
 		DisplayName:          pub.DisplayName,
 		AvatarURL:            pub.AvatarURL,
-		Bio:                  pub.Bio,
-		DataWatermarkAt:      &now,
+		Bio:                  bioPtr,
 		GeneratedAt:          now,
 		ProjectionVersion:    pub.ProjectionVersion,
 		ShowBio:              pub.ShowBio,
@@ -923,10 +1076,28 @@ func (h *Handlers) GetPublicProfile(w http.ResponseWriter, r *http.Request) {
 		ShowSkillRanking:     pub.ShowSkillRanking,
 		ShowAchievements:     pub.ShowAchievements,
 	}
+
 	if pub.ShowTokenTotal {
-		tot := "325700000"
-		dto.TokenTotal = &tot
+		sum, errSum := h.analytics.GetPersonalSummary(r.Context(), pub.UserID, "all")
+		if errSum == nil && sum != nil {
+			dto.TokenTotal = sum.Metrics.TotalTokens.Value
+			dto.DataWatermarkAt = sum.DataWatermarkAt
+			if pub.ShowAchievements && sum.Ranking.Rank != nil {
+				dto.Rank = sum.Ranking.Rank
+				dto.RankDelta = sum.Ranking.Delta
+				dto.Percentile = sum.Ranking.Percentile
+			}
+		}
 	}
+
+	if pub.ShowActivityCalendar {
+		cal, errCal := h.analytics.GetActivityCalendar(r.Context(), pub.UserID, "30d")
+		if errCal == nil && cal != nil {
+			dto.ActiveDays = &cal.TotalActiveDays
+			dto.CurrentStreak = &cal.CurrentStreak
+		}
+	}
+
 	WriteJSON(w, http.StatusOK, dto)
 }
 
@@ -947,7 +1118,19 @@ func (h *Handlers) GetPublicTrends(w http.ResponseWriter, r *http.Request) {
 
 	rangeKey := r.URL.Query().Get("range")
 	mode := r.URL.Query().Get("mode")
-	trend, err := h.analytics.GetTokenTrend(r.Context(), pub.UserID, rangeKey, mode, nil, nil, nil)
+
+	var agentID, providerID, modelID *string
+	if v := r.URL.Query().Get("agent"); v != "" && v != "all" {
+		agentID = &v
+	}
+	if v := r.URL.Query().Get("provider"); v != "" && v != "all" {
+		providerID = &v
+	}
+	if v := r.URL.Query().Get("model"); v != "" && v != "all" {
+		modelID = &v
+	}
+
+	trend, err := h.analytics.GetTokenTrend(r.Context(), pub.UserID, rangeKey, mode, agentID, providerID, modelID)
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -1020,9 +1203,19 @@ func (h *Handlers) GetLeaderboards(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) CompareUsers(w http.ResponseWriter, r *http.Request) {
-	// P1 compare users endpoint
 	handlesStr := r.URL.Query().Get("handles")
-	handles := strings.Split(handlesStr, ",")
+	rangeKey := r.URL.Query().Get("range")
+	if rangeKey == "" {
+		rangeKey = "30d"
+	}
+	rawHandles := strings.Split(handlesStr, ",")
+	var handles []string
+	for _, hName := range rawHandles {
+		hName = strings.TrimSpace(hName)
+		if hName != "" {
+			handles = append(handles, hName)
+		}
+	}
 	if len(handles) > 3 {
 		handles = handles[:3]
 	}
@@ -1030,31 +1223,60 @@ func (h *Handlers) CompareUsers(w http.ResponseWriter, r *http.Request) {
 	var results []domain.CompareUserItem
 	now := time.Now().UTC()
 	for _, hName := range handles {
-		hName = strings.TrimSpace(hName)
-		if hName == "" {
-			continue
-		}
 		pub, _, err := h.privacy.GetPublicProfileByHandle(r.Context(), hName)
-		if err == nil && pub != nil {
-			rankVal := 1
-			percVal := 99.0
-			tokVal := "325700000"
-			results = append(results, domain.CompareUserItem{
-				Handle:          pub.Handle,
-				DisplayName:     &pub.DisplayName,
-				AvatarURL:       pub.AvatarURL,
-				Visible:         true,
-				TokenTotal:      &tokVal,
-				Rank:            &rankVal,
-				Percentile:      &percVal,
-				DataWatermarkAt: &now,
-			})
-		} else {
+		if err != nil || pub == nil || pub.ProfileStatus != domain.ProfileStatusPublished {
 			results = append(results, domain.CompareUserItem{
 				Handle:  hName,
 				Visible: false,
 			})
+			continue
 		}
+
+		item := domain.CompareUserItem{
+			Handle:      pub.Handle,
+			DisplayName: &pub.DisplayName,
+			AvatarURL:   pub.AvatarURL,
+			Visible:     true,
+		}
+
+		if pub.ShowTokenTotal {
+			sum, errSum := h.analytics.GetPersonalSummary(r.Context(), pub.UserID, rangeKey)
+			if errSum == nil && sum != nil {
+				item.TokenTotal = sum.Metrics.TotalTokens.Value
+				item.DataWatermarkAt = sum.DataWatermarkAt
+				if sum.Metrics.GeneratedCodeLines.Value != nil {
+					item.CodeLinesTotal = sum.Metrics.GeneratedCodeLines.Value
+				}
+				if pub.ShowAchievements && sum.Ranking.Rank != nil {
+					item.Rank = sum.Ranking.Rank
+					item.Percentile = sum.Ranking.Percentile
+				}
+			}
+		}
+
+		if pub.ShowAgentBreakdown {
+			ab, errAb := h.analytics.GetAgentBreakdown(r.Context(), pub.UserID, rangeKey)
+			if errAb == nil && ab != nil && len(ab.Items) > 0 {
+				item.AgentBreakdown = ab.Items
+			}
+		}
+
+		if pub.ShowSkillRanking {
+			sk, errSk := h.analytics.GetSkillRanking(r.Context(), pub.UserID, rangeKey)
+			if errSk == nil && sk != nil && len(sk.Skills) > 0 {
+				item.SkillRanking = sk.Skills
+			}
+		}
+
+		if pub.ShowActivityCalendar {
+			cal, errCal := h.analytics.GetActivityCalendar(r.Context(), pub.UserID, rangeKey)
+			if errCal == nil && cal != nil {
+				item.CurrentStreak = &cal.CurrentStreak
+				item.ActiveDays = &cal.TotalActiveDays
+			}
+		}
+
+		results = append(results, item)
 	}
 
 	WriteJSON(w, http.StatusOK, domain.CompareResponse{
@@ -1066,6 +1288,19 @@ func (h *Handlers) CompareUsers(w http.ResponseWriter, r *http.Request) {
 // --- Cookie Helper ---
 
 func (h *Handlers) setSessionCookie(w http.ResponseWriter, token string, expiresAt time.Time) {
+	if h.auth.IsProduction() {
+		http.SetCookie(w, &http.Cookie{
+			Name:     SessionCookieName,
+			Value:    token,
+			Path:     "/",
+			Expires:  expiresAt,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			Secure:   true,
+		})
+		return
+	}
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     DevSessionCookie,
 		Value:    token,
@@ -1082,11 +1317,24 @@ func (h *Handlers) setSessionCookie(w http.ResponseWriter, token string, expires
 		Expires:  expiresAt,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   true,
+		Secure:   false,
 	})
 }
 
 func (h *Handlers) clearSessionCookie(w http.ResponseWriter) {
+	if h.auth.IsProduction() {
+		http.SetCookie(w, &http.Cookie{
+			Name:     SessionCookieName,
+			Value:    "",
+			Path:     "/",
+			MaxAge:   -1,
+			HttpOnly: true,
+			SameSite: http.SameSiteLaxMode,
+			Secure:   true,
+		})
+		return
+	}
+
 	http.SetCookie(w, &http.Cookie{
 		Name:     DevSessionCookie,
 		Value:    "",
@@ -1103,6 +1351,6 @@ func (h *Handlers) clearSessionCookie(w http.ResponseWriter) {
 		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   true,
+		Secure:   false,
 	})
 }

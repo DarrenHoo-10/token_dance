@@ -1,12 +1,19 @@
 package config
 
 import (
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+)
+
+const (
+	DefaultDevHMACSecret    = "tokendance-dev-hmac-secret-at-least-32-bytes-long"
+	DefaultDevEncryptionKey = "tokendance-dev-32-byte-aead-key!"
 )
 
 type Config struct {
@@ -29,6 +36,11 @@ type Config struct {
 	MediaAvatarMaxPixels int64         `json:"mediaAvatarMaxPixels"`
 	ObjectBucket         string        `json:"objectBucket,omitempty"`
 	HMACSecret           string        `json:"-"`
+	EncryptionKey        string        `json:"-"`
+	EncryptionKeyFile    string        `json:"encryptionKeyFile,omitempty"`
+	EncryptionKeyVersion uint16        `json:"encryptionKeyVersion"`
+	EmailProvider        string        `json:"emailProvider,omitempty"`
+	TestAuthCode         string        `json:"-"`
 }
 
 func DefaultConfig() *Config {
@@ -47,8 +59,38 @@ func DefaultConfig() *Config {
 		PublicSkillMinUsers:  5,
 		MediaAvatarMaxBytes:  5 * 1024 * 1024, // 5 MiB
 		MediaAvatarMaxPixels: 16000000,        // 16M pixels
-		HMACSecret:           "tokendance-dev-hmac-secret-at-least-32-bytes-long",
+		HMACSecret:           DefaultDevHMACSecret,
+		EncryptionKey:        DefaultDevEncryptionKey,
+		EncryptionKeyVersion: 1,
+		EmailProvider:        "sink",
 	}
+}
+
+// ParseEncryptionKey decodes a 32-byte encryption key from hex, base64, or raw 32-byte string
+func ParseEncryptionKey(keyStr string) ([32]byte, error) {
+	trimmed := strings.TrimSpace(keyStr)
+	var key [32]byte
+
+	if len(trimmed) == 64 {
+		if b, err := hex.DecodeString(trimmed); err == nil && len(b) == 32 {
+			copy(key[:], b)
+			return key, nil
+		}
+	}
+	if len(trimmed) == 32 {
+		copy(key[:], []byte(trimmed))
+		return key, nil
+	}
+	if b, err := base64.StdEncoding.DecodeString(trimmed); err == nil && len(b) == 32 {
+		copy(key[:], b)
+		return key, nil
+	}
+	if b, err := base64.RawStdEncoding.DecodeString(trimmed); err == nil && len(b) == 32 {
+		copy(key[:], b)
+		return key, nil
+	}
+
+	return key, fmt.Errorf("encryption key must be exactly 32 bytes (or 64 hex characters)")
 }
 
 func LoadFromEnv() (*Config, error) {
@@ -140,6 +182,34 @@ func LoadFromEnv() (*Config, error) {
 	if v := os.Getenv("TOKENDANCE_HMAC_SECRET"); v != "" {
 		cfg.HMACSecret = v
 	}
+	if v := os.Getenv("TOKENDANCE_ENCRYPTION_KEY"); v != "" {
+		cfg.EncryptionKey = v
+	}
+	if v := os.Getenv("TOKENDANCE_ENCRYPTION_KEY_FILE"); v != "" {
+		cfg.EncryptionKeyFile = v
+		data, err := os.ReadFile(v)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read encryption key file at %s: %w", v, err)
+		}
+		cfg.EncryptionKey = strings.TrimSpace(string(data))
+	}
+	if v := os.Getenv("TOKENDANCE_ENCRYPTION_KEY_VERSION"); v != "" {
+		if val, err := strconv.ParseUint(v, 10, 16); err == nil {
+			cfg.EncryptionKeyVersion = uint16(val)
+		}
+	}
+	if v := os.Getenv("TOKENDANCE_EMAIL_PROVIDER"); v != "" {
+		cfg.EmailProvider = v
+	}
+	if v := os.Getenv("TOKENDANCE_TEST_AUTH_CODE"); v != "" {
+		cfg.TestAuthCode = v
+	}
+
+	if cfg.Environment == "production" {
+		if cfg.EmailProvider == "sink" {
+			cfg.EmailProvider = "worker"
+		}
+	}
 
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("config validation failed: %w", err)
@@ -195,6 +265,31 @@ func (c *Config) Validate() error {
 	}
 	if len(c.HMACSecret) < 16 {
 		return fmt.Errorf("HMACSecret must be at least 16 bytes")
+	}
+
+	// Environment specific rules
+	if c.Environment == "production" {
+		if c.MySQLDSN == "" {
+			return fmt.Errorf("TOKENDANCE_MYSQL_DSN or TOKENDANCE_MYSQL_DSN_FILE is required in production environment")
+		}
+		if c.EncryptionKey == "" || c.EncryptionKey == DefaultDevEncryptionKey {
+			return fmt.Errorf("production requires explicit non-default TOKENDANCE_ENCRYPTION_KEY or TOKENDANCE_ENCRYPTION_KEY_FILE")
+		}
+		if c.HMACSecret == "" || c.HMACSecret == DefaultDevHMACSecret || len(c.HMACSecret) < 32 {
+			return fmt.Errorf("production requires explicit non-default TOKENDANCE_HMAC_SECRET with at least 32 bytes")
+		}
+		if c.TestAuthCode != "" {
+			return fmt.Errorf("TOKENDANCE_TEST_AUTH_CODE is strictly prohibited in production environment")
+		}
+		if c.EmailProvider != "worker" && c.EmailProvider != "smtp" {
+			return fmt.Errorf("production environment requires a durable email provider (e.g. 'worker' or 'smtp'), got '%s'", c.EmailProvider)
+		}
+	}
+
+	if c.EncryptionKey != "" {
+		if _, err := ParseEncryptionKey(c.EncryptionKey); err != nil {
+			return fmt.Errorf("invalid EncryptionKey: %w", err)
+		}
 	}
 
 	return nil

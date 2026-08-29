@@ -63,7 +63,9 @@ func (s *leaderboardStore) PublishSnapshot(ctx context.Context, snapshotID strin
 	}
 
 	// Delete existing entries for this snapshot
-	_, _ = tx.ExecContext(ctx, "DELETE FROM leaderboard_entries WHERE snapshot_id = ?", snapshotID)
+	if _, err := tx.ExecContext(ctx, "DELETE FROM leaderboard_entries WHERE snapshot_id = ?", snapshotID); err != nil {
+		return fmt.Errorf("failed to clean existing snapshot entries: %w", err)
+	}
 
 	for _, entry := range entries {
 		var uid string
@@ -106,97 +108,108 @@ func (s *leaderboardStore) GetLeaderboard(ctx context.Context, boardKey, window,
 	}
 
 	var snapshotID string
-	var watermark time.Time
+	var watermark sql.NullTime
 
 	snapQuery := `
 		SELECT snapshot_id, data_watermark_at
 		FROM leaderboard_snapshots
-		WHERE board_key = ? AND snapshot_status = 'published'
+		WHERE board_key = ? AND metric_key = ? AND snapshot_status = 'published'
 		ORDER BY published_at DESC
 		LIMIT 1`
 
-	err := s.db.QueryRowContext(ctx, snapQuery, boardKey).Scan(&snapshotID, &watermark)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("failed to query leaderboard snapshot: %w", err)
+	err := s.db.QueryRowContext(ctx, snapQuery, boardKey, metric).Scan(&snapshotID, &watermark)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// Fallback check without metric_key if boardKey only
+			err2 := s.db.QueryRowContext(ctx, `
+				SELECT snapshot_id, data_watermark_at
+				FROM leaderboard_snapshots
+				WHERE board_key = ? AND snapshot_status = 'published'
+				ORDER BY published_at DESC
+				LIMIT 1`, boardKey).Scan(&snapshotID, &watermark)
+			if err2 != nil {
+				if errors.Is(err2, sql.ErrNoRows) {
+					return &domain.LeaderboardResponse{
+						SnapshotID:      "",
+						BoardKey:        boardKey,
+						Window:          window,
+						Metric:          metric,
+						Entries:         []domain.LeaderboardEntry{},
+						DataWatermarkAt: nil,
+					}, nil
+				}
+				return nil, fmt.Errorf("failed to query leaderboard snapshot: %w", err2)
+			}
+		} else {
+			return nil, fmt.Errorf("failed to query leaderboard snapshot: %w", err)
+		}
 	}
 
-	var entries []domain.LeaderboardEntry
+	entriesQuery := `
+		SELECT e.rank_no, p.handle, p.display_name, p.avatar_url, e.metric_value, e.previous_rank_no
+		FROM leaderboard_entries e
+		JOIN users u ON e.user_id = u.user_id
+		JOIN public_user_profiles p ON e.user_id = p.user_id
+		JOIN user_privacy_settings priv ON e.user_id = priv.user_id
+		WHERE e.snapshot_id = ?
+		  AND u.account_status = 'active'
+		  AND u.leaderboard_visibility = 'public'
+		  AND p.profile_status = 'published'
+		  AND priv.public_profile_enabled = TRUE
+		ORDER BY e.rank_no ASC
+		LIMIT ?`
 
-	if snapshotID != "" {
-		entriesQuery := `
-			SELECT e.rank_no, COALESCE(u.handle, 'anonymous'), e.display_name_snapshot,
-			       e.avatar_url_snapshot, e.metric_value, e.previous_rank_no
-			FROM leaderboard_entries e
-			LEFT JOIN users u ON e.user_id = u.user_id
-			WHERE e.snapshot_id = ?
-			ORDER BY e.rank_no ASC
-			LIMIT ?`
+	rows, err := s.db.QueryContext(ctx, entriesQuery, snapshotID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query leaderboard entries: %w", err)
+	}
+	defer rows.Close()
 
-		rows, err := s.db.QueryContext(ctx, entriesQuery, snapshotID, limit)
-		if err != nil {
-			return nil, fmt.Errorf("failed to query leaderboard entries: %w", err)
+	entries := make([]domain.LeaderboardEntry, 0)
+	rank := 1
+	for rows.Next() {
+		var rawRank int
+		var handle, displayName string
+		var avatarURL sql.NullString
+		var metricVal float64
+		var prevRank sql.NullInt32
+
+		if err := rows.Scan(
+			&rawRank,
+			&handle,
+			&displayName,
+			&avatarURL,
+			&metricVal,
+			&prevRank,
+		); err != nil {
+			return nil, fmt.Errorf("failed to scan leaderboard entry: %w", err)
 		}
-		defer rows.Close()
 
-		for rows.Next() {
-			var entry domain.LeaderboardEntry
-			var avatarURL sql.NullString
-			var metricVal float64
-			var prevRank sql.NullInt32
-
-			if err := rows.Scan(
-				&entry.RankNo,
-				&entry.Handle,
-				&entry.DisplayName,
-				&avatarURL,
-				&metricVal,
-				&prevRank,
-			); err != nil {
-				return nil, fmt.Errorf("failed to scan leaderboard entry: %w", err)
-			}
-
-			entry.AvatarURL = ptrFromNullString(avatarURL)
-			entry.MetricValue = fmt.Sprintf("%.0f", metricVal)
-			if prevRank.Valid {
-				delta := int(prevRank.Int32 - int32(entry.RankNo))
-				entry.RankDelta = &delta
-			}
-
-			entries = append(entries, entry)
+		var rankDelta *int
+		if prevRank.Valid {
+			delta := int(prevRank.Int32 - int32(rawRank))
+			rankDelta = &delta
 		}
-	} else {
-		// Fallback for greenfield database without pre-generated snapshots: query published profiles
-		now := time.Now().UTC()
-		watermark = now
-		snapshotID = "snp_01default"
 
-		pubQuery := `
-			SELECT handle, display_name, avatar_url
-			FROM public_user_profiles
-			WHERE profile_status = 'published'
-			LIMIT ?`
+		entries = append(entries, domain.LeaderboardEntry{
+			RankNo:      rank,
+			Handle:      handle,
+			DisplayName: displayName,
+			AvatarURL:   ptrFromNullString(avatarURL),
+			MetricValue: fmt.Sprintf("%.0f", metricVal),
+			RankDelta:   rankDelta,
+		})
+		rank++
+	}
 
-		rows, err := s.db.QueryContext(ctx, pubQuery, limit)
-		if err == nil {
-			defer rows.Close()
-			rank := 1
-			for rows.Next() {
-				var handle, displayName string
-				var avatarURL sql.NullString
-				if err := rows.Scan(&handle, &displayName, &avatarURL); err == nil {
-					delta := 0
-					entries = append(entries, domain.LeaderboardEntry{
-						RankNo:      rank,
-						Handle:      handle,
-						DisplayName: displayName,
-						AvatarURL:   ptrFromNullString(avatarURL),
-						MetricValue: "325700000",
-						RankDelta:   &delta,
-					})
-					rank++
-				}
-			}
-		}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("leaderboard entries iteration error: %w", err)
+	}
+
+	var wmPtr *time.Time
+	if watermark.Valid {
+		tVal := watermark.Time
+		wmPtr = &tVal
 	}
 
 	return &domain.LeaderboardResponse{
@@ -205,6 +218,6 @@ func (s *leaderboardStore) GetLeaderboard(ctx context.Context, boardKey, window,
 		Window:          window,
 		Metric:          metric,
 		Entries:         entries,
-		DataWatermarkAt: &watermark,
+		DataWatermarkAt: wmPtr,
 	}, nil
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"tokendance/internal/auth"
@@ -22,6 +23,79 @@ type Middleware struct {
 func NewMiddleware(authService *auth.Service) *Middleware {
 	return &Middleware{
 		authService: authService,
+	}
+}
+
+type IPRateLimiter struct {
+	mu      sync.Mutex
+	records map[string][]time.Time
+	limit   int
+	window  time.Duration
+}
+
+func NewIPRateLimiter(limit int, window time.Duration) *IPRateLimiter {
+	return &IPRateLimiter{
+		records: make(map[string][]time.Time),
+		limit:   limit,
+		window:  window,
+	}
+}
+
+func (lim *IPRateLimiter) Allow(key string) bool {
+	lim.mu.Lock()
+	defer lim.mu.Unlock()
+
+	now := time.Now()
+	cutoff := now.Add(-lim.window)
+
+	timestamps := lim.records[key]
+	var valid []time.Time
+	for _, t := range timestamps {
+		if t.After(cutoff) {
+			valid = append(valid, t)
+		}
+	}
+
+	if len(valid) >= lim.limit {
+		lim.records[key] = valid
+		return false
+	}
+
+	valid = append(valid, now)
+	lim.records[key] = valid
+	return true
+}
+
+func (m *Middleware) RateLimit(limit int, window time.Duration) func(http.Handler) http.Handler {
+	limiter := NewIPRateLimiter(limit, window)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ip := r.RemoteAddr
+			if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+				ip = strings.TrimSpace(strings.Split(forwarded, ",")[0])
+			} else if realIP := r.Header.Get("X-Real-IP"); realIP != "" {
+				ip = strings.TrimSpace(realIP)
+			}
+			if host, _, err := net.SplitHostPort(ip); err == nil {
+				ip = host
+			}
+
+			if !limiter.Allow(ip) {
+				w.Header().Set("Retry-After", "60")
+				WriteError(w, r, domain.NewAppError(429, "API_RATE_LIMIT_EXCEEDED", "api.rateLimited", "too many requests, please slow down", nil, domain.ErrRateLimited))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func (m *Middleware) MaxBodySize(maxBytes int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			next.ServeHTTP(w, r)
+		})
 	}
 }
 
@@ -79,8 +153,10 @@ func (m *Middleware) SessionResolver(next http.Handler) http.Handler {
 		// Extract from Cookie
 		if c, err := r.Cookie(SessionCookieName); err == nil && c.Value != "" {
 			token = c.Value
-		} else if c, err := r.Cookie(DevSessionCookie); err == nil && c.Value != "" {
-			token = c.Value
+		} else if !m.authService.IsProduction() {
+			if c, err := r.Cookie(DevSessionCookie); err == nil && c.Value != "" {
+				token = c.Value
+			}
 		}
 
 		if token == "" {

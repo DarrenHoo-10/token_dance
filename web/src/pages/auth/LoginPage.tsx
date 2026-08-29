@@ -15,7 +15,7 @@ export const LoginPage: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  const returnTo = searchParams.get('return_to') || '/me';
+  const rawReturnTo = searchParams.get('return_to');
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -32,9 +32,18 @@ export const LoginPage: React.FC = () => {
     try {
       setLoading(true);
       setErrorMessage(null);
-      await login({ email, password, returnTo });
+      const res = await login({
+        email,
+        password,
+        returnTo: rawReturnTo || undefined,
+      });
       showToast(t('auth.loginSuccess'), 'success');
-      navigate(returnTo);
+      const target = res?.returnTo || '/me';
+      if (res?.user?.onboardingRequired || res?.user?.productState === 'new') {
+        navigate(`/onboarding?return_to=${encodeURIComponent(target)}`);
+      } else {
+        navigate(target);
+      }
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(t(err.messageKey) || t('auth.invalidCredentials') || err.message);
@@ -112,7 +121,7 @@ export const LoginPage: React.FC = () => {
           <div>
             <small style={{ color: '#88928a', fontSize: 11 }}>{t('metrics.activeStreak')}</small>
             <strong className="mono-num" style={{ display: 'block', fontSize: 20, marginTop: 4 }}>
-              23 days
+              23 {t('metrics.days')}
             </strong>
           </div>
         </div>
@@ -161,7 +170,7 @@ export const LoginPage: React.FC = () => {
               {t('auth.tabLogin')}
             </span>
             <NavLink
-              to={`/register?return_to=${encodeURIComponent(returnTo)}`}
+              to={rawReturnTo ? `/register?return_to=${encodeURIComponent(rawReturnTo)}` : '/register'}
               style={{ paddingBottom: 8, color: 'var(--text-muted)', fontSize: 13 }}
             >
               {t('auth.tabRegister')}
@@ -179,7 +188,6 @@ export const LoginPage: React.FC = () => {
                 fontSize: 12,
                 marginBottom: 16,
               }}
-              role="alert"
             >
               {errorMessage}
             </div>
@@ -193,7 +201,6 @@ export const LoginPage: React.FC = () => {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              autoFocus
             />
 
             <Input
@@ -210,46 +217,39 @@ export const LoginPage: React.FC = () => {
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                marginBottom: 20,
+                marginBottom: 24,
                 fontSize: 12,
               }}
             >
-              <span className="text-muted">{t('auth.keepSignedIn')}</span>
-              <NavLink to="/forgot-password" style={{ fontWeight: 600, color: 'var(--text-main)' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+                <input type="checkbox" defaultChecked />
+                <span>{t('auth.keepSignedIn')}</span>
+              </label>
+
+              <NavLink
+                to={rawReturnTo ? `/forgot-password?return_to=${encodeURIComponent(rawReturnTo)}` : '/forgot-password'}
+                style={{ color: 'var(--text-muted)' }}
+              >
                 {t('auth.forgotPassword')}
               </NavLink>
             </div>
 
-            <Button
-              type="submit"
-              variant="dark"
-              loading={loading}
-              style={{ width: '100%', height: 44 }}
-            >
+            <Button type="submit" variant="primary" size="lg" loading={loading} style={{ width: '100%' }}>
               {t('auth.submitLogin')}
             </Button>
           </form>
 
-          <div style={{ marginTop: 24, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)' }}>
-            <span>{t('auth.newToTokenDance')} </span>
-            <NavLink to={`/register?return_to=${encodeURIComponent(returnTo)}`} style={{ fontWeight: 700, color: 'var(--text-main)' }}>
-              {t('auth.createAccountLink')}
-            </NavLink>
-          </div>
-
-          <div
+          <p
             style={{
-              marginTop: 32,
-              paddingTop: 20,
-              borderTop: '1px solid var(--border-light)',
               fontSize: 11,
               color: 'var(--text-subtle)',
+              textAlign: 'center',
+              marginTop: 24,
               lineHeight: 1.5,
             }}
           >
-            <strong>{t('auth.privacyPledge')} </strong>
-            {t('auth.privacyPledgeDesc')}
-          </div>
+            {t('auth.termsNotice')}
+          </p>
         </div>
       </main>
     </div>

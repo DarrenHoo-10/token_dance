@@ -24,6 +24,7 @@ import (
 	"tokendance/internal/migrate"
 	"tokendance/internal/privacy"
 	"tokendance/internal/profile"
+	"tokendance/internal/provider"
 	"tokendance/internal/search"
 	"tokendance/internal/store"
 	"tokendance/internal/store/memory"
@@ -42,6 +43,8 @@ func main() {
 	var st store.Store
 	var db *sql.DB
 
+	var readinessChecker func(ctx context.Context) error
+
 	if cfg.MySQLDSN != "" {
 		log.Printf("Connecting to MySQL backend (pool: max_open=50, max_idle=25)...")
 		dbPoolCfg := mysql.DefaultDBConfig()
@@ -52,16 +55,17 @@ func main() {
 		db = dbConn
 		defer db.Close()
 
-		// Run database migrations with advisory lock and baseline checks
+		// Validate schema compatibility without running DDL
 		migRunner := migrate.NewRunner(db)
-		ctxMig, cancelMig := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancelMig()
-
-		if err := migRunner.RunMigrations(ctxMig); err != nil {
-			log.Fatalf("Fatal database migration error: %v", err)
+		ctxCheck, cancelCheck := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := migRunner.ValidateSchemaCompatibility(ctxCheck); err != nil {
+			cancelCheck()
+			log.Fatalf("Fatal database schema compatibility check failed: %v", err)
 		}
-		log.Println("Database migrations verified and up to date.")
+		cancelCheck()
+		log.Println("Database schema compatibility verified.")
 
+		readinessChecker = migRunner.ValidateSchemaCompatibility
 		st = mysql.NewStore(db)
 	} else {
 		if cfg.Environment == "production" {
@@ -71,17 +75,19 @@ func main() {
 		st = memory.NewMemoryStore()
 	}
 
+	storage := provider.NewMemoryObjectStorage("")
+
 	authService := auth.NewService(st, cfg, clk)
 	profileService := profile.NewService(st, clk)
 	privacyService := privacy.NewService(st, clk)
 	analyticsService := analytics.NewService(st, clk)
 	deviceService := device.NewService(st, cfg, clk)
-	exportService := export.NewService(st, clk)
-	mediaService := media.NewService(st, cfg, clk)
+	exportService := export.NewService(st, clk, storage)
+	mediaService := media.NewService(st, cfg, clk, storage)
 	searchService := search.NewService(st, clk)
 	leaderboardService := leaderboard.NewService(st)
 
-	router := httpapi.NewRouter(
+	router := httpapi.NewRouterWithReadiness(
 		authService,
 		profileService,
 		privacyService,
@@ -91,6 +97,7 @@ func main() {
 		mediaService,
 		searchService,
 		leaderboardService,
+		readinessChecker,
 	)
 
 	server := &http.Server{

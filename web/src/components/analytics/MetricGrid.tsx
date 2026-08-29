@@ -33,12 +33,13 @@ function formatPercentage(val: string | null | undefined): string | null {
   return `${pct}%`;
 }
 
-function formatCost(amount: string | null | undefined, currency = 'USD'): string | null {
+function formatCost(amount: string | null | undefined, currency: string | null | undefined = 'USD'): string | null {
   if (!amount) return null;
   const num = parseFloat(amount);
   if (isNaN(num)) return null;
+  const curr = currency || 'USD';
   const formatted = num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return currency === 'USD' ? `$${formatted}` : `${formatted} ${currency}`;
+  return curr === 'USD' ? `$${formatted}` : `${formatted} ${curr}`;
 }
 
 export const MetricGrid: React.FC<MetricGridProps> = ({ metrics }) => {
@@ -58,7 +59,7 @@ export const MetricGrid: React.FC<MetricGridProps> = ({ metrics }) => {
       <MetricCard
         label={t('metrics.totalTokens')}
         value={formatNumber(metrics.totalTokens?.value)}
-        hint={metrics.totalTokens?.change || '▲ Exact + Derived'}
+        hint={metrics.totalTokens?.change || t('metrics.exactDerived')}
         supported={metrics.totalTokens?.supported}
       />
 
@@ -82,7 +83,7 @@ export const MetricGrid: React.FC<MetricGridProps> = ({ metrics }) => {
       <MetricCard
         label={t('metrics.inputContextTokens')}
         value={formatNumber(metrics.inputContextTokens?.value)}
-        hint="Prompt + Cache Read"
+        hint={t('metrics.inputContextHint')}
         supported={metrics.inputContextTokens?.supported}
       />
 
@@ -90,7 +91,7 @@ export const MetricGrid: React.FC<MetricGridProps> = ({ metrics }) => {
       <MetricCard
         label={t('metrics.outputTokens')}
         value={formatNumber(metrics.outputTokens?.value)}
-        hint="Completion Tokens"
+        hint={t('metrics.outputTokensHint')}
         supported={metrics.outputTokens?.supported}
       />
 
@@ -98,7 +99,7 @@ export const MetricGrid: React.FC<MetricGridProps> = ({ metrics }) => {
       <MetricCard
         label={t('metrics.cacheHitRate')}
         value={formatPercentage(metrics.cacheHitRate?.value)}
-        hint="Cache Read Ratio"
+        hint={t('metrics.cacheHitRateHint')}
         supported={metrics.cacheHitRate?.supported}
       />
 
@@ -114,7 +115,7 @@ export const MetricGrid: React.FC<MetricGridProps> = ({ metrics }) => {
       <MetricCard
         label={t('metrics.messageCount')}
         value={formatNumber(metrics.messageCount?.value)}
-        hint="Turns Completed"
+        hint={t('metrics.messageCountHint')}
         supported={metrics.messageCount?.supported}
       />
 
@@ -122,7 +123,7 @@ export const MetricGrid: React.FC<MetricGridProps> = ({ metrics }) => {
       <MetricCard
         label={t('metrics.userMessageCount')}
         value={formatNumber(metrics.userMessageCount?.value)}
-        hint="User Triggers"
+        hint={t('metrics.userMessageCountHint')}
         supported={metrics.userMessageCount?.supported}
       />
     </div>

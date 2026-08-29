@@ -32,7 +32,7 @@ export const ExportsSettingsPage: React.FC = () => {
       setLoading(true);
       setError(null);
       const res = await api.getExports();
-      setJobs(res.jobs || []);
+      setJobs(res.exports || res.jobs || []);
     } catch (err) {
       setError(err instanceof ApiError ? err : new Error(String(err)));
     } finally {
@@ -78,7 +78,7 @@ export const ExportsSettingsPage: React.FC = () => {
   const handleRequestAccountDeletion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (confirmHandle !== user?.handle && confirmHandle !== user?.displayName) {
-      showToast('Handle confirmation does not match', 'error');
+      showToast(t('settings.handleMismatch'), 'error');
       return;
     }
 
@@ -130,7 +130,9 @@ export const ExportsSettingsPage: React.FC = () => {
           }}
         >
           <div>
-            <strong style={{ color: 'var(--danger)', fontSize: 13 }}>⚠️ Account Deletion Pending</strong>
+            <strong style={{ color: 'var(--danger)', fontSize: 13 }}>
+              {t('settings.deletionPendingTitle')}
+            </strong>
             <p style={{ fontSize: 12, color: 'var(--danger)', margin: '4px 0 0' }}>
               {t('settings.deletionPendingBanner', {
                 date: activeDeletion.cancelBefore
@@ -161,53 +163,61 @@ export const ExportsSettingsPage: React.FC = () => {
 
         {jobs.length === 0 ? (
           <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>
-            No export jobs generated yet
+            {t('settings.noExports')}
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {jobs.map((job) => (
-              <div
-                key={job.exportId}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: '14px 16px',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: 'var(--bg-subtle)',
-                  border: '1px solid var(--border-light)',
-                }}
-              >
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <strong style={{ fontSize: 13 }}>CSV Export ({job.scope})</strong>
-                    <Badge
-                      variant={
-                        job.jobStatus === 'completed'
-                          ? 'good'
-                          : job.jobStatus === 'pending' || job.jobStatus === 'running'
-                          ? 'warning'
-                          : 'danger'
-                      }
-                    >
-                      {job.jobStatus}
-                    </Badge>
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                    Created: {new Date(job.createdAt).toLocaleString()}
-                    {job.fileSizeBytes && ` · ${(job.fileSizeBytes / 1024).toFixed(1)} KB`}
-                  </div>
-                </div>
+            {jobs.map((job) => {
+              const scopeName = job.exportScope || job.scope || 'all_aggregates';
+              const formatName = (job.exportFormat || job.format || 'csv').toUpperCase();
+              const sizeInBytes = job.fileSize ?? job.fileSizeBytes;
 
-                <div>
-                  {job.jobStatus === 'completed' && (
-                    <Button variant="outline" size="sm" onClick={() => handleDownload(job.exportId)}>
-                      ↓ {t('settings.downloadFile')}
-                    </Button>
-                  )}
+              return (
+                <div
+                  key={job.exportId}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '14px 16px',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: 'var(--bg-subtle)',
+                    border: '1px solid var(--border-light)',
+                  }}
+                >
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <strong style={{ fontSize: 13 }}>
+                        {formatName} {t('settings.csvExport')} ({scopeName})
+                      </strong>
+                      <Badge
+                        variant={
+                          job.jobStatus === 'completed'
+                            ? 'good'
+                            : job.jobStatus === 'pending' || job.jobStatus === 'running'
+                            ? 'warning'
+                            : 'danger'
+                        }
+                      >
+                        {job.jobStatus}
+                      </Badge>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                      {t('settings.created')}: {new Date(job.createdAt).toLocaleString()}
+                      {sizeInBytes !== undefined && sizeInBytes !== null && ` · ${(sizeInBytes / 1024).toFixed(1)} KB`}
+                    </div>
+                  </div>
+
+                  <div>
+                    {job.jobStatus === 'completed' && (
+                      <Button variant="outline" size="sm" onClick={() => handleDownload(job.exportId)}>
+                        ↓ {t('settings.downloadFile')}
+                      </Button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -245,26 +255,27 @@ export const ExportsSettingsPage: React.FC = () => {
               variant="danger"
               onClick={handleRequestAccountDeletion}
               loading={submittingDelete}
-              disabled={!confirmHandle}
+              disabled={confirmHandle !== user?.handle && confirmHandle !== user?.displayName}
             >
               {t('settings.requestDeletion')}
             </Button>
           </div>
         }
       >
-        <div style={{ padding: '8px 0' }}>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 16 }}>
-            {t('settings.deletionModalDesc')}
-          </p>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 16 }}>
+          {t('settings.deletionModalDesc')}
+        </p>
 
+        <form onSubmit={handleRequestAccountDeletion}>
           <Input
             label={t('settings.deletionConfirmationPrompt')}
-            placeholder={user?.handle || 'your-handle'}
+            placeholder={user?.handle || 'username'}
             value={confirmHandle}
             onChange={(e) => setConfirmHandle(e.target.value)}
+            required
             autoFocus
           />
-        </div>
+        </form>
       </Modal>
     </div>
   );

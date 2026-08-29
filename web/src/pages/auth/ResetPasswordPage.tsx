@@ -14,6 +14,7 @@ export const ResetPasswordPage: React.FC = () => {
   const [searchParams] = useSearchParams();
 
   const initialEmail = searchParams.get('email') || '';
+  const rawReturnTo = searchParams.get('return_to');
 
   const [email, setEmail] = useState(initialEmail);
   const [code, setCode] = useState('');
@@ -38,7 +39,8 @@ export const ResetPasswordPage: React.FC = () => {
       setErrorMessage(null);
       await api.resetPassword({ email, code, newPassword });
       showToast(t('auth.resetSuccess'), 'success');
-      navigate('/login');
+      const target = rawReturnTo ? `/login?return_to=${encodeURIComponent(rawReturnTo)}` : '/login';
+      navigate(target);
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(t(err.messageKey) || err.message);
@@ -133,7 +135,10 @@ export const ResetPasswordPage: React.FC = () => {
         </form>
 
         <div style={{ marginTop: 24, textAlign: 'center', fontSize: 12 }}>
-          <NavLink to="/login" style={{ color: 'var(--text-muted)' }}>
+          <NavLink
+            to={rawReturnTo ? `/login?return_to=${encodeURIComponent(rawReturnTo)}` : '/login'}
+            style={{ color: 'var(--text-muted)' }}
+          >
             ← {t('auth.signInLink')}
           </NavLink>
         </div>
