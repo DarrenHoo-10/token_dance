@@ -57,6 +57,6 @@ Reviewer `01a04eb7-211a-7211-aef1-bf2bb62d0602`（`sol-medium`）拒绝集成，
 
 ## 最终 reviewer 结论
 
-Reviewer `01a04f8a-836a-7581-907c-29381bd1a6f1` 使用 `sol-medium` 对 `b0f3762` 完成最终复审，结论为 **Approved for integration，0 个 open issue**。复审确认不可变且 scope-aware 的排行榜新快照、即时历史排名、迁移重放、metadata 白名单、签名 ingest、fenced deletion、Provider、独立密钥环、稳定 CSRF、OpenAPI/sqlc、非 UTC 边界、Web payload 与中英文均保持通过。
+Reviewer `01a04f8a-836a-7581-907c-29381bd1a6f1` 使用 `sol-medium` 对 `b0f3762` 完成复审并给出 0 个 open issue。随后真实 API smoke 发现 deletion status 对 nullable JSON 的 sqlc 扫描问题并修复；Reviewer `01a04f98-d6a0-74d1-8901-bc2275e114c5` 再次使用 `sol-medium` 对 `13d4845` 完成最终复审，结论为 **Approved，0 个 open issue**。复审确认不可变且 scope-aware 的排行榜新快照、即时历史排名、迁移重放、metadata 白名单、签名 ingest、fenced deletion、Provider、独立密钥环、稳定 CSRF、OpenAPI/sqlc、非 UTC 边界、Web payload、中英文和 owner-scoped deletion status 均保持通过。
 
 后续集成、复审、fallback 和最终 reviewer 结论继续追加到本文件。
