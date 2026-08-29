@@ -311,6 +311,193 @@ func TestDeletionDatabaseAndObjectFailureInjectionRetainsRetryableState(t *testi
 	})
 }
 
+func TestRebuildPublishedLeaderboardsCreatesImmutableScopedMetricRevisionsMySQL8034(t *testing.T) {
+	db := getTestMySQLDB(t)
+	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
+	defer func() {
+		_, _ = db.Exec("SELECT RELEASE_LOCK('tokendance_global_test_lock')")
+		db.Close()
+	}()
+	resetDeletionTestSchema(t, db)
+
+	ctx := context.Background()
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	windowStart := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	windowEnd := time.Date(2026, 8, 31, 0, 0, 0, 0, time.UTC)
+	publicA := "usr_lb_public_a"
+	publicB := "usr_lb_public_b"
+	teamUser := "usr_lb_team_member"
+	privateUser := "usr_lb_private_owner"
+	for _, user := range []struct {
+		id, handle, visibility string
+	}{
+		{publicA, "metric_a", "public"},
+		{publicB, "metric_b", "public"},
+		{teamUser, "team_member", "team"},
+		{privateUser, "private_owner", "private"},
+	} {
+		seedDeletionUser(t, db, user.id, "active")
+		if _, err := db.Exec(`UPDATE users SET handle = ?, display_name = ?, leaderboard_visibility = ? WHERE user_id = ?`, user.handle, user.handle, user.visibility, user.id); err != nil {
+			t.Fatalf("seed leaderboard user %s: %v", user.id, err)
+		}
+		if user.visibility == "public" {
+			if _, err := db.Exec(`INSERT INTO user_privacy_settings (user_id, public_profile_enabled) VALUES (?, TRUE)`, user.id); err != nil {
+				t.Fatalf("seed public privacy: %v", err)
+			}
+			if _, err := db.Exec(`INSERT INTO public_user_profiles (user_id, handle, display_name, profile_status, source_profile_version, source_privacy_version, published_at) VALUES (?, ?, ?, 'published', 1, 1, ?)`, user.id, user.handle, user.handle, now); err != nil {
+				t.Fatalf("seed public profile: %v", err)
+			}
+		}
+	}
+
+	seedMetrics := func(userID string, tokens, cost, codeLines, messages, duration, sessions, turns, tools, skills interface{}) {
+		t.Helper()
+		_, err := db.Exec(`
+			INSERT INTO daily_user_agent_metrics (
+				metric_date, user_id, agent_id, exact_token_total, derived_token_total,
+				session_count, interaction_turn_count, tool_call_count, skill_use_count,
+				code_generated_lines, cost_amount, source_max_event_pk, aggregation_version,
+				computed_at, updated_at, active_duration_ms, message_count
+			) VALUES ('2026-08-10', ?, 'agent', ?, 0, ?, ?, ?, ?, ?, ?, 99, 2, ?, ?, ?, ?)`,
+			userID, tokens, sessions, turns, tools, skills, codeLines, cost, now, now, duration, messages)
+		if err != nil {
+			t.Fatalf("seed metrics for %s: %v", userID, err)
+		}
+	}
+	seedMetrics(publicA, 30, 1.25, 40, 5, 600, 2, 3, 4, 6)
+	seedMetrics(publicB, 10, 0.25, 10, 1, 100, 1, 1, 1, 1)
+	seedMetrics(teamUser, 900, 9, 900, 90, 9000, 9, 9, 9, 9)
+	seedMetrics(privateUser, 800, 8, 800, 80, 8000, 8, 8, 8, 8)
+
+	metrics := map[string]string{
+		"tokens": "30.000000", "cost": "1.250000", "code_lines": "40.000000",
+		"messages": "5.000000", "duration": "600.000000", "sessions": "2.000000",
+		"turns": "3.000000", "tools": "4.000000", "skills": "6.000000",
+	}
+	oldSnapshots := make(map[string]string, len(metrics))
+	for metric := range metrics {
+		oldID := "snp_old_" + metric
+		oldSnapshots[metric] = oldID
+		if _, err := db.Exec(`
+			INSERT INTO leaderboard_snapshots (
+				snapshot_id, board_key, scope_type, scope_key, metric_key, window_start, window_end,
+				timezone_name, ranking_rule_version, participant_count, source_max_event_pk,
+				data_watermark_at, snapshot_status, generated_at, published_at
+			) VALUES (?, ?, 'global', 'global', ?, ?, ?, 'UTC', 7, 2, 50, ?, 'published', ?, ?)`,
+			oldID, "board_"+metric, metric, windowStart, windowEnd, now.Add(-time.Hour), now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
+			t.Fatalf("seed %s snapshot: %v", metric, err)
+		}
+		if _, err := db.Exec(`
+			INSERT INTO leaderboard_entries (
+				snapshot_id, rank_no, user_id, metric_value, previous_rank_no, display_name_snapshot
+			) VALUES (?, 1, ?, 10, 1, 'metric_b'), (?, 2, ?, 20, 3, 'metric_a')`,
+			oldID, publicB, oldID, publicA); err != nil {
+			t.Fatalf("seed %s entries: %v", metric, err)
+		}
+	}
+
+	for _, scoped := range []struct {
+		id, board, scopeType, scopeKey, userID string
+	}{
+		{"snp_old_team", "board_team", "team", "team_alpha", teamUser},
+		{"snp_old_private", "board_private", "private", privateUser, privateUser},
+	} {
+		if _, err := db.Exec(`
+			INSERT INTO leaderboard_snapshots (
+				snapshot_id, board_key, scope_type, scope_key, metric_key, window_start, window_end,
+				timezone_name, ranking_rule_version, participant_count, source_max_event_pk,
+				data_watermark_at, snapshot_status, generated_at, published_at
+			) VALUES (?, ?, ?, ?, 'tokens', ?, ?, 'UTC', 3, 1, 50, ?, 'published', ?, ?)`,
+			scoped.id, scoped.board, scoped.scopeType, scoped.scopeKey, windowStart, windowEnd, now.Add(-time.Hour), now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
+			t.Fatalf("seed %s snapshot: %v", scoped.scopeType, err)
+		}
+		if _, err := db.Exec(`INSERT INTO leaderboard_entries (snapshot_id, rank_no, user_id, metric_value, previous_rank_no, display_name_snapshot) VALUES (?, 1, ?, 1, 2, ?)`, scoped.id, scoped.userID, scoped.scopeType+" user"); err != nil {
+			t.Fatalf("seed %s entry: %v", scoped.scopeType, err)
+		}
+	}
+
+	if _, err := db.Exec(`UPDATE user_privacy_settings SET public_profile_enabled = FALSE WHERE user_id = ?`, publicB); err != nil {
+		t.Fatalf("disable current public visibility before rebuild: %v", err)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("begin leaderboard rebuild: %v", err)
+	}
+	if err := rebuildPublishedLeaderboards(ctx, tx, []string{"2026-08-10"}, now); err != nil {
+		tx.Rollback()
+		t.Fatalf("rebuild published leaderboards: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit leaderboard rebuild: %v", err)
+	}
+
+	for metric, expected := range metrics {
+		oldID := oldSnapshots[metric]
+		var oldStatus string
+		var oldCount int
+		if err := db.QueryRow(`SELECT snapshot_status, (SELECT COUNT(*) FROM leaderboard_entries WHERE snapshot_id = ?) FROM leaderboard_snapshots WHERE snapshot_id = ?`, oldID, oldID).Scan(&oldStatus, &oldCount); err != nil {
+			t.Fatalf("read immutable old %s snapshot: %v", metric, err)
+		}
+		if oldStatus != "superseded" || oldCount != 2 {
+			t.Fatalf("old %s snapshot mutated: status=%s entries=%d", metric, oldStatus, oldCount)
+		}
+		var oldWinner, oldRunnerUp string
+		var oldWinnerValue, oldRunnerUpValue string
+		if err := db.QueryRow(`SELECT user_id, metric_value FROM leaderboard_entries WHERE snapshot_id = ? ORDER BY rank_no LIMIT 1 OFFSET 0`, oldID).Scan(&oldWinner, &oldWinnerValue); err != nil {
+			t.Fatalf("page one immutable old %s snapshot: %v", metric, err)
+		}
+		if err := db.QueryRow(`SELECT user_id, metric_value FROM leaderboard_entries WHERE snapshot_id = ? ORDER BY rank_no LIMIT 1 OFFSET 1`, oldID).Scan(&oldRunnerUp, &oldRunnerUpValue); err != nil {
+			t.Fatalf("page two immutable old %s snapshot: %v", metric, err)
+		}
+		if oldWinner != publicB || oldWinnerValue != "10.000000" || oldRunnerUp != publicA || oldRunnerUpValue != "20.000000" {
+			t.Fatalf("old %s pages changed: %s/%s then %s/%s", metric, oldWinner, oldWinnerValue, oldRunnerUp, oldRunnerUpValue)
+		}
+
+		var newID, scopeType, scopeKey, status string
+		var ruleVersion uint32
+		var participantCount uint32
+		if err := db.QueryRow(`
+			SELECT snapshot_id, scope_type, scope_key, snapshot_status, ranking_rule_version, participant_count
+			FROM leaderboard_snapshots
+			WHERE board_key = ? AND metric_key = ? AND snapshot_status = 'published'`, "board_"+metric, metric).
+			Scan(&newID, &scopeType, &scopeKey, &status, &ruleVersion, &participantCount); err != nil {
+			t.Fatalf("read new %s snapshot: %v", metric, err)
+		}
+		if newID == oldID || scopeType != "global" || scopeKey != "global" || status != "published" || ruleVersion != 8 || participantCount != 1 {
+			t.Fatalf("invalid new %s snapshot: id=%s scope=%s/%s status=%s rule=%d participants=%d", metric, newID, scopeType, scopeKey, status, ruleVersion, participantCount)
+		}
+		var winner, value string
+		var previousRank sql.NullInt32
+		if err := db.QueryRow(`SELECT user_id, metric_value, previous_rank_no FROM leaderboard_entries WHERE snapshot_id = ? AND rank_no = 1`, newID).Scan(&winner, &value, &previousRank); err != nil {
+			t.Fatalf("read new %s winner: %v", metric, err)
+		}
+		if winner != publicA || value != expected || !previousRank.Valid || previousRank.Int32 != 2 {
+			t.Fatalf("new %s entry mismatch: user=%s value=%s previous=%v", metric, winner, value, previousRank)
+		}
+	}
+
+	for _, scoped := range []struct {
+		board, scopeType, scopeKey, expectedUser string
+	}{
+		{"board_team", "team", "team_alpha", teamUser},
+		{"board_private", "private", privateUser, privateUser},
+	} {
+		var newID, gotScope, gotKey string
+		if err := db.QueryRow(`SELECT snapshot_id, scope_type, scope_key FROM leaderboard_snapshots WHERE board_key = ? AND snapshot_status = 'published'`, scoped.board).Scan(&newID, &gotScope, &gotKey); err != nil {
+			t.Fatalf("read rebuilt %s scope: %v", scoped.scopeType, err)
+		}
+		var count int
+		var onlyUser string
+		if err := db.QueryRow(`SELECT COUNT(*), MIN(user_id) FROM leaderboard_entries WHERE snapshot_id = ?`, newID).Scan(&count, &onlyUser); err != nil {
+			t.Fatalf("read rebuilt %s entries: %v", scoped.scopeType, err)
+		}
+		if gotScope != scoped.scopeType || gotKey != scoped.scopeKey || count != 1 || onlyUser != scoped.expectedUser {
+			t.Fatalf("%s scope leaked participants: scope=%s/%s count=%d user=%s", scoped.scopeType, gotScope, gotKey, count, onlyUser)
+		}
+	}
+}
+
 func TestDeletionInstallationTwoInstallationGoldenMetricsAndLeaderboardMySQL8034(t *testing.T) {
 	db := getTestMySQLDB(t)
 	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
@@ -462,12 +649,34 @@ func TestDeletionInstallationTwoInstallationGoldenMetricsAndLeaderboardMySQL8034
 	}
 
 	assertGolden("after", 0, 200, 300, 100, 60, 20, 20, 1000, 2, 0, 20, 7, "0.50000000")
+	var oldStatus string
+	var oldWinner, oldRunnerUp string
+	if err := db.QueryRow(`SELECT snapshot_status FROM leaderboard_snapshots WHERE snapshot_id = 'snp_golden_install_delete'`).Scan(&oldStatus); err != nil {
+		t.Fatalf("read old installation-deletion snapshot status: %v", err)
+	}
+	if err := db.QueryRow(`SELECT user_id FROM leaderboard_entries WHERE snapshot_id = 'snp_golden_install_delete' AND rank_no = 1`).Scan(&oldWinner); err != nil {
+		t.Fatalf("read immutable old installation-deletion winner: %v", err)
+	}
+	if err := db.QueryRow(`SELECT user_id FROM leaderboard_entries WHERE snapshot_id = 'snp_golden_install_delete' AND rank_no = 2`).Scan(&oldRunnerUp); err != nil {
+		t.Fatalf("read immutable old installation-deletion runner-up: %v", err)
+	}
+	if oldStatus != "superseded" || oldWinner != userID || oldRunnerUp != competitorID {
+		t.Fatalf("installation deletion mutated old snapshot: status=%s winner=%s runnerUp=%s", oldStatus, oldWinner, oldRunnerUp)
+	}
+
+	var newSnapshotID string
+	if err := db.QueryRow(`SELECT snapshot_id FROM leaderboard_snapshots WHERE board_key = 'global' AND metric_key = 'tokens' AND snapshot_status = 'published'`).Scan(&newSnapshotID); err != nil {
+		t.Fatalf("read installation-deletion published revision: %v", err)
+	}
+	if newSnapshotID == "snp_golden_install_delete" {
+		t.Fatal("installation deletion did not publish a new snapshot id")
+	}
 	var firstUser, secondUser string
 	var firstValue, secondValue string
-	if err := db.QueryRow(`SELECT user_id, metric_value FROM leaderboard_entries WHERE snapshot_id = 'snp_golden_install_delete' AND rank_no = 1`).Scan(&firstUser, &firstValue); err != nil {
+	if err := db.QueryRow(`SELECT user_id, metric_value FROM leaderboard_entries WHERE snapshot_id = ? AND rank_no = 1`, newSnapshotID).Scan(&firstUser, &firstValue); err != nil {
 		t.Fatalf("read rebuilt leaderboard winner: %v", err)
 	}
-	if err := db.QueryRow(`SELECT user_id, metric_value FROM leaderboard_entries WHERE snapshot_id = 'snp_golden_install_delete' AND rank_no = 2`).Scan(&secondUser, &secondValue); err != nil {
+	if err := db.QueryRow(`SELECT user_id, metric_value FROM leaderboard_entries WHERE snapshot_id = ? AND rank_no = 2`, newSnapshotID).Scan(&secondUser, &secondValue); err != nil {
 		t.Fatalf("read rebuilt leaderboard runner-up: %v", err)
 	}
 	if firstUser != competitorID || firstValue != "250.000000" || secondUser != userID || secondValue != "200.000000" {
