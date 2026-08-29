@@ -8,6 +8,7 @@ build/
 
 # Testing
 coverage/
+web/e2e/artifacts/
 
 # Environment and logs
 *.log
