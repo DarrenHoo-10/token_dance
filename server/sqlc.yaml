@@ -1,0 +1,16 @@
+version: "2"
+sql:
+  - engine: "mysql"
+    schema:
+      - "db/migrations/0001_tokendance_server.sql"
+      - "db/migrations/0002_tokendance_user_system.sql"
+      - "db/migrations/0003_tokendance_analytics_extensions.sql"
+      - "db/migrations/0004_deletion_workflow_fencing.sql"
+    queries: "db/queries"
+    gen:
+      go:
+        package: "sqlcgen"
+        out: "internal/store/sqlcgen"
+        sql_package: "database/sql"
+        emit_json_tags: true
+        emit_empty_slices: true

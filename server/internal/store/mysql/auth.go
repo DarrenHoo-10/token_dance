@@ -11,6 +11,7 @@ import (
 
 	"tokendance/internal/domain"
 	"tokendance/internal/store"
+	"tokendance/internal/store/sqlcgen"
 )
 
 type authStore struct {
@@ -488,43 +489,7 @@ func (s *authStore) FindUserByEmailHash(ctx context.Context, emailLookupHash [32
 }
 
 func (s *authStore) FindUserByID(ctx context.Context, userID string) (*domain.User, error) {
-	query := `
-		SELECT user_id, auth_subject_hash, email_lookup_hash, email_ciphertext,
-		       handle, email_verified_at, display_name, avatar_url, avatar_object_id,
-		       bio, account_status, leaderboard_visibility, timezone_name, locale,
-		       onboarding_completed_at, profile_version, public_profile_updated_at,
-		       created_at, updated_at, deleted_at
-		FROM users
-		WHERE user_id = ?
-		LIMIT 1`
-
-	var u domain.User
-	var authSubHash, emailHash []byte
-	var handle, avatarURL, avatarObjID, bio sql.NullString
-	var emailVerifiedAt, onboardingCompletedAt, publicProfileUpdatedAt, deletedAt sql.NullTime
-
-	err := s.db.QueryRowContext(ctx, query, userID).Scan(
-		&u.UserID,
-		&authSubHash,
-		&emailHash,
-		&u.EmailCiphertext,
-		&handle,
-		&emailVerifiedAt,
-		&u.DisplayName,
-		&avatarURL,
-		&avatarObjID,
-		&bio,
-		&u.AccountStatus,
-		&u.LeaderboardVisibility,
-		&u.TimezoneName,
-		&u.Locale,
-		&onboardingCompletedAt,
-		&u.ProfileVersion,
-		&publicProfileUpdatedAt,
-		&u.CreatedAt,
-		&u.UpdatedAt,
-		&deletedAt,
-	)
+	row, err := sqlcgen.New(s.db).GetUserByID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, domain.ErrNotFound
@@ -532,18 +497,37 @@ func (s *authStore) FindUserByID(ctx context.Context, userID string) (*domain.Us
 		return nil, fmt.Errorf("failed to query user by ID: %w", err)
 	}
 
-	u.AuthSubjectHash = scanBytes32(authSubHash)
-	u.EmailLookupHash = scanBytes32Ptr(emailHash)
-	u.Handle = ptrFromNullString(handle)
-	u.EmailVerifiedAt = ptrFromNullTime(emailVerifiedAt)
-	u.AvatarURL = ptrFromNullString(avatarURL)
-	u.AvatarObjectID = ptrFromNullString(avatarObjID)
-	u.Bio = ptrFromNullString(bio)
-	u.OnboardingCompletedAt = ptrFromNullTime(onboardingCompletedAt)
-	u.PublicProfileUpdatedAt = ptrFromNullTime(publicProfileUpdatedAt)
-	u.DeletedAt = ptrFromNullTime(deletedAt)
+	var emailLookupHash []byte
+	if row.EmailLookupHash.Valid {
+		emailLookupHash = []byte(row.EmailLookupHash.String)
+	}
+	var emailCiphertext []byte
+	if row.EmailCiphertext.Valid {
+		emailCiphertext = []byte(row.EmailCiphertext.String)
+	}
 
-	return &u, nil
+	return &domain.User{
+		UserID:                 row.UserID,
+		AuthSubjectHash:        scanBytes32(row.AuthSubjectHash),
+		EmailLookupHash:        scanBytes32Ptr(emailLookupHash),
+		EmailCiphertext:        emailCiphertext,
+		Handle:                 ptrFromNullString(row.Handle),
+		EmailVerifiedAt:        ptrFromNullTime(row.EmailVerifiedAt),
+		DisplayName:            row.DisplayName,
+		AvatarURL:              ptrFromNullString(row.AvatarUrl),
+		AvatarObjectID:         ptrFromNullString(row.AvatarObjectID),
+		Bio:                    ptrFromNullString(row.Bio),
+		AccountStatus:          domain.AccountStatus(row.AccountStatus),
+		LeaderboardVisibility:  domain.LeaderboardVisibility(row.LeaderboardVisibility),
+		TimezoneName:           row.TimezoneName,
+		Locale:                 row.Locale,
+		OnboardingCompletedAt:  ptrFromNullTime(row.OnboardingCompletedAt),
+		ProfileVersion:         row.ProfileVersion,
+		PublicProfileUpdatedAt: ptrFromNullTime(row.PublicProfileUpdatedAt),
+		CreatedAt:              row.CreatedAt,
+		UpdatedAt:              row.UpdatedAt,
+		DeletedAt:              ptrFromNullTime(row.DeletedAt),
+	}, nil
 }
 
 func (s *authStore) RecordLoginFailure(ctx context.Context, userID string, failedCount uint16, lockedUntil *time.Time, event domain.UserSecurityEvent) error {
