@@ -81,7 +81,7 @@ func (w *Worker) ProcessOutbox(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
-	now := w.clk.Now()
+	now := w.clk.Now().Truncate(time.Millisecond)
 	leaseExpiry := now.Add(-1 * time.Minute)
 
 	// Step 1: Claim pending or stale sending emails with lease
@@ -93,9 +93,9 @@ func (w *Worker) ProcessOutbox(ctx context.Context) (int, error) {
 		    attempt_count = attempt_count + 1,
 		    updated_at = ?
 		WHERE (
-		    (delivery_status = 'pending' AND next_attempt_at <= ? AND (locked_at IS NULL OR locked_at < ?))
+		    (delivery_status = 'pending' AND next_attempt_at <= ? AND (locked_at IS NULL OR locked_at <= ?))
 		    OR
-		    (delivery_status = 'sending' AND (locked_at IS NULL OR locked_at < ?))
+		    (delivery_status = 'sending' AND (locked_at IS NULL OR locked_at <= ?))
 		)
 		ORDER BY created_at ASC
 		LIMIT 10`
@@ -157,9 +157,11 @@ func (w *Worker) ProcessOutbox(ctx context.Context) (int, error) {
 			&item.attemptCount,
 			&item.nextAttemptAt,
 			&item.expiresAt,
-		); err == nil {
-			items = append(items, item)
+		); err != nil {
+			log.Printf("[Worker %s] scan outbox row error: %v", w.workerID, err)
+			continue
 		}
+		items = append(items, item)
 	}
 	rows.Close()
 
@@ -219,7 +221,7 @@ func (w *Worker) ProcessOutbox(ctx context.Context) (int, error) {
 				SET delivery_status = 'sent',
 				    sent_at = ?,
 				    provider_message_id = ?,
-				    payload_ciphertext = 0x,
+				    payload_ciphertext = '',
 				    last_error_code = NULL,
 				    locked_at = NULL,
 				    locked_by = NULL,

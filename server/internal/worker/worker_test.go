@@ -84,7 +84,8 @@ func TestWorker_EmailOutboxWithProvider_RetryAndExpiry(t *testing.T) {
 	storage := provider.NewMemoryObjectStorage("")
 	w := NewWorkerWithFull(db, clk, nil, mockProv, storage)
 
-	now := clk.Now()
+	// Seed outbox item with truncated time to avoid sub-millisecond roundoff
+	now := clk.Now().Truncate(time.Millisecond)
 	emailID := "emb_retry_01"
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO email_outbox (
@@ -149,7 +150,7 @@ func TestWorker_EmailOutbox_CrashTakeoverAndFencing(t *testing.T) {
 		t.Fatalf("failed to run migrations: %v", err)
 	}
 
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Millisecond)
 	clk := clock.NewMockClock(now)
 	liveSink := email.NewDeliverySink()
 	storage := provider.NewMemoryObjectStorage("")
