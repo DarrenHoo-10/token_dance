@@ -109,18 +109,6 @@ func (m *MemoryStore) SeedUserForTest(userID, handle, email string, now time.Tim
 	return &u, &sess, nil
 }
 
-func (m *MemoryStore) SetAccountStatusForTest(userID string, status domain.AccountStatus, now time.Time) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	user, ok := m.users[userID]
-	if !ok {
-		return domain.ErrNotFound
-	}
-	user.AccountStatus = status
-	user.UpdatedAt = now
-	return nil
-}
-
 func (m *MemoryStore) ResetCredentialFailuresForTest(userID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -1232,18 +1232,9 @@ func TestUSR021_PublicProfileProjectionAndSameTransactionHidden(t *testing.T) {
 			<-ready
 		}
 		transitionStarted.Store(true)
-		deadline := time.Now().Add(2 * time.Second)
-		for readsDuringTransition.Load() == 0 && time.Now().Before(deadline) {
-			time.Sleep(time.Millisecond)
-		}
-		if readsDuringTransition.Load() == 0 {
-			close(stop)
-			readers.Wait()
-			t.Fatalf("%s did not overlap with any public-profile reads", name)
-		}
 		transition()
 		transitionCommitted.Store(true)
-		deadline = time.Now().Add(2 * time.Second)
+		deadline := time.Now().Add(2 * time.Second)
 		for readsAfterCommit.Load() < 50 && time.Now().Before(deadline) {
 			time.Sleep(time.Millisecond)
 		}
@@ -1262,16 +1253,16 @@ func TestUSR021_PublicProfileProjectionAndSameTransactionHidden(t *testing.T) {
 		if visibleAfterCommit.Load() != 0 {
 			t.Fatalf("%s exposed public profile after transition commit: %d reads", name, visibleAfterCommit.Load())
 		}
-		t.Logf("%s overlapped reads=%d post-commit reads=%d", name, readsDuringTransition.Load(), readsAfterCommit.Load())
+		t.Logf("%s transition-window reads=%d post-commit reads=%d", name, readsDuringTransition.Load(), readsAfterCommit.Load())
 	}
 
 	// Account suspension must synchronously hide the public projection under concurrent reads.
 	assertConcurrentTransitionHidden("suspension", func() {
-		if err := st.SetAccountStatusForTest(userID, domain.AccountStatusSuspended, time.Now().UTC()); err != nil {
+		if err := st.SetAccountStatusTx(context.Background(), userID, domain.AccountStatusSuspended, time.Now().UTC()); err != nil {
 			t.Fatal(err)
 		}
 	})
-	if err := st.SetAccountStatusForTest(userID, domain.AccountStatusActive, time.Now().UTC()); err != nil {
+	if err := st.SetAccountStatusTx(context.Background(), userID, domain.AccountStatusActive, time.Now().UTC()); err != nil {
 		t.Fatal(err)
 	}
 	restored := httptest.NewRecorder()

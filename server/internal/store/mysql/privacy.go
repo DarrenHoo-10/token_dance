@@ -233,6 +233,51 @@ func (s *privacyStore) GetPublicProfileByHandle(ctx context.Context, handle stri
 	}, nil
 }
 
+func (s *privacyStore) SetAccountStatusTx(ctx context.Context, userID string, status domain.AccountStatus, now time.Time) error {
+	if status != domain.AccountStatusActive && status != domain.AccountStatusSuspended {
+		return domain.ErrInvalidArgument
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin account status transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var currentStatus string
+	if err := tx.QueryRowContext(ctx, "SELECT account_status FROM users WHERE user_id = ? FOR UPDATE", userID).Scan(&currentStatus); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain.ErrNotFound
+		}
+		return fmt.Errorf("lock account status: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE users SET account_status = ?, updated_at = ? WHERE user_id = ?", status, now, userID); err != nil {
+		return fmt.Errorf("update account status: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE public_user_profiles p
+		JOIN users u ON u.user_id = p.user_id
+		LEFT JOIN user_privacy_settings privacy ON privacy.user_id = p.user_id
+		SET p.profile_status = CASE
+				WHEN ? = 'active' AND u.onboarding_completed_at IS NOT NULL
+					AND COALESCE(privacy.public_profile_enabled, FALSE) = TRUE THEN 'published'
+				ELSE 'hidden'
+			END,
+			p.published_at = CASE
+				WHEN ? = 'active' AND u.onboarding_completed_at IS NOT NULL
+					AND COALESCE(privacy.public_profile_enabled, FALSE) = TRUE THEN ?
+				ELSE NULL
+			END,
+			p.projection_version = p.projection_version + 1,
+			p.updated_at = ?
+		WHERE p.user_id = ?`, status, status, now, now, userID); err != nil {
+		return fmt.Errorf("project account status: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit account status transaction: %w", err)
+	}
+	return nil
+}
+
 func (s *privacyStore) RequestDeletionTx(ctx context.Context, req domain.DataDeletionRequest, event domain.UserSecurityEvent, now time.Time) (*domain.DataDeletionRequest, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

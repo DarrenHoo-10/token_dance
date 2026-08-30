@@ -61,6 +61,7 @@ type PrivacyStore interface {
 	GetPrivacy(ctx context.Context, userID string) (*domain.UserPrivacySettings, error)
 	UpdatePrivacyTx(ctx context.Context, userID string, in domain.UserPrivacySettings, expectedVersion uint64, event domain.UserSecurityEvent, now time.Time) (*domain.UserPrivacySettings, error)
 	GetPublicProfileByHandle(ctx context.Context, handle string, now time.Time) (*domain.PublicUserProfile, error)
+	SetAccountStatusTx(ctx context.Context, userID string, status domain.AccountStatus, now time.Time) error
 	RequestDeletionTx(ctx context.Context, req domain.DataDeletionRequest, event domain.UserSecurityEvent, now time.Time) (*domain.DataDeletionRequest, error)
 	CancelDeletionTx(ctx context.Context, requestID string, userID string, now time.Time) error
 	GetDeletionRequest(ctx context.Context, requestID string, userID string) (*domain.DataDeletionRequest, error)

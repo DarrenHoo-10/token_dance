@@ -11,7 +11,37 @@ import (
 	"tokendance/internal/domain"
 )
 
-func TestMySQL_USR021_AccountDeletionAtomicallyHidesPublicProjection(t *testing.T) {
+func TestUSR021_MySQLAccountSuspensionAtomicallyHidesPublicProjection(t *testing.T) {
+	runUSR021MySQLAtomicHide(t, "suspension", func(ctx context.Context, st *Store, userID string, now time.Time) error {
+		return st.Privacy().SetAccountStatusTx(ctx, userID, domain.AccountStatusSuspended, now)
+	}, true)
+}
+
+func TestUSR021_MySQLAccountDeletionAtomicallyHidesPublicProjection(t *testing.T) {
+	runUSR021MySQLAtomicHide(t, "deletion", func(ctx context.Context, st *Store, userID string, now time.Time) error {
+		cancelBefore := now.Add(24 * time.Hour)
+		req := domain.DataDeletionRequest{
+			RequestID:       "del_usr021_mysql_atomic",
+			UserID:          &userID,
+			DeletionScope:   "account",
+			RequestStatus:   domain.DeletionStatusPending,
+			Phase:           "queued",
+			CancelBefore:    &cancelBefore,
+			RequestedAt:     now,
+			ScopeFilterJSON: map[string]interface{}{},
+		}
+		_, err := st.Privacy().RequestDeletionTx(ctx, req, domain.UserSecurityEvent{}, now)
+		return err
+	}, false)
+}
+
+func runUSR021MySQLAtomicHide(
+	t *testing.T,
+	transitionName string,
+	transition func(context.Context, *Store, string, time.Time) error,
+	restore bool,
+) {
+	t.Helper()
 	st, db, cleanup := getTestStore(t)
 	defer cleanup()
 
@@ -46,11 +76,11 @@ func TestMySQL_USR021_AccountDeletionAtomicallyHidesPublicProjection(t *testing.
 		t.Fatalf("seed public projection: %v", err)
 	}
 	if _, err := st.Privacy().GetPublicProfileByHandle(ctx, handle, now); err != nil {
-		t.Fatalf("published profile not readable before deletion: %v", err)
+		t.Fatalf("published profile not readable before %s: %v", transitionName, err)
 	}
 
-	// Hold the production transaction open while readers run. Uncommitted user/profile
-	// changes remain invisible; after commit no new read may observe the profile.
+	// Keep the shipped MySQL transaction open while readers run. Before commit they
+	// see the old state; every read started after commit must return ErrNotFound.
 	if _, err := db.ExecContext(ctx, `
 		CREATE TRIGGER usr021_delay_profile_hide
 		BEFORE UPDATE ON public_user_profiles
@@ -63,6 +93,7 @@ func TestMySQL_USR021_AccountDeletionAtomicallyHidesPublicProjection(t *testing.
 	var readsDuring atomic.Int64
 	var readsAfter atomic.Int64
 	var visibleAfter atomic.Int64
+	var unexpectedAfter atomic.Int64
 	ready := make(chan struct{}, 4)
 	stop := make(chan struct{})
 	var readers sync.WaitGroup
@@ -85,8 +116,11 @@ func TestMySQL_USR021_AccountDeletionAtomicallyHidesPublicProjection(t *testing.
 				}
 				if startedAfterCommit {
 					readsAfter.Add(1)
-					if err == nil {
+					switch {
+					case err == nil:
 						visibleAfter.Add(1)
+					case !errors.Is(err, domain.ErrNotFound):
+						unexpectedAfter.Add(1)
 					}
 				}
 			}
@@ -97,21 +131,10 @@ func TestMySQL_USR021_AccountDeletionAtomicallyHidesPublicProjection(t *testing.
 	}
 
 	transitionRunning.Store(true)
-	cancelBefore := now.Add(24 * time.Hour)
-	req := domain.DataDeletionRequest{
-		RequestID:       "del_usr021_mysql_atomic",
-		UserID:          &userID,
-		DeletionScope:   "account",
-		RequestStatus:   domain.DeletionStatusPending,
-		Phase:           "queued",
-		CancelBefore:    &cancelBefore,
-		RequestedAt:     now,
-		ScopeFilterJSON: map[string]interface{}{},
-	}
-	if _, err := st.Privacy().RequestDeletionTx(ctx, req, domain.UserSecurityEvent{}, now); err != nil {
+	if err := transition(ctx, st, userID, now); err != nil {
 		close(stop)
 		readers.Wait()
-		t.Fatalf("request account deletion: %v", err)
+		t.Fatalf("execute account %s: %v", transitionName, err)
 	}
 	transitionCommitted.Store(true)
 
@@ -123,16 +146,29 @@ func TestMySQL_USR021_AccountDeletionAtomicallyHidesPublicProjection(t *testing.
 	readers.Wait()
 
 	if readsDuring.Load() == 0 {
-		t.Fatal("production deletion transaction did not overlap a public-profile read")
+		t.Fatalf("production %s transaction did not overlap a public-profile read", transitionName)
 	}
 	if readsAfter.Load() < 50 {
-		t.Fatalf("insufficient post-commit reads: %d", readsAfter.Load())
+		t.Fatalf("insufficient post-commit reads after %s: %d", transitionName, readsAfter.Load())
 	}
 	if visibleAfter.Load() != 0 {
-		t.Fatalf("public profile visible after deletion commit in %d reads", visibleAfter.Load())
+		t.Fatalf("public profile visible after %s commit in %d reads", transitionName, visibleAfter.Load())
+	}
+	if unexpectedAfter.Load() != 0 {
+		t.Fatalf("post-commit %s reads returned %d errors other than ErrNotFound", transitionName, unexpectedAfter.Load())
 	}
 	if _, err := st.Privacy().GetPublicProfileByHandle(ctx, handle, time.Now().UTC()); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("expected hidden public projection after commit, got %v", err)
+		t.Fatalf("expected hidden public projection after %s commit, got %v", transitionName, err)
 	}
-	t.Logf("MySQL transaction overlapped reads=%d post-commit reads=%d", readsDuring.Load(), readsAfter.Load())
+
+	if restore {
+		restoredAt := now.Add(time.Second)
+		if err := st.Privacy().SetAccountStatusTx(ctx, userID, domain.AccountStatusActive, restoredAt); err != nil {
+			t.Fatalf("restore active account: %v", err)
+		}
+		if _, err := st.Privacy().GetPublicProfileByHandle(ctx, handle, restoredAt); err != nil {
+			t.Fatalf("active account did not republish enabled projection: %v", err)
+		}
+	}
+	t.Logf("MySQL %s transaction overlapped reads=%d post-commit ErrNotFound reads=%d", transitionName, readsDuring.Load(), readsAfter.Load())
 }

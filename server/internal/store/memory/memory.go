@@ -838,6 +838,34 @@ func (m *MemoryStore) GetPublicProfileByHandle(ctx context.Context, handle strin
 	return nil, domain.ErrNotFound
 }
 
+func (m *MemoryStore) SetAccountStatusTx(ctx context.Context, userID string, status domain.AccountStatus, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if status != domain.AccountStatusActive && status != domain.AccountStatusSuspended {
+		return domain.ErrInvalidArgument
+	}
+	u, ok := m.users[userID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	u.AccountStatus = status
+	u.UpdatedAt = now
+	if pub := m.publicProfiles[userID]; pub != nil {
+		privacy := m.privacySettings[userID]
+		if status == domain.AccountStatusActive && privacy != nil && privacy.PublicProfileEnabled && u.OnboardingCompletedAt != nil {
+			pub.ProfileStatus = domain.ProfileStatusPublished
+			pub.PublishedAt = &now
+		} else {
+			pub.ProfileStatus = domain.ProfileStatusHidden
+			pub.PublishedAt = nil
+		}
+		pub.ProjectionVersion++
+		pub.UpdatedAt = now
+	}
+	return nil
+}
+
 func (m *MemoryStore) RequestDeletionTx(ctx context.Context, req domain.DataDeletionRequest, event domain.UserSecurityEvent, now time.Time) (*domain.DataDeletionRequest, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
