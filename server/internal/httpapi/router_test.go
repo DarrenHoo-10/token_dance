@@ -102,10 +102,20 @@ func setupTestRouter(t *testing.T) (http.Handler, *auth.Service, *memory.MemoryS
 }
 
 func setupTestRouterWithConfig(t *testing.T, cfg *config.Config) (http.Handler, *auth.Service, *memory.MemoryStore) {
+	return setupTestRouterWithArgonMode(t, cfg, true)
+}
+
+func setupTestRouterWithProductionArgon(t *testing.T, cfg *config.Config) (http.Handler, *auth.Service, *memory.MemoryStore) {
+	return setupTestRouterWithArgonMode(t, cfg, false)
+}
+
+func setupTestRouterWithArgonMode(t *testing.T, cfg *config.Config, fast bool) (http.Handler, *auth.Service, *memory.MemoryStore) {
 	st := memory.NewMemoryStore()
-	cfg.Argon2MemoryKiB = 1024
-	cfg.Argon2Time = 1
-	cfg.Argon2Parallelism = 1
+	if fast {
+		cfg.Argon2MemoryKiB = 1024
+		cfg.Argon2Time = 1
+		cfg.Argon2Parallelism = 1
+	}
 
 	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	clk := clock.NewMockClock(now)

@@ -26,11 +26,11 @@
 | USR-018 | `TestUSR018_DeviceRevocationRejectsIngestMySQL` | MySQL row-lock boundary | revoke 后 ingest 授权返回 DEVICE_REVOKED |
 | USR-019 | `TestUSR019_ImmutablePublishedLeaderboardSnapshotsMySQL` | MySQL Worker | 新建 immutable revision，旧 snapshot 分页不变，scope 和全部指标正确 |
 | USR-020 | `TestUSR020_RedisUnavailablePreservesCorrectness` | HTTP + Redis 故障降级 | Redis 地址不可达时注册、Session、onboarding、隐私、公开查询和任务创建仍正确 |
-| USR-021 | `TestUSR021_PublicProfileProjectionAndSameTransactionHidden` | HTTP + Repository | projection version 单调，关闭路径同步 hidden，无私有字段 |
+| USR-021 | `TestUSR021_PublicProfileProjectionAndSameTransactionHidden`; `TestMySQL_USR021_AccountDeletionAtomicallyHidesPublicProjection` | HTTP + memory/MySQL production Repository | projection version 单调；suspend/delete 与并发公开读取重叠；真实 MySQL 删除事务提交后立即 hidden，无私有字段 |
 | USR-022 | `TestUSR022_AvatarValidationAndPixelBombProtection` | HTTP + Media service | MIME、大小、像素、owner、ready 状态验证 |
-| USR-023 | `TestUSR023_DevicePauseResumeRevokeLifecycle` | Device service | active→disabled→active→revoked 状态机与恢复限制 |
+| USR-023 | `TestUSR023_HTTPIngestPauseResumeRevokeLifecycle`; `TestUSR023_DevicePauseResumeRevokeLifecycle` | Signed HTTP ingest + Device service | active ingest 成功，pause 拒绝，resume 后成功，revoke 拒绝且不可恢复 |
 | USR-101 | `TestUSR101_ExportIdempotencyAndKeyRotationMySQL` | MySQL production Repository | 同 key/body 返回原任务，异 body 冲突，密钥轮换后仍幂等 |
-| USR-102 | `TestUSR102_ExportAuthorizationAndSignedURL` | Export service + ObjectStorage | 跨用户 404、完成前拒绝、完成后生成 60 秒签名 URL |
+| USR-102 | `TestUSR102_ExportAuthorizationAndSignedURL` | Export service + ObjectStorage | 跨用户 404、完成前拒绝，响应 expiry 与实际 presigner TTL 均精确为 60 秒 |
 | USR-103 | `TestUSR103_DeletionCancellationRaceMySQL` | MySQL Worker 并发 | grace period 内取消不能被 Worker 重新 claim |
 | USR-104 | `TestUSR104_DeletionTombstoneAndPIIScrubbingMySQL` | MySQL Worker | 四种 scope、PII/凭据/Session/事件/对象清理和安全 tombstone |
 | USR-105 | `TestUSR105_WorkerCrashTakeoverAndFencingMySQL` | MySQL 双 Worker | SKIP LOCKED、lease takeover、过期 Worker completion 被 fencing 拒绝 |

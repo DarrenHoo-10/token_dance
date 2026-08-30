@@ -13,10 +13,20 @@ import (
 	"tokendance/internal/store/memory"
 )
 
+type ttlRecordingStorage struct {
+	provider.ObjectStorage
+	downloadTTL time.Duration
+}
+
+func (s *ttlRecordingStorage) PresignDownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
+	s.downloadTTL = ttl
+	return s.ObjectStorage.PresignDownloadURL(ctx, key, ttl)
+}
+
 func TestUSR102_ExportAuthorizationAndSignedURL(t *testing.T) {
 	ctx := context.Background()
 	st := memory.NewMemoryStore()
-	storage := provider.NewMemoryObjectStorage("")
+	storage := &ttlRecordingStorage{ObjectStorage: provider.NewMemoryObjectStorage("")}
 	clk := clock.NewMockClock(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
 	svc := NewService(st, clk, storage)
 
@@ -89,6 +99,16 @@ func TestUSR102_ExportAuthorizationAndSignedURL(t *testing.T) {
 	}
 	if dl.DownloadURL == "" || dl.ExpiresAt == "" {
 		t.Errorf("download response missing URL or expiry: %+v", dl)
+	}
+	expiresAt, err := time.Parse(time.RFC3339, dl.ExpiresAt)
+	if err != nil {
+		t.Fatalf("invalid signed URL expiry: %v", err)
+	}
+	if ttl := expiresAt.Sub(now); ttl != 60*time.Second {
+		t.Fatalf("expected response expiry TTL 60s, got %v", ttl)
+	}
+	if storage.downloadTTL != 60*time.Second {
+		t.Fatalf("expected object-storage presigner TTL 60s, got %v", storage.downloadTTL)
 	}
 
 	// 8. Access other user's export -> 404

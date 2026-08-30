@@ -109,6 +109,28 @@ func (m *MemoryStore) SeedUserForTest(userID, handle, email string, now time.Tim
 	return &u, &sess, nil
 }
 
+func (m *MemoryStore) SetAccountStatusForTest(userID string, status domain.AccountStatus, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	user, ok := m.users[userID]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	user.AccountStatus = status
+	user.UpdatedAt = now
+	return nil
+}
+
+func (m *MemoryStore) ResetCredentialFailuresForTest(userID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if credential, ok := m.userCredentials[userID]; ok {
+		credential.FailedLoginCount = 0
+		credential.LockedUntil = nil
+		credential.LastFailedLoginAt = nil
+	}
+}
+
 func (m *MemoryStore) CompleteRegistrationTxInputHelper(in store.RegistrationTxInput) (*domain.UserSession, error) {
 	return m.CompleteRegistrationTx(nil, in)
 }

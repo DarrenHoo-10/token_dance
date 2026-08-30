@@ -3,6 +3,7 @@ package device
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"testing"
 	"time"
 
@@ -51,6 +52,9 @@ func TestUSR023_DevicePauseResumeRevokeLifecycle(t *testing.T) {
 	if inst.InstallationStatus != domain.InstallationStatusActive {
 		t.Errorf("expected active status")
 	}
+	if _, _, err := svc.AuthorizeIngest(ctx, inst.InstallationID); err != nil {
+		t.Fatalf("active device ingest should be authorized: %v", err)
+	}
 
 	// 3. List Devices
 	devices, err := svc.ListDevices(ctx, userID)
@@ -78,6 +82,14 @@ func TestUSR023_DevicePauseResumeRevokeLifecycle(t *testing.T) {
 	if paused.InstallationStatus != domain.InstallationStatusDisabled || *paused.DisabledReason != "user_paused" {
 		t.Errorf("expected disabled/user_paused state")
 	}
+	if _, _, err := svc.AuthorizeIngest(ctx, inst.InstallationID); err == nil {
+		t.Fatal("paused device ingest should be rejected")
+	} else {
+		var appErr *domain.AppError
+		if !errors.As(err, &appErr) || appErr.Code != "DEVICE_DISABLED" {
+			t.Fatalf("expected DEVICE_DISABLED while paused, got %v", err)
+		}
+	}
 
 	// 6. Resume Device
 	resumed, err := svc.ResumeDevice(ctx, inst.InstallationID, userID)
@@ -87,6 +99,9 @@ func TestUSR023_DevicePauseResumeRevokeLifecycle(t *testing.T) {
 	if resumed.InstallationStatus != domain.InstallationStatusActive {
 		t.Errorf("expected active state after resume")
 	}
+	if _, _, err := svc.AuthorizeIngest(ctx, inst.InstallationID); err != nil {
+		t.Fatalf("resumed device ingest should be authorized: %v", err)
+	}
 
 	// 7. Revoke Device
 	revoked, err := svc.RevokeDevice(ctx, inst.InstallationID, userID)
@@ -95,5 +110,16 @@ func TestUSR023_DevicePauseResumeRevokeLifecycle(t *testing.T) {
 	}
 	if revoked.InstallationStatus != domain.InstallationStatusRevoked {
 		t.Errorf("expected revoked status")
+	}
+	if _, _, err := svc.AuthorizeIngest(ctx, inst.InstallationID); err == nil {
+		t.Fatal("revoked device ingest should be rejected")
+	} else {
+		var appErr *domain.AppError
+		if !errors.As(err, &appErr) || appErr.Code != "DEVICE_REVOKED" {
+			t.Fatalf("expected DEVICE_REVOKED after revocation, got %v", err)
+		}
+	}
+	if _, err := svc.ResumeDevice(ctx, inst.InstallationID, userID); err == nil {
+		t.Fatal("revoked device must not be resumable")
 	}
 }

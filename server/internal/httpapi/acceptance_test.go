@@ -12,11 +12,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"tokendance/internal/config"
 	"tokendance/internal/domain"
+	"tokendance/internal/store/memory"
 )
 
 // Helper to extract session cookie from recorder
@@ -264,18 +266,41 @@ func TestUSR004_CodeReplayPrevention(t *testing.T) {
 
 // USR-005: 登录防枚举 (不存在邮箱和错误密码各 1,000 次 -> 错误码一致，响应时延分布无显著可利用差异)
 func TestUSR005_Argon2idAntiEnumeration(t *testing.T) {
-	router, authSvc, st := setupTestRouter(t)
+	cfg := config.DefaultConfig()
+	cfg.TrustedProxyCIDRs = []string{"127.0.0.0/8"}
+	router, authSvc, st := setupTestRouterWithProductionArgon(t, cfg)
+	server := httptest.NewServer(router)
+	defer server.Close()
+	client := server.Client()
 	existingEmail := "realuser-usr005@tokendance.dev"
 	correctPassword := "CorrectPassword123!"
 
-	// Register through the shipped HTTP path so the known account has a real Argon2id credential.
+	postJSON := func(path string, body []byte, forwardedIP string) (*http.Response, []byte) {
+		request, err := http.NewRequest(http.MethodPost, server.URL+path, bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		if forwardedIP != "" {
+			request.Header.Set("X-Forwarded-For", forwardedIP)
+		}
+		response, err := client.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return response, payload
+	}
+
+	// Register through a listening HTTP server with production Argon2id parameters.
 	codeBody, _ := json.Marshal(map[string]string{"email": existingEmail, "locale": "en-US"})
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/register/code", bytes.NewReader(codeBody))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("request registration code: %d %s", rec.Code, rec.Body.String())
+	response, payload := postJSON("/api/v1/auth/register/code", codeBody, "198.51.100.1")
+	if response.StatusCode != http.StatusAccepted {
+		t.Fatalf("request registration code: %d %s", response.StatusCode, payload)
 	}
 	emailHash := authSvc.ComputeEmailLookupHash(existingEmail)
 	challenge, err := st.FindPendingEmailChallenge(context.Background(), domain.ChallengeTypeRegister, emailHash)
@@ -284,12 +309,17 @@ func TestUSR005_Argon2idAntiEnumeration(t *testing.T) {
 	}
 	registrationCode := getChallengeCode(authSvc, challenge.CodeHash)
 	registerBody, _ := json.Marshal(map[string]string{"email": existingEmail, "code": registrationCode, "password": correctPassword})
-	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(registerBody))
-	req.Header.Set("Content-Type", "application/json")
-	rec = httptest.NewRecorder()
-	router.ServeHTTP(rec, req)
-	if rec.Code != http.StatusCreated {
-		t.Fatalf("complete registration: %d %s", rec.Code, rec.Body.String())
+	response, payload = postJSON("/api/v1/auth/register", registerBody, "198.51.100.2")
+	if response.StatusCode != http.StatusCreated {
+		t.Fatalf("complete registration: %d %s", response.StatusCode, payload)
+	}
+	var registered struct {
+		User struct {
+			UserID string `json:"userId"`
+		} `json:"user"`
+	}
+	if err := json.Unmarshal(payload, &registered); err != nil || registered.User.UserID == "" {
+		t.Fatalf("registration response missing user ID: %v %s", err, payload)
 	}
 
 	wrongPassBody, _ := json.Marshal(map[string]string{"email": existingEmail, "password": "WrongPassword123!"})
@@ -302,23 +332,32 @@ func TestUSR005_Argon2idAntiEnumeration(t *testing.T) {
 	log.SetOutput(io.Discard)
 	defer log.SetOutput(previousLogWriter)
 
-	requestSequence := 0
+	requestSequence := 10
 	requestLogin := func(body []byte) (time.Duration, ErrorWrapper) {
-		request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
-		request.Header.Set("Content-Type", "application/json")
-		// Use a unique direct peer address per request so the authentication timing
-		// observation is not replaced by the separately tested rate-limit response.
 		requestSequence++
-		request.RemoteAddr = fmt.Sprintf("198.51.%d.%d:1234", requestSequence/250, requestSequence%250+1)
-		response := httptest.NewRecorder()
+		forwardedIP := fmt.Sprintf("203.0.%d.%d", requestSequence/250, requestSequence%250+1)
+		request, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/auth/login", bytes.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Forwarded-For", forwardedIP)
 		started := time.Now()
-		router.ServeHTTP(response, request)
+		response, err := client.Do(request)
 		duration := time.Since(started)
-		if response.Code != http.StatusUnauthorized {
-			t.Fatalf("expected 401, got %d: %s", response.Code, response.Body.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if response.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d: %s", response.StatusCode, payload)
 		}
 		var envelope ErrorWrapper
-		if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		if err := json.Unmarshal(payload, &envelope); err != nil {
 			t.Fatal(err)
 		}
 		if envelope.Error.Code != "AUTH_INVALID_CREDENTIALS" || envelope.Error.MessageKey != "auth.invalidCredentials" {
@@ -327,9 +366,11 @@ func TestUSR005_Argon2idAntiEnumeration(t *testing.T) {
 		return duration, envelope
 	}
 
-	// Alternate cohorts to avoid warm-up and scheduler drift favoring one cohort.
+	// Alternate cohorts. Reset only the known account's failure counter after the
+	// measured request, so all 1,000 observations exercise the unlocked real-credential path.
 	for attempt := 0; attempt < attemptsPerCohort; attempt++ {
 		wrongDuration, wrongEnvelope := requestLogin(wrongPassBody)
+		st.ResetCredentialFailuresForTest(registered.User.UserID)
 		unknownDuration, unknownEnvelope := requestLogin(nonExistentBody)
 		if wrongEnvelope.Error.Code != unknownEnvelope.Error.Code || wrongEnvelope.Error.MessageKey != unknownEnvelope.Error.MessageKey {
 			t.Fatalf("cohort response mismatch at attempt %d", attempt)
@@ -341,8 +382,7 @@ func TestUSR005_Argon2idAntiEnumeration(t *testing.T) {
 	sort.Slice(wrongDurations, func(i, j int) bool { return wrongDurations[i] < wrongDurations[j] })
 	sort.Slice(unknownDurations, func(i, j int) bool { return unknownDurations[i] < unknownDurations[j] })
 	percentile := func(values []time.Duration, percentile int) time.Duration {
-		index := (len(values) - 1) * percentile / 100
-		return values[index]
+		return values[(len(values)-1)*percentile/100]
 	}
 	wrongP50, unknownP50 := percentile(wrongDurations, 50), percentile(unknownDurations, 50)
 	wrongP95, unknownP95 := percentile(wrongDurations, 95), percentile(unknownDurations, 95)
@@ -358,13 +398,14 @@ func TestUSR005_Argon2idAntiEnumeration(t *testing.T) {
 		}
 		return b
 	}
-	p50Tolerance := maxDuration(5*time.Millisecond, maxDuration(wrongP50, unknownP50)/2)
-	p95Tolerance := maxDuration(10*time.Millisecond, maxDuration(wrongP95, unknownP95)/2)
+	p50Tolerance := maxDuration(10*time.Millisecond, maxDuration(wrongP50, unknownP50)/4)
+	p95Tolerance := maxDuration(20*time.Millisecond, maxDuration(wrongP95, unknownP95)/4)
 	if absDuration(wrongP50-unknownP50) > p50Tolerance || absDuration(wrongP95-unknownP95) > p95Tolerance {
 		t.Fatalf("exploitable timing separation: wrong p50=%v p95=%v unknown p50=%v p95=%v tolerances=%v/%v",
 			wrongP50, wrongP95, unknownP50, unknownP95, p50Tolerance, p95Tolerance)
 	}
-	t.Logf("USR-005 cohorts=%d each wrong[p50=%v p95=%v] unknown[p50=%v p95=%v]", attemptsPerCohort, wrongP50, wrongP95, unknownP50, unknownP95)
+	t.Logf("USR-005 real_server production_argon cohorts=%d each unlocked-wrong[p50=%v p95=%v] unknown[p50=%v p95=%v]",
+		attemptsPerCohort, wrongP50, wrongP95, unknownP50, unknownP95)
 }
 
 // USR-006: Session 撤销 (退出其他设备后复用旧 Cookie -> 立即 401，不依赖 Redis TTL)
@@ -733,12 +774,119 @@ func TestUSR010_LocaleAndMessageKeyConsistency(t *testing.T) {
 	userID := "usr_usr010test"
 	now := time.Now().UTC()
 	u, _, _ := st.SeedUserForTest(userID, "localepilot", "locale@tokendance.dev", now)
+	costAmount, costCurrency := "19.87500000", "USD"
+	st.SeedUserMetricsFixture(userID, memory.UserMetricFixture{
+		AggregationVersion:   2,
+		CostAmount:           &costAmount,
+		CostCurrency:         &costCurrency,
+		CostSupported:        true,
+		ExactTokenTotal:      987654,
+		DerivedTokenTotal:    12345,
+		CodeGeneratedLines:   4321,
+		TokenInputTotal:      700000,
+		TokenOutputTotal:     200000,
+		TokenCacheReadTotal:  70000,
+		TokenCacheWriteTotal: 20000,
+		TokenReasoningTotal:  9999,
+		ActiveDurationMs:     7654321,
+		MessageCount:         321,
+		UserMessageCount:     123,
+		ExtensionsSupported:  true,
+	})
+	st.SeedUserTrendFixture(userID, []memory.UserTrendFixture{{
+		Date: "2026-08-29", AgentID: "codex", ProviderID: "xai", ModelID: "grok-4.6",
+		ExactTokens: 900000, DerivedTokens: 12345, InputTokens: 700000, OutputTokens: 200000,
+		CacheReadTokens: 70000, CacheWriteTokens: 20000, ReasoningTokens: 9999,
+	}})
+	successRate, previousDelta := 0.875, 12.5
+	st.SeedUserSkillFixture(userID, []memory.UserSkillFixture{{
+		SkillID: "skl_locale", SkillKey: "locale-proof", SkillPublicName: "Locale Proof",
+		UseCount: 17, ActiveDays: 5, PublicUserCount: 3, SuccessRate: &successRate, PreviousDeltaPct: &previousDelta,
+	}})
 
 	cookie := &http.Cookie{
 		Name:  DevSessionCookie,
 		Value: "test-session-token-" + userID,
 	}
 	csrfToken := "test-csrf-token-" + userID
+
+	fetchSummary := func() domain.PersonalSummary {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/me/summary?range=30d", nil)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 on /me/summary, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var summary domain.PersonalSummary
+		if err := json.Unmarshal(rec.Body.Bytes(), &summary); err != nil {
+			t.Fatal(err)
+		}
+		return summary
+	}
+	beforeLocale := fetchSummary()
+	beforeMetrics, _ := json.Marshal(beforeLocale.Metrics)
+	if !beforeLocale.Metrics.TotalTokens.Supported || beforeLocale.Metrics.TotalTokens.Value == nil || *beforeLocale.Metrics.TotalTokens.Value != "999999" {
+		t.Fatalf("non-zero analytics fixture was not served through /me/summary: %+v", beforeLocale.Metrics.TotalTokens)
+	}
+	metricPaths := []string{
+		"/api/v1/me/summary?range=30d",
+		"/api/v1/me/trends/tokens?range=30d&mode=total",
+		"/api/v1/me/breakdowns/agents?range=30d",
+		"/api/v1/me/breakdowns/models?range=30d",
+		"/api/v1/me/skills?range=30d",
+		"/api/v1/me/calendar?range=10w",
+		"/api/v1/me/activity?range=30d&limit=50",
+		"/api/v1/me/filter-options",
+	}
+	volatileFields := map[string]bool{
+		"dataWatermarkAt": true, "lastCommittedAt": true, "generatedAt": true,
+		"updatedAt": true, "publishedAt": true, "snapshotGeneratedAt": true,
+	}
+	var stripVolatileFields func(interface{})
+	stripVolatileFields = func(value interface{}) {
+		switch typed := value.(type) {
+		case map[string]interface{}:
+			for key, child := range typed {
+				if volatileFields[key] {
+					delete(typed, key)
+					continue
+				}
+				stripVolatileFields(child)
+			}
+		case []interface{}:
+			for _, child := range typed {
+				stripVolatileFields(child)
+			}
+		}
+	}
+	canonicalMetricPayload := func(body []byte) string {
+		var decoded interface{}
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			t.Fatalf("decode metric payload: %v: %s", err, body)
+		}
+		stripVolatileFields(decoded)
+		canonical, err := json.Marshal(decoded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(canonical)
+	}
+	fetchMetricSurfaces := func() map[string]string {
+		result := make(map[string]string, len(metricPaths))
+		for _, path := range metricPaths {
+			request := httptest.NewRequest(http.MethodGet, path, nil)
+			request.AddCookie(cookie)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("metric surface %s returned %d: %s", path, response.Code, response.Body.String())
+			}
+			result[path] = canonicalMetricPayload(response.Body.Bytes())
+		}
+		return result
+	}
+	beforeSurfaces := fetchMetricSurfaces()
 
 	// 1. Update locale to zh-CN with If-Match
 	newLocale := "zh-CN"
@@ -763,23 +911,45 @@ func TestUSR010_LocaleAndMessageKeyConsistency(t *testing.T) {
 		t.Errorf("expected locale zh-CN, got %s", updatedUser.Locale)
 	}
 
-	// 2. Fetch summary metrics: ensure metric numbers and schema remain identical regardless of locale
-	reqSummary := httptest.NewRequest(http.MethodGet, "/api/v1/me/summary?range=30d", nil)
-	reqSummary.AddCookie(cookie)
-	recSummary := httptest.NewRecorder()
-	router.ServeHTTP(recSummary, reqSummary)
-
-	if recSummary.Code != http.StatusOK {
-		t.Fatalf("expected 200 on /me/summary, got %d", recSummary.Code)
+	// 2. Fetch summary after zh-CN and prove the metric payload is byte-for-byte unchanged.
+	zhSummary := fetchSummary()
+	zhMetrics, _ := json.Marshal(zhSummary.Metrics)
+	if !bytes.Equal(beforeMetrics, zhMetrics) {
+		t.Fatalf("locale changed metric payload: before=%s zh=%s", beforeMetrics, zhMetrics)
+	}
+	zhSurfaces := fetchMetricSurfaces()
+	for path, before := range beforeSurfaces {
+		if zhSurfaces[path] != before {
+			t.Fatalf("zh-CN changed metric surface %s: before=%s after=%s", path, before, zhSurfaces[path])
+		}
 	}
 
-	var summary domain.PersonalSummary
-	_ = json.Unmarshal(recSummary.Body.Bytes(), &summary)
-	if !summary.Metrics.TotalTokens.Supported || *summary.Metrics.TotalTokens.Value == "" {
-		t.Errorf("expected valid total tokens metric in summary")
+	// Switch back to en-US and compare every shipped analytics endpoint again.
+	enBody, _ := json.Marshal(map[string]interface{}{"locale": "en-US"})
+	reqEN := httptest.NewRequest(http.MethodPatch, "/api/v1/me/profile", bytes.NewReader(enBody))
+	reqEN.Header.Set("Content-Type", "application/json")
+	reqEN.Header.Set("X-CSRF-Token", csrfToken)
+	reqEN.Header.Set("If-Match", fmt.Sprintf(`"%d"`, updatedUser.ProfileVersion))
+	reqEN.AddCookie(cookie)
+	recEN := httptest.NewRecorder()
+	router.ServeHTTP(recEN, reqEN)
+	if recEN.Code != http.StatusOK {
+		t.Fatalf("expected 200 switching back to en-US, got %d: %s", recEN.Code, recEN.Body.String())
+	}
+	enSummary := fetchSummary()
+	enMetrics, _ := json.Marshal(enSummary.Metrics)
+	if !bytes.Equal(beforeMetrics, enMetrics) {
+		t.Fatalf("en-US changed metric payload: before=%s en=%s", beforeMetrics, enMetrics)
+	}
+	enSurfaces := fetchMetricSurfaces()
+	for path, before := range beforeSurfaces {
+		if enSurfaces[path] != before {
+			t.Fatalf("en-US changed metric surface %s: before=%s after=%s", path, before, enSurfaces[path])
+		}
 	}
 
-	// 3. Trigger error and verify structured error envelope with messageKey
+	// 3. Trigger error and verify the stable structured messageKey contract.
+
 	invalidName := ""
 	invalidBody, _ := json.Marshal(map[string]interface{}{
 		"displayName": invalidName,
@@ -997,6 +1167,132 @@ func TestUSR021_PublicProfileProjectionAndSameTransactionHidden(t *testing.T) {
 	if recPubHidden.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 Not Found for disabled public profile, got %d (body: %s)", recPubHidden.Code, recPubHidden.Body.String())
 	}
+
+	// Re-enable publication before exercising account-state transitions.
+	reEnableBody, _ := json.Marshal(map[string]interface{}{
+		"publicProfileEnabled": true, "leaderboardVisibility": "public", "showBio": true, "showTokenTotal": true,
+	})
+	reqReEnable := httptest.NewRequest(http.MethodPatch, "/api/v1/me/privacy", bytes.NewReader(reEnableBody))
+	reqReEnable.Header.Set("Content-Type", "application/json")
+	reqReEnable.Header.Set("X-CSRF-Token", csrfToken)
+	reqReEnable.AddCookie(cookie)
+	recReEnable := httptest.NewRecorder()
+	router.ServeHTTP(recReEnable, reqReEnable)
+	if recReEnable.Code != http.StatusOK {
+		t.Fatalf("re-enable public profile: %d %s", recReEnable.Code, recReEnable.Body.String())
+	}
+
+	previousProjectionLogWriter := log.Writer()
+	log.SetOutput(io.Discard)
+	defer log.SetOutput(previousProjectionLogWriter)
+	var publicRequestSequence atomic.Int64
+	newPublicRequest := func() *http.Request {
+		sequence := publicRequestSequence.Add(1)
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/public/users/"+handle, nil)
+		request.RemoteAddr = fmt.Sprintf("198.18.%d.%d:1234", sequence/250, sequence%250+1)
+		return request
+	}
+	assertConcurrentTransitionHidden := func(name string, transition func()) {
+		var transitionStarted atomic.Bool
+		var transitionCommitted atomic.Bool
+		var readsDuringTransition atomic.Int64
+		var readsAfterCommit atomic.Int64
+		var visibleAfterCommit atomic.Int64
+		ready := make(chan struct{}, 4)
+		stop := make(chan struct{})
+		var readers sync.WaitGroup
+		for index := 0; index < 4; index++ {
+			readers.Add(1)
+			go func() {
+				defer readers.Done()
+				ready <- struct{}{}
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+					}
+					startedAfterCommit := transitionCommitted.Load()
+					startedDuringTransition := transitionStarted.Load() && !startedAfterCommit
+					response := httptest.NewRecorder()
+					router.ServeHTTP(response, newPublicRequest())
+					if startedDuringTransition {
+						readsDuringTransition.Add(1)
+					}
+					if startedAfterCommit {
+						readsAfterCommit.Add(1)
+						if response.Code == http.StatusOK {
+							visibleAfterCommit.Add(1)
+						}
+					}
+				}
+			}()
+		}
+		for index := 0; index < 4; index++ {
+			<-ready
+		}
+		transitionStarted.Store(true)
+		deadline := time.Now().Add(2 * time.Second)
+		for readsDuringTransition.Load() == 0 && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		if readsDuringTransition.Load() == 0 {
+			close(stop)
+			readers.Wait()
+			t.Fatalf("%s did not overlap with any public-profile reads", name)
+		}
+		transition()
+		transitionCommitted.Store(true)
+		deadline = time.Now().Add(2 * time.Second)
+		for readsAfterCommit.Load() < 50 && time.Now().Before(deadline) {
+			time.Sleep(time.Millisecond)
+		}
+		close(stop)
+		readers.Wait()
+		if readsAfterCommit.Load() < 50 {
+			t.Fatalf("%s did not complete enough post-commit reads: %d", name, readsAfterCommit.Load())
+		}
+		for index := 0; index < 50; index++ {
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, newPublicRequest())
+			if response.Code == http.StatusOK {
+				visibleAfterCommit.Add(1)
+			}
+		}
+		if visibleAfterCommit.Load() != 0 {
+			t.Fatalf("%s exposed public profile after transition commit: %d reads", name, visibleAfterCommit.Load())
+		}
+		t.Logf("%s overlapped reads=%d post-commit reads=%d", name, readsDuringTransition.Load(), readsAfterCommit.Load())
+	}
+
+	// Account suspension must synchronously hide the public projection under concurrent reads.
+	assertConcurrentTransitionHidden("suspension", func() {
+		if err := st.SetAccountStatusForTest(userID, domain.AccountStatusSuspended, time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if err := st.SetAccountStatusForTest(userID, domain.AccountStatusActive, time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	restored := httptest.NewRecorder()
+	router.ServeHTTP(restored, httptest.NewRequest(http.MethodGet, "/api/v1/public/users/"+handle, nil))
+	if restored.Code != http.StatusOK {
+		t.Fatalf("active/public profile did not restore for deletion test: %d %s", restored.Code, restored.Body.String())
+	}
+
+	// Account deletion request must transition to deletion_pending and hide concurrently.
+	assertConcurrentTransitionHidden("account deletion", func() {
+		body, _ := json.Marshal(map[string]interface{}{"scope": "account", "confirmation": true})
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/me/deletion-requests", bytes.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-CSRF-Token", csrfToken)
+		request.AddCookie(cookie)
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("account deletion request failed: %d %s", response.Code, response.Body.String())
+		}
+	})
 }
 
 // USR-022: 头像对象 (上传伪造 MIME、超限/像素炸弹、他人 object id -> 全部拒绝；只有 owner 的 ready 对象可切为当前头像)
