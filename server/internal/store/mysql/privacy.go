@@ -250,6 +250,17 @@ func (s *privacyStore) SetAccountStatusTx(ctx context.Context, userID string, st
 		}
 		return fmt.Errorf("lock account status: %w", err)
 	}
+	current := domain.AccountStatus(currentStatus)
+	if current == status {
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("commit idempotent account status transaction: %w", err)
+		}
+		return nil
+	}
+	if !((current == domain.AccountStatusActive && status == domain.AccountStatusSuspended) ||
+		(current == domain.AccountStatusSuspended && status == domain.AccountStatusActive)) {
+		return domain.ErrConflict
+	}
 	if _, err := tx.ExecContext(ctx, "UPDATE users SET account_status = ?, updated_at = ? WHERE user_id = ?", status, now, userID); err != nil {
 		return fmt.Errorf("update account status: %w", err)
 	}

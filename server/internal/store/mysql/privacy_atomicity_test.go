@@ -35,6 +35,43 @@ func TestUSR021_MySQLAccountDeletionAtomicallyHidesPublicProjection(t *testing.T
 	}, false)
 }
 
+func TestUSR021_MySQLAccountStatusRejectsDeletionWorkflowBypass(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+	userID := "usr_usr021_terminal_status"
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO users (
+			user_id, auth_subject_hash, display_name, account_status,
+			leaderboard_visibility, timezone_name, locale, created_at, updated_at
+		) VALUES (?, UNHEX(SHA2(?, 256)), 'USR 021 Terminal', 'deletion_pending',
+			'private', 'UTC', 'en-US', ?, ?)`, userID, "subject:"+userID, now, now); err != nil {
+		t.Fatalf("seed deletion_pending user: %v", err)
+	}
+	for _, target := range []domain.AccountStatus{domain.AccountStatusActive, domain.AccountStatusSuspended} {
+		if err := st.Privacy().SetAccountStatusTx(ctx, userID, target, now); !errors.Is(err, domain.ErrConflict) {
+			t.Fatalf("deletion_pending -> %s should conflict, got %v", target, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, "UPDATE users SET account_status = 'deleted' WHERE user_id = ?", userID); err != nil {
+		t.Fatalf("mark user deleted: %v", err)
+	}
+	for _, target := range []domain.AccountStatus{domain.AccountStatusActive, domain.AccountStatusSuspended} {
+		if err := st.Privacy().SetAccountStatusTx(ctx, userID, target, now); !errors.Is(err, domain.ErrConflict) {
+			t.Fatalf("deleted -> %s should conflict, got %v", target, err)
+		}
+	}
+	var status string
+	if err := db.QueryRowContext(ctx, "SELECT account_status FROM users WHERE user_id = ?", userID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != string(domain.AccountStatusDeleted) {
+		t.Fatalf("terminal account status changed to %s", status)
+	}
+}
+
 func runUSR021MySQLAtomicHide(
 	t *testing.T,
 	transitionName string,

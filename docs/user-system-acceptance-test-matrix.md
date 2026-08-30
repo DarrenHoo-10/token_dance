@@ -26,7 +26,7 @@
 | USR-018 | `TestUSR018_DeviceRevocationRejectsIngestMySQL` | MySQL row-lock boundary | revoke 后 ingest 授权返回 DEVICE_REVOKED |
 | USR-019 | `TestUSR019_ImmutablePublishedLeaderboardSnapshotsMySQL` | MySQL Worker | 新建 immutable revision，旧 snapshot 分页不变，scope 和全部指标正确 |
 | USR-020 | `TestUSR020_RedisUnavailablePreservesCorrectness` | HTTP + Redis 故障降级 | Redis 地址不可达时注册、Session、onboarding、隐私、公开查询和任务创建仍正确 |
-| USR-021 | `TestUSR021_PublicProfileProjectionAndSameTransactionHidden`; `TestUSR021_MySQLAccountSuspensionAtomicallyHidesPublicProjection`; `TestUSR021_MySQLAccountDeletionAtomicallyHidesPublicProjection` | HTTP + memory/MySQL production Repository | projection version 单调；真实 MySQL suspend/delete 事务均与并发公开读取重叠，提交后每次读取严格返回 `ErrNotFound`；active 恢复按隐私设置重新发布 |
+| USR-021 | `TestUSR021_PublicProfileProjectionAndSameTransactionHidden`; `TestUSR021_MySQLAccountSuspensionAtomicallyHidesPublicProjection`; `TestUSR021_MySQLAccountDeletionAtomicallyHidesPublicProjection`; `TestUSR021_MySQLAccountStatusRejectsDeletionWorkflowBypass` | HTTP + memory/MySQL production Repository | projection version 单调；真实 MySQL suspend/delete 事务均与并发公开读取重叠，提交后每次读取严格返回 `ErrNotFound`；active 恢复按隐私设置重新发布；禁止 deletion_pending/deleted 绕过删除状态机 |
 | USR-022 | `TestUSR022_AvatarValidationAndPixelBombProtection` | HTTP + Media service | MIME、大小、像素、owner、ready 状态验证 |
 | USR-023 | `TestUSR023_HTTPIngestPauseResumeRevokeLifecycle`; `TestUSR023_DevicePauseResumeRevokeLifecycle` | Signed HTTP ingest + Device service | active ingest 成功，pause 拒绝，resume 后成功，revoke 拒绝且不可恢复 |
 | USR-101 | `TestUSR101_ExportIdempotencyAndKeyRotationMySQL` | MySQL production Repository | 同 key/body 返回原任务，异 body 冲突，密钥轮换后仍幂等 |

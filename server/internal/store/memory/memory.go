@@ -849,6 +849,13 @@ func (m *MemoryStore) SetAccountStatusTx(ctx context.Context, userID string, sta
 	if !ok {
 		return domain.ErrNotFound
 	}
+	if u.AccountStatus == status {
+		return nil
+	}
+	if !((u.AccountStatus == domain.AccountStatusActive && status == domain.AccountStatusSuspended) ||
+		(u.AccountStatus == domain.AccountStatusSuspended && status == domain.AccountStatusActive)) {
+		return domain.ErrConflict
+	}
 	u.AccountStatus = status
 	u.UpdatedAt = now
 	if pub := m.publicProfiles[userID]; pub != nil {

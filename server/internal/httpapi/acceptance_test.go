@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -1284,6 +1285,9 @@ func TestUSR021_PublicProfileProjectionAndSameTransactionHidden(t *testing.T) {
 			t.Fatalf("account deletion request failed: %d %s", response.Code, response.Body.String())
 		}
 	})
+	if err := st.SetAccountStatusTx(context.Background(), userID, domain.AccountStatusActive, time.Now().UTC()); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("deletion_pending account bypassed cancellation workflow: %v", err)
+	}
 }
 
 // USR-022: 头像对象 (上传伪造 MIME、超限/像素炸弹、他人 object id -> 全部拒绝；只有 owner 的 ready 对象可切为当前头像)
