@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { ChevronDown, Database, LogOut, Search, Settings, UserRound } from 'lucide-react';
+import { ChevronDown, Database, FileText, LogOut, Search, Settings, UserRound } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
@@ -8,10 +8,11 @@ import { Button } from '@/components/common/Button';
 
 export const Navbar: React.FC = () => {
   const { user, authenticated, logout } = useAuth();
-  const { t } = useLocale();
+  const { locale, t } = useLocale();
   const navigate = useNavigate();
   const location = useLocation();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const userMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -47,6 +48,12 @@ export const Navbar: React.FC = () => {
     navigate('/login');
   };
 
+  const submitSearch = (event: React.FormEvent) => {
+    event.preventDefault();
+    const query = search.trim();
+    navigate(query ? `/explore?q=${encodeURIComponent(query)}` : '/explore');
+  };
+
   const initials = user?.displayName
     ? user.displayName
         .split(' ')
@@ -57,9 +64,9 @@ export const Navbar: React.FC = () => {
     : 'TD';
 
   return (
-    <header className="navbar">
+    <header className="navbar floating-nav">
       <NavLink to="/" className="nav-brand">
-        <img src="/logo.png" alt="TokenDance" />
+        <img src="/logo-tokendance-v2.png" alt="TokenDance" />
         <span>TokenDance</span>
       </NavLink>
 
@@ -70,15 +77,7 @@ export const Navbar: React.FC = () => {
             `nav-link ${isActive || location.pathname.startsWith('/leaderboard') ? 'active' : ''}`
           }
         >
-          {t('nav.leaderboard')}
-        </NavLink>
-        <NavLink
-          to="/me"
-          className={({ isActive }) =>
-            `nav-link ${isActive || location.pathname.startsWith('/me') ? 'active' : ''}`
-          }
-        >
-          {t('nav.tokenBoard')}
+          TokenBoard
         </NavLink>
         <NavLink
           to="/explore"
@@ -86,27 +85,48 @@ export const Navbar: React.FC = () => {
             `nav-link ${isActive || location.pathname.startsWith('/explore') ? 'active' : ''}`
           }
         >
-          {t('nav.explore')}
+          {locale === 'zh-CN' ? '发现' : 'Explore'}
         </NavLink>
         <NavLink
-          to="/compare"
+          to="/community"
           className={({ isActive }) =>
-            `nav-link ${isActive || location.pathname.startsWith('/compare') ? 'active' : ''}`
+            `nav-link ${isActive || location.pathname.startsWith('/community') ? 'active' : ''}`
           }
         >
-          {t('nav.compare')}
+          {locale === 'zh-CN' ? '社区' : 'Community'}
+        </NavLink>
+        <NavLink
+          to="/teams"
+          className={({ isActive }) =>
+            `nav-link ${isActive || location.pathname.startsWith('/teams') ? 'active' : ''}`
+          }
+        >
+          {locale === 'zh-CN' ? '团队' : 'Teams'}
         </NavLink>
       </nav>
+
+      <form
+        className="nav-search"
+        role="search"
+        onSubmit={submitSearch}
+      >
+        <input
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder={t('common.searchPlaceholder')}
+          aria-label={t('common.search')}
+        />
+        <Search size={17} aria-hidden="true" />
+      </form>
 
       <div className="nav-actions">
         <button
           type="button"
-          className="nav-search"
-          onClick={() => navigate('/explore')}
-          aria-label={t('common.search')}
+          className="nav-document"
+          onClick={() => navigate(authenticated ? '/me' : '/login?return_to=%2Fme')}
+          aria-label={t('nav.tokenBoard')}
         >
-          <span>{t('common.searchPlaceholder')}</span>
-          <Search size={17} aria-hidden="true" />
+          <FileText size={22} aria-hidden="true" />
         </button>
 
         <LocaleSwitcher />
@@ -190,7 +210,7 @@ export const Navbar: React.FC = () => {
             )}
           </div>
         ) : (
-          <div style={{ display: 'flex', gap: 8 }}>
+          <div className="nav-auth-actions">
             <Button
               variant="outline"
               size="sm"

@@ -24,6 +24,55 @@ import type {
   FilterOptionsResponse,
 } from '@/types/api';
 
+const mockSummary: PersonalSummary = {
+  range: { key: '30d', from: '2026-08-01', to: '2026-08-30', timezone: 'Asia/Shanghai' },
+  metrics: {
+    estimatedCost: { amount: '1428.60', currency: 'USD', supported: true },
+    totalTokens: { value: '325700000', supported: true, change: '▲ 18.7%' },
+    generatedCodeLines: { value: '864200', supported: true, change: '▲ 12.4%' },
+    tokensPerCodeLine: { value: '286.4', supported: true },
+    inputContextTokens: { value: '184600000', supported: true },
+    outputTokens: { value: '78300000', supported: true },
+    cacheHitRate: { value: '0.386', supported: true, change: '▲ 4.2%' },
+    activeDurationMs: { value: '1737360000', supported: true },
+    messageCount: { value: '42800', supported: true, change: '▲ 9.1%' },
+    userMessageCount: { value: '18600', supported: true, change: '▲ 7.8%' },
+  },
+  ranking: { visibility: 'public', rank: 37, delta: 5, percentile: 1 },
+  sync: { lastCommittedAt: new Date(Date.now() - 8 * 60 * 1000).toISOString(), pendingLocalCount: 12, status: 'healthy' },
+  aggregationVersion: 1,
+};
+
+const mockTrends = Array.from({ length: 30 }, (_, index) => {
+  const total = 5_800_000 + index * 205_000 + Math.sin(index * 0.72) * 1_350_000;
+  return {
+    date: `08-${String(index + 1).padStart(2, '0')}`,
+    tokenTotal: String(Math.round(total)),
+    inputTokens: String(Math.round(total * 0.57)),
+    outputTokens: String(Math.round(total * 0.24)),
+    cacheReadTokens: String(Math.round(total * 0.19)),
+  };
+});
+
+const mockAgents: BreakdownItem[] = [
+  { key: 'claude-code', label: 'Claude Code', tokenTotal: '136800000', percentage: 42 },
+  { key: 'codex', label: 'Codex', tokenTotal: '101000000', percentage: 31 },
+  { key: 'cursor', label: 'Cursor', tokenTotal: '55400000', percentage: 17 },
+  { key: 'others', label: 'Others', tokenTotal: '32500000', percentage: 10 },
+];
+
+const mockSkills: SkillItem[] = [
+  { skillId: 'codex-review', skillPublicName: 'codex-review', useCount: '1284', activeDays: 26, rankNo: 1 },
+  { skillId: 'commit-context', skillPublicName: 'commit-context', useCount: '936', activeDays: 21, rankNo: 2 },
+  { skillId: 'imagegen', skillPublicName: 'imagegen', useCount: '622', activeDays: 18, rankNo: 3 },
+];
+
+const mockCalendar: CalendarDay[] = Array.from({ length: 70 }, (_, index) => ({
+  date: `day-${index + 1}`,
+  tokenTotal: String((index % 9) * 540000),
+  level: Math.max(0, Math.min(4, Math.round(2 + Math.sin(index * 0.48) * 2))),
+}));
+
 export const PersonalDashboardPage: React.FC = () => {
   const { user, authenticated, loading: authLoading } = useAuth();
   const { t } = useLocale();
@@ -112,10 +161,22 @@ export const PersonalDashboardPage: React.FC = () => {
     return <ErrorState error={error} onRetry={fetchData} />;
   }
 
-  const syncStatus = summary?.sync?.status || (summary?.sync?.lastCommittedAt ? 'healthy' : 'unknown');
+  const hasCollectedData = Number(summary?.metrics?.totalTokens?.value || 0) > 0;
+  const displaySummary = hasCollectedData && summary ? summary : mockSummary;
+  const displayTrends = (trends?.points || trends?.trends || []).length ? (trends?.points || trends?.trends || []) : mockTrends;
+  const displayAgents = agentBreakdowns.length ? agentBreakdowns : mockAgents;
+  const displaySkills = skills.length ? skills : mockSkills;
+  const displayCalendar = calendarDays.length ? calendarDays : mockCalendar;
+  const displayStreak = calendarStreak || 23;
+  const displayFilters: FilterOptionsResponse = {
+    agents: filterOptions.agents.length ? filterOptions.agents : [{ id: 'claude-code', name: 'Claude Code' }, { id: 'codex', name: 'Codex' }, { id: 'cursor', name: 'Cursor' }],
+    providers: filterOptions.providers,
+    models: filterOptions.models.length ? filterOptions.models : [{ id: 'claude-sonnet-4', name: 'Claude Sonnet 4' }, { id: 'gpt-5', name: 'GPT-5' }, { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' }],
+  };
+  const syncStatus = displaySummary.sync.status || (displaySummary.sync.lastCommittedAt ? 'healthy' : 'unknown');
 
   return (
-    <div>
+    <div className="personal-dashboard">
       {/* Header */}
       <div
         style={{
@@ -170,7 +231,8 @@ export const PersonalDashboardPage: React.FC = () => {
       </div>
 
       {/* Ten Core Metrics Grid */}
-      {summary?.metrics && <MetricGrid metrics={summary.metrics} />}
+      <p className="mock-disclosure">{t('common.loading').startsWith('加载') ? '当前无采集数据，费用、代码、上下文和消息数据使用 Mock 展示。' : 'No collected data yet. Cost, code, context, and message metrics are shown with Mock data.'}</p>
+      <MetricGrid metrics={displaySummary.metrics} />
 
       {/* Middle Grid: Token Trend + Agent Breakdown */}
       <div className="grid-2" style={{ marginBottom: 20 }}>
@@ -194,7 +256,7 @@ export const PersonalDashboardPage: React.FC = () => {
                 style={{ height: 32, fontSize: 11, padding: '0 8px', cursor: 'pointer' }}
               >
                 <option value="all">{t('dashboard.allAgents')}</option>
-                {filterOptions.agents.map((a) => {
+                {displayFilters.agents.map((a) => {
                   const key = typeof a === 'string' ? a : a.id;
                   const label = typeof a === 'string' ? a : a.name;
                   return (
@@ -214,7 +276,7 @@ export const PersonalDashboardPage: React.FC = () => {
                 style={{ height: 32, fontSize: 11, padding: '0 8px', cursor: 'pointer' }}
               >
                 <option value="all">{t('dashboard.allModels')}</option>
-                {filterOptions.models.map((m) => {
+                {displayFilters.models.map((m) => {
                   const key = typeof m === 'string' ? m : m.id;
                   const label = typeof m === 'string' ? m : m.name;
                   return (
@@ -227,7 +289,7 @@ export const PersonalDashboardPage: React.FC = () => {
             </div>
           </div>
 
-          <TokenTrendChart trends={trends?.points || trends?.trends || []} />
+          <TokenTrendChart trends={displayTrends} />
         </div>
 
         {/* Agent Breakdown Panel */}
@@ -240,11 +302,11 @@ export const PersonalDashboardPage: React.FC = () => {
               </p>
             </div>
             <Badge variant="lime">
-              {agentBreakdowns.length} {t('dashboard.sourcesCount')}
+              {displayAgents.length} {t('dashboard.sourcesCount')}
             </Badge>
           </div>
 
-          <AgentBreakdown items={agentBreakdowns} />
+          <AgentBreakdown items={displayAgents} />
         </div>
       </div>
 
@@ -259,14 +321,14 @@ export const PersonalDashboardPage: React.FC = () => {
                 {t('dashboard.activityCalendarSub')}
               </p>
             </div>
-            {calendarStreak > 0 && (
+            {displayStreak > 0 && (
               <Badge variant="good">
-                ● {calendarStreak} {t('dashboard.streakLabel')}
+                ● {displayStreak} {t('dashboard.streakLabel')}
               </Badge>
             )}
           </div>
 
-          <ActivityCalendar days={calendarDays} streakDays={calendarStreak} />
+          <ActivityCalendar days={displayCalendar} streakDays={displayStreak} />
         </div>
 
         {/* Skill Ranking */}
@@ -281,7 +343,7 @@ export const PersonalDashboardPage: React.FC = () => {
             <Badge variant="lime">{t('dashboard.topSkills')}</Badge>
           </div>
 
-          <SkillRanking skills={skills} />
+          <SkillRanking skills={displaySkills} />
         </div>
 
         {/* Sync Status */}
@@ -304,8 +366,8 @@ export const PersonalDashboardPage: React.FC = () => {
           </div>
 
           <SyncStatusCard
-            lastCommittedAt={summary?.sync?.lastCommittedAt || null}
-            pendingLocalCount={summary?.sync?.pendingLocalCount ?? null}
+            lastCommittedAt={displaySummary.sync.lastCommittedAt}
+            pendingLocalCount={displaySummary.sync.pendingLocalCount}
             status={syncStatus}
           />
         </div>

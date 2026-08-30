@@ -5,7 +5,7 @@ import { Footer } from './Footer';
 
 export const AppLayout: React.FC = () => {
   return (
-    <div className="app-container">
+    <div className="app-container product-shell">
       <Navbar />
       <main className="main-content">
         <Outlet />

@@ -6,6 +6,7 @@ export const Footer: React.FC = () => {
 
   return (
     <footer
+      className="site-footer"
       style={{
         borderTop: '1px solid var(--border-light)',
         backgroundColor: 'var(--bg-surface)',
@@ -27,15 +28,15 @@ export const Footer: React.FC = () => {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <img src="/logo.png" alt="TokenDance" style={{ width: 18, height: 18 }} />
+          <img src="/logo-tokendance-v2.png" alt="TokenDance" style={{ width: 18, height: 18 }} />
           <strong>TokenDance</strong>
-          <span>—</span>
+          <span>·</span>
           <span>{t('common.heroTagline')}</span>
         </div>
 
         <div style={{ display: 'flex', gap: 20, fontFamily: 'var(--font-mono)', fontSize: 11 }}>
           <span>TOKENDANCE · 2026</span>
-          <span>🔒 {t('auth.privacyPledge')}</span>
+          <span>{t('auth.privacyPledge')}</span>
         </div>
       </div>
     </footer>

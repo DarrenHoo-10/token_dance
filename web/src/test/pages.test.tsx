@@ -37,81 +37,20 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
   });
 
   describe('LeaderboardPage', () => {
-    it('renders real leaderboard entries from typed API', async () => {
-      vi.spyOn(api, 'getLeaderboard').mockResolvedValue({
-        boardKey: 'global',
-        window: '30d',
-        metric: 'tokens',
-        snapshotId: 'snp_123',
-        entries: [
-          {
-            rankNo: 1,
-            rankDelta: 0,
-            handle: 'alice',
-            displayName: 'Alice Engineer',
-            avatarUrl: null,
-            metricValue: '500000000',
-            formattedMetric: '500.0M',
-            topAgent: 'Claude Code',
-            activeDays: 30,
-          },
-        ],
-      });
-
+    it('renders the approved high-fidelity leaderboard home', () => {
       renderWithProviders(<LeaderboardPage />, '/leaderboard');
-
-      expect(screen.getByRole('status')).toBeInTheDocument(); // LoadingState
-
-      await waitFor(() => {
-        expect(screen.getByText('Alice Engineer')).toBeInTheDocument();
-        expect(screen.getByText('@alice')).toBeInTheDocument();
-        expect(screen.getByText('#1')).toBeInTheDocument();
-        expect(screen.getByText('500.0M')).toBeInTheDocument();
-      });
+      expect(screen.getByRole('heading', { name: 'Let Token Dance' })).toBeInTheDocument();
+      expect(screen.getByText('maxbauer')).toBeInTheDocument();
+      expect(screen.getByText('sophiadev')).toBeInTheDocument();
+      expect(screen.getByText('12.4B')).toBeInTheDocument();
     });
 
-    it('renders EmptyState when entries array is empty', async () => {
-      vi.spyOn(api, 'getLeaderboard').mockResolvedValue({
-        boardKey: 'global',
-        window: '30d',
-        metric: 'tokens',
-        snapshotId: 'snp_empty',
-        entries: [],
-      });
-
+    it('filters the rendered leaderboard without replacing the approved shell', () => {
       renderWithProviders(<LeaderboardPage />, '/leaderboard');
-
-      await waitFor(() => {
-        expect(screen.getByText('暂无相关数据')).toBeInTheDocument();
-      });
-    });
-
-    it('renders ErrorState with retry button when API fails', async () => {
-      const getLeaderboardSpy = vi.spyOn(api, 'getLeaderboard')
-        .mockRejectedValueOnce(new ApiError(500, { code: 'HTTP_500', messageKey: 'errors.http_500' }))
-        .mockResolvedValueOnce({
-          boardKey: 'global',
-          window: '30d',
-          metric: 'tokens',
-          snapshotId: 'snp_retry',
-          entries: [
-            { rankNo: 1, handle: 'bob', displayName: 'Bob Dev', avatarUrl: null, metricValue: '1000', formattedMetric: '1.0K' },
-          ],
-        });
-
-      renderWithProviders(<LeaderboardPage />, '/leaderboard');
-
-      await waitFor(() => {
-        expect(screen.getByText('数据加载失败')).toBeInTheDocument();
-        expect(screen.getByText('重试')).toBeInTheDocument();
-      });
-
-      fireEvent.click(screen.getByText('重试'));
-
-      await waitFor(() => {
-        expect(screen.getByText('Bob Dev')).toBeInTheDocument();
-      });
-      expect(getLeaderboardSpy).toHaveBeenCalledTimes(2);
+      const filter = screen.getByPlaceholderText('筛选开发者');
+      fireEvent.change(filter, { target: { value: 'maxbauer' } });
+      expect(screen.getByText('maxbauer')).toBeInTheDocument();
+      expect(screen.queryByText('sophiadev')).not.toBeInTheDocument();
     });
   });
 

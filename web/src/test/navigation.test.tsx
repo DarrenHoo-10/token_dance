@@ -36,17 +36,17 @@ describe('Navigation & Locale Switching Tests', () => {
 
     await waitFor(() => {
       expect(screen.getByText('TokenBoard')).toBeInTheDocument();
-      expect(screen.getByText('排行榜')).toBeInTheDocument();
+      expect(screen.getByText('社区')).toBeInTheDocument();
     });
 
     const enBtn = screen.getByText('EN');
     fireEvent.click(enBtn);
 
-    expect(screen.getByText('Leaderboard')).toBeInTheDocument();
+    expect(screen.getByText('Community')).toBeInTheDocument();
 
     const zhBtn = screen.getByText('中文');
     fireEvent.click(zhBtn);
-    expect(screen.getByText('排行榜')).toBeInTheDocument();
+    expect(screen.getByText('社区')).toBeInTheDocument();
   });
 
   it('preserves query params, route, and input state across locale switches', () => {

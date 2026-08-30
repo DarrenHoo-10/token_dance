@@ -74,8 +74,10 @@ export const App: React.FC = () => {
                 {/* Public community pages */}
                 <Route path="/u/:handle" element={<PublicProfilePage />} />
                 <Route path="/explore" element={<ExplorePage />} />
+                <Route path="/community" element={<ExplorePage />} />
                 <Route path="/leaderboard" element={<LeaderboardPage />} />
                 <Route path="/compare" element={<ComparePage />} />
+                <Route path="/teams" element={<ComparePage />} />
 
                 {/* 404 catch-all */}
                 <Route path="*" element={<NotFoundPage />} />
