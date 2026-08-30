@@ -12,6 +12,7 @@ import (
 )
 
 const aggregationVersion = 2
+const aggregationLockName = "tokendance_aggregate_rebuild"
 
 func placeholders(count int) string {
 	return strings.TrimSuffix(strings.Repeat("?,", count), ",")
@@ -95,7 +96,13 @@ func canonicalAggregateStatements(datePlaceholders string) []struct {
 				GROUP BY t.occurred_date, t.user_id, t.agent_id
 			), session_activity AS (
 				SELECT occurred_date, user_id, agent_id, SUM(COALESCE(session_duration_ms, 0)) session_duration_ms
-				FROM sessions GROUP BY occurred_date, user_id, agent_id
+				FROM (
+					SELECT occurred_date, user_id, agent_id, session_hash,
+						MAX(CASE WHEN event_type = 'session_ended' AND parent_session_hash IS NULL THEN duration_ms END) session_duration_ms
+					FROM filtered WHERE session_hash IS NOT NULL
+					GROUP BY occurred_date, user_id, agent_id, session_hash
+				) session_rows
+				GROUP BY occurred_date, user_id, agent_id
 			), cost_ranked AS (
 				SELECT occurred_date, user_id, agent_id, cost_amount, cost_currency,
 					ROW_NUMBER() OVER (
@@ -107,19 +114,48 @@ func canonicalAggregateStatements(datePlaceholders string) []struct {
 				SELECT occurred_date, user_id, agent_id, SUM(cost_amount) cost_amount, MAX(cost_currency) cost_currency
 				FROM cost_ranked WHERE authority_rank = 1 GROUP BY occurred_date, user_id, agent_id
 			)
-			SELECT b.occurred_date, b.user_id, b.agent_id, b.exact_tokens, b.derived_tokens,
-				b.estimated_tokens, b.session_count, b.child_session_count,
-				b.interaction_turn_count, b.model_request_count, b.tool_call_count, b.skill_use_count,
-				b.code_generated_lines, b.code_accepted_lines, b.correlated_code_lines,
-				COALESCE(c.cost_amount, 0), COALESCE(c.cost_currency, 'USD'), b.source_max_event_pk, ` + fmt.Sprint(aggregationVersion) + `,
-				CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3), b.token_input_total, b.token_output_total,
-				b.token_cache_read_total, b.token_cache_write_total, b.token_reasoning_total,
-				COALESCE(sa.session_duration_ms, 0) + COALESCE(a.turn_fallback_ms, 0),
-				COALESCE(a.message_count, 0), COALESCE(a.user_message_count, 0)
+			SELECT b.occurred_date, b.user_id, b.agent_id,
+				MAX(b.exact_tokens), MAX(b.derived_tokens), MAX(b.estimated_tokens),
+				MAX(b.session_count), MAX(b.child_session_count),
+				MAX(b.interaction_turn_count), MAX(b.model_request_count), MAX(b.tool_call_count), MAX(b.skill_use_count),
+				MAX(b.code_generated_lines), MAX(b.code_accepted_lines), MAX(b.correlated_code_lines),
+				COALESCE(MAX(c.cost_amount), 0), COALESCE(MAX(c.cost_currency), 'USD'), MAX(b.source_max_event_pk), ` + fmt.Sprint(aggregationVersion) + `,
+				CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3), MAX(b.token_input_total), MAX(b.token_output_total),
+				MAX(b.token_cache_read_total), MAX(b.token_cache_write_total), MAX(b.token_reasoning_total),
+				COALESCE(MAX(sa.session_duration_ms), 0) + COALESCE(MAX(a.turn_fallback_ms), 0),
+				COALESCE(MAX(a.message_count), 0), COALESCE(MAX(a.user_message_count), 0)
 			FROM base b
 			LEFT JOIN activity a ON a.occurred_date = b.occurred_date AND a.user_id = b.user_id AND a.agent_id = b.agent_id
 			LEFT JOIN session_activity sa ON sa.occurred_date = b.occurred_date AND sa.user_id = b.user_id AND sa.agent_id = b.agent_id
-			LEFT JOIN costs c ON c.occurred_date = b.occurred_date AND c.user_id = b.user_id AND c.agent_id = b.agent_id`, repeats: 1},
+			LEFT JOIN costs c ON c.occurred_date = b.occurred_date AND c.user_id = b.user_id AND c.agent_id = b.agent_id
+			GROUP BY b.occurred_date, b.user_id, b.agent_id
+			ON DUPLICATE KEY UPDATE
+				exact_token_total = VALUES(exact_token_total),
+				derived_token_total = VALUES(derived_token_total),
+				estimated_token_total = VALUES(estimated_token_total),
+				session_count = VALUES(session_count),
+				child_session_count = VALUES(child_session_count),
+				interaction_turn_count = VALUES(interaction_turn_count),
+				model_request_count = VALUES(model_request_count),
+				tool_call_count = VALUES(tool_call_count),
+				skill_use_count = VALUES(skill_use_count),
+				code_generated_lines = VALUES(code_generated_lines),
+				code_accepted_lines = VALUES(code_accepted_lines),
+				correlated_code_lines = VALUES(correlated_code_lines),
+				cost_amount = VALUES(cost_amount),
+				cost_currency = VALUES(cost_currency),
+				source_max_event_pk = VALUES(source_max_event_pk),
+				aggregation_version = VALUES(aggregation_version),
+				computed_at = VALUES(computed_at),
+				updated_at = VALUES(updated_at),
+				token_input_total = VALUES(token_input_total),
+				token_output_total = VALUES(token_output_total),
+				token_cache_read_total = VALUES(token_cache_read_total),
+				token_cache_write_total = VALUES(token_cache_write_total),
+				token_reasoning_total = VALUES(token_reasoning_total),
+				active_duration_ms = VALUES(active_duration_ms),
+				message_count = VALUES(message_count),
+				user_message_count = VALUES(user_message_count)`, repeats: 1},
 		{query: `
 			INSERT INTO daily_user_agent_model_metrics (
 				metric_date, user_id, agent_id, provider_id, model_id,
@@ -157,13 +193,30 @@ func canonicalAggregateStatements(datePlaceholders string) []struct {
 				GROUP BY occurred_date, user_id, agent_id, provider_id, model_id
 			)
 			SELECT b.occurred_date, b.user_id, b.agent_id, b.provider_id, b.model_id,
-				b.exact_tokens, b.derived_tokens, b.estimated_tokens, b.model_request_count,
-				COALESCE(c.cost_amount, 0), COALESCE(c.cost_currency, 'USD'), b.source_max_event_pk, ` + fmt.Sprint(aggregationVersion) + `,
-				CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3), b.token_input_total, b.token_output_total,
-				b.token_cache_read_total, b.token_cache_write_total, b.token_reasoning_total
+				MAX(b.exact_tokens), MAX(b.derived_tokens), MAX(b.estimated_tokens), MAX(b.model_request_count),
+				COALESCE(MAX(c.cost_amount), 0), COALESCE(MAX(c.cost_currency), 'USD'), MAX(b.source_max_event_pk), ` + fmt.Sprint(aggregationVersion) + `,
+				CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3), MAX(b.token_input_total), MAX(b.token_output_total),
+				MAX(b.token_cache_read_total), MAX(b.token_cache_write_total), MAX(b.token_reasoning_total)
 			FROM base b LEFT JOIN costs c
 			  ON c.occurred_date = b.occurred_date AND c.user_id = b.user_id AND c.agent_id = b.agent_id
-			 AND c.provider_id = b.provider_id AND c.model_id = b.model_id`, repeats: 1},
+			 AND c.provider_id = b.provider_id AND c.model_id = b.model_id
+			GROUP BY b.occurred_date, b.user_id, b.agent_id, b.provider_id, b.model_id
+			ON DUPLICATE KEY UPDATE
+				exact_token_total = VALUES(exact_token_total),
+				derived_token_total = VALUES(derived_token_total),
+				estimated_token_total = VALUES(estimated_token_total),
+				model_request_count = VALUES(model_request_count),
+				cost_amount = VALUES(cost_amount),
+				cost_currency = VALUES(cost_currency),
+				source_max_event_pk = VALUES(source_max_event_pk),
+				aggregation_version = VALUES(aggregation_version),
+				computed_at = VALUES(computed_at),
+				updated_at = VALUES(updated_at),
+				token_input_total = VALUES(token_input_total),
+				token_output_total = VALUES(token_output_total),
+				token_cache_read_total = VALUES(token_cache_read_total),
+				token_cache_write_total = VALUES(token_cache_write_total),
+				token_reasoning_total = VALUES(token_reasoning_total)`, repeats: 1},
 		{query: `
 			INSERT INTO daily_skill_metrics (
 				metric_date, user_id, agent_id, skill_key, skill_public_name, use_count,
@@ -178,7 +231,21 @@ func canonicalAggregateStatements(datePlaceholders string) []struct {
 				CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3)
 			FROM usage_events WHERE ` + filter + `
 			  AND event_type = 'skill_invoked' AND skill_key IS NOT NULL
-			GROUP BY occurred_date, user_id, agent_id, skill_key`, repeats: 1},
+			GROUP BY occurred_date, user_id, agent_id, skill_key
+			ON DUPLICATE KEY UPDATE
+				skill_public_name = VALUES(skill_public_name),
+				use_count = VALUES(use_count),
+				exact_use_count = VALUES(exact_use_count),
+				derived_use_count = VALUES(derived_use_count),
+				correlated_use_count = VALUES(correlated_use_count),
+				estimated_use_count = VALUES(estimated_use_count),
+				success_count = VALUES(success_count),
+				failure_count = VALUES(failure_count),
+				duration_ms = VALUES(duration_ms),
+				source_max_event_pk = VALUES(source_max_event_pk),
+				aggregation_version = VALUES(aggregation_version),
+				computed_at = VALUES(computed_at),
+				updated_at = VALUES(updated_at)`, repeats: 1},
 	}
 }
 
@@ -206,15 +273,34 @@ func (w *Worker) ProcessAggregates(ctx context.Context) (int, error) {
 	if w.db == nil {
 		return 0, nil
 	}
-	rows, err := w.db.QueryContext(ctx, `
-		SELECT DISTINCT e.user_id, DATE_FORMAT(e.occurred_date, '%Y-%m-%d')
+	conn, err := w.db.Conn(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("open aggregate connection: %w", err)
+	}
+	defer conn.Close()
+
+	var acquired int
+	if err := conn.QueryRowContext(ctx, `SELECT GET_LOCK(?, 30)`, aggregationLockName).Scan(&acquired); err != nil {
+		return 0, fmt.Errorf("acquire aggregate rebuild lock: %w", err)
+	}
+	if acquired != 1 {
+		return 0, fmt.Errorf("aggregate rebuild lock is busy")
+	}
+	defer func() {
+		releaseCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, _ = conn.ExecContext(releaseCtx, `SELECT RELEASE_LOCK(?)`, aggregationLockName)
+	}()
+
+	rows, err := conn.QueryContext(ctx, `
+		SELECT DISTINCT e.user_id, DATE_FORMAT(e.occurred_date, '%Y-%m-%d') AS metric_date
 		FROM usage_events e
 		LEFT JOIN (
 			SELECT metric_date, user_id, MAX(source_max_event_pk) source_max_event_pk
 			FROM daily_user_agent_metrics GROUP BY metric_date, user_id
 		) a ON a.metric_date = e.occurred_date AND a.user_id = e.user_id
 		WHERE e.event_pk > COALESCE(a.source_max_event_pk, 0)
-		ORDER BY e.user_id, e.occurred_date
+		ORDER BY e.user_id, metric_date
 		LIMIT 500`)
 	if err != nil {
 		return 0, fmt.Errorf("find aggregate rebuild targets: %w", err)
@@ -231,11 +317,14 @@ func (w *Worker) ProcessAggregates(ctx context.Context) (int, error) {
 	if err := rows.Err(); err != nil {
 		return 0, fmt.Errorf("iterate aggregate rebuild targets: %w", err)
 	}
+	if err := rows.Close(); err != nil {
+		return 0, fmt.Errorf("close aggregate rebuild targets: %w", err)
+	}
 	if len(targets) == 0 {
 		return 0, nil
 	}
 
-	tx, err := w.db.BeginTx(ctx, nil)
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin aggregate rebuild: %w", err)
 	}
