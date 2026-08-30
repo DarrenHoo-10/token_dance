@@ -7,7 +7,6 @@ import type {
   TokenTrendsResponse,
   ExportListResponse,
   DeviceListResponse,
-  CompareResponse,
   LeaderboardResponse,
   PublicUserProfile,
   ActivityResponse,
@@ -382,42 +381,6 @@ describe('ApiHttpClient Contract Tests against OpenAPI & Backend Fixtures', () =
     expect(res.entries[0].rankNo).toBe(1);
     expect(res.entries[0].handle).toBe('maxbauer');
     expect(res.entries[0].metricValue).toBe('325700000');
-  });
-
-  it('validates CompareResponse backend JSON contract for visible and invisible users', async () => {
-    const fixture: CompareResponse = {
-      users: [
-        {
-          handle: 'maxbauer',
-          displayName: 'Max Bauer',
-          avatarUrl: null,
-          visible: true,
-          tokenTotal: '325700000',
-          rank: 1,
-          percentile: 99.0,
-          dataWatermarkAt: '2026-08-30T10:00:00Z',
-        },
-        {
-          handle: 'hidden_coder',
-          visible: false,
-        },
-      ],
-      generatedAt: '2026-08-30T10:00:00Z',
-    };
-
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      headers: new Headers({ 'Content-Type': 'application/json' }),
-      json: () => Promise.resolve(fixture),
-    });
-
-    const res = await api.compareUsers(['maxbauer', 'hidden_coder']);
-    expect(res.users[0].visible).toBe(true);
-    expect(res.users[0].tokenTotal).toBe('325700000');
-    expect(res.users[1].visible).toBe(false);
-    expect(res.users[1].displayName).toBeUndefined();
-    expect(res.users[1].tokenTotal).toBeUndefined();
   });
 
   it('validates PublicProfileDTO backend JSON contract (without nested trends/skills)', async () => {

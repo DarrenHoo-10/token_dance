@@ -7,7 +7,6 @@ import { NotificationProvider } from '@/context/NotificationContext';
 import { AuthProvider } from '@/context/AuthContext';
 import { Navbar } from '@/components/layout/Navbar';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
-import { CompareTray } from '@/components/compare/CompareTray';
 import { api } from '@/api/client';
 
 afterEach(() => {
@@ -37,7 +36,10 @@ describe('Navigation & Locale Switching Tests', () => {
     await waitFor(() => {
       expect(screen.getByText('TokenBoard')).toBeInTheDocument();
       expect(screen.getByText('社区')).toBeInTheDocument();
+      expect(screen.getByText('团队')).toBeInTheDocument();
     });
+    expect(screen.queryByText('发现')).not.toBeInTheDocument();
+    expect(screen.queryByRole('search')).not.toBeInTheDocument();
 
     const enBtn = screen.getByText('EN');
     fireEvent.click(enBtn);
@@ -135,7 +137,7 @@ describe('Navigation & Locale Switching Tests', () => {
 
     expect(menuTrigger).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByRole('menu')).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Public Profile' })).toHaveAttribute(
+    expect(screen.getByRole('menuitem', { name: 'Personal Data' })).toHaveAttribute(
       'href',
       '/u/maxbauer'
     );
@@ -154,27 +156,4 @@ describe('Navigation & Locale Switching Tests', () => {
     expect(menuTrigger).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('renders CompareTray and triggers remove and clear', () => {
-    const handleRemove = vi.fn();
-    const handleClear = vi.fn();
-
-    render(
-      <LocaleProvider>
-        <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-          <CompareTray
-            handles={['maxbauer', 'sophiadev']}
-            onRemove={handleRemove}
-            onClear={handleClear}
-          />
-        </MemoryRouter>
-      </LocaleProvider>
-    );
-
-    expect(screen.getByText('@maxbauer')).toBeInTheDocument();
-    expect(screen.getByText('@sophiadev')).toBeInTheDocument();
-
-    const clearBtn = screen.getByText('清空');
-    fireEvent.click(clearBtn);
-    expect(handleClear).toHaveBeenCalled();
-  });
 });

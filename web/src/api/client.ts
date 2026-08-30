@@ -37,9 +37,7 @@ import type {
   DeletionRequest,
   CreateDeletionRequest,
   PublicUserProfile,
-  SearchResponse,
   LeaderboardResponse,
-  CompareResponse,
 } from '@/types/api';
 
 export class ApiError extends Error {
@@ -478,11 +476,6 @@ class ApiHttpClient {
     return this.request<SkillsResponse>(`/public/users/${encodeURIComponent(handle)}/skills?${searchParams.toString()}`, { method: 'GET' });
   }
 
-  public async searchPublic(query: string, limit = 20): Promise<SearchResponse> {
-    const params = new URLSearchParams({ q: query, limit: limit.toString() });
-    return this.request<SearchResponse>(`/public/search?${params.toString()}`, { method: 'GET' });
-  }
-
   public async getLeaderboard(params: {
     board?: string;
     window?: string;
@@ -504,14 +497,6 @@ class ApiHttpClient {
     return this.request<LeaderboardResponse>(`/public/leaderboards?${searchParams.toString()}`, { method: 'GET' });
   }
 
-  public async compareUsers(handles: string[], range = '30d', metric = 'tokens'): Promise<CompareResponse> {
-    const params = new URLSearchParams({
-      handles: handles.join(','),
-      range,
-      metric,
-    });
-    return this.request<CompareResponse>(`/public/compare?${params.toString()}`, { method: 'GET' });
-  }
 }
 
 export const api = new ApiHttpClient();

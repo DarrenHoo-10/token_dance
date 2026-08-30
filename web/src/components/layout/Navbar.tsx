@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { ChevronDown, Database, FileText, LogOut, Search, Settings, UserRound } from 'lucide-react';
+import { ChevronDown, Database, FileText, LogOut, Settings, UserRound } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
@@ -12,7 +12,6 @@ export const Navbar: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [search, setSearch] = useState('');
   const userMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -48,12 +47,6 @@ export const Navbar: React.FC = () => {
     navigate('/login');
   };
 
-  const submitSearch = (event: React.FormEvent) => {
-    event.preventDefault();
-    const query = search.trim();
-    navigate(query ? `/explore?q=${encodeURIComponent(query)}` : '/explore');
-  };
-
   const initials = user?.displayName
     ? user.displayName
         .split(' ')
@@ -80,14 +73,6 @@ export const Navbar: React.FC = () => {
           TokenBoard
         </NavLink>
         <NavLink
-          to="/explore"
-          className={({ isActive }) =>
-            `nav-link ${isActive || location.pathname.startsWith('/explore') ? 'active' : ''}`
-          }
-        >
-          {locale === 'zh-CN' ? '发现' : 'Explore'}
-        </NavLink>
-        <NavLink
           to="/community"
           className={({ isActive }) =>
             `nav-link ${isActive || location.pathname.startsWith('/community') ? 'active' : ''}`
@@ -104,20 +89,6 @@ export const Navbar: React.FC = () => {
           {locale === 'zh-CN' ? '团队' : 'Teams'}
         </NavLink>
       </nav>
-
-      <form
-        className="nav-search"
-        role="search"
-        onSubmit={submitSearch}
-      >
-        <input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder={t('common.searchPlaceholder')}
-          aria-label={t('common.search')}
-        />
-        <Search size={17} aria-hidden="true" />
-      </form>
 
       <div className="nav-actions">
         <button

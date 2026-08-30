@@ -7,9 +7,9 @@ import { AuthProvider } from '@/context/AuthContext';
 import { api, ApiError } from '@/api/client';
 
 import { LeaderboardPage } from '@/pages/public/LeaderboardPage';
-import { ExplorePage } from '@/pages/public/ExplorePage';
 import { PublicProfilePage } from '@/pages/public/PublicProfilePage';
-import { ComparePage } from '@/pages/public/ComparePage';
+import { CommunityPage } from '@/pages/public/CommunityPage';
+import { TeamDashboardPage } from '@/pages/teams/TeamDashboardPage';
 import { ActivityPage } from '@/pages/me/ActivityPage';
 import { PersonalDashboardPage } from '@/pages/me/PersonalDashboardPage';
 import { PrivacySettingsPage } from '@/pages/settings/PrivacySettingsPage';
@@ -45,45 +45,25 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       expect(screen.getByText('12.4B')).toBeInTheDocument();
     });
 
-    it('filters the rendered leaderboard without replacing the approved shell', () => {
+    it('does not expose unsupported search controls', () => {
       renderWithProviders(<LeaderboardPage />, '/leaderboard');
-      const filter = screen.getByPlaceholderText('筛选开发者');
-      fireEvent.change(filter, { target: { value: 'maxbauer' } });
       expect(screen.getByText('maxbauer')).toBeInTheDocument();
-      expect(screen.queryByText('sophiadev')).not.toBeInTheDocument();
+      expect(screen.queryByRole('search')).not.toBeInTheDocument();
     });
   });
 
-  describe('ExplorePage', () => {
-    it('executes search and displays user and agent results', async () => {
-      vi.spyOn(api, 'searchPublic').mockResolvedValue({
-        users: [
-          { handle: 'dev1', displayName: 'Dev One', avatarUrl: null, bio: 'Coding', rank: 5, tokenTotal: '100M', topAgent: 'Claude Code' },
-        ],
-        agents: [
-          { agentId: 'claude-code', name: 'Claude Code', displayName: 'Claude Code', developerCount: '10K', tokenTotal30d: '1T', tags: ['agent'] },
-        ],
-        skills: [],
-      });
-
-      renderWithProviders(<ExplorePage />, '/explore?q=claude');
-
-      await waitFor(() => {
-        expect(screen.getByText('Dev One')).toBeInTheDocument();
-        expect(screen.getByText('@dev1 · Claude Code')).toBeInTheDocument();
-      });
+  describe('CommunityPage and TeamDashboardPage', () => {
+    it('renders the intentionally blank community page', () => {
+      renderWithProviders(<CommunityPage />, '/community');
+      expect(screen.getByRole('heading', { name: '社区' })).toBeInTheDocument();
+      expect(screen.getByText('这里暂时留白')).toBeInTheDocument();
     });
 
-    it('renders ErrorState when search API fails', async () => {
-      vi.spyOn(api, 'searchPublic').mockRejectedValue(
-        new ApiError(503, { code: 'HTTP_503', messageKey: 'errors.http_503' })
-      );
-
-      renderWithProviders(<ExplorePage />, '/explore?q=test');
-
-      await waitFor(() => {
-        expect(screen.getByText('数据加载失败')).toBeInTheDocument();
-      });
+    it('renders team token analytics instead of user comparison', () => {
+      renderWithProviders(<TeamDashboardPage />, '/teams');
+      expect(screen.getByRole('heading', { name: '小团队 Token 分析' })).toBeInTheDocument();
+      expect(screen.getByText('团队 Token 趋势')).toBeInTheDocument();
+      expect(screen.getByText('成员消耗')).toBeInTheDocument();
     });
   });
 
@@ -136,8 +116,8 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         expect(getTrendsSpy).toHaveBeenCalledWith('maxbauer', { range: '30d' });
         expect(getSkillsSpy).toHaveBeenCalledWith('maxbauer', '30d');
         expect(screen.getAllByText('Max Bauer').length).toBeGreaterThanOrEqual(1);
-        expect(screen.getByText('@maxbauer')).toBeInTheDocument();
-        expect(screen.getByText('Building with AI')).toBeInTheDocument();
+        expect(screen.getByText(/@maxbauer/)).toBeInTheDocument();
+        expect(screen.getByText(/Building with AI/)).toBeInTheDocument();
         expect(screen.getByText('#1')).toBeInTheDocument();
         expect(screen.getByText('325.7M')).toBeInTheDocument();
         expect(screen.getByText('test-runner')).toBeInTheDocument();
@@ -166,51 +146,6 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       await waitFor(() => {
         expect(screen.getByText('数据加载失败')).toBeInTheDocument();
         expect(screen.getByText('PUBLIC_PROFILE_NOT_FOUND')).toBeInTheDocument();
-      });
-    });
-  });
-
-  describe('ComparePage', () => {
-    it('renders comparison data for selected handles including invisible users without crashing', async () => {
-      vi.spyOn(api, 'compareUsers').mockResolvedValue({
-        range: '30d',
-        metric: 'tokens',
-        generatedAt: '2026-08-30T10:00:00Z',
-        users: [
-          {
-            handle: 'user1',
-            displayName: 'User One',
-            avatarUrl: null,
-            visible: true,
-            rank: 1,
-            tokenTotal: '100000000',
-            codeLinesTotal: '50000',
-            activeDays: 20,
-            currentStreak: 15,
-            topAgent: 'Codex',
-          },
-          {
-            handle: 'invisible_dev',
-            visible: false,
-          },
-        ],
-      });
-
-      renderWithProviders(<ComparePage />, '/compare?handles=user1,invisible_dev');
-
-      await waitFor(() => {
-        expect(screen.getByText('User One')).toBeInTheDocument();
-        expect(screen.getByText('@user1')).toBeInTheDocument();
-        expect(screen.getByText('@invisible_dev')).toBeInTheDocument();
-        expect(screen.getByText('该用户未公开此项数据')).toBeInTheDocument();
-      });
-    });
-
-    it('renders EmptyState when no handles are provided', async () => {
-      renderWithProviders(<ComparePage />, '/compare');
-
-      await waitFor(() => {
-        expect(screen.getByText('最多选择 3 位公开用户进行对比')).toBeInTheDocument();
       });
     });
   });

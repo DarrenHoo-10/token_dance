@@ -1,8 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowUpRight, BarChart3, ChevronLeft, ChevronRight, CircleHelp,
-  Flame, Search, TrendingDown, TrendingUp, Users,
+  Flame, TrendingDown, TrendingUp, Users,
 } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 
@@ -71,14 +71,9 @@ export const LeaderboardPage: React.FC = () => {
   const navigate = useNavigate();
   const zh = locale === 'zh-CN';
   const [range, setRange] = useState<Range>('Today');
-  const [query, setQuery] = useState('');
   const [connected, setConnected] = useState(false);
-  const filtered = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    return normalized ? leaders.filter((leader) => `${leader.name} ${leader.displayName} ${leader.tools}`.toLowerCase().includes(normalized)) : leaders;
-  }, [query]);
-  const podium = [leaders[1], leaders[0], leaders[2]].filter((leader) => filtered.some((item) => item.rank === leader.rank));
-  const rows = filtered.filter((leader) => leader.rank > 3);
+  const podium = [leaders[1], leaders[0], leaders[2]];
+  const rows = leaders.filter((leader) => leader.rank > 3);
 
   return <div className="token-home"><div className="home-dashboard">
     <section className="main-column" aria-label={zh ? 'Token 排行榜' : 'Token leaderboard'}>
@@ -100,12 +95,11 @@ export const LeaderboardPage: React.FC = () => {
       <section className="leaderboard-panel" id="leaderboard">
         <div className="range-tabs" role="tablist" aria-label={zh ? '排行榜周期' : 'Leaderboard period'}>
           {ranges.map((item) => <button key={item} type="button" role="tab" aria-selected={range === item} className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{item === 'Today' && zh ? '今天' : item}{item === 'Today' && <span className="live-dot" />}</button>)}
-          <label className="board-search"><Search /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={zh ? '筛选开发者' : 'Filter builders'} /></label>
         </div>
         {podium.length > 0 && <div className="podium-grid">{podium.map((leader) => <PodiumCard key={leader.rank} leader={leader} />)}</div>}
         <div className="ranking-table">
-          {rows.length ? rows.map((leader) => <RankingRow key={leader.rank} leader={leader} range={range} />) : <div className="board-empty"><Search /><strong>{zh ? '没有匹配的开发者' : 'No builders found'}</strong></div>}
-          {!query && <div className="ranking-row current-user"><span className="rank-number">37</span><div className="rank-person"><img className="leader-avatar row-avatar" src="https://i.pravatar.cc/120?img=12" alt="" /><span>{zh ? '你' : 'You'}<small>{zh ? '继续创造！' : 'keep shipping!'}</small></span></div><strong className="rank-tokens">{(12.7 * multipliers[range]).toFixed(range === 'Today' ? 1 : 0)}M</strong><Sparkline values={[10, 12, 11, 18, 14, 22, 19]} /><span className="rank-tools">Claude 51% · Cursor 27% · Codex 22%</span><TrendBadge value={5} /></div>}
+          {rows.map((leader) => <RankingRow key={leader.rank} leader={leader} range={range} />)}
+          <div className="ranking-row current-user"><span className="rank-number">37</span><div className="rank-person"><img className="leader-avatar row-avatar" src="https://i.pravatar.cc/120?img=12" alt="" /><span>{zh ? '你' : 'You'}<small>{zh ? '继续创造！' : 'keep shipping!'}</small></span></div><strong className="rank-tokens">{(12.7 * multipliers[range]).toFixed(range === 'Today' ? 1 : 0)}M</strong><Sparkline values={[10, 12, 11, 18, 14, 22, 19]} /><span className="rank-tools">Claude 51% · Cursor 27% · Codex 22%</span><TrendBadge value={5} /></div>
         </div>
       </section>
     </section>

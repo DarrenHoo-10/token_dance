@@ -27,9 +27,9 @@ import { ExportsSettingsPage } from '@/pages/settings/ExportsSettingsPage';
 
 // Public & Community
 import { PublicProfilePage } from '@/pages/public/PublicProfilePage';
-import { ExplorePage } from '@/pages/public/ExplorePage';
 import { LeaderboardPage } from '@/pages/public/LeaderboardPage';
-import { ComparePage } from '@/pages/public/ComparePage';
+import { CommunityPage } from '@/pages/public/CommunityPage';
+import { TeamDashboardPage } from '@/pages/teams/TeamDashboardPage';
 import { NotFoundPage } from '@/pages/system/NotFoundPage';
 
 const RootRedirect: React.FC = () => {
@@ -73,11 +73,9 @@ export const App: React.FC = () => {
 
                 {/* Public community pages */}
                 <Route path="/u/:handle" element={<PublicProfilePage />} />
-                <Route path="/explore" element={<ExplorePage />} />
-                <Route path="/community" element={<ExplorePage />} />
+                <Route path="/community" element={<CommunityPage />} />
                 <Route path="/leaderboard" element={<LeaderboardPage />} />
-                <Route path="/compare" element={<ComparePage />} />
-                <Route path="/teams" element={<ComparePage />} />
+                <Route path="/teams" element={<TeamDashboardPage />} />
 
                 {/* 404 catch-all */}
                 <Route path="*" element={<NotFoundPage />} />

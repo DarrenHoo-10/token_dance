@@ -493,47 +493,6 @@ export interface PublicUserProfile {
   skillRanking?: SkillItem[];
 }
 
-export interface SearchUserResult {
-  handle: string;
-  displayName: string;
-  avatarUrl: string | null;
-  bio?: string | null;
-  rank?: number | null;
-  tokenTotal?: string;
-  topAgent?: string;
-}
-
-export interface SearchAgentResult {
-  agentId: string;
-  name: string;
-  description?: string;
-  // Compatibility aliases
-  displayName?: string;
-  developerCount?: string;
-  tokenTotal30d?: string;
-  tags?: string[];
-}
-
-export interface SearchSkillResult {
-  skillId: string;
-  skillPublicName: string;
-  useCount: string | number;
-  publicUserCount: number;
-  activeDays: number;
-  // Compatibility aliases
-  userCount?: number;
-  growthDelta?: number;
-  tags?: string[];
-}
-
-export interface SearchResponse {
-  users: SearchUserResult[];
-  agents: SearchAgentResult[];
-  skills?: SearchSkillResult[];
-  query?: string;
-  totalCount?: number;
-}
-
 export interface LeaderboardEntry {
   rankNo: number;
   handle: string;
@@ -559,31 +518,3 @@ export interface LeaderboardResponse {
   generatedAt?: string;
   totalEntries?: number;
 }
-
-export interface CompareUserItem {
-  handle: string;
-  displayName?: string | null;
-  avatarUrl?: string | null;
-  visible: boolean;
-  tokenTotal?: string | null;
-  rank?: number | null;
-  percentile?: number | string | null;
-  dataWatermarkAt?: string | null;
-  // Extra fields
-  codeLinesTotal?: string | null;
-  activeDays?: number | null;
-  currentStreak?: number | null;
-  topAgent?: string | null;
-  agentBreakdown?: AgentBreakdownItem[];
-  skillRanking?: SkillItem[];
-}
-
-export interface CompareResponse {
-  users: CompareUserItem[];
-  generatedAt: string;
-  range?: string;
-  metric?: string;
-}
-
-export type UserComparisonItem = CompareUserItem;
-export type UserComparisonResponse = CompareResponse;

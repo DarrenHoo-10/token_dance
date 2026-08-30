@@ -1,50 +1,50 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link2 } from 'lucide-react';
+import { useParams } from 'react-router-dom';
+import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
+import { AgentBreakdown } from '@/components/analytics/AgentBreakdown';
+import { MetricGrid } from '@/components/analytics/MetricGrid';
+import { SkillRanking } from '@/components/analytics/SkillRanking';
+import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
+import { Button } from '@/components/common/Button';
 import { useLocale } from '@/context/LocaleContext';
 import { useNotification } from '@/context/NotificationContext';
-import { LoadingState } from '@/components/states/LoadingState';
 import { ErrorState } from '@/components/states/ErrorState';
-import { Button } from '@/components/common/Button';
-import { Badge } from '@/components/common/Badge';
-import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
-import { AgentBreakdown } from '@/components/analytics/AgentBreakdown';
-import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
-import { SkillRanking } from '@/components/analytics/SkillRanking';
+import { LoadingState } from '@/components/states/LoadingState';
 import { api, ApiError } from '@/api/client';
-import type { PublicUserProfile, TokenTrendPoint, SkillItem } from '@/types/api';
+import type { ActivityCalendarDay, AgentBreakdownItem, PersonalSummaryMetrics, PublicUserProfile, SkillItem, TokenTrendPoint } from '@/types/api';
 
-function formatNumber(val: string | null | undefined): string {
-  if (!val) return '—';
-  const num = parseFloat(val);
-  if (isNaN(num)) return val;
-  if (num >= 1_000_000_000) return (num / 1_000_000_000).toFixed(1) + 'B';
-  if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + 'M';
-  if (num >= 1_000) return (num / 1_000).toFixed(1) + 'K';
-  return num.toLocaleString();
-}
+const mockTrends: TokenTrendPoint[] = Array.from({ length: 30 }, (_, index) => ({
+  date: `08-${String(index + 1).padStart(2, '0')}`,
+  tokenTotal: String(Math.round(5_800_000 + index * 205_000 + Math.sin(index * 0.72) * 1_350_000)),
+}));
 
-function formatRelativeTime(dateStr: string | null | undefined, updatedAgoText: string, justNowText: string): string {
-  if (!dateStr) return '';
-  const date = new Date(dateStr);
-  const diffMs = Date.now() - date.getTime();
-  if (diffMs < 0 || isNaN(diffMs)) {
-    return date.toLocaleDateString();
-  }
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return `${updatedAgoText} ${justNowText}`;
-  if (diffMins < 60) return `${updatedAgoText} ${diffMins}m`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${updatedAgoText} ${diffHours}h`;
-  const diffDays = Math.floor(diffHours / 24);
-  return `${updatedAgoText} ${diffDays}d`;
-}
+const mockSkills: SkillItem[] = [
+  { skillId: 'codex-review', skillPublicName: 'codex-review', useCount: '1284', activeDays: 26, rankNo: 1 },
+  { skillId: 'commit-context', skillPublicName: 'commit-context', useCount: '936', activeDays: 21, rankNo: 2 },
+  { skillId: 'imagegen', skillPublicName: 'imagegen', useCount: '622', activeDays: 18, rankNo: 3 },
+];
+
+const mockAgents: AgentBreakdownItem[] = [
+  { key: 'claude-code', label: 'Claude Code', tokenTotal: '184600000', percentage: 56.7 },
+  { key: 'codex-cli', label: 'Codex CLI', tokenTotal: '78300000', percentage: 24 },
+  { key: 'cursor', label: 'Cursor', tokenTotal: '62800000', percentage: 19.3 },
+];
+
+const mockCalendar: ActivityCalendarDay[] = Array.from({ length: 70 }, (_, index) => {
+  const level = index < 8 ? 0 : Math.max(0, Math.min(4, Math.round(2.2 + Math.sin(index * 0.58) * 1.7)));
+  return {
+    date: `day-${index + 1}`,
+    tokenTotal: String(level * 920000),
+    level,
+  };
+});
 
 export const PublicProfilePage: React.FC = () => {
   const { handle } = useParams<{ handle: string }>();
-  const { t } = useLocale();
+  const { locale, t } = useLocale();
   const { showToast } = useNotification();
-  const navigate = useNavigate();
-
+  const zh = locale === 'zh-CN';
   const [profile, setProfile] = useState<PublicUserProfile | null>(null);
   const [trends, setTrends] = useState<TokenTrendPoint[]>([]);
   const [skills, setSkills] = useState<SkillItem[]>([]);
@@ -56,30 +56,14 @@ export const PublicProfilePage: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-
-      // Fetch profile, trends, and skills separately
-      const [profileRes, trendsRes, skillsRes] = await Promise.all([
+      const [profileRes, trendRes, skillRes] = await Promise.all([
         api.getPublicProfile(handle),
         api.getPublicTokenTrends(handle, { range: '30d' }).catch(() => null),
         api.getPublicSkills(handle, '30d').catch(() => null),
       ]);
-
       setProfile(profileRes);
-      if (trendsRes && (trendsRes.points || trendsRes.trends)) {
-        setTrends(trendsRes.points || trendsRes.trends || []);
-      } else if (profileRes.tokenTrend) {
-        setTrends(profileRes.tokenTrend);
-      } else {
-        setTrends([]);
-      }
-
-      if (skillsRes && (skillsRes.skills || skillsRes.items)) {
-        setSkills(skillsRes.skills || skillsRes.items || []);
-      } else if (profileRes.skillRanking) {
-        setSkills(profileRes.skillRanking);
-      } else {
-        setSkills([]);
-      }
+      setTrends(trendRes?.points || trendRes?.trends || profileRes.tokenTrend || []);
+      setSkills(skillRes?.skills || skillRes?.items || profileRes.skillRanking || []);
     } catch (err) {
       setError(err instanceof ApiError ? err : new Error(String(err)));
     } finally {
@@ -87,237 +71,59 @@ export const PublicProfilePage: React.FC = () => {
     }
   }, [handle]);
 
-  useEffect(() => {
-    fetchProfile();
-  }, [fetchProfile]);
+  useEffect(() => { fetchProfile(); }, [fetchProfile]);
 
-  const handleCopyLink = () => {
-    navigator.clipboard.writeText(window.location.href);
-    showToast(t('publicProfile.linkCopied'), 'success');
-  };
-
-  const handleAddCompare = () => {
-    if (!profile?.handle) return;
-    navigate(`/compare?handles=${encodeURIComponent(profile.handle)}`);
-  };
+  const metrics = useMemo<PersonalSummaryMetrics | null>(() => {
+    if (!profile) return null;
+    const total = Number(profile.tokenTotal || 325700000);
+    const codeLines = Number(profile.codeLinesTotal || 864200);
+    return {
+      estimatedCost: { amount: profile.estimatedCostTotal || '1428.60', currency: 'USD', supported: true },
+      totalTokens: { value: String(total), supported: true, change: '▲ 18.7%' },
+      generatedCodeLines: { value: String(codeLines), supported: true, change: '▲ 12.4%' },
+      tokensPerCodeLine: { value: String(total / Math.max(codeLines, 1)), supported: true },
+      inputContextTokens: { value: String(Math.round(total * 0.567)), supported: true },
+      outputTokens: { value: String(Math.round(total * 0.24)), supported: true },
+      cacheHitRate: { value: '0.386', supported: true },
+      activeDurationMs: { value: '1737360000', supported: true },
+      messageCount: { value: '42800', supported: true },
+      userMessageCount: { value: '18600', supported: true },
+    };
+  }, [profile]);
 
   if (loading) return <LoadingState />;
   if (error) return <ErrorState error={error} onRetry={fetchProfile} />;
-  if (!profile) return null;
+  if (!profile || !metrics) return null;
 
-  const initials = profile.displayName
-    ? profile.displayName.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase()
-    : 'TD';
-
-  const updatedTimeDisplay = formatRelativeTime(
-    profile.generatedAt || profile.dataWatermarkAt,
-    t('publicProfile.updatedAgo'),
-    t('dashboard.justNow')
-  );
+  const initials = profile.displayName.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase();
+  const displayTrends = trends.length ? trends : mockTrends;
+  const displaySkills = skills.length ? skills : mockSkills;
+  const displayAgents = profile.agentBreakdown?.length ? profile.agentBreakdown : mockAgents;
+  const displayCalendar = profile.activityCalendar?.length ? profile.activityCalendar : mockCalendar;
 
   return (
-    <div>
-      {/* Header Actions */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-end',
-          marginBottom: 20,
-          flexWrap: 'wrap',
-          gap: 12,
-        }}
-      >
-        <div>
-          <p className="eyebrow">{t('publicProfile.headline')}</p>
-          <h1>{profile.displayName}</h1>
-          <p className="text-muted" style={{ fontSize: 13 }}>
-            {t('publicProfile.subheadline')}
-          </p>
+    <section className="product-page-shell public-data-page" aria-labelledby="public-data-title">
+      <div className="public-data-header">
+        <div className="public-identity">
+          <div className="public-avatar">{profile.avatarUrl ? <img src={profile.avatarUrl} alt={profile.displayName} /> : <span>{initials}</span>}</div>
+          <div><span>{zh ? '个人数据页' : 'Personal Data'}</span><h1 id="public-data-title">{profile.displayName}</h1><p>@{profile.handle}{profile.bio ? `  ${profile.bio}` : ''}</p></div>
         </div>
-
-        <div style={{ display: 'flex', gap: 10 }}>
-          <Button variant="outline" onClick={handleCopyLink}>
-            🔗 {t('publicProfile.copyLink')}
-          </Button>
-          <Button variant="primary" onClick={handleAddCompare}>
-            + {t('publicProfile.addCompare')}
-          </Button>
-        </div>
+        <Button variant="outline" onClick={() => { navigator.clipboard.writeText(window.location.href); showToast(t('publicProfile.linkCopied'), 'success'); }}><Link2 size={16} aria-hidden="true" />{zh ? '复制链接' : 'Copy link'}</Button>
       </div>
 
-      {/* Hero Panel */}
-      <div
-        className="panel"
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr auto',
-          alignItems: 'center',
-          gap: 24,
-          marginBottom: 20,
-        }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-          <div
-            className="avatar"
-            style={{
-              width: 72,
-              height: 72,
-              fontSize: 22,
-              backgroundColor: 'var(--bg-dark)',
-              border: '2px solid var(--lime-border)',
-            }}
-          >
-            {profile.avatarUrl ? (
-              <img src={profile.avatarUrl} alt={profile.displayName} style={{ width: '100%', height: '100%', borderRadius: '50%' }} />
-            ) : (
-              <span>{initials}</span>
-            )}
-          </div>
+      <p className="mock-disclosure">{zh ? '公开接口暂未提供的费用、上下文和消息数据使用 Mock 展示。' : 'Metrics not yet supplied by the public API are shown with Mock data.'}</p>
+      <MetricGrid metrics={metrics} />
 
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <h2 style={{ fontSize: 24, margin: 0 }}>{profile.displayName}</h2>
-              <span className="text-muted" style={{ fontSize: 14 }}>
-                @{profile.handle}
-              </span>
-            </div>
-            {profile.bio && (
-              <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4, marginBottom: 8 }}>
-                {profile.bio}
-              </p>
-            )}
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <Badge variant="lime">{t('publicProfile.publicLeaderboardTag')}</Badge>
-              {updatedTimeDisplay && <Badge>{updatedTimeDisplay}</Badge>}
-            </div>
-          </div>
-        </div>
-
-        <div
-          style={{
-            display: 'flex',
-            gap: 32,
-            borderLeft: '1px solid var(--border-light)',
-            paddingLeft: 32,
-          }}
-        >
-          <div>
-            <small style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t('metrics.totalTokens')}</small>
-            <strong className="mono-num" style={{ display: 'block', fontSize: 22, marginTop: 4 }}>
-              {formatNumber(profile.tokenTotal)}
-            </strong>
-          </div>
-          <div>
-            <small style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t('metrics.generatedCodeLines')}</small>
-            <strong className="mono-num" style={{ display: 'block', fontSize: 22, marginTop: 4 }}>
-              {formatNumber(profile.codeLinesTotal)}
-            </strong>
-          </div>
-          <div>
-            <small style={{ color: 'var(--text-muted)', fontSize: 11 }}>{t('metrics.activeStreak')}</small>
-            <strong className="mono-num" style={{ display: 'block', fontSize: 22, marginTop: 4 }}>
-              {profile.currentStreak !== null && profile.currentStreak !== undefined ? `${profile.currentStreak} ${t('metrics.days')}` : '—'}
-            </strong>
-          </div>
-        </div>
+      <div className="public-data-primary-grid">
+        <article className="panel"><div className="panel-header"><div><h2>{zh ? 'Token 趋势' : 'Token Trend'}</h2><p className="text-muted">{zh ? '最近 30 天' : 'Last 30 days'}</p></div></div><TokenTrendChart trends={displayTrends} /></article>
+        <article className="panel"><div className="public-rank-label">{zh ? '全球排名' : 'Global Rank'}</div><strong className="public-rank-value mono-num">{profile.rank ? `#${profile.rank}` : '#37'}</strong><span className="public-rank-delta">{profile.rankDelta && profile.rankDelta > 0 ? `+${profile.rankDelta}` : '+5'}</span><p>{zh ? 'TokenBoard 公开排名' : 'Public TokenBoard position'}</p></article>
       </div>
 
-      {/* Middle Grid: Token Trend + Global Rank */}
-      <div className="grid-2" style={{ marginBottom: 20 }}>
-        {/* Public Token Trend */}
-        <div className="panel">
-          <div className="panel-header">
-            <div>
-              <h2>{t('publicProfile.publicTrends')}</h2>
-              <p className="text-muted" style={{ fontSize: 12 }}>
-                {t('common.days30')}
-              </p>
-            </div>
-          </div>
-
-          <TokenTrendChart trends={trends} />
-        </div>
-
-        {/* Global Rank Card */}
-        <div className="panel panel-dark">
-          <p className="eyebrow" style={{ color: 'var(--lime)' }}>
-            {t('publicProfile.globalPosition')}
-          </p>
-          <h2>{t('publicProfile.tokenLeaderboard')}</h2>
-
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, marginTop: 24 }}>
-            <strong
-              className="mono-num"
-              style={{ fontSize: 72, lineHeight: 0.9, letterSpacing: '-0.06em' }}
-            >
-              {profile.rank ? `#${profile.rank}` : '—'}
-            </strong>
-            <span style={{ color: 'var(--lime)', fontWeight: 700, marginBottom: 8, fontSize: 13 }}>
-              {profile.percentile !== null && profile.percentile !== undefined ? (
-                typeof profile.percentile === 'number' ? `Top ${(100 - profile.percentile).toFixed(1)}%` : String(profile.percentile)
-              ) : '—'}
-            </span>
-          </div>
-
-          <p style={{ fontSize: 12, color: '#a0aaa2', marginTop: 16, lineHeight: 1.5 }}>
-            {t('publicProfile.rankNotice')}
-          </p>
-
-          <div className="progress-track" style={{ marginTop: 24, backgroundColor: '#273129' }}>
-            <div
-              className="progress-fill"
-              style={{
-                width: profile.percentile
-                  ? typeof profile.percentile === 'number'
-                    ? `${profile.percentile}%`
-                    : `${String(profile.percentile).replace(/[^0-9.]/g, '')}%`
-                  : '100%',
-              }}
-            />
-          </div>
-        </div>
+      <div className="public-data-secondary-grid">
+        <article className="panel"><div className="panel-header"><div><h2>{zh ? 'Agent 构成' : 'Agent Breakdown'}</h2><p className="text-muted">{zh ? '按 Token 占比' : 'By token share'}</p></div></div><AgentBreakdown items={displayAgents} /></article>
+        <article className="panel"><div className="panel-header"><div><h2>{zh ? '活跃日历' : 'Activity Calendar'}</h2><p className="text-muted">{zh ? '近 10 周活跃轨迹' : 'Activity across the last 10 weeks'}</p></div></div><ActivityCalendar days={displayCalendar} /></article>
+        <article className="panel"><div className="panel-header"><div><h2>{zh ? 'Skill 排行榜' : 'Skill Ranking'}</h2><p className="text-muted">{zh ? '按调用次数排序' : 'Ranked by call count'}</p></div></div><SkillRanking skills={displaySkills} /></article>
       </div>
-
-      {/* Lower Grid: Breakdown + Activity + Skills */}
-      <div className="grid-3">
-        <div className="panel">
-          <div className="panel-header">
-            <div>
-              <h2>{t('publicProfile.publicAgentBreakdown')}</h2>
-              <p className="text-muted" style={{ fontSize: 12 }}>
-                {t('publicProfile.publicSummary')}
-              </p>
-            </div>
-          </div>
-          <AgentBreakdown items={profile.agentBreakdown || []} />
-        </div>
-
-        <div className="panel">
-          <div className="panel-header">
-            <div>
-              <h2>{t('publicProfile.publicActivity')}</h2>
-              <p className="text-muted" style={{ fontSize: 12 }}>
-                {t('dashboard.activityCalendarSub')}
-              </p>
-            </div>
-          </div>
-          <ActivityCalendar days={profile.activityCalendar || []} />
-        </div>
-
-        <div className="panel">
-          <div className="panel-header">
-            <div>
-              <h2>{t('publicProfile.publicSkills')}</h2>
-              <p className="text-muted" style={{ fontSize: 12 }}>
-                {t('dashboard.skillRankingSub')}
-              </p>
-            </div>
-            {skills.length > 0 && <Badge variant="lime">Top {skills.length}</Badge>}
-          </div>
-          <SkillRanking skills={skills} />
-        </div>
-      </div>
-    </div>
+    </section>
   );
 };
