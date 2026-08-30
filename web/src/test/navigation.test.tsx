@@ -1,5 +1,5 @@
 import React from 'react';
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { LocaleProvider, useLocale } from '@/context/LocaleContext';
@@ -9,6 +9,11 @@ import { Navbar } from '@/components/layout/Navbar';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
 import { CompareTray } from '@/components/compare/CompareTray';
 import { api } from '@/api/client';
+
+afterEach(() => {
+  localStorage.clear();
+  vi.restoreAllMocks();
+});
 
 describe('Navigation & Locale Switching Tests', () => {
   it('renders navbar links and switches language', async () => {
@@ -95,6 +100,58 @@ describe('Navigation & Locale Switching Tests', () => {
     expect(screen.getByTestId('route-label')).toHaveTextContent('排行榜');
     expect(screen.getByTestId('current-path')).toHaveTextContent('/leaderboard?window=7d&metric=code_lines');
     expect(screen.getByTestId('search-input')).toHaveValue('custom query');
+  });
+
+  it('opens the authenticated user menu and closes it with Escape', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue({
+      authenticated: true,
+      user: {
+        userId: 'user-1',
+        handle: 'maxbauer',
+        displayName: 'Max Bauer',
+        avatarUrl: null,
+        locale: 'en-US',
+        onboardingRequired: false,
+        productState: 'active_public',
+      },
+    });
+
+    render(
+      <LocaleProvider>
+        <NotificationProvider>
+          <AuthProvider>
+            <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+              <Navbar />
+            </MemoryRouter>
+          </AuthProvider>
+        </NotificationProvider>
+      </LocaleProvider>
+    );
+
+    const menuTrigger = await screen.findByRole('button', { name: 'User menu' });
+    expect(menuTrigger).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(menuTrigger);
+
+    expect(menuTrigger).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'Public Profile' })).toHaveAttribute(
+      'href',
+      '/u/maxbauer'
+    );
+    expect(screen.getByRole('menuitem', { name: 'Settings' })).toHaveAttribute(
+      'href',
+      '/settings/privacy'
+    );
+    expect(screen.getByRole('menuitem', { name: 'Collector Devices' })).toHaveAttribute(
+      'href',
+      '/settings/devices'
+    );
+    expect(screen.getByRole('menuitem', { name: 'Sign Out' })).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(menuTrigger).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('renders CompareTray and triggers remove and clear', () => {

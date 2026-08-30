@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { ChevronDown, Database, LogOut, Search, Settings, UserRound } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
@@ -11,6 +12,35 @@ export const Navbar: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!dropdownOpen) return;
+
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!userMenuRef.current?.contains(event.target as Node)) {
+        setDropdownOpen(false);
+      }
+    };
+
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', closeOnOutsideClick);
+    document.addEventListener('keydown', closeOnEscape);
+
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [dropdownOpen]);
+
+  useEffect(() => {
+    setDropdownOpen(false);
+  }, [location.pathname]);
 
   const handleLogout = async () => {
     await logout();
@@ -35,6 +65,14 @@ export const Navbar: React.FC = () => {
 
       <nav className="nav-links" aria-label={t('common.mainNavigation')}>
         <NavLink
+          to="/leaderboard"
+          className={({ isActive }) =>
+            `nav-link ${isActive || location.pathname.startsWith('/leaderboard') ? 'active' : ''}`
+          }
+        >
+          {t('nav.leaderboard')}
+        </NavLink>
+        <NavLink
           to="/me"
           className={({ isActive }) =>
             `nav-link ${isActive || location.pathname.startsWith('/me') ? 'active' : ''}`
@@ -51,14 +89,6 @@ export const Navbar: React.FC = () => {
           {t('nav.explore')}
         </NavLink>
         <NavLink
-          to="/leaderboard"
-          className={({ isActive }) =>
-            `nav-link ${isActive || location.pathname.startsWith('/leaderboard') ? 'active' : ''}`
-          }
-        >
-          {t('nav.leaderboard')}
-        </NavLink>
-        <NavLink
           to="/compare"
           className={({ isActive }) =>
             `nav-link ${isActive || location.pathname.startsWith('/compare') ? 'active' : ''}`
@@ -69,68 +99,49 @@ export const Navbar: React.FC = () => {
       </nav>
 
       <div className="nav-actions">
-        <div
+        <button
+          type="button"
+          className="nav-search"
           onClick={() => navigate('/explore')}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            height: 36,
-            padding: '0 12px',
-            border: '1px solid var(--border-light)',
-            borderRadius: 'var(--radius-sm)',
-            backgroundColor: 'var(--bg-subtle)',
-            fontSize: 12,
-            color: 'var(--text-subtle)',
-            cursor: 'pointer',
-            minWidth: 160,
-          }}
+          aria-label={t('common.search')}
         >
-          <span>🔍 {t('common.searchPlaceholder')}</span>
-        </div>
+          <span>{t('common.searchPlaceholder')}</span>
+          <Search size={17} aria-hidden="true" />
+        </button>
 
         <LocaleSwitcher />
 
         {authenticated && user ? (
-          <div style={{ position: 'relative' }}>
+          <div className="user-menu" ref={userMenuRef}>
             <button
               type="button"
-              className="avatar"
-              style={{
-                width: 36,
-                height: 36,
-                cursor: 'pointer',
-                border: '1px solid var(--border-light)',
-              }}
+              className={`user-menu-trigger ${dropdownOpen ? 'open' : ''}`}
               onClick={() => setDropdownOpen((prev) => !prev)}
               aria-label={t('common.userMenu')}
+              aria-haspopup="menu"
+              aria-expanded={dropdownOpen}
+              aria-controls="primary-user-menu"
             >
-              {user.avatarUrl ? (
-                <img src={user.avatarUrl} alt={user.displayName} />
-              ) : (
-                <span>{initials}</span>
-              )}
+              <span className="avatar">
+                {user.avatarUrl ? (
+                  <img src={user.avatarUrl} alt="" />
+                ) : (
+                  <span>{initials}</span>
+                )}
+              </span>
+              <ChevronDown size={16} aria-hidden="true" />
             </button>
 
             {dropdownOpen && (
               <div
-                style={{
-                  position: 'absolute',
-                  right: 0,
-                  top: '100%',
-                  marginTop: 8,
-                  width: 200,
-                  backgroundColor: 'var(--bg-surface)',
-                  border: '1px solid var(--border-light)',
-                  borderRadius: 'var(--radius-md)',
-                  boxShadow: 'var(--shadow-card)',
-                  padding: '8px 0',
-                  zIndex: 100,
-                }}
-                onClick={() => setDropdownOpen(false)}
+                id="primary-user-menu"
+                className="user-menu-popover"
+                role="menu"
+                aria-label={t('common.userMenu')}
               >
-                <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border-light)' }}>
-                  <div style={{ fontWeight: 700, fontSize: 13 }}>{user.displayName}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                <div className="user-menu-header">
+                  <div className="user-menu-name">{user.displayName}</div>
+                  <div className="user-menu-handle">
                     {user.handle ? `@${user.handle}` : t('common.private')}
                   </div>
                 </div>
@@ -138,57 +149,40 @@ export const Navbar: React.FC = () => {
                 {user.handle && (
                   <NavLink
                     to={`/u/${user.handle}`}
-                    style={{
-                      display: 'block',
-                      padding: '8px 16px',
-                      fontSize: 13,
-                      color: 'var(--text-main)',
-                    }}
+                    className="user-menu-item"
+                    role="menuitem"
                   >
+                    <UserRound size={16} aria-hidden="true" />
                     {t('publicProfile.headline')}
                   </NavLink>
                 )}
 
                 <NavLink
                   to="/settings/privacy"
-                  style={{
-                    display: 'block',
-                    padding: '8px 16px',
-                    fontSize: 13,
-                    color: 'var(--text-main)',
-                  }}
+                  className="user-menu-item"
+                  role="menuitem"
                 >
+                  <Settings size={16} aria-hidden="true" />
                   {t('nav.settings')}
                 </NavLink>
 
                 <NavLink
                   to="/settings/devices"
-                  style={{
-                    display: 'block',
-                    padding: '8px 16px',
-                    fontSize: 13,
-                    color: 'var(--text-main)',
-                  }}
+                  className="user-menu-item"
+                  role="menuitem"
                 >
+                  <Database size={16} aria-hidden="true" />
                   {t('nav.devices')}
                 </NavLink>
 
-                <div style={{ borderTop: '1px solid var(--border-light)', marginTop: 4, paddingTop: 4 }}>
+                <div className="user-menu-footer">
                   <button
                     type="button"
                     onClick={handleLogout}
-                    style={{
-                      width: '100%',
-                      textAlign: 'left',
-                      padding: '8px 16px',
-                      fontSize: 13,
-                      color: 'var(--danger)',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      fontWeight: 600,
-                    }}
+                    className="user-menu-item danger"
+                    role="menuitem"
                   >
+                    <LogOut size={16} aria-hidden="true" />
                     {t('nav.logout')}
                   </button>
                 </div>

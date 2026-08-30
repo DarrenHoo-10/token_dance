@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
+    "build": "node scripts/build-sites.mjs",
+    "preview": "vite preview --outDir dist/client",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -19,6 +19,7 @@
     "react-router-dom": "^6.28.0"
   },
   "devDependencies": {
+    "@openai/sites-vite-plugin": "^0.2.0",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
@@ -26,11 +27,11 @@
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^6.0.2",
     "jsdom": "^25.0.1",
     "playwright-core": "^1.55.0",
     "typescript": "^5.7.2",
-    "vite": "^6.0.3",
+    "vite": "^8.0.13",
     "vitest": "^2.1.8"
   }
 }
