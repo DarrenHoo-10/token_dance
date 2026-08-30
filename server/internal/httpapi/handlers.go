@@ -156,10 +156,14 @@ func (h *Handlers) RequestRegisterCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	WriteJSON(w, http.StatusAccepted, map[string]interface{}{
+	response := map[string]interface{}{
 		"status":          "pending",
 		"cooldownSeconds": 60,
-	})
+	}
+	if cfg := h.auth.Config(); cfg.Environment == "test" && cfg.TestAuthCode != "" {
+		response["testCode"] = cfg.TestAuthCode
+	}
+	WriteJSON(w, http.StatusAccepted, response)
 }
 
 type RegisterRequest struct {

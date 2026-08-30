@@ -25,6 +25,13 @@ describe('I18n Translation Tests', () => {
     expect(getApiErrorMessage((key) => getTranslation('en-US', key), error)).toBe('The request is invalid. Please review it and try again.');
   });
 
+  it('keeps registration-code errors distinct from login credential errors', () => {
+    const error = { status: 400, code: 'AUTH_INVALID_CREDENTIALS', messageKey: 'auth.invalidCode' };
+
+    expect(getApiErrorMessage((key) => getTranslation('zh-CN', key), error)).toBe('验证码不正确，请检查后重试');
+    expect(getApiErrorMessage((key) => getTranslation('en-US', key), error)).toBe('The verification code is incorrect. Check it and try again.');
+  });
+
   it('contains consistent root sections in both locales', () => {
     const zhSections = Object.keys(translations['zh-CN']);
     const enSections = Object.keys(translations['en-US']);

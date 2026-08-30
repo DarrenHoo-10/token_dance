@@ -159,8 +159,8 @@ class ApiHttpClient {
     return res;
   }
 
-  public async requestRegisterCode(data: RegisterCodeRequest): Promise<{ status: string; cooldownSeconds: number }> {
-    return this.request<{ status: string; cooldownSeconds: number }>('/auth/register/code', {
+  public async requestRegisterCode(data: RegisterCodeRequest): Promise<{ status: string; cooldownSeconds: number; testCode?: string }> {
+    return this.request<{ status: string; cooldownSeconds: number; testCode?: string }>('/auth/register/code', {
       method: 'POST',
       body: JSON.stringify(data),
     });

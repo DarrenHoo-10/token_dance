@@ -45,7 +45,12 @@ export const RegisterPage: React.FC = () => {
       setErrorMessage(null);
       const res = await api.requestRegisterCode({ email, locale });
       setCooldown(res.cooldownSeconds || 60);
-      showToast(t('auth.codeSent'), 'info');
+      if (res.testCode) {
+        setCode(res.testCode);
+        showToast(t('auth.codeSentLocal', { code: res.testCode }), 'info');
+      } else {
+        showToast(t('auth.codeSent'), 'info');
+      }
     } catch (err) {
       if (err instanceof ApiError) {
         setErrorMessage(getApiErrorMessage(t, err));

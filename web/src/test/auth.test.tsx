@@ -70,6 +70,7 @@ describe('Auth & Onboarding Flow Tests', () => {
     const codeSpy = vi.spyOn(api, 'requestRegisterCode').mockResolvedValue({
       status: 'pending',
       cooldownSeconds: 60,
+      testCode: '123456',
     });
 
     vi.spyOn(api, 'getSession').mockResolvedValue({
@@ -105,6 +106,7 @@ describe('Auth & Onboarding Flow Tests', () => {
           email: 'newuser@example.com',
         })
       );
+      expect(screen.getByPlaceholderText('6 位数字验证码')).toHaveValue('123456');
     });
   });
 
