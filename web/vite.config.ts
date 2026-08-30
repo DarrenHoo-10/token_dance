@@ -4,6 +4,8 @@ import react from '@vitejs/plugin-react';
 import { sites } from '@openai/sites-vite-plugin';
 import path from 'path';
 
+const apiProxyTarget = process.env.VITE_API_PROXY_TARGET || 'http://127.0.0.1:8081';
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react(), sites()],
@@ -19,11 +21,11 @@ export default defineConfig({
     port: 3000,
     proxy: {
       '/api/v1': {
-        target: 'http://127.0.0.1:8080',
+        target: apiProxyTarget,
         changeOrigin: true,
       },
       '/v1': {
-        target: 'http://127.0.0.1:8080',
+        target: apiProxyTarget,
         changeOrigin: true,
       },
     },

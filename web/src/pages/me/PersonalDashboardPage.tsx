@@ -73,6 +73,8 @@ const mockCalendar: CalendarDay[] = Array.from({ length: 70 }, (_, index) => ({
   level: Math.max(0, Math.min(4, Math.round(2 + Math.sin(index * 0.48) * 2))),
 }));
 
+const mockAnalyticsEnabled = import.meta.env.VITE_ENABLE_MOCK_ANALYTICS === 'true';
+
 export const PersonalDashboardPage: React.FC = () => {
   const { user, authenticated, loading: authLoading } = useAuth();
   const { t } = useLocale();
@@ -161,17 +163,23 @@ export const PersonalDashboardPage: React.FC = () => {
     return <ErrorState error={error} onRetry={fetchData} />;
   }
 
+  if (!summary) {
+    return <LoadingState message={t('common.loading')} />;
+  }
+
   const hasCollectedData = Number(summary?.metrics?.totalTokens?.value || 0) > 0;
-  const displaySummary = hasCollectedData && summary ? summary : mockSummary;
-  const displayTrends = (trends?.points || trends?.trends || []).length ? (trends?.points || trends?.trends || []) : mockTrends;
-  const displayAgents = agentBreakdowns.length ? agentBreakdowns : mockAgents;
-  const displaySkills = skills.length ? skills : mockSkills;
-  const displayCalendar = calendarDays.length ? calendarDays : mockCalendar;
-  const displayStreak = calendarStreak || 23;
+  const useMockAnalytics = mockAnalyticsEnabled && !hasCollectedData;
+  const displaySummary = useMockAnalytics ? mockSummary : summary;
+  const fetchedTrends = trends?.points || trends?.trends || [];
+  const displayTrends = fetchedTrends.length ? fetchedTrends : useMockAnalytics ? mockTrends : [];
+  const displayAgents = agentBreakdowns.length ? agentBreakdowns : useMockAnalytics ? mockAgents : [];
+  const displaySkills = skills.length ? skills : useMockAnalytics ? mockSkills : [];
+  const displayCalendar = calendarDays.length ? calendarDays : useMockAnalytics ? mockCalendar : [];
+  const displayStreak = calendarStreak || (useMockAnalytics ? 23 : 0);
   const displayFilters: FilterOptionsResponse = {
-    agents: filterOptions.agents.length ? filterOptions.agents : [{ id: 'claude-code', name: 'Claude Code' }, { id: 'codex', name: 'Codex' }, { id: 'cursor', name: 'Cursor' }],
+    agents: filterOptions.agents.length ? filterOptions.agents : useMockAnalytics ? [{ id: 'claude-code', name: 'Claude Code' }, { id: 'codex', name: 'Codex' }, { id: 'cursor', name: 'Cursor' }] : [],
     providers: filterOptions.providers,
-    models: filterOptions.models.length ? filterOptions.models : [{ id: 'claude-sonnet-4', name: 'Claude Sonnet 4' }, { id: 'gpt-5', name: 'GPT-5' }, { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' }],
+    models: filterOptions.models.length ? filterOptions.models : useMockAnalytics ? [{ id: 'claude-sonnet-4', name: 'Claude Sonnet 4' }, { id: 'gpt-5', name: 'GPT-5' }, { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' }] : [],
   };
   const syncStatus = displaySummary.sync.status || (displaySummary.sync.lastCommittedAt ? 'healthy' : 'unknown');
 
@@ -231,7 +239,9 @@ export const PersonalDashboardPage: React.FC = () => {
       </div>
 
       {/* Ten Core Metrics Grid */}
-      <p className="mock-disclosure">{t('common.loading').startsWith('加载') ? '当前无采集数据，费用、代码、上下文和消息数据使用 Mock 展示。' : 'No collected data yet. Cost, code, context, and message metrics are shown with Mock data.'}</p>
+      {useMockAnalytics && (
+        <p className="mock-disclosure">{t('common.loading').startsWith('加载') ? '开发模式已启用 Mock 分析数据。' : 'Mock analytics data is enabled for development.'}</p>
+      )}
       <MetricGrid metrics={displaySummary.metrics} />
 
       {/* Middle Grid: Token Trend + Agent Breakdown */}
