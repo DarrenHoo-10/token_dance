@@ -55,6 +55,7 @@ export const App: React.FC = () => {
               {/* Main Application Layout */}
               <Route element={<AppLayout />}>
                 <Route path="/" element={<RootRedirect />} />
+                <Route path="/dashboard" element={<Navigate to="/me" replace />} />
                 
                 {/* /me personal dashboard & activity */}
                 <Route path="/me" element={<PersonalDashboardPage />} />
