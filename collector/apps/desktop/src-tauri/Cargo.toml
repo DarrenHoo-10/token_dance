@@ -28,6 +28,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 ulid = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 cookie = "0.18"
+sha2 = "0.10"
 tauri = { version = "2", features = ["tray-icon"] }
 
 [dev-dependencies]

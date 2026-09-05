@@ -12,9 +12,9 @@ export const accountWebsite = () => resolveWebsiteOrigin(getWebsiteUrl());
 export async function getAccountSession(website: string): Promise<{ user: AccountUser | null }> {
   return isTauriEnvironment() ? invoke("get_account_session", { website }) : { user: null };
 }
-export async function loginAccount(website: string, email: string, password: string): Promise<{ user: AccountUser | null }> {
+export async function loginAccount(website: string): Promise<{ user: AccountUser | null }> {
   if (!isTauriEnvironment()) throw new Error("PREVIEW_ONLY");
-  return invoke("login_account", { website, email, password });
+  return invoke("login_account", { website });
 }
 export async function logoutAccount(website: string): Promise<void> {
   if (isTauriEnvironment()) await invoke("logout_account", { website });
