@@ -151,6 +151,10 @@ class ApiHttpClient {
   }
 
   // --- Auth APIs ---
+  public async authorizeDesktop(data: { redirectUri: string; codeChallenge: string; state: string }): Promise<{ redirectUrl: string }> {
+    return this.request('/auth/desktop/authorize', { method: 'POST', body: JSON.stringify(data) });
+  }
+
   public async getSession(): Promise<SessionResponse> {
     const res = await this.request<SessionResponse>('/auth/session', { method: 'GET' });
     if (res.csrfToken) {

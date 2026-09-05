@@ -9,6 +9,7 @@ import (
 	"net/mail"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"tokendance/internal/clock"
@@ -30,6 +31,8 @@ type Service struct {
 	smtpMail  emailpkg.Provider
 
 	dummyArgonHash string
+	desktopMu      sync.Mutex
+	desktopCodes   map[[32]byte]desktopCode
 }
 
 func NewService(st store.Store, cfg *config.Config, clk clock.Clock) *Service {
