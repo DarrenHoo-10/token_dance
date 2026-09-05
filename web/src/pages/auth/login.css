@@ -38,7 +38,7 @@
 .login-form-shell { width: 100%; max-width: 420px; }
 .login-heading { margin: 20px 0 25px; }
 .login-heading .eyebrow { display: none; }
-.login-heading h2 { font-size: clamp(27px, 2.4vw, 34px); letter-spacing: -.045em; }
+.login-heading h2 { font-size: clamp(27px, 2.4vw, 34px); letter-spacing: -.045em; text-wrap: balance; }
 .login-heading p { font-size: 13px; color: #687165; margin-top: 10px; line-height: 1.7; }
 .login-tabs { display: flex; gap: 25px; border-bottom: 1px solid #dfe4d9; margin-bottom: 26px; font-size: 13px; }
 .login-tabs > * { padding: 0 0 11px; color: #66705f; }
@@ -49,6 +49,11 @@
 .login-page .form-input:focus { border-color: #749c15; box-shadow: 0 0 0 3px #b9f60020; }
 .login-page .form-input:autofill { box-shadow: 0 0 0 1000px #f4f7e9 inset; }
 .login-page .form-input:-webkit-autofill { -webkit-box-shadow: 0 0 0 1000px #f4f7e9 inset; -webkit-text-fill-color: #20291c; }
+.auth-email-code-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 10px; margin-bottom: 19px; }
+.login-page .auth-email-code-row .form-group { min-width: 0; margin-bottom: 0; }
+.login-page .auth-send-code { height: 50px; border-radius: 11px; border-color: #dce2d4; background: #fffefa; color: #59644f; font-size: 12px; white-space: nowrap; }
+.login-page .auth-send-code:not(:disabled):hover { background: #eef3e3; border-color: #749c15; }
+.login-page .auth-register-submit { margin-top: 8px; }
 .login-password-toggle { display: grid; place-items: center; width: 32px; height: 36px; margin-right: -5px; border: 0; background: transparent; color: #687165; cursor: pointer; border-radius: 5px; }
 .login-options { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin: 3px 0 24px; font-size: 11px; }
 .login-options label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
