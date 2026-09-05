@@ -1,0 +1,16 @@
+[package]
+name = "config-executor"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[dependencies]
+adapter-sdk = { path = "../adapter-sdk" }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+thiserror = "1"
+toml = "0.8"
+
+[dev-dependencies]

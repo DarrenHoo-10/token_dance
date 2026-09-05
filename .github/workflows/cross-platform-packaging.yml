@@ -1,0 +1,265 @@
+name: cross-platform-packaging
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - collector/crates/platform-windows/**
+      - collector/crates/platform-macos/**
+      - collector/packaging/**
+      - collector/apps/desktop/**
+      - .github/workflows/cross-platform-packaging.yml
+  pull_request:
+    paths:
+      - collector/crates/platform-windows/**
+      - collector/crates/platform-macos/**
+      - collector/packaging/**
+      - collector/apps/desktop/**
+      - .github/workflows/cross-platform-packaging.yml
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: collector/apps/desktop/package-lock.json
+      - name: Release wiring static tests
+        run: python collector/packaging/tests/test_release_wiring.py
+      - name: Windows crate format
+        run: cargo fmt --manifest-path collector/crates/platform-windows/Cargo.toml -- --check
+      - name: Windows runnable tests
+        run: cargo test --locked --manifest-path collector/crates/platform-windows/Cargo.toml
+      - name: Adapter Pack tests
+        run: cargo test --locked --manifest-path collector/packaging/adapter-pack/Cargo.toml
+      - name: PowerShell syntax and fail-closed Authenticode tests
+        shell: pwsh
+        run: |
+          $scripts = @(
+            'collector/packaging/windows/Verify-Authenticode.ps1',
+            'collector/packaging/windows/Sign-Authenticode.ps1',
+            'collector/packaging/windows/Install-CurrentUser.ps1',
+            'collector/packaging/windows/Uninstall-CurrentUser.ps1'
+          )
+          foreach ($script in $scripts) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) { throw "$script has parser errors: $errors" }
+          }
+          Set-Content -LiteralPath unsigned.exe -Value 'not a signed executable'
+          try {
+            & collector/packaging/windows/Verify-Authenticode.ps1 -Path unsigned.exe -ExpectedThumbprint ('0' * 40)
+            throw 'Unsigned artifact was incorrectly accepted'
+          } catch {
+            if ($_ -notmatch 'BLOCKED: Authenticode signature is not valid') { throw }
+          }
+          $oldThumbprint = $env:WINDOWS_SIGNING_CERT_THUMBPRINT
+          try {
+            $env:WINDOWS_SIGNING_CERT_THUMBPRINT = ''
+            try {
+              & collector/packaging/windows/Sign-Authenticode.ps1 -Path unsigned.exe
+              throw 'Missing signing certificate was incorrectly accepted'
+            } catch {
+              if ($_ -notmatch 'BLOCKED: WINDOWS_SIGNING_CERT_THUMBPRINT certificate evidence is missing') { throw }
+            }
+          } finally {
+            $env:WINDOWS_SIGNING_CERT_THUMBPRINT = $oldThumbprint
+          }
+      - name: Build Windows release executable
+        shell: pwsh
+        run: |
+          npm --prefix collector/apps/desktop ci
+          npm --prefix collector/apps/desktop run build
+          cargo build --locked --release --manifest-path collector/apps/desktop/src-tauri/Cargo.toml
+          $artifact = 'collector/apps/desktop/src-tauri/target/release/tokendance-desktop.exe'
+          if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
+            throw "BLOCKED: Windows release executable was not produced: $artifact"
+          }
+      - name: Sign and verify Windows release executable
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          WINDOWS_SIGNING_CERT_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_PFX_BASE64 }}
+          WINDOWS_SIGNING_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGNING_CERT_PASSWORD }}
+          WINDOWS_SIGNING_CERT_THUMBPRINT: ${{ secrets.WINDOWS_SIGNING_CERT_THUMBPRINT }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:WINDOWS_SIGNING_CERT_PFX_BASE64) { throw 'BLOCKED: WINDOWS_SIGNING_CERT_PFX_BASE64 is missing' }
+          if (-not $env:WINDOWS_SIGNING_CERT_PASSWORD) { throw 'BLOCKED: WINDOWS_SIGNING_CERT_PASSWORD is missing' }
+          if (-not $env:WINDOWS_SIGNING_CERT_THUMBPRINT) { throw 'BLOCKED: WINDOWS_SIGNING_CERT_THUMBPRINT is missing' }
+          $signTool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1
+          if (-not $signTool) { throw 'BLOCKED: signtool.exe is unavailable on the release runner' }
+          $env:Path = "$($signTool.DirectoryName);$env:Path"
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'tokenshow-signing.pfx'
+          $imported = @()
+          try {
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:WINDOWS_SIGNING_CERT_PFX_BASE64))
+            $password = ConvertTo-SecureString $env:WINDOWS_SIGNING_CERT_PASSWORD -AsPlainText -Force
+            $imported = @(Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password $password)
+            $expected = $env:WINDOWS_SIGNING_CERT_THUMBPRINT.Replace(' ', '').ToUpperInvariant()
+            if (-not ($imported | Where-Object { $_.Thumbprint.Replace(' ', '').ToUpperInvariant() -eq $expected })) {
+              throw "BLOCKED: imported PFX does not contain expected signer thumbprint $expected"
+            }
+            $artifact = 'collector/apps/desktop/src-tauri/target/release/tokendance-desktop.exe'
+            & collector/packaging/windows/Sign-Authenticode.ps1 -Path $artifact -CertificateThumbprint $expected
+            & collector/packaging/windows/Verify-Authenticode.ps1 -Path $artifact -ExpectedThumbprint $expected
+          } finally {
+            foreach ($certificate in $imported) {
+              Remove-Item -LiteralPath ("Cert:\CurrentUser\My\{0}" -f $certificate.Thumbprint) -Force -ErrorAction SilentlyContinue
+            }
+            Remove-Item -LiteralPath $pfxPath -Force -ErrorAction SilentlyContinue
+          }
+      - name: Record pull-request signing block
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        run: |
+          Add-Content $env:GITHUB_STEP_SUMMARY 'BLOCKED: Authenticode release signing is intentionally not claimed for pull requests because protected signing credentials are unavailable.'
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: tokendance-desktop-windows-signed
+          path: collector/apps/desktop/src-tauri/target/release/tokendance-desktop.exe
+          if-no-files-found: error
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: collector/apps/desktop/package-lock.json
+      - name: macOS crate format and tests
+        run: |
+          cargo fmt --manifest-path collector/crates/platform-macos/Cargo.toml -- --check
+          cargo test --locked --manifest-path collector/crates/platform-macos/Cargo.toml
+      - name: Both macOS architectures compile
+        run: |
+          cargo check --locked --manifest-path collector/crates/platform-macos/Cargo.toml --target aarch64-apple-darwin
+          cargo check --locked --manifest-path collector/crates/platform-macos/Cargo.toml --target x86_64-apple-darwin
+      - name: Packaging scripts and archive-binding tests
+        run: |
+          python3 collector/packaging/tests/test_release_wiring.py
+          plutil -lint collector/packaging/macos/collector.entitlements
+          plutil -lint collector/packaging/macos/dev.tokenshow.collector.plist.template
+          bash -n collector/packaging/macos/Build-App-Bundle.sh
+          bash -n collector/packaging/macos/Verify-NotarizationArchive.sh
+          bash -n collector/packaging/macos/sign-notarize.sh
+          work_dir="$(mktemp -d)"
+          trap 'rm -rf "$work_dir"' EXIT
+          bash collector/packaging/macos/Build-App-Bundle.sh /usr/bin/true "$work_dir/Expected.app"
+          codesign --force --deep --sign - "$work_dir/Expected.app"
+          ditto -c -k --keepParent "$work_dir/Expected.app" "$work_dir/expected.zip"
+          bash collector/packaging/macos/Verify-NotarizationArchive.sh "$work_dir/Expected.app" "$work_dir/expected.zip"
+          bash collector/packaging/macos/Build-App-Bundle.sh /usr/bin/false "$work_dir/Wrong.app"
+          codesign --force --deep --sign - "$work_dir/Wrong.app"
+          ditto -c -k --keepParent "$work_dir/Wrong.app" "$work_dir/wrong.zip"
+          if bash collector/packaging/macos/Verify-NotarizationArchive.sh "$work_dir/Expected.app" "$work_dir/wrong.zip" 2>"$work_dir/error.log"; then
+            echo 'Mismatched notarization archive was incorrectly accepted' >&2
+            exit 1
+          fi
+          grep -F 'BLOCKED: archive does not contain expected app' "$work_dir/error.log"
+          if env -u DEVELOPER_ID_APPLICATION -u APPLE_NOTARY_PROFILE \
+            bash collector/packaging/macos/sign-notarize.sh "$work_dir/Expected.app" "$work_dir/release.zip" 2>"$work_dir/blocked.log"; then
+            echo 'Missing macOS release credentials were incorrectly accepted' >&2
+            exit 1
+          fi
+          grep -F 'BLOCKED: DEVELOPER_ID_APPLICATION signing identity is missing' "$work_dir/blocked.log"
+      - name: Adapter Pack tests
+        run: cargo test --locked --manifest-path collector/packaging/adapter-pack/Cargo.toml
+      - name: Build macOS release app
+        run: |
+          npm --prefix collector/apps/desktop ci
+          npm --prefix collector/apps/desktop run build
+          cargo build --locked --release --manifest-path collector/apps/desktop/src-tauri/Cargo.toml
+          rm -rf collector/packaging/macos/release
+          mkdir -p collector/packaging/macos/release
+          bash collector/packaging/macos/Build-App-Bundle.sh \
+            collector/apps/desktop/src-tauri/target/release/tokendance-desktop \
+            collector/packaging/macos/release/TokenDance.app
+      - name: Sign, notarize, staple, and verify bound macOS release artifact
+        if: github.event_name != 'pull_request'
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          DEVELOPER_ID_APPLICATION: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+          APPLE_NOTARY_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_NOTARY_PRIVATE_KEY_BASE64 }}
+        run: |
+          : "${MACOS_CERTIFICATE_P12_BASE64:?BLOCKED: MACOS_CERTIFICATE_P12_BASE64 is missing}"
+          : "${MACOS_CERTIFICATE_PASSWORD:?BLOCKED: MACOS_CERTIFICATE_PASSWORD is missing}"
+          : "${DEVELOPER_ID_APPLICATION:?BLOCKED: DEVELOPER_ID_APPLICATION is missing}"
+          : "${APPLE_NOTARY_KEY_ID:?BLOCKED: APPLE_NOTARY_KEY_ID is missing}"
+          : "${APPLE_NOTARY_ISSUER_ID:?BLOCKED: APPLE_NOTARY_ISSUER_ID is missing}"
+          : "${APPLE_NOTARY_PRIVATE_KEY_BASE64:?BLOCKED: APPLE_NOTARY_PRIVATE_KEY_BASE64 is missing}"
+          keychain="$RUNNER_TEMP/tokenshow-release.keychain-db"
+          keychain_password="$(uuidgen)"
+          p12_path="$RUNNER_TEMP/tokenshow-release.p12"
+          api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
+          profile="tokenshow-ci-notary"
+          cleanup() {
+            security delete-keychain "$keychain" >/dev/null 2>&1 || true
+            rm -f "$p12_path" "$api_key_path"
+          }
+          trap cleanup EXIT
+          python3 - "$MACOS_CERTIFICATE_P12_BASE64" "$p12_path" <<'PY'
+          import base64
+          import sys
+          with open(sys.argv[2], "wb") as output:
+              output.write(base64.b64decode(sys.argv[1], validate=True))
+          PY
+          python3 - "$APPLE_NOTARY_PRIVATE_KEY_BASE64" "$api_key_path" <<'PY'
+          import base64
+          import sys
+          with open(sys.argv[2], "wb") as output:
+              output.write(base64.b64decode(sys.argv[1], validate=True))
+          PY
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db"
+          security import "$p12_path" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain"
+          security find-identity -v -p codesigning "$keychain" | grep -F "\"$DEVELOPER_ID_APPLICATION\"" >/dev/null || {
+            echo "BLOCKED: imported P12 does not contain exact Developer ID identity: $DEVELOPER_ID_APPLICATION" >&2
+            exit 78
+          }
+          xcrun notarytool store-credentials "$profile" \
+            --key "$api_key_path" \
+            --key-id "$APPLE_NOTARY_KEY_ID" \
+            --issuer "$APPLE_NOTARY_ISSUER_ID" \
+            --keychain "$keychain"
+          export APPLE_NOTARY_PROFILE="$profile"
+          export APPLE_NOTARY_KEYCHAIN="$keychain"
+          bash collector/packaging/macos/sign-notarize.sh \
+            collector/packaging/macos/release/TokenDance.app \
+            collector/packaging/macos/release/tokendance-desktop-macos.zip
+      - name: Record pull-request notarization block
+        if: github.event_name == 'pull_request'
+        run: |
+          echo 'BLOCKED: Developer ID signing and Apple notarization are intentionally not claimed for pull requests because protected release credentials are unavailable.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'pull_request'
+        with:
+          name: tokendance-desktop-macos-notarized
+          path: collector/packaging/macos/release/tokendance-desktop-macos.zip
+          if-no-files-found: error

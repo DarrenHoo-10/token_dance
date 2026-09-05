@@ -1,0 +1,13 @@
+{
+  "name": "tokendance-token-collector",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate:protocol": "node tools/generate-protocol.mjs",
+    "check:protocol": "node tools/generate-protocol.mjs --check && node tools/test-protocol.mjs"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
+  }
+}

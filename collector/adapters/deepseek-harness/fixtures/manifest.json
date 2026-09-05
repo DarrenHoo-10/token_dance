@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schemas.tokenshow.dev/adapter-manifest/v1.json",
+  "manifestVersion": "1.0",
+  "id": "dev.tokenshow.adapter.deepseek-harness",
+  "name": "DeepSeek Harness",
+  "version": "0.1.0",
+  "protocolVersion": "1.0",
+  "agent": { "id": "deepseek-harness", "versionRange": ">=1.0.0 <2.0.0" },
+  "platforms": ["windows-x64", "windows-arm64", "macos-x64", "macos-arm64"],
+  "sources": ["otlp", "jsonl_tail"],
+  "permissions": {
+    "readPaths": [{ "template": "USER_HOME", "relativeGlob": ".deepseek-harness/sessions/**", "access": "read" }],
+    "writePaths": [{ "template": "USER_HOME", "relativeGlob": ".deepseek-harness/composition.json", "access": "write" }],
+    "commands": [],
+    "networkDomains": []
+  },
+  "capabilities": ["tokens", "sessions", "turns", "tools", "skills", "code", "cost", "subagents"]
+}

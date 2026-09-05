@@ -1,0 +1,1211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.tokenshow.dev/protocol/v1/installation-register-response.schema.json",
+  "$ref": "#/$defs/InstallationRegisterResponse",
+  "$defs": {
+    "AdapterRuntimeStatus": {
+      "type": "string",
+      "enum": [
+        "UNDETECTED",
+        "DETECTED",
+        "NEEDS_PERMISSION",
+        "CONFIGURING",
+        "ACTIVE",
+        "DEGRADED",
+        "ERROR",
+        "DISABLED"
+      ]
+    },
+    "SetupPlanStatus": {
+      "type": "string",
+      "enum": [
+        "PROPOSED",
+        "APPROVED",
+        "APPLYING",
+        "VERIFYING",
+        "APPLIED",
+        "ROLLING_BACK",
+        "ROLLED_BACK",
+        "FAILED"
+      ]
+    },
+    "SourceCheckpointStatus": {
+      "type": "string",
+      "enum": [
+        "DISCOVERED",
+        "SCANNING",
+        "CURRENT",
+        "STALE",
+        "ROTATED",
+        "TRUNCATED",
+        "PERMISSION_DENIED",
+        "INCOMPATIBLE",
+        "ERROR",
+        "DISABLED"
+      ]
+    },
+    "EventDeliveryStatus": {
+      "type": "string",
+      "enum": [
+        "PENDING",
+        "QUEUED",
+        "IN_FLIGHT",
+        "ACKED",
+        "RETRYABLE",
+        "DEAD_LETTER"
+      ]
+    },
+    "ClientUploadBatchStatus": {
+      "type": "string",
+      "enum": [
+        "BUILDING",
+        "READY",
+        "IN_FLIGHT",
+        "ACKED",
+        "PARTIALLY_ACKED",
+        "RETRYABLE",
+        "FAILED"
+      ]
+    },
+    "Accuracy": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "derived",
+        "correlated",
+        "estimated"
+      ]
+    },
+    "CapabilityAvailability": {
+      "type": "string",
+      "enum": [
+        "available",
+        "unavailable"
+      ]
+    },
+    "Capability": {
+      "type": "string",
+      "enum": [
+        "tokens",
+        "sessions",
+        "turns",
+        "tools",
+        "skills",
+        "code",
+        "cost",
+        "subagents"
+      ]
+    },
+    "SourceKind": {
+      "type": "string",
+      "enum": [
+        "otlp",
+        "jsonl_tail",
+        "sqlite_snapshot",
+        "file_snapshot",
+        "runtime_stream",
+        "local_http_api",
+        "command_snapshot",
+        "remote_api"
+      ]
+    },
+    "EventType": {
+      "type": "string",
+      "enum": [
+        "session_started",
+        "session_ended",
+        "turn_started",
+        "turn_completed",
+        "model_usage_recorded",
+        "tool_invoked",
+        "skill_invoked",
+        "code_changed",
+        "cost_recorded",
+        "agent_spawned"
+      ]
+    },
+    "CostSource": {
+      "type": "string",
+      "enum": [
+        "provider_reported",
+        "estimated_price_table"
+      ]
+    },
+    "SkillInvokeType": {
+      "type": "string",
+      "enum": [
+        "native",
+        "hook",
+        "tool_correlated",
+        "runtime_correlated"
+      ]
+    },
+    "SessionEndReason": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "cancelled",
+        "error",
+        "timeout",
+        "unknown"
+      ]
+    },
+    "TurnTrigger": {
+      "type": "string",
+      "enum": [
+        "user",
+        "system",
+        "scheduled",
+        "subagent"
+      ]
+    },
+    "Platform": {
+      "type": "string",
+      "enum": [
+        "windows-x64",
+        "windows-arm64",
+        "macos-x64",
+        "macos-arm64"
+      ]
+    },
+    "OsType": {
+      "type": "string",
+      "enum": [
+        "windows",
+        "macos"
+      ]
+    },
+    "Architecture": {
+      "type": "string",
+      "enum": [
+        "x86_64",
+        "aarch64"
+      ]
+    },
+    "PathTemplateId": {
+      "type": "string",
+      "enum": [
+        "USER_HOME",
+        "LOCAL_APP_DATA",
+        "ROAMING_APP_DATA",
+        "MAC_APP_SUPPORT",
+        "CODEX_HOME",
+        "AGENT_CONFIG_HOME"
+      ]
+    },
+    "PathAccess": {
+      "type": "string",
+      "enum": [
+        "read",
+        "write"
+      ]
+    },
+    "RejectedEventErrorCode": {
+      "type": "string",
+      "enum": [
+        "SCHEMA_INVALID",
+        "PRIVACY_REJECTED",
+        "EVENT_TOO_LARGE",
+        "UNSUPPORTED_VERSION",
+        "INTERNAL_RETRYABLE"
+      ]
+    },
+    "EventSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/SourceKind"
+        },
+        "cursorHmac": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[A-Za-z0-9_-]{43}$",
+          "minLength": 55,
+          "maxLength": 55
+        },
+        "rawFingerprintHmac": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[A-Za-z0-9_-]{43}$",
+          "minLength": 55,
+          "maxLength": 55
+        }
+      },
+      "required": [
+        "kind",
+        "cursorHmac",
+        "rawFingerprintHmac"
+      ]
+    },
+    "TokenUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "inputTokens": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "outputTokens": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "cacheReadTokens": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "cacheWriteTokens": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "reasoningTokens": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "toolTokens": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "totalTokens": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        }
+      },
+      "required": []
+    },
+    "SessionStartedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "session_started"
+        },
+        "modelId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "workspaceHash": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[A-Za-z0-9_-]{43}$",
+          "minLength": 55,
+          "maxLength": 55
+        }
+      },
+      "required": [
+        "type"
+      ]
+    },
+    "SessionEndedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "session_ended"
+        },
+        "reason": {
+          "$ref": "#/$defs/SessionEndReason"
+        },
+        "durationMs": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        }
+      },
+      "required": [
+        "type",
+        "reason"
+      ]
+    },
+    "TurnStartedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "turn_started"
+        },
+        "trigger": {
+          "$ref": "#/$defs/TurnTrigger"
+        }
+      },
+      "required": [
+        "type"
+      ]
+    },
+    "TurnCompletedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "turn_completed"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "durationMs": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "errorClass": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "type",
+        "success"
+      ]
+    },
+    "ModelUsageRecordedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "model_usage_recorded"
+        },
+        "providerId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "modelId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "tokens": {
+          "$ref": "#/$defs/TokenUsage"
+        }
+      },
+      "required": [
+        "type",
+        "providerId",
+        "modelId",
+        "tokens"
+      ]
+    },
+    "ToolInvokedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "tool_invoked"
+        },
+        "toolCategory": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "durationMs": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        }
+      },
+      "required": [
+        "type",
+        "toolCategory",
+        "success"
+      ]
+    },
+    "SkillInvokedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "skill_invoked"
+        },
+        "skillKey": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[A-Za-z0-9_-]{43}$",
+          "minLength": 55,
+          "maxLength": 55
+        },
+        "invokeType": {
+          "$ref": "#/$defs/SkillInvokeType"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "pluginKey": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[A-Za-z0-9_-]{43}$",
+          "minLength": 55,
+          "maxLength": 55
+        },
+        "durationMs": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        }
+      },
+      "required": [
+        "type",
+        "skillKey",
+        "invokeType",
+        "success"
+      ]
+    },
+    "CodeChangedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "code_changed"
+        },
+        "addedLines": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "removedLines": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "generatedLines": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "acceptedLines": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "fileCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "language": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "type",
+        "addedLines",
+        "removedLines",
+        "fileCount"
+      ]
+    },
+    "CostRecordedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "cost_recorded"
+        },
+        "amount": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)(?:\\.[0-9]{1,8})?$",
+          "maxLength": 40
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "minLength": 3,
+          "maxLength": 3
+        },
+        "source": {
+          "$ref": "#/$defs/CostSource"
+        },
+        "discountAmount": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)(?:\\.[0-9]{1,8})?$",
+          "maxLength": 40
+        }
+      },
+      "required": [
+        "type",
+        "amount",
+        "currency",
+        "source"
+      ]
+    },
+    "AgentSpawnedPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "agent_spawned"
+        },
+        "childSessionHash": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[A-Za-z0-9_-]{43}$",
+          "minLength": 55,
+          "maxLength": 55
+        },
+        "spawnedAgentType": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "type",
+        "childSessionHash",
+        "spawnedAgentType"
+      ]
+    },
+    "EventEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][0-9A-Za-z.-]+)?$",
+          "maxLength": 32
+        },
+        "eventId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "minLength": 43,
+          "maxLength": 43
+        },
+        "adapterId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "adapterVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][0-9A-Za-z.-]+)?$",
+          "maxLength": 32
+        },
+        "agentId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "agentVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][0-9A-Za-z.-]+)?$",
+          "maxLength": 32
+        },
+        "installationId": {
+          "type": "string",
+          "pattern": "^[a-z]{3}_[0-9A-HJKMNP-TV-Z]{26}$",
+          "minLength": 30,
+          "maxLength": 30
+        },
+        "occurredAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "sessionHash": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[A-Za-z0-9_-]{43}$",
+          "minLength": 55,
+          "maxLength": 55
+        },
+        "turnHash": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[A-Za-z0-9_-]{43}$",
+          "minLength": 55,
+          "maxLength": 55
+        },
+        "toolCallHash": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[A-Za-z0-9_-]{43}$",
+          "minLength": 55,
+          "maxLength": 55
+        },
+        "source": {
+          "$ref": "#/$defs/EventSource"
+        },
+        "accuracy": {
+          "$ref": "#/$defs/Accuracy"
+        },
+        "payload": {
+          "$ref": "#/$defs/EventPayload"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "eventId",
+        "adapterId",
+        "adapterVersion",
+        "agentId",
+        "installationId",
+        "occurredAt",
+        "source",
+        "accuracy",
+        "payload"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "session_started",
+                      "session_ended",
+                      "turn_started",
+                      "turn_completed",
+                      "model_usage_recorded",
+                      "tool_invoked",
+                      "skill_invoked",
+                      "code_changed",
+                      "agent_spawned"
+                    ]
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            },
+            "required": [
+              "payload"
+            ]
+          },
+          "then": {
+            "required": [
+              "sessionHash"
+            ]
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "payload": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "turn_started",
+                      "turn_completed"
+                    ]
+                  }
+                },
+                "required": [
+                  "type"
+                ]
+              }
+            },
+            "required": [
+              "payload"
+            ]
+          },
+          "then": {
+            "required": [
+              "turnHash"
+            ]
+          }
+        }
+      ]
+    },
+    "AgentDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "versionRange": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "id",
+        "versionRange"
+      ]
+    },
+    "PathPermission": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "template": {
+          "$ref": "#/$defs/PathTemplateId"
+        },
+        "relativeGlob": {
+          "type": "string",
+          "pattern": "^(?![A-Za-z]:)(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[^\\u0000]{1,512}$"
+        },
+        "access": {
+          "$ref": "#/$defs/PathAccess"
+        }
+      },
+      "required": [
+        "template",
+        "relativeGlob",
+        "access"
+      ]
+    },
+    "CommandPermission": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "executableId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "executableId",
+        "args"
+      ]
+    },
+    "AdapterPermissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "readPaths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PathPermission"
+          },
+          "maxItems": 256
+        },
+        "writePaths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PathPermission"
+          },
+          "maxItems": 256
+        },
+        "commands": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CommandPermission"
+          },
+          "maxItems": 256
+        },
+        "networkDomains": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^(?=.{1,253}$)(?!.*\\*)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]{2,63}$"
+          },
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "readPaths",
+        "writePaths",
+        "commands",
+        "networkDomains"
+      ]
+    },
+    "AdapterManifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "$schema": {
+          "type": "string",
+          "const": "https://schemas.tokenshow.dev/adapter-manifest/v1.json"
+        },
+        "manifestVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][0-9A-Za-z.-]+)?$",
+          "maxLength": 32
+        },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][0-9A-Za-z.-]+)?$",
+          "maxLength": 32
+        },
+        "protocolVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][0-9A-Za-z.-]+)?$",
+          "maxLength": 32
+        },
+        "agent": {
+          "$ref": "#/$defs/AgentDescriptor"
+        },
+        "platforms": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Platform"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceKind"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        },
+        "permissions": {
+          "$ref": "#/$defs/AdapterPermissions"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Capability"
+          },
+          "maxItems": 256,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "$schema",
+        "manifestVersion",
+        "id",
+        "name",
+        "version",
+        "protocolVersion",
+        "agent",
+        "platforms",
+        "sources",
+        "permissions",
+        "capabilities"
+      ]
+    },
+    "UploadBatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "batchId": {
+          "type": "string",
+          "pattern": "^[a-z]{3}_[0-9A-HJKMNP-TV-Z]{26}$",
+          "minLength": 30,
+          "maxLength": 30
+        },
+        "installationId": {
+          "type": "string",
+          "pattern": "^[a-z]{3}_[0-9A-HJKMNP-TV-Z]{26}$",
+          "minLength": 30,
+          "maxLength": 30
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EventEnvelope"
+          },
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "batchId",
+        "installationId",
+        "createdAt",
+        "events"
+      ]
+    },
+    "RejectedEvent": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "minLength": 43,
+          "maxLength": 43
+        },
+        "errorCode": {
+          "$ref": "#/$defs/RejectedEventErrorCode"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "eventId",
+        "errorCode",
+        "retryable"
+      ]
+    },
+    "UploadAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "batchId": {
+          "type": "string",
+          "pattern": "^[a-z]{3}_[0-9A-HJKMNP-TV-Z]{26}$",
+          "minLength": 30,
+          "maxLength": 30
+        },
+        "accepted": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "duplicates": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "rejected": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RejectedEvent"
+          },
+          "maxItems": 256
+        },
+        "serverTime": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "batchId",
+        "accepted",
+        "duplicates",
+        "rejected",
+        "serverTime"
+      ]
+    },
+    "UploadPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "maxBatchEvents": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "maxBatchBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "flushIntervalSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "required": [
+        "maxBatchEvents",
+        "maxBatchBytes",
+        "flushIntervalSeconds"
+      ]
+    },
+    "InstallationRegisterRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "devicePublicKey": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "minLength": 43,
+          "maxLength": 43
+        },
+        "osType": {
+          "$ref": "#/$defs/OsType"
+        },
+        "architecture": {
+          "$ref": "#/$defs/Architecture"
+        },
+        "collectorVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][0-9A-Za-z.-]+)?$",
+          "maxLength": 32
+        }
+      },
+      "required": [
+        "devicePublicKey",
+        "osType",
+        "architecture",
+        "collectorVersion"
+      ]
+    },
+    "InstallationRegisterResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "installationId": {
+          "type": "string",
+          "pattern": "^[a-z]{3}_[0-9A-HJKMNP-TV-Z]{26}$",
+          "minLength": 30,
+          "maxLength": 30
+        },
+        "policy": {
+          "$ref": "#/$defs/UploadPolicy"
+        }
+      },
+      "required": [
+        "installationId",
+        "policy"
+      ]
+    },
+    "CapabilityStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "capability": {
+          "$ref": "#/$defs/Capability"
+        },
+        "availability": {
+          "$ref": "#/$defs/CapabilityAvailability"
+        },
+        "accuracy": {
+          "$ref": "#/$defs/Accuracy"
+        },
+        "safeReasonCode": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "capability",
+        "availability"
+      ]
+    },
+    "AdapterStatusReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "adapterId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "adapterVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][0-9A-Za-z.-]+)?$",
+          "maxLength": 32
+        },
+        "agentVersion": {
+          "type": "string",
+          "pattern": "^[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][0-9A-Za-z.-]+)?$",
+          "maxLength": 32
+        },
+        "runtimeStatus": {
+          "$ref": "#/$defs/AdapterRuntimeStatus"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/CapabilityStatus"
+          },
+          "maxItems": 256
+        },
+        "sourceKinds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SourceKind"
+          },
+          "maxItems": 256
+        },
+        "safeErrorCode": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "reportedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "adapterId",
+        "adapterVersion",
+        "runtimeStatus",
+        "capabilities",
+        "sourceKinds",
+        "reportedAt"
+      ]
+    },
+    "EventPayload": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/SessionStartedPayload"
+        },
+        {
+          "$ref": "#/$defs/SessionEndedPayload"
+        },
+        {
+          "$ref": "#/$defs/TurnStartedPayload"
+        },
+        {
+          "$ref": "#/$defs/TurnCompletedPayload"
+        },
+        {
+          "$ref": "#/$defs/ModelUsageRecordedPayload"
+        },
+        {
+          "$ref": "#/$defs/ToolInvokedPayload"
+        },
+        {
+          "$ref": "#/$defs/SkillInvokedPayload"
+        },
+        {
+          "$ref": "#/$defs/CodeChangedPayload"
+        },
+        {
+          "$ref": "#/$defs/CostRecordedPayload"
+        },
+        {
+          "$ref": "#/$defs/AgentSpawnedPayload"
+        }
+      ]
+    }
+  }
+}

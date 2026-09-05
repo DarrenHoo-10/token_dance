@@ -1,0 +1,23 @@
+[package]
+name = "wal-spool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+aes-gcm.workspace = true
+ciborium.workspace = true
+crc32c.workspace = true
+keyring.workspace = true
+privacy.workspace = true
+protocol.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

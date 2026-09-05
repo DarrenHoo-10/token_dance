@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schemas.tokenshow.dev/adapter-manifest/v1.json",
+  "manifestVersion": "1.0",
+  "id": "dev.tokenshow.adapter.codex",
+  "name": "Codex",
+  "version": "1.0.0",
+  "protocolVersion": "1.0",
+  "agent": { "id": "codex", "versionRange": ">=0.100.0" },
+  "platforms": ["windows-x64", "windows-arm64", "macos-x64", "macos-arm64"],
+  "sources": ["otlp", "jsonl_tail"],
+  "permissions": {
+    "readPaths": [{ "template": "CODEX_HOME", "relativeGlob": "sessions/**", "access": "read" }, { "template": "CODEX_HOME", "relativeGlob": "archived_sessions/**", "access": "read" }],
+    "writePaths": [{ "template": "CODEX_HOME", "relativeGlob": "config.toml", "access": "write" }],
+    "commands": [],
+    "networkDomains": []
+  },
+  "capabilities": ["tokens", "sessions", "turns", "tools", "skills", "code"]
+}

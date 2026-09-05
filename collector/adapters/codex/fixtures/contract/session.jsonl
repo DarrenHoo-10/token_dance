@@ -1,0 +1,7 @@
+{"type":"thread.started","timestamp":"2026-08-30T10:00:00Z","thread_id":"thread-secret-id","model":"gpt-5-codex","prompt":"TOKENDANCE_CODEX_PROMPT_CANARY"}
+{"type":"turn.started","timestamp":"2026-08-30T10:00:01Z","thread_id":"thread-secret-id","turn_id":"turn-secret-id","input":"TOKENDANCE_CODEX_PROMPT_CANARY"}
+{"type":"token.usage","timestamp":"2026-08-30T10:00:02Z","thread_id":"thread-secret-id","turn_id":"turn-secret-id","provider":"openai","model":"gpt-5-codex","input_tokens":100,"output_tokens":40,"cached_input_tokens":20,"reasoning_tokens":10,"total_tokens":150,"response":"TOKENDANCE_CODEX_RESPONSE_CANARY"}
+{"type":"tool.completed","timestamp":"2026-08-30T10:00:03Z","thread_id":"thread-secret-id","turn_id":"turn-secret-id","tool_call_id":"call-secret-id","tool":"shell","success":true,"arguments":"TOKENDANCE_CODEX_TOOL_CANARY"}
+{"type":"skill.injected","timestamp":"2026-08-30T10:00:04Z","thread_id":"thread-secret-id","turn_id":"turn-secret-id","skill":"loaded-only-skill","content":"TOKENDANCE_CODEX_SKILL_LOAD_CANARY"}
+{"type":"skill.execution.failed","timestamp":"2026-08-30T10:00:05Z","thread_id":"thread-secret-id","turn_id":"turn-secret-id","invocationId":"skill-invocation-secret","skill_name":"private-skill-name","plugin_name":"official","success":false,"duration_ms":9,"content":"TOKENDANCE_CODEX_SKILL_CANARY"}
+{"type":"future.record","timestamp":"2026-08-30T10:00:06Z","secret":"TOKENDANCE_CODEX_FUTURE_CANARY"}

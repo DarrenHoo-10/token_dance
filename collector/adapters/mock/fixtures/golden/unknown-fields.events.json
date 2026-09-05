@@ -1,0 +1,45 @@
+[
+  {
+    "schemaVersion": "1.0",
+    "eventId": "jy7JPjZTHY18PZjwplq0xgNy9vxPYf6zp8wEz8-sRfQ",
+    "adapterId": "dev.tokenshow.adapter.mock",
+    "adapterVersion": "1.0.0",
+    "agentId": "mock",
+    "agentVersion": "1.0.0",
+    "installationId": "ins_01test",
+    "occurredAt": "2026-08-29T12:00:00.000Z",
+    "sessionHash": "hmac-sha256:1WRyE3ANA2NdcQcjdZzhO1VOQajGem7gJxoUheBi1Gs",
+    "source": {
+      "kind": "jsonl_tail",
+      "cursorHmac": "hmac-sha256:HgAMUmgs72LN8-weplC3ntXm0jCc0zIr_L4LAqXqycA",
+      "rawFingerprintHmac": "hmac-sha256:4oPgiUMvu_UViviDFoo9xRuqelkutNbUeA9FwZD5JyU"
+    },
+    "accuracy": "exact",
+    "payload": {
+      "type": "session_started"
+    }
+  },
+  {
+    "schemaVersion": "1.0",
+    "eventId": "qY9kTeFgDg_9eNfkhHT6Qw2e4Yz4e6XVKbvmFBOu1dA",
+    "adapterId": "dev.tokenshow.adapter.mock",
+    "adapterVersion": "1.0.0",
+    "agentId": "mock",
+    "agentVersion": "1.0.0",
+    "installationId": "ins_01test",
+    "occurredAt": "2026-08-29T12:00:02.000Z",
+    "sessionHash": "hmac-sha256:1WRyE3ANA2NdcQcjdZzhO1VOQajGem7gJxoUheBi1Gs",
+    "source": {
+      "kind": "jsonl_tail",
+      "cursorHmac": "hmac-sha256:8CkRm4x9qM3eBenSq8QMsBeyCCllavuoPOmKH1Zs5EI",
+      "rawFingerprintHmac": "hmac-sha256:MQmv-vZ9fwfO-jGTMp8kjHm3qrLFpizx312jbbGUtJY"
+    },
+    "accuracy": "exact",
+    "payload": {
+      "type": "skill_invoked",
+      "skillKey": "hmac-sha256:jUVnwgToTJWPBtvujKWMyvCeRYYug1KdDzu5G1xWGQ0",
+      "invokeType": "native",
+      "success": true
+    }
+  }
+]

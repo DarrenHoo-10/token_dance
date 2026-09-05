@@ -1,0 +1,5 @@
+{"name":"claude_code.session.started","timestamp":"2026-08-30T10:00:00.000Z","attributes":{"session.id":"session-secret","model":"claude-sonnet-4","prompt":"TOKSHOW_TEST_PROMPT_SECRET","path":"C:/TOKSHOW_TEST_ABSOLUTE_PATH_SECRET"}}
+{"name":"claude_code.token.usage","timestamp":"2026-08-30T10:00:01.000Z","attributes":{"session.id":"session-secret","turn.id":"turn-secret","provider":"anthropic","model":"claude-sonnet-4","input_tokens":10,"output_tokens":20,"cache_read_tokens":5,"total_tokens":35,"response":"TOKSHOW_TEST_SOURCE_CODE_SECRET"}}
+{"name":"claude_code.skill.loaded","timestamp":"2026-08-30T10:00:02.000Z","attributes":{"session.id":"session-secret","skill.name":"load-only","content":"TOKSHOW_TEST_SKILL_LOAD_SECRET"}}
+{"name":"claude_code.skill.execution.completed","timestamp":"2026-08-30T10:00:03.000Z","attributes":{"session.id":"session-secret","skill.name":"review","skill.invocation.id":"skill-call-secret","plugin.name":"official","success":true,"toolArguments":"TOKSHOW_TEST_API_KEY_SECRET"}}
+{"name":"claude_code.future.event","timestamp":"2026-08-30T10:00:04.000Z","attributes":{"future":"ignored"}}

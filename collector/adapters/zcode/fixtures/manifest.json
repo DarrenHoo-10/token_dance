@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schemas.tokenshow.dev/adapter-manifest/v1.json",
+  "manifestVersion": "1.0",
+  "id": "dev.tokenshow.adapter.zcode",
+  "name": "ZCode",
+  "version": "1.0.0",
+  "protocolVersion": "1.0",
+  "agent": { "id": "zcode", "versionRange": ">=1.0.0" },
+  "platforms": ["windows-x64", "windows-arm64", "macos-x64", "macos-arm64"],
+  "sources": ["sqlite_snapshot", "runtime_stream"],
+  "permissions": {
+    "readPaths": [{ "template": "AGENT_CONFIG_HOME", "relativeGlob": "cli/db/db.sqlite", "access": "read" }],
+    "writePaths": [],
+    "commands": [],
+    "networkDomains": []
+  },
+  "capabilities": ["tokens", "sessions", "turns", "tools", "skills"]
+}

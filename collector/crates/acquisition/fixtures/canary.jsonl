@@ -1,0 +1,4 @@
+{"type":"session_started","occurredAt":"2026-08-29T12:00:00.000Z","sessionId":"sess-canary","prompt":"TOKSHOW_TEST_PROMPT_SECRET","sourceCode":"TOKSHOW_TEST_SOURCE_CODE_SECRET"}
+{"type":"model_usage_recorded","occurredAt":"2026-08-29T12:00:01.000Z","sessionId":"sess-canary","providerId":"mock","modelId":"C:\\Users\\TOKSHOW_TEST_ABSOLUTE_PATH_SECRET","tokens":{"totalTokens":1},"apiKey":"TOKSHOW_TEST_API_KEY_SECRET"}
+{"type":"skill_invoked","occurredAt":"2026-08-29T12:00:02.000Z","sessionId":"sess-canary","skillKey":"skill.demo","skillInvokeType":"native","success":true,"skillMarkdown":"TOKSHOW_TEST_PROMPT_SECRET"}
+{"type":"model_usage_recorded","occurredAt":"2026-08-29T12:00:03.000Z","sessionId":"sess-canary","providerId":"mock","modelId":"safe-model","tokens":{"totalTokens":4}}

@@ -1,0 +1,42 @@
+{
+  "resourceMetrics": [
+    {
+      "resource": {
+        "attributes": [
+          {"key": "service.name", "value": {"stringValue": "grok-build"}},
+          {"key": "service.instance.id", "value": {"stringValue": "local-1"}}
+        ]
+      },
+      "scopeMetrics": [
+        {
+          "scope": {"name": "grok.telemetry", "version": "1.2.3"},
+          "metrics": [
+            {
+              "name": "grok_code.token.usage",
+              "description": "Grok token usage",
+              "unit": "{token}",
+              "sum": {
+                "dataPoints": [
+                  {
+                    "attributes": [
+                      {"key": "session.id", "value": {"stringValue": "session-7"}},
+                      {"key": "provider", "value": {"stringValue": "xai"}},
+                      {"key": "model", "value": {"stringValue": "grok-code-fast"}},
+                      {"key": "input_tokens", "value": {"intValue": "7"}},
+                      {"key": "output_tokens", "value": {"intValue": "8"}}
+                    ],
+                    "startTimeUnixNano": "1788084000000000000",
+                    "timeUnixNano": "1788084060000000000",
+                    "asInt": "15"
+                  }
+                ],
+                "aggregationTemporality": 2,
+                "isMonotonic": true
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

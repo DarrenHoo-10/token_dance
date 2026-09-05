@@ -1,0 +1,3 @@
+{"name":"claude_code.token.usage","timestamp":"2026-08-30T10:01:00.000Z","attributes":{"session.id":"otlp-session","provider":"anthropic","model":"claude-sonnet-4","input_tokens":7,"output_tokens":8,"total_tokens":15}}
+{"name":"claude_code.tool.completed","timestamp":"2026-08-30T10:01:01.000Z","attributes":{"session.id":"otlp-session","tool.call.id":"call-secret","tool.category":"editor","success":true,"duration_ms":12}}
+{"name":"claude_code.lines_of_code.count","timestamp":"2026-08-30T10:01:02.000Z","attributes":{"session.id":"otlp-session","added_lines":4,"removed_lines":1,"generated_lines":3,"accepted_lines":2,"file_count":1,"language":"rust"}}

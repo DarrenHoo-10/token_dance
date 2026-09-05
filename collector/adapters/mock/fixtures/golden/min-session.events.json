@@ -1,0 +1,116 @@
+[
+  {
+    "schemaVersion": "1.0",
+    "eventId": "jy7JPjZTHY18PZjwplq0xgNy9vxPYf6zp8wEz8-sRfQ",
+    "adapterId": "dev.tokenshow.adapter.mock",
+    "adapterVersion": "1.0.0",
+    "agentId": "mock",
+    "agentVersion": "1.0.0",
+    "installationId": "ins_01test",
+    "occurredAt": "2026-08-29T12:00:00.000Z",
+    "sessionHash": "hmac-sha256:TAdfNr-exRWS63JxS2bz7SP3t9dsogNUQ28OD8LkG0o",
+    "source": {
+      "kind": "jsonl_tail",
+      "cursorHmac": "hmac-sha256:HgAMUmgs72LN8-weplC3ntXm0jCc0zIr_L4LAqXqycA",
+      "rawFingerprintHmac": "hmac-sha256:UAyCPoxRy05JJgHoqA7KoF1-Zo2uuu94lyWP_YPtwCs"
+    },
+    "accuracy": "exact",
+    "payload": {
+      "type": "session_started"
+    }
+  },
+  {
+    "schemaVersion": "1.0",
+    "eventId": "TNjbHj_rX5mGi6Hv6xZOcIS1dP2Lnh2sN-wCY1FGKCM",
+    "adapterId": "dev.tokenshow.adapter.mock",
+    "adapterVersion": "1.0.0",
+    "agentId": "mock",
+    "agentVersion": "1.0.0",
+    "installationId": "ins_01test",
+    "occurredAt": "2026-08-29T12:00:01.000Z",
+    "sessionHash": "hmac-sha256:TAdfNr-exRWS63JxS2bz7SP3t9dsogNUQ28OD8LkG0o",
+    "turnHash": "hmac-sha256:0aqdxDfo06Lnu8PSv325ZtVniSEKsbNlj_4fWvXgrWs",
+    "source": {
+      "kind": "jsonl_tail",
+      "cursorHmac": "hmac-sha256:2p2DrU6PeBVLWexfMPH3ZT8J5u7owNLaQW37a5ae8WU",
+      "rawFingerprintHmac": "hmac-sha256:OLRMRS1sEQ8rx-e0I5WW6sTE69hwXO5qWgcuIrkFa7A"
+    },
+    "accuracy": "exact",
+    "payload": {
+      "type": "turn_started",
+      "trigger": "user"
+    }
+  },
+  {
+    "schemaVersion": "1.0",
+    "eventId": "yCLmu_kgLw5QH1VJWbeMSfCJrffp925hRmUu6_sAoFc",
+    "adapterId": "dev.tokenshow.adapter.mock",
+    "adapterVersion": "1.0.0",
+    "agentId": "mock",
+    "agentVersion": "1.0.0",
+    "installationId": "ins_01test",
+    "occurredAt": "2026-08-29T12:00:02.000Z",
+    "sessionHash": "hmac-sha256:TAdfNr-exRWS63JxS2bz7SP3t9dsogNUQ28OD8LkG0o",
+    "turnHash": "hmac-sha256:0aqdxDfo06Lnu8PSv325ZtVniSEKsbNlj_4fWvXgrWs",
+    "source": {
+      "kind": "jsonl_tail",
+      "cursorHmac": "hmac-sha256:8CkRm4x9qM3eBenSq8QMsBeyCCllavuoPOmKH1Zs5EI",
+      "rawFingerprintHmac": "hmac-sha256:PqBi4_vZZzvcmH-Z105kspyOERW11CPy3Ktps3vgjuk"
+    },
+    "accuracy": "exact",
+    "payload": {
+      "type": "model_usage_recorded",
+      "providerId": "mock",
+      "modelId": "mock-1",
+      "tokens": {
+        "inputTokens": "10",
+        "outputTokens": "20",
+        "totalTokens": "30"
+      }
+    }
+  },
+  {
+    "schemaVersion": "1.0",
+    "eventId": "7KZEGS7m5v_UoD1N2roTTklO_QVvLSC9bVjuVhsWyv8",
+    "adapterId": "dev.tokenshow.adapter.mock",
+    "adapterVersion": "1.0.0",
+    "agentId": "mock",
+    "agentVersion": "1.0.0",
+    "installationId": "ins_01test",
+    "occurredAt": "2026-08-29T12:00:03.000Z",
+    "sessionHash": "hmac-sha256:TAdfNr-exRWS63JxS2bz7SP3t9dsogNUQ28OD8LkG0o",
+    "turnHash": "hmac-sha256:0aqdxDfo06Lnu8PSv325ZtVniSEKsbNlj_4fWvXgrWs",
+    "source": {
+      "kind": "jsonl_tail",
+      "cursorHmac": "hmac-sha256:HZRT4uN1nJDeC3dyuNs4qr539YCS3Ye2LxL8HYpoPBw",
+      "rawFingerprintHmac": "hmac-sha256:t_IydSXtrs-zdrJmZ0AYPKGOGnuDrGmYAkqDVXD99e4"
+    },
+    "accuracy": "exact",
+    "payload": {
+      "type": "turn_completed",
+      "success": true,
+      "durationMs": "2000"
+    }
+  },
+  {
+    "schemaVersion": "1.0",
+    "eventId": "um8IRTtDNagZmDK5o-LAoAP_nifZke3gVssTVWgymJ4",
+    "adapterId": "dev.tokenshow.adapter.mock",
+    "adapterVersion": "1.0.0",
+    "agentId": "mock",
+    "agentVersion": "1.0.0",
+    "installationId": "ins_01test",
+    "occurredAt": "2026-08-29T12:00:04.000Z",
+    "sessionHash": "hmac-sha256:TAdfNr-exRWS63JxS2bz7SP3t9dsogNUQ28OD8LkG0o",
+    "source": {
+      "kind": "jsonl_tail",
+      "cursorHmac": "hmac-sha256:57YbGu9PF116-UQUWh3WwZz11hgZ9FR36Ym9mjDmfuQ",
+      "rawFingerprintHmac": "hmac-sha256:yJ9nmP2yfdSwsokIYM7OWIC3n6ay6zYx_cwhy2PJQhI"
+    },
+    "accuracy": "exact",
+    "payload": {
+      "type": "session_ended",
+      "reason": "completed"
+    }
+  }
+]

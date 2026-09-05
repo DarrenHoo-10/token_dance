@@ -1,0 +1,6 @@
+{"type":"session/start","timestamp":"2026-08-30T10:00:00.000Z","sessionId":"session-secret","model":"deepseek-chat","prompt":"TOKSHOW_TEST_PROMPT_SECRET","path":"C:/TOKSHOW_TEST_ABSOLUTE_PATH_SECRET"}
+{"type":"model/usage","timestamp":"2026-08-30T10:00:01.000Z","sessionId":"session-secret","turnId":"turn-secret","provider":"deepseek","model":"deepseek-chat","input_tokens":10,"output_tokens":20,"cache_read_tokens":5,"total_tokens":35,"response":"TOKSHOW_TEST_SOURCE_CODE_SECRET"}
+{"type":"skill/loaded","timestamp":"2026-08-30T10:00:02.000Z","sessionId":"session-secret","skill":"load-only"}
+{"type":"skill/execution/completed","timestamp":"2026-08-30T10:00:03.000Z","sessionId":"session-secret","skill":"review","invocation_id":"skill-call-secret","plugin":"official","success":true,"toolArguments":"TOKSHOW_TEST_API_KEY_SECRET"}
+{"type":"agent/spawned","timestamp":"2026-08-30T10:00:04.000Z","sessionId":"session-secret","child_session_id":"child-session-secret","agent_type":"worker"}
+{"type":"future/event","timestamp":"2026-08-30T10:00:05.000Z","future":"ignored"}

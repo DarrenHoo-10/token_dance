@@ -9,6 +9,9 @@ build/
 # Testing
 coverage/
 web/e2e/artifacts/
+server/coverage.out
+__pycache__/
+*.py[cod]
 
 # Environment and logs
 *.log
@@ -28,6 +31,19 @@ pnpm-debug.log*
 *.dylib
 server/tokendance-api*
 server/tokendance-worker*
+server/bin/
+
+# Rust / Collector
+collector/target/
+collector/**/target/
+collector/adapters/*/Cargo.lock
+collector/apps/desktop/src-tauri/target/
+collector/apps/desktop/node_modules/
+collector/apps/desktop/dist/
+**/*.rs.bk
+
+# Collector local state
+collector-state/
 
 # Editor / OS
 .DS_Store

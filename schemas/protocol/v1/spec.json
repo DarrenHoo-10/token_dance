@@ -1,0 +1,214 @@
+{
+  "version": "1.0",
+  "enums": {
+    "AdapterRuntimeStatus": ["UNDETECTED", "DETECTED", "NEEDS_PERMISSION", "CONFIGURING", "ACTIVE", "DEGRADED", "ERROR", "DISABLED"],
+    "SetupPlanStatus": ["PROPOSED", "APPROVED", "APPLYING", "VERIFYING", "APPLIED", "ROLLING_BACK", "ROLLED_BACK", "FAILED"],
+    "SourceCheckpointStatus": ["DISCOVERED", "SCANNING", "CURRENT", "STALE", "ROTATED", "TRUNCATED", "PERMISSION_DENIED", "INCOMPATIBLE", "ERROR", "DISABLED"],
+    "EventDeliveryStatus": ["PENDING", "QUEUED", "IN_FLIGHT", "ACKED", "RETRYABLE", "DEAD_LETTER"],
+    "ClientUploadBatchStatus": ["BUILDING", "READY", "IN_FLIGHT", "ACKED", "PARTIALLY_ACKED", "RETRYABLE", "FAILED"],
+    "Accuracy": ["exact", "derived", "correlated", "estimated"],
+    "CapabilityAvailability": ["available", "unavailable"],
+    "Capability": ["tokens", "sessions", "turns", "tools", "skills", "code", "cost", "subagents"],
+    "SourceKind": ["otlp", "jsonl_tail", "sqlite_snapshot", "file_snapshot", "runtime_stream", "local_http_api", "command_snapshot", "remote_api"],
+    "EventType": ["session_started", "session_ended", "turn_started", "turn_completed", "model_usage_recorded", "tool_invoked", "skill_invoked", "code_changed", "cost_recorded", "agent_spawned"],
+    "CostSource": ["provider_reported", "estimated_price_table"],
+    "SkillInvokeType": ["native", "hook", "tool_correlated", "runtime_correlated"],
+    "SessionEndReason": ["completed", "cancelled", "error", "timeout", "unknown"],
+    "TurnTrigger": ["user", "system", "scheduled", "subagent"],
+    "Platform": ["windows-x64", "windows-arm64", "macos-x64", "macos-arm64"],
+    "OsType": ["windows", "macos"],
+    "Architecture": ["x86_64", "aarch64"],
+    "PathTemplateId": ["USER_HOME", "LOCAL_APP_DATA", "ROAMING_APP_DATA", "MAC_APP_SUPPORT", "CODEX_HOME", "AGENT_CONFIG_HOME"],
+    "PathAccess": ["read", "write"],
+    "RejectedEventErrorCode": ["SCHEMA_INVALID", "PRIVACY_REJECTED", "EVENT_TOO_LARGE", "UNSUPPORTED_VERSION", "INTERNAL_RETRYABLE"]
+  },
+  "objects": {
+    "EventSource": {
+      "kind": "SourceKind",
+      "cursorHmac": "hmac",
+      "rawFingerprintHmac": "hmac"
+    },
+    "TokenUsage": {
+      "inputTokens?": "uint64String",
+      "outputTokens?": "uint64String",
+      "cacheReadTokens?": "uint64String",
+      "cacheWriteTokens?": "uint64String",
+      "reasoningTokens?": "uint64String",
+      "toolTokens?": "uint64String",
+      "totalTokens?": "uint64String"
+    },
+    "SessionStartedPayload": {
+      "type": "const:session_started",
+      "modelId?": "identifier",
+      "workspaceHash?": "hmac"
+    },
+    "SessionEndedPayload": {
+      "type": "const:session_ended",
+      "reason": "SessionEndReason",
+      "durationMs?": "uint64String"
+    },
+    "TurnStartedPayload": {
+      "type": "const:turn_started",
+      "trigger?": "TurnTrigger"
+    },
+    "TurnCompletedPayload": {
+      "type": "const:turn_completed",
+      "success": "boolean",
+      "durationMs?": "uint64String",
+      "errorClass?": "identifier"
+    },
+    "ModelUsageRecordedPayload": {
+      "type": "const:model_usage_recorded",
+      "providerId": "identifier",
+      "modelId": "identifier",
+      "tokens": "TokenUsage"
+    },
+    "ToolInvokedPayload": {
+      "type": "const:tool_invoked",
+      "toolCategory": "identifier",
+      "success": "boolean",
+      "durationMs?": "uint64String"
+    },
+    "SkillInvokedPayload": {
+      "type": "const:skill_invoked",
+      "skillKey": "hmac",
+      "invokeType": "SkillInvokeType",
+      "success": "boolean",
+      "pluginKey?": "hmac",
+      "durationMs?": "uint64String"
+    },
+    "CodeChangedPayload": {
+      "type": "const:code_changed",
+      "addedLines": "uint64String",
+      "removedLines": "uint64String",
+      "generatedLines?": "uint64String",
+      "acceptedLines?": "uint64String",
+      "fileCount": "uint32",
+      "language?": "identifier"
+    },
+    "CostRecordedPayload": {
+      "type": "const:cost_recorded",
+      "amount": "decimal",
+      "currency": "currency",
+      "source": "CostSource",
+      "discountAmount?": "decimal"
+    },
+    "AgentSpawnedPayload": {
+      "type": "const:agent_spawned",
+      "childSessionHash": "hmac",
+      "spawnedAgentType": "identifier"
+    },
+    "EventEnvelope": {
+      "schemaVersion": "version",
+      "eventId": "base64url32",
+      "adapterId": "identifier",
+      "adapterVersion": "version",
+      "agentId": "identifier",
+      "agentVersion?": "version",
+      "installationId": "prefixedId",
+      "occurredAt": "datetime",
+      "sessionHash?": "hmac",
+      "turnHash?": "hmac",
+      "toolCallHash?": "hmac",
+      "source": "EventSource",
+      "accuracy": "Accuracy",
+      "payload": "EventPayload"
+    },
+    "AgentDescriptor": {
+      "id": "identifier",
+      "versionRange": "shortString"
+    },
+    "PathPermission": {
+      "template": "PathTemplateId",
+      "relativeGlob": "relativeGlob",
+      "access": "PathAccess"
+    },
+    "CommandPermission": {
+      "executableId": "identifier",
+      "args": "shortString[]"
+    },
+    "AdapterPermissions": {
+      "readPaths": "PathPermission[]",
+      "writePaths": "PathPermission[]",
+      "commands": "CommandPermission[]",
+      "networkDomains": "domain[]"
+    },
+    "AdapterManifest": {
+      "$schema": "schemaUri",
+      "manifestVersion": "version",
+      "id": "identifier",
+      "name": "shortString",
+      "version": "version",
+      "protocolVersion": "version",
+      "agent": "AgentDescriptor",
+      "platforms": "Platform[]",
+      "sources": "SourceKind[]",
+      "permissions": "AdapterPermissions",
+      "capabilities": "Capability[]"
+    },
+    "UploadBatch": {
+      "batchId": "prefixedId",
+      "installationId": "prefixedId",
+      "createdAt": "datetime",
+      "events": "EventEnvelope[]"
+    },
+    "RejectedEvent": {
+      "eventId": "base64url32",
+      "errorCode": "RejectedEventErrorCode",
+      "retryable": "boolean"
+    },
+    "UploadAck": {
+      "batchId": "prefixedId",
+      "accepted": "uint32",
+      "duplicates": "uint32",
+      "rejected": "RejectedEvent[]",
+      "serverTime": "datetime"
+    },
+    "UploadPolicy": {
+      "maxBatchEvents": "uint32",
+      "maxBatchBytes": "uint32",
+      "flushIntervalSeconds": "uint32"
+    },
+    "InstallationRegisterRequest": {
+      "devicePublicKey": "base64url32",
+      "osType": "OsType",
+      "architecture": "Architecture",
+      "collectorVersion": "version"
+    },
+    "InstallationRegisterResponse": {
+      "installationId": "prefixedId",
+      "policy": "UploadPolicy"
+    },
+    "CapabilityStatus": {
+      "capability": "Capability",
+      "availability": "CapabilityAvailability",
+      "accuracy?": "Accuracy",
+      "safeReasonCode?": "identifier"
+    },
+    "AdapterStatusReport": {
+      "adapterId": "identifier",
+      "adapterVersion": "version",
+      "agentVersion?": "version",
+      "runtimeStatus": "AdapterRuntimeStatus",
+      "capabilities": "CapabilityStatus[]",
+      "sourceKinds": "SourceKind[]",
+      "safeErrorCode?": "identifier",
+      "reportedAt": "datetime"
+    }
+  },
+  "unions": {
+    "EventPayload": [
+      "SessionStartedPayload",
+      "SessionEndedPayload",
+      "TurnStartedPayload",
+      "TurnCompletedPayload",
+      "ModelUsageRecordedPayload",
+      "ToolInvokedPayload",
+      "SkillInvokedPayload",
+      "CodeChangedPayload",
+      "CostRecordedPayload",
+      "AgentSpawnedPayload"
+    ]
+  },
+  "roots": ["EventEnvelope", "UploadBatch", "UploadAck", "AdapterManifest", "InstallationRegisterRequest", "InstallationRegisterResponse", "AdapterStatusReport"]
+}

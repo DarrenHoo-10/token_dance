@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schemas.tokenshow.dev/adapter-manifest/v1.json",
+  "manifestVersion": "1.0",
+  "id": "dev.tokenshow.adapter.claude",
+  "name": "Claude Code",
+  "version": "0.1.0",
+  "protocolVersion": "1.0",
+  "agent": { "id": "claude-code", "versionRange": ">=1.0.0 <2.0.0" },
+  "platforms": ["windows-x64", "windows-arm64", "macos-x64", "macos-arm64"],
+  "sources": ["otlp", "jsonl_tail"],
+  "permissions": {
+    "readPaths": [{ "template": "USER_HOME", "relativeGlob": ".claude/projects/**", "access": "read" }],
+    "writePaths": [{ "template": "USER_HOME", "relativeGlob": ".claude/settings.json", "access": "write" }],
+    "commands": [],
+    "networkDomains": []
+  },
+  "capabilities": ["tokens", "sessions", "turns", "tools", "skills", "code", "cost"]
+}

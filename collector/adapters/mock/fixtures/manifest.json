@@ -1,0 +1,45 @@
+{
+  "$schema": "https://schemas.tokenshow.dev/adapter-manifest/v1.json",
+  "manifestVersion": "1.0",
+  "id": "dev.tokenshow.adapter.mock",
+  "name": "Mock Agent",
+  "version": "1.0.0",
+  "protocolVersion": "1.0",
+  "agent": {
+    "id": "mock",
+    "versionRange": ">=1.0.0"
+  },
+  "platforms": [
+    "windows-x64",
+    "windows-arm64",
+    "macos-x64",
+    "macos-arm64"
+  ],
+  "sources": ["jsonl_tail"],
+  "permissions": {
+    "readPaths": [
+      {
+        "template": "AGENT_CONFIG_HOME",
+        "relativeGlob": "sessions/**",
+        "access": "read"
+      }
+    ],
+    "writePaths": [
+      {
+        "template": "AGENT_CONFIG_HOME",
+        "relativeGlob": "config.json",
+        "access": "write"
+      }
+    ],
+    "commands": [],
+    "networkDomains": []
+  },
+  "capabilities": [
+    "tokens",
+    "sessions",
+    "turns",
+    "tools",
+    "skills",
+    "code"
+  ]
+}

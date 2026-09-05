@@ -1,0 +1,4 @@
+[
+  {"versionRange": ">=1.0.0 <1.2.0", "userVersion": 7, "tableSignature":"sessions(id,created_at,model);steps(id,session_id,finished_at,input_tokens,output_tokens,tool_count)", "eventSchemaHash":"sha256:39d83a3b7a7ce7eb-zcode-v1", "fingerprint":"zcode-sqlite-v1-uv7"},
+  {"versionRange": ">=1.2.0 <2.0.0", "userVersion": 9, "tableSignature":"sessions(id,created_at,model);step_metrics(id,session_id,finished_at,input_tokens,output_tokens,total_tokens,tool_count,skill_name)", "eventSchemaHash":"sha256:d340f59c6cb90b10-zcode-v2", "fingerprint":"zcode-sqlite-v2-uv9"}
+]
