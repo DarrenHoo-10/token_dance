@@ -9,6 +9,7 @@ on:
       - collector/packaging/**
       - collector/apps/desktop/**
       - .github/workflows/cross-platform-packaging.yml
+      - .gitattributes
   pull_request:
     paths:
       - collector/crates/platform-windows/**
@@ -16,6 +17,7 @@ on:
       - collector/packaging/**
       - collector/apps/desktop/**
       - .github/workflows/cross-platform-packaging.yml
+      - .gitattributes
 
 permissions:
   contents: read
