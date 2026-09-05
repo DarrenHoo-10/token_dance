@@ -10,9 +10,9 @@
 
 | 下载 | 说明 |
 | --- | --- |
-| [TokenDance.exe](https://github.com/DarrenHoo-10/token_dance/releases/download/v0.1.0/TokenDance.exe) | Windows x64 便携版，下载后双击运行 |
-| [Windows ZIP 压缩包](https://github.com/DarrenHoo-10/token_dance/releases/download/v0.1.0/TokenDance-windows-x64.zip) | 包含程序、使用说明和构建信息；解压后运行 |
-| [版本说明与 SHA-256 校验文件](https://github.com/DarrenHoo-10/token_dance/releases/tag/v0.1.0) | 查看版本详情与下载校验值 |
+| [TokenDance.exe](https://github.com/DarrenHoo-10/token_dance/releases/download/v0.1.1/TokenDance.exe) | Windows x64 便携版，下载后双击运行 |
+| [Windows ZIP 压缩包](https://github.com/DarrenHoo-10/token_dance/releases/download/v0.1.1/TokenDance-windows-x64.zip) | 包含程序、使用说明和构建信息；解压后运行 |
+| [版本说明与 SHA-256 校验文件](https://github.com/DarrenHoo-10/token_dance/releases/tag/v0.1.1) | 查看版本详情与下载校验值 |
 
 1. 将程序放在固定目录，双击 `TokenDance.exe`。
 2. 在 Windows 右下角托盘点击 TokenDance 图标。看不到时展开隐藏图标区域。
@@ -32,6 +32,8 @@
 - 网站提供个人统计、公开排行榜、账号和设备管理。
 
 各工具能够提供的数据不同，缺失的额度、费用或历史数据不会当作真实统计值展示。
+
+同步状态与本机采集相互独立。“同步未完成，稍后自动重试”表示后台会自动补传；“部分记录校验未通过，已保留在本机”表示服务器拒收了部分记录，原始待同步记录仍保存在本机，无需删除数据或重新安装。v0.1.1 修复了部分上传结果的解析；服务端同时兼容 GLM 等模型名称的大写字母和提供商命名空间。
 
 ## 项目结构
 
