@@ -15,7 +15,7 @@ export function TokenOrbit() {
         <div className="token-orbit__satellite"><span /></div>
         <div className="token-orbit__satellite token-orbit__satellite--second"><span /></div>
       </div>
-      <div className="token-orbit__core"><img src="/logo-tokendance-v2.png" alt="" /></div>
+      <div className="token-orbit__core"><img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" /></div>
       <span className="token-orbit__code token-orbit__code--one">{'{ }'}</span>
       <span className="token-orbit__code token-orbit__code--two">{'</>'}</span>
       <span className="token-orbit__code token-orbit__code--three">{'✳'}</span>

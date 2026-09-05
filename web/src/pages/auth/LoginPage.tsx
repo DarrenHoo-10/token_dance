@@ -92,7 +92,7 @@ export const LoginPage: React.FC = () => {
     <div className="login-page" data-motion={motionPaused ? 'paused' : 'playing'}>
       <aside className="login-brand">
         <NavLink to="/" className="login-brand__logo" aria-label="TokenDance">
-          <img src="/logo-tokendance-v2.png" alt="" /><span>TokenDance</span>
+          <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" /><span>TokenDance</span>
         </NavLink>
         <button type="button" className="login-motion-toggle" onClick={() => setMotionPaused(!motionPaused)}
           aria-label={t(motionPaused ? 'auth.resumeMotion' : 'auth.pauseMotion')} aria-pressed={motionPaused}>

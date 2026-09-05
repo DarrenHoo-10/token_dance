@@ -59,7 +59,7 @@ export const Navbar: React.FC = () => {
   return (
     <header className="navbar floating-nav">
       <NavLink to="/" className="nav-brand">
-        <img src="/logo-tokendance-v2.png" alt="TokenDance" />
+        <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="TokenDance" />
         <span>TokenDance</span>
       </NavLink>
 

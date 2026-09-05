@@ -60,7 +60,7 @@ export class ApiError extends Error {
 
 class ApiHttpClient {
   private csrfToken: string | null = null;
-  private baseUrl = '';
+  private baseUrl = import.meta.env.BASE_URL.replace(/\/$/, '');
 
   public setCsrfToken(token: string | null): void {
     this.csrfToken = token;
