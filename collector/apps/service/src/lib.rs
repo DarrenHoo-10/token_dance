@@ -1477,6 +1477,53 @@ mod tests {
         assert!(service.wal.unacked_count() > 0);
     }
 
+    #[tokio::test]
+    async fn collect_tick_ingests_grok_session_turn_usage() {
+        let home = tempfile::tempdir().unwrap();
+        let session = home
+            .path()
+            .join(".grok")
+            .join("sessions")
+            .join("proj")
+            .join("primary");
+        fs::create_dir_all(&session).unwrap();
+        fs::write(
+            home.path().join(".grok").join("version.json"),
+            "{\"version\":\"1.0.13\"}\n",
+        )
+        .unwrap();
+        fs::write(
+            session.join("updates.jsonl"),
+            r#"{"timestamp":"2026-09-05T12:16:09Z","method":"_x.ai/session/update","params":{"sessionId":"s1","update":{"sessionUpdate":"turn_completed","prompt_id":"p1","usage":{"inputTokens":11,"outputTokens":7,"totalTokens":18,"modelUsage":{"grok-4.6-build":{"inputTokens":11,"outputTokens":7,"totalTokens":18}}}}}}
+"#,
+        )
+        .unwrap();
+        let snapshot = crate::detect_from_home(home.path());
+        assert!(snapshot.is_installed(OfficialAgent::GrokBuild));
+        let state = home.path().join("state");
+        let wal = WalStore::open_with_limits(
+            &state,
+            Arc::new(InjectedKeyProvider::new([0x48; 32])),
+            SpoolLimits::for_tests(),
+        )
+        .unwrap();
+        let mut service = ProductionService::assemble(
+            "ins_00000000000000000000000004",
+            b"collect-tick-grok-device-key",
+            &snapshot,
+            Arc::new(EmptySecrets),
+            wal,
+        )
+        .await
+        .unwrap();
+        let report = crate::collect_tick(&mut service, &snapshot, true).await;
+        assert!(
+            report.accepted_events > 0,
+            "grok session usage was not ingested: {report:?}"
+        );
+        assert!(service.wal.unacked_count() > 0);
+    }
+
     #[test]
     fn remote_window_and_sqlite_query_cursors_restore_from_wal() {
         let dir = tempfile::tempdir().unwrap();
