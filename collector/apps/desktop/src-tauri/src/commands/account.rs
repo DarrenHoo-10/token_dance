@@ -342,7 +342,11 @@ impl AccountState {
                     // Recheck slowly so a device resumed on the website can
                     // recover without requiring a manual desktop action.
                     current.retry_at = Some(Instant::now() + Duration::from_secs(300));
-                    "NEEDS_ATTENTION"
+                    if matches!(error.as_str(), "REJECTED_EVENTS" | "EVENT_TOO_LARGE") {
+                        "DATA_REJECTED"
+                    } else {
+                        "NEEDS_ATTENTION"
+                    }
                 } else {
                     "RETRYING"
                 }

@@ -16,3 +16,9 @@ test("background failures, pause and expired access have distinct states", () =>
   assert.equal(syncStatusText("PAUSED", 2, false), "Sync paused");
   assert.equal(syncStatusText("SYNCING", 2, false), "Syncing");
 });
+
+test("rejected records are retained and are not reported as a connection failure", () => {
+  assert.match(syncStatusText("DATA_REJECTED", 78, true), /校验未通过.*保留在本机/);
+  assert.match(syncStatusText("DATA_REJECTED", 78, false), /Kept locally/);
+  assert.doesNotMatch(syncStatusText("RETRYING", 78, true), /连接异常/);
+});
