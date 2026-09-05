@@ -571,6 +571,8 @@ dependencies = [
  "async-trait",
  "collector-core",
  "config-executor",
+ "serde_json",
+ "tokio",
  "wal-spool",
 ]
 

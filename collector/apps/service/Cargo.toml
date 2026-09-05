@@ -5,6 +5,10 @@ edition = "2021"
 license = "MIT"
 publish = false
 
+[[bin]]
+name = "tokendance-collector"
+path = "src/main.rs"
+
 [dependencies]
 acquisition = { path = "../../crates/acquisition" }
 adapter-sdk = { path = "../../crates/adapter-sdk" }
@@ -17,6 +21,11 @@ adapter-grok-build = { path = "../../adapters/grok-build" }
 adapter-zcode = { path = "../../adapters/zcode" }
 collector-core = { path = "../../crates/collector-core" }
 config-executor = { path = "../../crates/config-executor" }
+protocol = { path = "../../crates/protocol" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "sync"] }
+uploader = { path = "../../crates/uploader" }
 wal-spool = { path = "../../crates/wal-spool" }
 
 [dev-dependencies]

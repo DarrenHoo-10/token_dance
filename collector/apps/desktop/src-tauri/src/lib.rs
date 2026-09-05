@@ -3,16 +3,126 @@ pub mod commands;
 pub mod daemon;
 pub mod state;
 
+use std::fs;
+use std::panic;
+
 use daemon::CollectorDaemon;
 use state::AppState;
 use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::tray::TrayIconBuilder;
 use tauri::{Manager, WindowEvent};
 
+fn crash_log_path() -> std::path::PathBuf {
+    state::app_data_root().join("crash.log")
+}
+
+fn write_crash_log(message: &str) {
+    let path = crash_log_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(&path, message);
+    eprintln!("{message}\ncrash log: {}", path.display());
+}
+
+fn install_panic_hook() {
+    panic::set_hook(Box::new(|info| {
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        write_crash_log(&format!("panic: {info}\n{backtrace}"));
+    }));
+}
+
+fn install_tray(app: &tauri::App) -> tauri::Result<()> {
+    let open_item = MenuItem::with_id(
+        app,
+        "open_settings",
+        "打开 TokenDance 设置 / Open Settings",
+        true,
+        None::<&str>,
+    )?;
+    let toggle_pause_item = MenuItem::with_id(
+        app,
+        "toggle_pause",
+        "暂停/恢复数据采集 / Pause Collection",
+        true,
+        None::<&str>,
+    )?;
+    let sync_item = MenuItem::with_id(
+        app,
+        "sync_now",
+        "立即同步数据 / Sync Now",
+        true,
+        None::<&str>,
+    )?;
+    let quit_item = MenuItem::with_id(
+        app,
+        "quit",
+        "退出程序 / Quit TokenDance",
+        true,
+        None::<&str>,
+    )?;
+    let tray_menu = Menu::with_items(
+        app,
+        &[&open_item, &toggle_pause_item, &sync_item, &quit_item],
+    )?;
+
+    // tauri.conf.json already creates `main-tray`. Rebuilding the same id panics
+    // the process during setup, which looks like an instant flash-exit.
+    let tray = if let Some(existing) = app.tray_by_id("main-tray") {
+        existing
+    } else {
+        let mut builder = TrayIconBuilder::with_id("main-tray")
+            .tooltip("TokenDance Collector 运行中")
+            .menu(&tray_menu);
+        if let Some(icon) = app.default_window_icon() {
+            builder = builder.icon(icon.clone());
+        }
+        builder.build(app)?
+    };
+    tray.set_tooltip(Some("TokenDance Collector 运行中"))?;
+    tray.set_menu(Some(tray_menu))?;
+    tray.on_menu_event(|app, event| match event.id.as_ref() {
+        "open_settings" => {}
+        "toggle_pause" => {
+            let state = app.state::<AppState>().inner().clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = state.toggle_global_pause().await;
+            });
+        }
+        "sync_now" => {
+            let state = app.state::<AppState>().inner().clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = state.trigger_sync_now().await;
+            });
+        }
+        "quit" => {
+            let state = app.state::<AppState>().inner().clone();
+            let handle = app.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = state.shutdown().await;
+                handle.exit(0);
+            });
+        }
+        _ => {}
+    });
+    tray.on_tray_icon_event(|_tray, _event| {
+        // Background collector mode: do not surface the settings window.
+    });
+    Ok(())
+}
+
 pub fn run() {
-    let app_state = tauri::async_runtime::block_on(AppState::production())
-        .expect("initialize service-backed desktop state");
-    CollectorDaemon::new(app_state.clone()).start();
+    install_panic_hook();
+
+    let app_state = match tauri::async_runtime::block_on(AppState::production()) {
+        Ok(state) => state,
+        Err(error) => {
+            write_crash_log(&format!(
+                "failed to initialize service-backed desktop state: {error}"
+            ));
+            panic!("initialize service-backed desktop state: {error}");
+        }
+    };
 
     let builder = tauri::Builder::default()
         .manage(app_state)
@@ -47,92 +157,21 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            let open_item = MenuItem::with_id(
-                app,
-                "open_settings",
-                "打开 TokenDance 设置 / Open Settings",
-                true,
-                None::<&str>,
-            )?;
-            let toggle_pause_item = MenuItem::with_id(
-                app,
-                "toggle_pause",
-                "暂停/恢复数据采集 / Pause Collection",
-                true,
-                None::<&str>,
-            )?;
-            let sync_item = MenuItem::with_id(
-                app,
-                "sync_now",
-                "立即同步数据 / Sync Now",
-                true,
-                None::<&str>,
-            )?;
-            let quit_item = MenuItem::with_id(
-                app,
-                "quit",
-                "退出程序 / Quit TokenDance",
-                true,
-                None::<&str>,
-            )?;
-            let tray_menu = Menu::with_items(
-                app,
-                &[&open_item, &toggle_pause_item, &sync_item, &quit_item],
-            )?;
-
-            TrayIconBuilder::with_id("main-tray")
-                .tooltip("TokenDance Collector 运行中")
-                .menu(&tray_menu)
-                .on_menu_event(|app, event| match event.id.as_ref() {
-                    "open_settings" => {
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                    "toggle_pause" => {
-                        let state = app.state::<AppState>().inner().clone();
-                        tauri::async_runtime::spawn(async move {
-                            let _ = state.toggle_global_pause().await;
-                        });
-                    }
-                    "sync_now" => {
-                        let state = app.state::<AppState>().inner().clone();
-                        tauri::async_runtime::spawn(async move {
-                            let _ = state.trigger_sync_now().await;
-                        });
-                    }
-                    "quit" => {
-                        let state = app.state::<AppState>().inner().clone();
-                        let handle = app.clone();
-                        tauri::async_runtime::spawn(async move {
-                            let _ = state.shutdown().await;
-                            handle.exit(0);
-                        });
-                    }
-                    _ => {}
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        ..
-                    } = event
-                    {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                })
-                .build(app)?;
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.hide();
+            }
+            let state = app.state::<AppState>().inner().clone();
+            CollectorDaemon::new(state).start();
+            if let Err(error) = install_tray(app) {
+                write_crash_log(&format!("tray setup failed: {error}"));
+            }
             Ok(())
         });
 
-    builder
-        .run(tauri::generate_context!())
-        .expect("run TokenDance desktop application");
+    if let Err(error) = builder.run(tauri::generate_context!()) {
+        write_crash_log(&format!("run TokenDance desktop application: {error}"));
+        panic!("run TokenDance desktop application: {error}");
+    }
 }
 
 #[cfg(test)]

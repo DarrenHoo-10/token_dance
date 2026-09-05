@@ -8,12 +8,12 @@ use base64::Engine as _;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use protocol::{
-    Architecture, InstallationRegisterRequest, InstallationRegisterResponse, OsType, RejectedEvent,
+    Architecture, EventEnvelope, InstallationRegisterResponse, OsType, RejectedEvent,
     RejectedEventErrorCode, UploadAck, UploadBatch,
 };
 use rand::rngs::OsRng;
 use rand::RngCore;
-use serde_json::Value;
+use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
@@ -204,11 +204,13 @@ pub fn canonical_request(
     )
 }
 
+#[derive(Clone)]
 pub struct HttpTransport {
     base_url: String,
     client: reqwest::Client,
     installation_id: String,
     signer: Arc<dyn DeviceSigner>,
+    claimed_protocol: bool,
 }
 
 impl HttpTransport {
@@ -223,15 +225,38 @@ impl HttpTransport {
             client,
             installation_id: installation_id.into(),
             signer,
+            claimed_protocol: false,
         }
+    }
+
+    pub fn new_claimed(
+        base_url: impl Into<String>,
+        client: reqwest::Client,
+        installation_id: impl Into<String>,
+        signer: Arc<dyn DeviceSigner>,
+    ) -> Self {
+        Self {
+            base_url: base_url.into(),
+            client,
+            installation_id: installation_id.into(),
+            signer,
+            claimed_protocol: true,
+        }
+    }
+
+    pub fn installation_id(&self) -> &str {
+        &self.installation_id
     }
 }
 
 #[async_trait]
 impl IngestTransport for HttpTransport {
     async fn upload(&self, batch: &UploadBatch) -> Result<UploadAck, TransportError> {
-        let json =
-            serde_json::to_vec(batch).map_err(|err| TransportError::Decode(err.to_string()))?;
+        let json = if self.claimed_protocol {
+            encode_claimed_batch(batch)?
+        } else {
+            serde_json::to_vec(batch).map_err(|err| TransportError::Decode(err.to_string()))?
+        };
         let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
         use std::io::Write;
         let gzipped = encoder
@@ -246,13 +271,21 @@ impl IngestTransport for HttpTransport {
         OsRng.fill_bytes(&mut nonce_bytes);
         let nonce = URL_SAFE_NO_PAD.encode(nonce_bytes);
         let body_sha256: [u8; 32] = Sha256::digest(&gzipped).into();
-        let canonical = canonical_request(
-            reqwest::Method::POST.as_str(),
-            INGEST_PATH,
-            &timestamp,
-            &nonce,
-            &body_sha256,
-        );
+        let body_sha256_hex = body_sha256
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let canonical = if self.claimed_protocol {
+            format!("POST\n{INGEST_PATH}\n{timestamp}\n{nonce}\n{body_sha256_hex}")
+        } else {
+            canonical_request(
+                reqwest::Method::POST.as_str(),
+                INGEST_PATH,
+                &timestamp,
+                &nonce,
+                &body_sha256,
+            )
+        };
         let signature = self
             .signer
             .sign(canonical.as_bytes())
@@ -263,7 +296,7 @@ impl IngestTransport for HttpTransport {
             URL_SAFE_NO_PAD.encode(signature)
         );
 
-        let response = self
+        let mut request = self
             .client
             .post(format!(
                 "{}{}",
@@ -275,12 +308,211 @@ impl IngestTransport for HttpTransport {
             .header("authorization", authorization)
             .header("x-timestamp", timestamp)
             .header("x-nonce", nonce)
-            .header("idempotency-key", &batch.batch_id)
+            .header("idempotency-key", &batch.batch_id);
+        if self.claimed_protocol {
+            request = request.header("x-body-sha256", body_sha256_hex);
+        }
+        let response = request
             .body(gzipped)
             .send()
             .await
             .map_err(map_reqwest_error)?;
-        decode_response(response).await
+        if self.claimed_protocol {
+            decode_claimed_response(response).await
+        } else {
+            decode_response(response).await
+        }
+    }
+}
+
+async fn decode_claimed_response(response: reqwest::Response) -> Result<UploadAck, TransportError> {
+    let status = response.status().as_u16();
+    let retry_after = response
+        .headers()
+        .get("retry-after")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|text| text.parse::<u64>().ok())
+        .map(Duration::from_secs);
+    let body = response
+        .text()
+        .await
+        .map_err(|error| TransportError::Decode(error.to_string()))?;
+    match status {
+        200..=202 => {
+            let mut value: Value = serde_json::from_str(&body)
+                .map_err(|error| TransportError::Decode(error.to_string()))?;
+            if let Some(object) = value.as_object_mut() {
+                object.remove("installationId");
+            }
+            serde_json::from_value(value).map_err(|error| TransportError::Decode(error.to_string()))
+        }
+        401 | 403 => Err(TransportError::Auth),
+        other => Err(TransportError::Http {
+            status: other,
+            retry_after,
+            body,
+        }),
+    }
+}
+
+fn encode_claimed_batch(batch: &UploadBatch) -> Result<Vec<u8>, TransportError> {
+    let events = batch
+        .events
+        .iter()
+        .map(flatten_claimed_event)
+        .collect::<Result<Vec<_>, _>>()?;
+    serde_json::to_vec(&json!({
+        "batchId": batch.batch_id,
+        "events": events,
+    }))
+    .map_err(|error| TransportError::Decode(error.to_string()))
+}
+
+fn flatten_claimed_event(event: &EventEnvelope) -> Result<Value, TransportError> {
+    let encoded =
+        serde_json::to_value(event).map_err(|error| TransportError::Decode(error.to_string()))?;
+    let mut flat = encoded
+        .as_object()
+        .cloned()
+        .ok_or_else(|| TransportError::Decode("event envelope must be an object".into()))?;
+    flat.remove("installationId");
+
+    let schema_version = flat
+        .remove("schemaVersion")
+        .and_then(|value| {
+            value
+                .as_str()
+                .and_then(|text| text.split('.').next())
+                .and_then(|text| text.parse::<u64>().ok())
+        })
+        .unwrap_or(1);
+    flat.insert("schemaVersion".into(), Value::from(schema_version));
+    flat.insert("privacyPolicyVersion".into(), Value::from(1));
+
+    let source_kind = flat
+        .remove("source")
+        .and_then(|value| {
+            value
+                .as_object()
+                .and_then(|source| source.get("kind"))
+                .cloned()
+        })
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .unwrap_or_else(|| "runtime_stream".into());
+    flat.insert(
+        "sourceKind".into(),
+        Value::String(if source_kind == "jsonl_tail" {
+            "jsonl".into()
+        } else {
+            source_kind
+        }),
+    );
+
+    let mut payload = flat
+        .remove("payload")
+        .and_then(|value| value.as_object().cloned())
+        .ok_or_else(|| TransportError::Decode("event payload must be an object".into()))?;
+    let event_type = payload
+        .remove("type")
+        .and_then(|value| value.as_str().map(str::to_owned))
+        .ok_or_else(|| TransportError::Decode("event payload type is required".into()))?;
+    flat.insert("eventType".into(), Value::String(event_type.clone()));
+
+    match event_type.as_str() {
+        "session_started" => move_value(&mut payload, &mut flat, "modelId", "modelId"),
+        "session_ended" => move_u64(&mut payload, &mut flat, "durationMs", "durationMs"),
+        "turn_started" => {
+            if let Some(Value::String(trigger)) = payload.remove("trigger") {
+                let trigger = match trigger.as_str() {
+                    "scheduled" => "automation",
+                    "subagent" => "system",
+                    other => other,
+                };
+                flat.insert("turnTrigger".into(), Value::String(trigger.into()));
+            }
+        }
+        "turn_completed" => {
+            move_value(&mut payload, &mut flat, "success", "success");
+            move_u64(&mut payload, &mut flat, "durationMs", "durationMs");
+        }
+        "model_usage_recorded" => {
+            move_value(&mut payload, &mut flat, "providerId", "providerId");
+            move_value(&mut payload, &mut flat, "modelId", "modelId");
+            if let Some(Value::Object(mut tokens)) = payload.remove("tokens") {
+                for (from, to) in [
+                    ("inputTokens", "tokenInput"),
+                    ("outputTokens", "tokenOutput"),
+                    ("cacheReadTokens", "tokenCacheRead"),
+                    ("cacheWriteTokens", "tokenCacheWrite"),
+                    ("reasoningTokens", "tokenReasoning"),
+                    ("totalTokens", "tokenTotal"),
+                ] {
+                    move_u64(&mut tokens, &mut flat, from, to);
+                }
+            }
+        }
+        "tool_invoked" => {
+            move_value(&mut payload, &mut flat, "toolCategory", "toolCategory");
+            move_value(&mut payload, &mut flat, "success", "success");
+            move_u64(&mut payload, &mut flat, "durationMs", "durationMs");
+        }
+        "skill_invoked" => {
+            move_value(&mut payload, &mut flat, "skillKey", "skillKey");
+            move_value(&mut payload, &mut flat, "invokeType", "skillInvokeType");
+            move_value(&mut payload, &mut flat, "pluginKey", "pluginKey");
+            move_value(&mut payload, &mut flat, "success", "success");
+            move_u64(&mut payload, &mut flat, "durationMs", "durationMs");
+        }
+        "code_changed" => {
+            for (from, to) in [
+                ("addedLines", "codeAddedLines"),
+                ("removedLines", "codeDeletedLines"),
+                ("generatedLines", "codeGeneratedLines"),
+                ("acceptedLines", "codeAcceptedLines"),
+                ("fileCount", "codeFileCount"),
+            ] {
+                move_u64(&mut payload, &mut flat, from, to);
+            }
+        }
+        "cost_recorded" => {
+            move_value(&mut payload, &mut flat, "amount", "costAmount");
+            move_value(&mut payload, &mut flat, "currency", "costCurrency");
+            move_value(&mut payload, &mut flat, "source", "costSource");
+        }
+        "agent_spawned" => {}
+        _ => {}
+    }
+
+    Ok(Value::Object(flat))
+}
+
+fn move_value(
+    source: &mut Map<String, Value>,
+    target: &mut Map<String, Value>,
+    from: &str,
+    to: &str,
+) {
+    if let Some(value) = source.remove(from) {
+        target.insert(to.into(), value);
+    }
+}
+
+fn move_u64(
+    source: &mut Map<String, Value>,
+    target: &mut Map<String, Value>,
+    from: &str,
+    to: &str,
+) {
+    let Some(value) = source.remove(from) else {
+        return;
+    };
+    let number = match value {
+        Value::Number(number) => Some(number),
+        Value::String(text) => text.parse::<u64>().ok().map(serde_json::Number::from),
+        _ => None,
+    };
+    if let Some(number) = number {
+        target.insert(to.into(), Value::Number(number));
     }
 }
 
@@ -315,15 +547,42 @@ impl RegistrationClient {
         architecture: Architecture,
         collector_version: impl Into<String>,
     ) -> Result<RegisteredCollector, TransportError> {
+        self.register_with_installation(signer, os_type, architecture, collector_version, None)
+            .await
+    }
+
+    pub async fn register_with_installation(
+        self,
+        signer: Arc<dyn DeviceSigner>,
+        os_type: OsType,
+        architecture: Architecture,
+        collector_version: impl Into<String>,
+        installation_id: Option<String>,
+    ) -> Result<RegisteredCollector, TransportError> {
         let public_key = signer
             .public_key()
             .map_err(|err| TransportError::Signing(err.to_string()))?;
-        let request = InstallationRegisterRequest {
-            device_public_key: URL_SAFE_NO_PAD.encode(public_key),
-            os_type,
-            architecture,
-            collector_version: collector_version.into(),
-        };
+        let mut request = serde_json::Map::new();
+        request.insert(
+            "devicePublicKey".into(),
+            Value::String(URL_SAFE_NO_PAD.encode(public_key)),
+        );
+        request.insert(
+            "osType".into(),
+            serde_json::to_value(os_type).map_err(|err| TransportError::Decode(err.to_string()))?,
+        );
+        request.insert(
+            "architecture".into(),
+            serde_json::to_value(architecture)
+                .map_err(|err| TransportError::Decode(err.to_string()))?,
+        );
+        request.insert(
+            "collectorVersion".into(),
+            Value::String(collector_version.into()),
+        );
+        if let Some(installation_id) = installation_id {
+            request.insert("installationId".into(), Value::String(installation_id));
+        }
         let response = self
             .client
             .post(format!(
@@ -332,7 +591,7 @@ impl RegistrationClient {
                 REGISTER_PATH
             ))
             .bearer_auth(&self.user_session_token)
-            .json(&request)
+            .json(&Value::Object(request))
             .send()
             .await
             .map_err(map_reqwest_error)?;

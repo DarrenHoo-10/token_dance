@@ -60,6 +60,16 @@ impl JsonlTailer {
         self.last_record_hash = checkpoint.last_record_hash.clone();
     }
 
+    pub fn restore_matching(&mut self, wal: &wal_spool::WalStore) {
+        let Ok(meta) = fs::metadata(&self.path) else {
+            return;
+        };
+        let identity = file_identity(&self.path, &meta);
+        if let Some(checkpoint) = wal.checkpoint(&self.logical_source_id, &identity) {
+            self.restore(checkpoint);
+        }
+    }
+
     pub fn reset_for_rescan(&mut self) {
         self.offset = 0;
         self.last_record_hash = None;

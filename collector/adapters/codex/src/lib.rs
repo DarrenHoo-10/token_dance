@@ -239,6 +239,9 @@ fn decode_jsonl(
         let Ok(value) = serde_json::from_str::<Value>(line) else {
             continue;
         };
+        let Some(value) = flatten_codex_record(value) else {
+            continue;
+        };
         if let Some(event) = decode_record(
             manifest,
             version,
@@ -251,6 +254,92 @@ fn decode_jsonl(
         }
     }
     Ok(events)
+}
+
+fn flatten_codex_record(value: Value) -> Option<Value> {
+    let object = value.as_object()?;
+    let outer = object.get("type").and_then(Value::as_str).unwrap_or("");
+    if matches!(
+        outer,
+        "thread.started"
+            | "turn.started"
+            | "token.usage"
+            | "tool.completed"
+            | "skill.execution.completed"
+            | "skill.execution.failed"
+            | "patch.applied"
+            | "skill.injected"
+            | "future.record"
+    ) {
+        return Some(value);
+    }
+    let payload = object.get("payload").and_then(Value::as_object)?;
+    let mut out = Map::new();
+    if let Some(timestamp) = object.get("timestamp") {
+        out.insert("timestamp".into(), timestamp.clone());
+    }
+    match outer {
+        "session_meta" => {
+            out.insert("type".into(), Value::String("thread.started".into()));
+            if let Some(id) = payload
+                .get("session_id")
+                .or_else(|| payload.get("id"))
+                .cloned()
+            {
+                out.insert("thread_id".into(), id);
+            }
+            Some(Value::Object(out))
+        }
+        "event_msg" => match payload.get("type").and_then(Value::as_str) {
+            Some("task_started") => {
+                out.insert("type".into(), Value::String("turn.started".into()));
+                if let Some(turn_id) = payload.get("turn_id").cloned() {
+                    out.insert("turn_id".into(), turn_id);
+                }
+                Some(Value::Object(out))
+            }
+            Some("token_count") => {
+                let usage = payload
+                    .get("info")
+                    .and_then(Value::as_object)
+                    .and_then(|info| info.get("last_token_usage"))
+                    .and_then(Value::as_object)?;
+                out.insert("type".into(), Value::String("token.usage".into()));
+                out.insert("provider".into(), Value::String("openai".into()));
+                for key in [
+                    "input_tokens",
+                    "output_tokens",
+                    "cached_input_tokens",
+                    "reasoning_output_tokens",
+                    "total_tokens",
+                ] {
+                    if let Some(value) = usage.get(key) {
+                        let dest = if key == "reasoning_output_tokens" {
+                            "reasoning_tokens"
+                        } else {
+                            key
+                        };
+                        out.insert(dest.into(), value.clone());
+                    }
+                }
+                Some(Value::Object(out))
+            }
+            _ => None,
+        },
+        "response_item" => match payload.get("type").and_then(Value::as_str) {
+            Some("custom_tool_call") => {
+                out.insert("type".into(), Value::String("tool.completed".into()));
+                if let Some(name) = payload.get("name").cloned() {
+                    out.insert("tool".into(), name);
+                }
+                let success = payload.get("status").and_then(Value::as_str) == Some("completed");
+                out.insert("success".into(), Value::Bool(success));
+                Some(Value::Object(out))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 fn decode_otel(

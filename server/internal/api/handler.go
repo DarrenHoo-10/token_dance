@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/tokendance/token-collector/server/internal/auth"
@@ -41,6 +42,7 @@ type RegisterInstallationRequest struct {
 	OSType           string `json:"osType"`
 	Architecture     string `json:"architecture"`
 	CollectorVersion string `json:"collectorVersion"`
+	InstallationID   string `json:"installationId,omitempty"`
 }
 
 type RegisterInstallationResponse struct {
@@ -98,7 +100,20 @@ func (h *Handler) HandleRegisterInstallation(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	instID := h.IDGenerator()
+	instID := strings.TrimSpace(req.InstallationID)
+	if instID == "" {
+		instID = h.IDGenerator()
+	} else if !validCollectorInstallationID(instID) {
+		http.Error(w, "invalid installationId", http.StatusBadRequest)
+		return
+	} else if existing, lookupErr := h.Installations.GetInstallation(r.Context(), instID); lookupErr == nil {
+		if existing.UserID != userID {
+			http.Error(w, "installation already registered", http.StatusConflict)
+			return
+		}
+		h.writeRegistration(w, http.StatusOK, existing.InstallationID)
+		return
+	}
 	now := time.Now().UTC()
 
 	inst := &domain.Installation{
@@ -128,6 +143,18 @@ func (h *Handler) HandleRegisterInstallation(w http.ResponseWriter, r *http.Requ
 	}
 
 	h.writeRegistration(w, http.StatusCreated, instID)
+}
+
+func validCollectorInstallationID(id string) bool {
+	if len(id) != 30 || !strings.HasPrefix(id, "ins_") {
+		return false
+	}
+	for _, char := range id[4:] {
+		if (char < '0' || char > '9') && (char < 'A' || char > 'Z') && (char < 'a' || char > 'z') {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *Handler) writeRegistration(w http.ResponseWriter, status int, installationID string) {
@@ -209,6 +236,7 @@ func (h *Handler) HandleIngestBatch(w http.ResponseWriter, r *http.Request) {
 		BatchID:    result.BatchID,
 		Accepted:   result.Accepted,
 		Duplicates: result.Duplicates,
+		Rejected:   []protocol.RejectedEvent{},
 		ServerTime: result.ServerTime.Format(time.RFC3339Nano),
 	}
 	for _, rej := range result.Rejected {

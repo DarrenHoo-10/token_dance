@@ -7,7 +7,7 @@ use std::time::Instant;
 use acquisition::SecretResolver;
 use adapter_sdk::{ConfigMutation, SetupPlan};
 use chrono::Utc;
-use collector_service::{DetectionSnapshot, ProductionService};
+use collector_service::{detect_local, DetectionSnapshot, ProductionService};
 use config_executor::{EncryptedBackupStore, SemanticVerifier, SetupPlanExecutor};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
@@ -292,6 +292,7 @@ impl EncryptedBackupStore for MemoryBackupStore {
 #[derive(Clone)]
 pub struct AppState {
     pub service: Arc<Mutex<ProductionService>>,
+    pub detection: Arc<DetectionSnapshot>,
     control: Arc<RwLock<PersistedControl>>,
     control_dir: Arc<PathBuf>,
     start_time: Instant,
@@ -337,10 +338,15 @@ impl AppState {
         let wal =
             WalStore::open(root.join("spool"), key_provider).map_err(|error| error.to_string())?;
         let installation_id = load_or_create_installation_id(&root)?;
+        let detection = if cfg!(test) {
+            DetectionSnapshot::default()
+        } else {
+            detect_local()
+        };
         let service = ProductionService::assemble(
             installation_id.clone(),
             &key,
-            &DetectionSnapshot::default(),
+            &detection,
             Arc::new(EmptySecrets),
             wal,
         )
@@ -351,6 +357,7 @@ impl AppState {
             .unwrap_or_else(|| PersistedControl::initial(&installation_id, autostart_enabled));
         let state = Self {
             service: Arc::new(Mutex::new(service)),
+            detection: Arc::new(detection),
             control: Arc::new(RwLock::new(control)),
             control_dir: Arc::new(root),
             start_time: Instant::now(),
@@ -360,6 +367,10 @@ impl AppState {
         state.apply_saved_agent_controls().await?;
         state.persist_control().await?;
         Ok(state)
+    }
+
+    pub fn control_dir_path(&self) -> PathBuf {
+        (*self.control_dir).clone()
     }
 
     async fn apply_saved_agent_controls(&self) -> Result<(), String> {
@@ -795,7 +806,7 @@ impl AppState {
     }
 }
 
-fn app_data_root() -> PathBuf {
+pub(crate) fn app_data_root() -> PathBuf {
     let base = std::env::var_os("LOCALAPPDATA")
         .or_else(|| std::env::var_os("XDG_DATA_HOME"))
         .or_else(|| std::env::var_os("HOME"))

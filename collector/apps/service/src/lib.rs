@@ -1,7 +1,14 @@
 #![forbid(unsafe_code)]
 
+pub mod detect;
+pub mod runtime;
+pub mod upload;
+
+pub use detect::{detect_from_home, detect_local};
+pub use runtime::{collect_tick, CollectReport};
+
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use acquisition::{
@@ -125,6 +132,14 @@ impl DetectionSnapshot {
 
     pub fn is_installed(&self, agent: OfficialAgent) -> bool {
         self.agents.contains_key(&agent)
+    }
+
+    pub fn iter_sources(
+        &self,
+    ) -> impl Iterator<Item = (OfficialAgent, &str, &DetectedSourceConfig)> {
+        self.sources
+            .iter()
+            .map(|((agent, source_id), config)| (*agent, source_id.as_str(), config))
     }
 }
 
@@ -401,6 +416,28 @@ impl ProductionService {
         })
     }
 
+    pub async fn ingest_jsonl_path(
+        &mut self,
+        adapter_id: &str,
+        source_id: &str,
+        path: &Path,
+        historical: bool,
+    ) -> Result<usize, acquisition::AcquisitionError> {
+        let mut tailer = JsonlTailer::new(
+            self.collector.installation_id(),
+            source_id,
+            source_id,
+            path,
+        );
+        tailer.restore_matching(&self.wal);
+        let collector = &self.collector;
+        let wal = &mut self.wal;
+        IngestPipeline::new(collector, adapter_id)
+            .ingest(&mut tailer, wal, historical)
+            .await
+            .map(|poll| poll.accepted_events)
+    }
+
     pub async fn ingest_driver_batch(
         &mut self,
         adapter_id: &str,
@@ -661,6 +698,9 @@ fn build_driver(
             let Some(path) = config.and_then(|config| config.path.clone()) else {
                 return Ok(None);
             };
+            if path.is_dir() {
+                return Ok(None);
+            }
             DriverInstance::JsonlTail(JsonlTailer::new(installation_id, id, path_template, path))
         }
         SourceSpec::SqliteSnapshot { id, .. } => {
@@ -792,7 +832,7 @@ fn endpoint_host(endpoint: &str) -> Result<String, acquisition::AcquisitionError
     }
 }
 
-fn adapter_id(agent: OfficialAgent) -> &'static str {
+pub fn adapter_id(agent: OfficialAgent) -> &'static str {
     match agent {
         OfficialAgent::Codex => adapter_codex::ADAPTER_ID,
         OfficialAgent::ClaudeCode => adapter_claude::ADAPTER_ID,
@@ -1384,6 +1424,35 @@ mod tests {
                 .unwrap(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn collect_tick_ingests_detected_codex_jsonl() {
+        let home = tempfile::tempdir().unwrap();
+        let sessions = home.path().join(".codex").join("sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        fs::write(sessions.join("one.jsonl"), adapter_codex::SESSION_JSONL).unwrap();
+        let snapshot = crate::detect_from_home(home.path());
+        assert!(snapshot.is_installed(OfficialAgent::Codex));
+        let state = home.path().join("state");
+        let wal = WalStore::open_with_limits(
+            &state,
+            Arc::new(InjectedKeyProvider::new([0x47; 32])),
+            SpoolLimits::for_tests(),
+        )
+        .unwrap();
+        let mut service = ProductionService::assemble(
+            "ins_00000000000000000000000003",
+            b"collect-tick-device-key",
+            &snapshot,
+            Arc::new(EmptySecrets),
+            wal,
+        )
+        .await
+        .unwrap();
+        let report = crate::collect_tick(&mut service, &snapshot, true).await;
+        assert!(report.accepted_events > 0, "{report:?}");
+        assert!(service.wal.unacked_count() > 0);
     }
 
     #[test]

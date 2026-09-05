@@ -2,14 +2,17 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/oklog/ulid/v2"
 	"github.com/tokendance/token-collector/server/internal/api"
 	"github.com/tokendance/token-collector/server/internal/auth"
+	"github.com/tokendance/token-collector/server/internal/domain"
 	"github.com/tokendance/token-collector/server/internal/ingest"
 	"github.com/tokendance/token-collector/server/internal/store"
 	"github.com/tokendance/token-collector/server/internal/store/mysqlstore"
@@ -26,6 +29,9 @@ func main() {
 		log.Fatalf("open MySQL store: %v", err)
 	}
 	defer s.Close()
+	if err := ensureBootstrapUser(s); err != nil {
+		log.Fatalf("ensure bootstrap user: %v", err)
+	}
 
 	ingestSvc := &ingest.Service{
 		Batches:  s,
@@ -75,4 +81,31 @@ func main() {
 
 func generateID() string {
 	return "ins_" + ulid.Make().String()
+}
+
+func bootstrapSessionToken() string {
+	if token := os.Getenv("TOKENSHOW_BOOTSTRAP_TOKEN"); token != "" {
+		return token
+	}
+	return "local-dev-session"
+}
+
+func ensureBootstrapUser(s *mysqlstore.Store) error {
+	ctx := context.Background()
+	token := bootstrapSessionToken()
+	hash := sha256.Sum256([]byte(token))
+	if _, err := s.GetUserByAuthSubjectHash(ctx, hash); err == nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	return s.CreateUser(ctx, &domain.User{
+		UserID:                "usr_localdev000000000000000001",
+		AuthSubjectHash:       hash,
+		DisplayName:           "Local Collector",
+		AccountStatus:         "active",
+		LeaderboardVisibility: "private",
+		TimezoneName:          "UTC",
+		CreatedAt:             now,
+		UpdatedAt:             now,
+	})
 }

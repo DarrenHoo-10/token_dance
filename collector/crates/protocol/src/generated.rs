@@ -518,6 +518,7 @@ pub struct UploadAck {
     pub batch_id: String,
     pub accepted: u32,
     pub duplicates: u32,
+    #[serde(default)]
     pub rejected: Vec<RejectedEvent>,
     pub server_time: String,
 }
