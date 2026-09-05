@@ -10,7 +10,7 @@ Push-Location $desktopRoot
 try {
     & npm.cmd run build
     if ($LASTEXITCODE -ne 0) { throw 'Frontend build failed' }
-    & cargo build --release --manifest-path src-tauri/Cargo.toml --features custom-protocol
+    & cargo build --locked --release --manifest-path src-tauri/Cargo.toml --features custom-protocol
     if ($LASTEXITCODE -ne 0) { throw 'Native build failed' }
 
     $releaseDir = Join-Path $desktopRoot 'release'

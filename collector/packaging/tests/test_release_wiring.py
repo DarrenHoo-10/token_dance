@@ -12,6 +12,19 @@ WINDOWS_VERIFY = (ROOT / "collector/packaging/windows/Verify-Authenticode.ps1").
 
 
 class ReleaseWiringTests(unittest.TestCase):
+    def test_both_platforms_embed_frontend_with_a_locked_build(self):
+        command = "cargo build --locked --release --manifest-path collector/apps/desktop/src-tauri/Cargo.toml --features custom-protocol"
+        self.assertEqual(WORKFLOW.count(command), 2)
+
+    def test_signing_and_signed_uploads_require_explicit_release_mode(self):
+        self.assertIn('sign_release:', WORKFLOW)
+        self.assertIn('default: false', WORKFLOW)
+        gate = "if: github.event_name == 'workflow_dispatch' && inputs.sign_release"
+        self.assertEqual(WORKFLOW.count(gate), 4)
+        self.assertIn('tokendance-desktop-windows-unsigned', WORKFLOW)
+        self.assertIn('tokendance-desktop-macos-unsigned', WORKFLOW)
+        self.assertNotIn("if: github.event_name != 'pull_request'", WORKFLOW)
+
     def test_windows_release_artifact_is_built_signed_verified_and_uploaded(self):
         artifact = "collector/apps/desktop/src-tauri/target/release/tokendance-desktop.exe"
         self.assertIn("cargo build --locked --release --manifest-path collector/apps/desktop/src-tauri/Cargo.toml", WORKFLOW)
