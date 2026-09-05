@@ -5,7 +5,10 @@ use std::time::Duration;
 
 use wal_spool::{KeyProvider, OsKeyProvider, WalStore};
 
-use crate::detect::{default_jsonl_limit, detect_local, detected_adapter_ids, list_jsonl_files};
+use crate::detect::{
+    default_jsonl_limit, detect_local, detected_adapter_ids, grok_history_limit,
+    list_grok_history_files, list_jsonl_files,
+};
 use crate::upload::UploadPipeline;
 use crate::{adapter_id, DetectionSnapshot, ProductionService};
 
@@ -70,7 +73,9 @@ pub async fn collect_tick(
         if path
             .extension()
             .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("sqlite") || ext.eq_ignore_ascii_case("vscdb"))
+            .is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("sqlite") || ext.eq_ignore_ascii_case("vscdb")
+            })
         {
             match service.poll_sqlite(adapter, source_id).await {
                 Ok(count) => report.accepted_events += count,
@@ -80,17 +85,21 @@ pub async fn collect_tick(
             }
             continue;
         }
-        for file in list_jsonl_files(path, default_jsonl_limit()) {
+        let files = if source_id == adapter_grok_build::HISTORY_SOURCE_ID {
+            list_grok_history_files(path, grok_history_limit())
+        } else {
+            list_jsonl_files(path, default_jsonl_limit())
+        };
+        for file in files {
             report.files_scanned += 1;
             match service
                 .ingest_jsonl_path(adapter, source_id, &file, historical)
                 .await
             {
                 Ok(count) => report.accepted_events += count,
-                Err(error) => report.errors.push(format!(
-                    "{adapter}/{source_id} {}: {error}",
-                    file.display()
-                )),
+                Err(error) => report
+                    .errors
+                    .push(format!("{adapter}/{source_id} {}: {error}", file.display())),
             }
         }
     }
@@ -107,7 +116,8 @@ pub async fn assemble_local_service(
         "collector-wal-key",
     ));
     let key = key_provider.data_key().map_err(|error| error.to_string())?;
-    let wal = WalStore::open(root.join("spool"), key_provider).map_err(|error| error.to_string())?;
+    let wal =
+        WalStore::open(root.join("spool"), key_provider).map_err(|error| error.to_string())?;
     let installation_id = load_or_create_installation_id(root)?;
     let service = ProductionService::assemble(
         installation_id,
