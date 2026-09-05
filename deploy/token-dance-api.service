@@ -1,0 +1,22 @@
+[Unit]
+Description=TokenDance API
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+User=tokendance
+Group=tokendance
+WorkingDirectory=/opt/token-dance/current
+EnvironmentFile=/etc/token-dance/app.env
+ExecStart=/opt/token-dance/current/bin/token-dance-api
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+MemoryMax=384M
+LimitNOFILE=16384
+
+[Install]
+WantedBy=multi-user.target

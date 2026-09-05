@@ -114,7 +114,7 @@ export const OnboardingPage: React.FC = () => {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 20, fontWeight: 800 }}>
-          <img src="/logo-tokendance-v2.png" alt="TokenDance" style={{ width: 32, height: 32 }} />
+          <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="TokenDance" style={{ width: 32, height: 32 }} />
           <span>TokenDance</span>
         </div>
 

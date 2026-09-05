@@ -28,7 +28,7 @@ export const Footer: React.FC = () => {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <img src="/logo-tokendance-v2.png" alt="TokenDance" style={{ width: 18, height: 18 }} />
+          <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="TokenDance" style={{ width: 18, height: 18 }} />
           <strong>TokenDance</strong>
           <span>·</span>
           <span>{t('common.heroTagline')}</span>

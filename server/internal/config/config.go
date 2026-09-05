@@ -79,6 +79,7 @@ type Config struct {
 	ObjectEndpoint         string `json:"objectEndpoint,omitempty"`
 	ObjectRegion           string `json:"objectRegion,omitempty"`
 	ObjectBucket           string `json:"objectBucket,omitempty"`
+	ObjectPrefix           string `json:"objectPrefix,omitempty"`
 	ObjectAccessKey        string `json:"-"`
 	ObjectAccessKeyFile    string `json:"objectAccessKeyFile,omitempty"`
 	ObjectSecretKey        string `json:"-"`
@@ -271,6 +272,7 @@ func LoadFromEnv() (*Config, error) {
 	setString("TOKENDANCE_OBJECT_ENDPOINT", &cfg.ObjectEndpoint)
 	setString("TOKENDANCE_OBJECT_REGION", &cfg.ObjectRegion)
 	setString("TOKENDANCE_OBJECT_BUCKET", &cfg.ObjectBucket)
+	setString("TOKENDANCE_OBJECT_PREFIX", &cfg.ObjectPrefix)
 	setString("TOKENDANCE_EMAIL_PROVIDER", &cfg.EmailProvider)
 	setString("TOKENDANCE_SMTP_HOST", &cfg.SMTPHost)
 	setString("TOKENDANCE_SMTP_USERNAME", &cfg.SMTPUsername)

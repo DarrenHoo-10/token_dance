@@ -21,6 +21,7 @@ import (
 
 type S3ObjectStorage struct {
 	bucket    string
+	prefix    string
 	client    *s3.Client
 	presigner *s3.PresignClient
 }
@@ -40,6 +41,7 @@ func NewObjectStorage(cfg *appconfig.Config) (ObjectStorage, error) {
 			Endpoint:     cfg.ObjectEndpoint,
 			Region:       cfg.ObjectRegion,
 			Bucket:       cfg.ObjectBucket,
+			Prefix:       cfg.ObjectPrefix,
 			AccessKey:    cfg.ObjectAccessKey,
 			SecretKey:    cfg.ObjectSecretKey,
 			SessionToken: cfg.ObjectSessionToken,
@@ -54,6 +56,7 @@ type S3Options struct {
 	Endpoint     string
 	Region       string
 	Bucket       string
+	Prefix       string
 	AccessKey    string
 	SecretKey    string
 	SessionToken string
@@ -82,16 +85,23 @@ func NewS3ObjectStorage(ctx context.Context, opts S3Options) (*S3ObjectStorage, 
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(strings.TrimRight(opts.Endpoint, "/"))
 		o.UsePathStyle = opts.UsePathStyle
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
 	})
+	prefix := strings.Trim(opts.Prefix, "/")
+	if prefix != "" {
+		prefix += "/"
+	}
 	return &S3ObjectStorage{
 		bucket:    opts.Bucket,
+		prefix:    prefix,
 		client:    client,
 		presigner: s3.NewPresignClient(client),
 	}, nil
 }
 
 func (s *S3ObjectStorage) PutObject(ctx context.Context, key string, data io.Reader, size int64, contentType string) error {
-	input := &s3.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key), Body: data}
+	input := &s3.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.prefix + key), Body: data}
 	if size >= 0 {
 		input.ContentLength = aws.Int64(size)
 	}
@@ -103,7 +113,7 @@ func (s *S3ObjectStorage) PutObject(ctx context.Context, key string, data io.Rea
 }
 
 func (s *S3ObjectStorage) HeadObject(ctx context.Context, key string) (*ObjectMeta, error) {
-	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
+	out, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.prefix + key)})
 	if err != nil {
 		return nil, mapS3Error("head", key, err)
 	}
@@ -115,7 +125,7 @@ func (s *S3ObjectStorage) HeadObject(ctx context.Context, key string) (*ObjectMe
 }
 
 func (s *S3ObjectStorage) OpenObject(ctx context.Context, key string) (io.ReadCloser, error) {
-	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.prefix + key)})
 	if err != nil {
 		return nil, mapS3Error("open", key, err)
 	}
@@ -127,7 +137,7 @@ func (s *S3ObjectStorage) GetObject(ctx context.Context, key string) (io.ReadClo
 }
 
 func (s *S3ObjectStorage) PresignDownloadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
-	out, err := s.presigner.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)}, s3.WithPresignExpires(ttl))
+	out, err := s.presigner.PresignGetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.prefix + key)}, s3.WithPresignExpires(ttl))
 	if err != nil {
 		return "", mapS3Error("presign download", key, err)
 	}
@@ -135,7 +145,7 @@ func (s *S3ObjectStorage) PresignDownloadURL(ctx context.Context, key string, tt
 }
 
 func (s *S3ObjectStorage) PresignUploadURL(ctx context.Context, key string, ttl time.Duration) (string, error) {
-	out, err := s.presigner.PresignPutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)}, s3.WithPresignExpires(ttl))
+	out, err := s.presigner.PresignPutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.prefix + key)}, s3.WithPresignExpires(ttl))
 	if err != nil {
 		return "", mapS3Error("presign upload", key, err)
 	}
@@ -143,7 +153,7 @@ func (s *S3ObjectStorage) PresignUploadURL(ctx context.Context, key string, ttl 
 }
 
 func (s *S3ObjectStorage) DeleteObject(ctx context.Context, key string) error {
-	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(s.prefix + key)})
 	return mapS3Error("delete", key, err)
 }
 
