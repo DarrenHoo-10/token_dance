@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { accountWebsite, getAccountSession, loginAccount, logoutAccount, openAccountWebsite } from "./account-bridge";
 import type { AccountUser } from "./account-bridge";
 
-export function DesktopAccountCard({ zh, websiteRevision }: { zh: boolean; websiteRevision: number }) {
+export function DesktopAccountCard({ zh }: { zh: boolean }) {
   const [user, setUser] = useState<AccountUser | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [email, setEmail] = useState("");
@@ -17,10 +17,10 @@ export function DesktopAccountCard({ zh, websiteRevision }: { zh: boolean; websi
   const errorText = (code: string) => {
     if (code.includes("INVALID_CREDENTIALS")) return t("邮箱或密码不正确，请重试。", "Incorrect email or password. Try again.");
     if (code.includes("TOO_MANY_ATTEMPTS")) return t("尝试次数较多，请稍后再试。", "Too many attempts. Please try again later.");
-    if (code.includes("HTTPS_REQUIRED") || code.includes("INVALID_WEBSITE")) return t("请在“网站连接”中填写有效的 HTTPS 网站地址。", "Set a valid HTTPS address in Website connection.");
+    if (code.includes("HTTPS_REQUIRED") || code.includes("INVALID_WEBSITE")) return t("当前网站地址不支持安全登录，请联系支持。", "This website address does not support secure sign-in. Contact support.");
     if (code.includes("PREVIEW_ONLY")) return t("这是界面预览，请在 TokenDance 桌面应用内登录。", "This is a preview. Sign in inside the TokenDance desktop app.");
     if (code.includes("ACCOUNT_FORBIDDEN")) return t("当前账号无法登录，请到网站检查账号状态。", "Unable to sign in. Check your account on the website.");
-    return t("暂时无法连接账号服务，请检查网站连接后重试。", "Unable to reach the account service. Check Website connection and retry.");
+    return t("暂时无法连接账号服务，请检查网络后重试。", "Unable to reach the account service. Check your network and retry.");
   };
 
   useEffect(() => {
@@ -39,7 +39,7 @@ export function DesktopAccountCard({ zh, websiteRevision }: { zh: boolean; websi
     window.addEventListener("focus", refresh);
     document.addEventListener("visibilitychange", refresh);
     return () => { generation.current++; window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); };
-  }, [websiteRevision]);
+  }, []);
 
   const submit = async (logout = false) => {
     if (working.current) return;

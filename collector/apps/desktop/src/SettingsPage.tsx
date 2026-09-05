@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { brandLogo } from "./brand";
 import { DesktopAccountCard } from "./DesktopAccountCard";
-import { getAgentConfigs, getAutostartStatus, getDaemonStatus, getWebsiteUrl, hideWindow, isTauriEnvironment, openWebsite, quitApp, saveWebsiteUrl, setAgentStatus, setAutostart, setGlobalPause } from "./tauri-bridge";
+import { getAgentConfigs, getAutostartStatus, getDaemonStatus, getWebsiteUrl, hideWindow, isTauriEnvironment, openWebsite, quitApp, setAgentStatus, setAutostart, setGlobalPause } from "./tauri-bridge";
+import { resolveWebsiteOrigin } from "./website";
 import type { AgentConfig, AutostartInfo, DaemonStatus } from "./tauri-bridge";
 import "./styles/settings.css";
 
@@ -16,9 +17,7 @@ export function SettingsPage() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [sourcesOpen, setSourcesOpen] = useState(false);
-  const [connectionOpen, setConnectionOpen] = useState(false);
-  const [website, setWebsite] = useState(getWebsiteUrl);
-  const [websiteRevision, setWebsiteRevision] = useState(0);
+  const website = resolveWebsiteOrigin(getWebsiteUrl());
   const mounted = useRef(false);
   const loading = useRef<Promise<boolean> | null>(null);
   const mutating = useRef(false);
@@ -70,9 +69,6 @@ export function SettingsPage() {
     catch (err) { setNotice(String(err)); }
     finally { mutating.current = false; setBusy(false); }
   };
-  const goToWebsite = (path: "/settings/profile" | "/settings/privacy" | "/settings/devices") => {
-    void perform(() => openWebsite(path));
-  };
   const disabled = busy || !data || error;
   const collecting = data?.status.status === "RUNNING" && !data.status.globalPaused;
   const statusLabel = error ? t("连接中断", "Disconnected") : !data ? t("连接中", "Connecting") : data.status.globalPaused ? t("已暂停", "Paused") : collecting ? t("采集中", "Collecting") : t("需要检查", "Needs attention");
@@ -89,13 +85,12 @@ export function SettingsPage() {
     <main className="settings-main">
       <div className="settings-intro"><div><h1>{t("桌面设置", "Desktop settings")}</h1><p>{t("仅设置这台设备的采集与运行方式。", "Collection and preferences for this device.")}</p></div><span className={`settings-status ${collecting && !error ? "active" : ""}`}><i />{statusLabel}</span></div>
       {error && <div className="settings-error" role="alert">{t("无法读取本机设置，已保留上次状态。", "Unable to refresh settings. Showing the last known state.")}<button onClick={() => void refresh()}>{t("重试", "Retry")}</button></div>}
-      <DesktopAccountCard zh={zh} websiteRevision={websiteRevision} />
+      <DesktopAccountCard key={website} zh={zh} />
       <section className="settings-section" aria-labelledby="preferences-heading">
         <div className="settings-section-heading"><h2 id="preferences-heading">{t("运行偏好", "Preferences")}</h2><span>{t("更改自动保存", "Changes save automatically")}</span></div>
         <div className="settings-sheet">
           <div className="settings-row"><div><h3>{t("开机启动", "Launch at login")}</h3><p>{t("登录电脑后，自动在托盘中运行", "Start quietly in the tray when you sign in")}</p></div><Toggle label={t("开机启动", "Launch at login")} checked={data?.autostart.enabled ?? false} disabled={disabled} onChange={enabled => void perform(async () => { const autostart = await setAutostart(enabled); setData(current => current ? { ...current, autostart } : current); }, true)} /></div>
           <div className="settings-row"><div><h3>{t("采集用量", "Collect usage")}</h3><p>{t("记录本机 Agent 用量，可随时暂停", "Record agent usage on this device. Pause anytime.")}</p></div><Toggle label={t("采集用量", "Collect usage")} checked={data ? !data.status.globalPaused : false} disabled={disabled} onChange={enabled => void perform(() => setGlobalPause(!enabled), true)} /></div>
-          <div className="settings-row"><div><h3>{t("界面语言", "App language")}</h3><p>{t("仅影响桌面端的显示语言", "Applies to the desktop app only")}</p></div><div className="settings-languages" role="group" aria-label={t("界面语言", "App language")}><button aria-pressed={zh} onClick={() => changeLanguage("zh")}>中文</button><button aria-pressed={!zh} onClick={() => changeLanguage("en")}>English</button></div></div>
         </div>
       </section>
       <section className="settings-sources">
@@ -105,14 +100,8 @@ export function SettingsPage() {
           {data?.agents.length === 0 && <p className="settings-no-sources">{t("尚未发现可用的采集来源。", "No collection sources found yet.")}</p>}
         </div>
       </section>
-      <section className="settings-web" aria-labelledby="web-settings-heading"><div className="settings-web-heading"><span className="settings-web-mark" aria-hidden="true">↗</span><div><h2 id="web-settings-heading">{t("更多设置，在网站完成", "More settings on the web")}</h2><p>{t("统一管理账号、公开范围和所有设备。", "Manage your account, visibility and devices in one place.")}</p></div></div><div className="settings-web-links">
-        <button onClick={() => goToWebsite("/settings/profile")}>{t("账号与资料", "Account & profile")}<span aria-hidden="true">↗</span></button>
-        <button onClick={() => goToWebsite("/settings/privacy")}>{t("隐私与公开范围", "Privacy & visibility")}<span aria-hidden="true">↗</span></button>
-        <button onClick={() => goToWebsite("/settings/devices")}>{t("设备管理", "Devices")}<span aria-hidden="true">↗</span></button>
-      </div></section>
-      {connectionOpen && <form className="settings-connection" onSubmit={event => { event.preventDefault(); try { saveWebsiteUrl(website.trim()); setWebsiteRevision(value => value + 1); setConnectionOpen(false); setNotice(website.trim() ? t("网站地址已保存。未登录会先打开登录页，已登录则进入官网首页。", "Website saved. Sign-in opens if needed; otherwise the official homepage.") : t("已使用默认网站地址。未登录去登录页，已登录去官网首页。", "Using the default website. Sign-in if needed, otherwise the official homepage.")); } catch (err) { setNotice(String(err)); } }}><label htmlFor="website-address">{t("TokenDance 网站地址（可留空使用默认）", "TokenDance website URL (optional)")}</label><div><input autoFocus id="website-address" type="url" placeholder="http://127.0.0.1:3000" value={website} onChange={event => setWebsite(event.target.value)} /><button type="submit">{t("保存", "Save")}</button><button type="button" onClick={() => setConnectionOpen(false)}>{t("取消", "Cancel")}</button></div></form>}
     </main>
-    <footer className="settings-footer"><span>{!isTauriEnvironment() ? t("界面预览 · 示例状态", "Preview · Sample state") : `TokenDance ${data?.status.collectorVersion ?? ""}`}</span><div><button className="settings-connection-link" onClick={() => { setWebsite(getWebsiteUrl()); setConnectionOpen(!connectionOpen); }}>{t("网站连接", "Website connection")}</button><button className="settings-done" onClick={() => void perform(hideWindow)}>{t("完成", "Done")}</button></div></footer>
+    <footer className="settings-footer"><a className="settings-website-link" href={website} target="_blank" rel="noopener noreferrer" title={t("在浏览器打开 TokenDance 网站", "Open the TokenDance website in your browser")} onClick={event => { event.preventDefault(); void perform(() => openWebsite()); }}><span>{website}</span><span aria-hidden="true">↗</span></a><span>{!isTauriEnvironment() ? t("界面预览 · 示例状态", "Preview · Sample state") : `TokenDance ${data?.status.collectorVersion ?? ""}`}</span></footer>
     {notice && <div role="status" className="settings-notice">{notice}</div>}
   </div>;
 }
