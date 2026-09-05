@@ -36,7 +36,7 @@ pub struct AccountSession {
 }
 
 fn account_origin(website: &str) -> Result<Url, String> {
-    let url = Url::parse(website).map_err(|_| "INVALID_WEBSITE")?;
+    let mut url = Url::parse(website).map_err(|_| "INVALID_WEBSITE")?;
     let local = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
     if (url.scheme() != "https" && !(url.scheme() == "http" && local))
         || url.host_str().is_none()
@@ -45,8 +45,11 @@ fn account_origin(website: &str) -> Result<Url, String> {
     {
         return Err("HTTPS_REQUIRED".into());
     }
-    Url::parse(&format!("{}/", url.origin().ascii_serialization()))
-        .map_err(|_| "INVALID_WEBSITE".into())
+    url.set_query(None);
+    url.set_fragment(None);
+    let path = format!("{}/", url.path().trim_end_matches('/'));
+    url.set_path(&path);
+    Ok(url)
 }
 
 impl Connection {
@@ -70,7 +73,10 @@ impl Connection {
         path: &str,
         body: Option<Value>,
     ) -> Result<Option<Value>, String> {
-        let url = self.origin.join(path).map_err(|_| "INVALID_WEBSITE")?;
+        let url = self
+            .origin
+            .join(path.trim_start_matches('/'))
+            .map_err(|_| "INVALID_WEBSITE")?;
         let mut request = self
             .client
             .request(method, url)
@@ -217,7 +223,9 @@ fn save_account(connection: &Connection) {
 fn load_account(origin: &Url) -> Option<(BTreeMap<String, String>, String)> {
     let body = fs::read(persist_path()).ok()?;
     let stored: PersistedAccount = serde_json::from_slice(&body).ok()?;
-    if stored.origin != origin.as_str() || stored.expires_at <= unix_now() || stored.cookies.is_empty()
+    if stored.origin != origin.as_str()
+        || stored.expires_at <= unix_now()
+        || stored.cookies.is_empty()
     {
         let _ = fs::remove_file(persist_path());
         return None;
@@ -436,7 +444,7 @@ mod tests {
             account_origin("https://example.com/base?q=x")
                 .unwrap()
                 .as_str()
-                == "https://example.com/"
+                == "https://example.com/base/"
         );
         assert!(account_origin("http://localhost:3000").is_ok());
         for bad in [
@@ -459,5 +467,23 @@ mod tests {
         let next = connection(&mut state, account_origin("https://two.example").unwrap()).unwrap();
         assert!(next.cookies.is_empty());
         assert!(next.csrf.is_empty());
+    }
+
+    #[tokio::test]
+    async fn account_requests_keep_the_application_path_and_origin_header() {
+        let (origin, server) = mock_server(vec![response("204 No Content", "", "")]);
+        let base =
+            account_origin(origin.join("token-dance/?old=1#fragment").unwrap().as_str()).unwrap();
+        let mut client = Connection::new(base).unwrap();
+        client
+            .request(Method::GET, "/api/v1/auth/session", None)
+            .await
+            .unwrap();
+        let requests = server.join().unwrap();
+        assert!(requests[0].starts_with("GET /token-dance/api/v1/auth/session "));
+        assert!(requests[0].contains(&format!(
+            "origin: {}\r\n",
+            origin.origin().ascii_serialization()
+        )));
     }
 }
