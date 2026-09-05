@@ -647,6 +647,9 @@ type LeaderboardEntry struct {
 }
 
 type LeaderboardResponse struct {
+	TotalEntries    *int               `json:"totalEntries,omitempty"`
+	TotalTokens     *string            `json:"totalTokens,omitempty"`
+	Timezone        string             `json:"timezone,omitempty"`
 	SnapshotID      string             `json:"snapshotId"`
 	BoardKey        string             `json:"boardKey"`
 	Window          string             `json:"window"`

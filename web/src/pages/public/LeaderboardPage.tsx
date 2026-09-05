@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useRef, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowUpRight, BarChart3, ChevronLeft, ChevronRight, CircleHelp,
@@ -63,7 +63,9 @@ export const LeaderboardPage: React.FC = () => {
   const { user, authenticated } = useAuth();
   const zh = locale === 'zh-CN';
   const [range, setRange] = useState<Range>('Today');
-  const [connected, setConnected] = useState(false);
+  const requestId = useRef(0);
+  const [boardSummary, setBoardSummary] = useState<{ totalTokens?: string; totalEntries?: number }>({});
+  const [sharing, setSharing] = useState<{ publicProfileEnabled: boolean; showTokenTotal: boolean } | null>(null);
 
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,16 +78,21 @@ export const LeaderboardPage: React.FC = () => {
   const [agentTools, setAgentTools] = useState<BreakdownItem[]>([]);
 
   const fetchLeaderboard = useCallback(async () => {
+    const id = ++requestId.current;
     setLoading(true);
     setLoadError(false);
     try {
       const res = await api.getLeaderboard({ window: windowByRange[range], limit: 10 });
+      if (id !== requestId.current) return;
+      setBoardSummary(res);
       setEntries(res.entries || []);
     } catch {
+      if (id !== requestId.current) return;
+      setBoardSummary({});
       setEntries([]);
       setLoadError(true);
     } finally {
-      setLoading(false);
+      if (id === requestId.current) setLoading(false);
     }
   }, [range]);
 
@@ -95,6 +102,7 @@ export const LeaderboardPage: React.FC = () => {
 
   useEffect(() => {
     setAllTimeSummary(null);
+    setSharing(null);
     if (!authenticated) {
       setSummary(null);
       setCalendarDays([]);
@@ -103,6 +111,7 @@ export const LeaderboardPage: React.FC = () => {
       return;
     }
     let cancelled = false;
+    api.getPrivacy().then(result => { if (!cancelled) setSharing(result); }).catch(() => {});
     api.getPersonalSummary('all')
       .then((result) => { if (!cancelled) setAllTimeSummary(result); })
       .catch(() => { /* Keep unavailable historical totals distinct from zero. */ });
@@ -127,9 +136,6 @@ export const LeaderboardPage: React.FC = () => {
 
   const podium = entries.length >= 3 ? [entries[1], entries[0], entries[2]] : entries.slice(0, entries.length);
   const rows = entries.filter((entry) => entry.rankNo > 3);
-  const ownEntry = user?.handle
-    ? entries.find((entry) => entry.handle.toLowerCase() === user.handle!.toLowerCase())
-    : undefined;
   const rankValue = summary?.ranking?.rank ?? null;
   const todayTokens = summary?.metrics?.totalTokens?.value ?? null;
   const allTimeTokens = allTimeSummary?.metrics.totalTokens.supported
@@ -151,10 +157,10 @@ export const LeaderboardPage: React.FC = () => {
     if (entries.length === 0) {
       return <div className="leaderboard-empty">
         <p>{zh
-          ? '还没有上榜数据。连接你的编码工具并把资料设为公开后，这里会展示真实排行。'
-          : 'No leaderboard data yet. Connect your coding tools and make your profile public to appear here.'}</p>
+          ? '本周期暂无公开排行数据。只有已公开 Token 用量的用户会参与排名。'
+          : 'No public usage in this period. Only users sharing their token totals are ranked.'}</p>
         <button className="primary-cta" type="button" onClick={() => navigate(authenticated ? '/me' : '/auth')}>
-          {zh ? '开始使用' : 'Get Started'} <ArrowUpRight />
+          {authenticated ? (zh ? '查看我的数据与公开设置' : 'My data & sharing') : (zh ? '开始使用' : 'Get Started')} <ArrowUpRight />
         </button>
       </div>;
     }
@@ -162,15 +168,7 @@ export const LeaderboardPage: React.FC = () => {
       {podium.length > 0 && <div className="podium-grid">{podium.map((entry) => <PodiumCard key={entry.rankNo} entry={entry} />)}</div>}
       <div className="ranking-table">
         {rows.map((entry) => <RankingRow key={entry.rankNo} entry={entry} />)}
-        {authenticated && rankValue !== null && !ownEntry && (
-          <div className="ranking-row current-user">
-            <span className="rank-number">{rankValue}</span>
-            <div className="rank-person"><span>{zh ? '你' : 'You'}</span></div>
-            <strong className="rank-tokens">{formatTokens(todayTokens)}</strong>
-            <span className="rank-tools">—</span>
-            <TrendBadge value={summary?.ranking?.delta ?? null} />
-          </div>
-        )}
+
       </div>
     </>;
   };
@@ -181,20 +179,26 @@ export const LeaderboardPage: React.FC = () => {
         <div className="hero-copy"><h1>Let Token Dance</h1><p>{zh ? '看看今天谁正在与 AI 一起创造。' : 'See who’s building the most with AI today.'}</p>
           <div className="hero-actions">
             <button className="primary-cta" type="button" onClick={() => document.querySelector('#leaderboard')?.scrollIntoView({ behavior: 'smooth' })}>{zh ? '查看排行榜' : 'View Leaderboard'} <ArrowUpRight /></button>
-            <button className={`secondary-cta ${connected ? 'connected' : ''}`} type="button" onClick={() => setConnected((value) => !value)}>{connected ? (zh ? '工具已连接' : 'Tools Connected') : (zh ? '连接工具' : 'Connect Tools')}</button>
+            <button className="secondary-cta" type="button" onClick={() => navigate(authenticated ? '/settings/devices' : '/login?return_to=%2Fsettings%2Fdevices')}>{zh ? '连接工具' : 'Connect Tools'}</button>
           </div>
         </div>
         <div className="hero-landscape" aria-hidden="true"><span className="line-dot dot-a" /><span className="line-dot dot-b" /><span className="line-dot dot-c" /><div className="line-segment segment-a" /><div className="line-segment segment-b" /><div className="line-segment segment-c" /><div className="peak peak-a" /><div className="peak peak-b" /><div className="peak peak-c" /><div className="bar bar-a" /><div className="bar bar-b" /><div className="bar bar-c" /></div>
         <div className="summary-grid">
-          <div className="summary-card"><span className="summary-icon"><Flame /></span><div><strong>—</strong><p>{zh ? '已消耗 Token' : 'Tokens Burned'}</p></div></div>
-          <div className="summary-card"><span className="summary-icon"><Users /></span><div><strong>—</strong><p>{zh ? '开发者' : 'Developers'}</p></div></div>
-          <div className="summary-card"><span className="summary-icon"><Users /></span><div><strong>—</strong><p>{zh ? '团队' : 'Teams'}</p></div></div>
+          <div className="summary-card"><span className="summary-icon"><Flame /></span><div><strong>{loading || boardSummary.totalTokens == null ? '—' : boardSummary.totalTokens === '0' ? '0' : formatTokens(boardSummary.totalTokens)}</strong><p>{zh ? '本期公开 Token' : 'Public tokens · period'}</p></div></div>
+          <div className="summary-card"><span className="summary-icon"><Users /></span><div><strong>{loading ? '—' : boardSummary.totalEntries ?? '—'}</strong><p>{zh ? '本期上榜开发者' : 'Ranked developers'}</p></div></div>
+          <div className="summary-card"><span className="summary-icon"><Users /></span><div><strong>UTC</strong><p>{zh ? '统一统计时区' : 'Leaderboard timezone'}</p></div></div>
         </div>
       </section>
 
+      {authenticated && sharing && (!sharing.publicProfileEnabled || !sharing.showTokenTotal) && <div className="panel" role="status" style={{ marginBottom: 16 }}>
+        <p style={{ margin: '0 0 8px' }}>{!sharing.publicProfileEnabled
+          ? (zh ? '你的数据目前仅自己可见，尚未加入公开排行榜。' : 'Your data is private, so you are not on the public leaderboard.')
+          : (zh ? '你尚未公开 Token 用量，因此不会参与 Token 排名。' : 'Your token totals are hidden, so you are not ranked.')}</p>
+        <button className="btn btn-outline" onClick={() => navigate(sharing.publicProfileEnabled ? '/settings/privacy' : '/me')}>{zh ? '管理公开设置' : 'Manage sharing'}</button>
+      </div>}
       <section className="leaderboard-panel" id="leaderboard">
         <div className="range-tabs" role="tablist" aria-label={zh ? '排行榜周期' : 'Leaderboard period'}>
-          {ranges.map((item) => <button key={item} type="button" role="tab" aria-selected={range === item} className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{item === 'Today' && zh ? '今天' : item}{item === 'Today' && <span className="live-dot" />}</button>)}
+          {ranges.map((item) => <button key={item} type="button" role="tab" aria-selected={range === item} className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{zh ? ({ Today: '今天', '7 Days': '近 7 天', '30 Days': '近 30 天', 'All Time': '全部时间' }[item]) : item}{item === 'Today' && <span className="live-dot" />}</button>)}
         </div>
         {renderLeaderboardBody()}
       </section>
@@ -203,7 +207,7 @@ export const LeaderboardPage: React.FC = () => {
     <aside className="side-column">
       <section className="side-card stats-card"><div className="card-heading"><h2>{zh ? '你的数据' : 'Your Stats'}</h2><button type="button" onClick={() => navigate('/me')} aria-label={zh ? '打开个人数据' : 'Open analytics'}><BarChart3 /></button></div>
         {authenticated ? <>
-          <div className="stat-block"><span>{zh ? '全球排名' : 'Global Rank'}</span><div className="stat-line"><strong>{rankValue ?? '—'}</strong><TrendBadge value={summary?.ranking?.delta ?? null} />{summary?.ranking?.percentile != null && <em>{zh ? `前 ${summary.ranking.percentile}%` : `Top ${summary.ranking.percentile}%`}</em>}</div></div>
+          <div className="stat-block"><span>{zh ? '今日公开排名 · UTC' : 'Today’s public rank · UTC'}</span><div className="stat-line"><strong>{rankValue ?? '—'}</strong><TrendBadge value={summary?.ranking?.delta ?? null} />{summary?.ranking?.percentile != null && <em>{zh ? `前 ${summary.ranking.percentile}%` : `Top ${summary.ranking.percentile}%`}</em>}</div></div>
           <div className="stat-block"><span>{zh ? '今日 Token' : 'Today’s Tokens'}</span><div className="stat-line"><strong>{formatTokens(todayTokens)}</strong></div></div>
           <div className="stat-block"><span>{zh ? '累计 Token · All time' : 'All time Tokens'}</span><div className="stat-line"><strong>{allTimeTokens === '0' ? '0' : formatTokens(allTimeTokens)}</strong></div></div>
           <div className="streak-line"><span>{zh ? '连续活跃' : 'Streak'}</span><div><Flame /><strong>{streak || 0}</strong>{zh ? '天' : 'days'}</div></div>

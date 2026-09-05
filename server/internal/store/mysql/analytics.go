@@ -206,37 +206,10 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 	var delta *int
 	var percentile *float64
 	if u.LeaderboardVisibility == domain.LeaderboardVisibilityPublic {
-		snapQuery := `
-			SELECT e.rank_no, e.previous_rank_no, s.participant_count
-			FROM leaderboard_entries e
-			JOIN leaderboard_snapshots s ON e.snapshot_id = s.snapshot_id
-			JOIN public_user_profiles p ON e.user_id = p.user_id
-			JOIN users usr ON usr.user_id = e.user_id
-			JOIN user_privacy_settings priv ON priv.user_id = e.user_id
-			WHERE e.user_id = ?
-			  AND s.board_key = 'global'
-			  AND s.snapshot_status = 'published'
-			  AND p.profile_status = 'published'
-			  AND usr.account_status = 'active'
-			  AND usr.leaderboard_visibility = 'public'
-			  AND priv.public_profile_enabled = TRUE
-			ORDER BY s.published_at DESC
-			LIMIT 1`
-
-		var rNo int
-		var prevRNo sql.NullInt32
-		var pCount int
-		if err := s.db.QueryRowContext(ctx, snapQuery, userID).Scan(&rNo, &prevRNo, &pCount); err == nil {
-			rVal := rNo
-			rank = &rVal
-			if prevRNo.Valid {
-				dVal := int(prevRNo.Int32 - int32(rNo))
-				delta = &dVal
-			}
-			if pCount > 0 {
-				pVal := math.Round((1.0-(float64(rNo-1)/float64(pCount)))*1000.0) / 10.0
-				percentile = &pVal
-			}
+		var rankErr error
+		rank, percentile, rankErr = (&leaderboardStore{db: s.db}).liveTokenRank(ctx, userID, string(r.Key), time.Now())
+		if rankErr != nil {
+			return nil, fmt.Errorf("query personal token rank: %w", rankErr)
 		}
 	}
 
