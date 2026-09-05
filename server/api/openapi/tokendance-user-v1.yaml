@@ -153,6 +153,14 @@ paths:
                   maxLength: 128
                 returnTo:
                   type: string
+                locale:
+                  type: string
+                  enum: [zh-CN, en-US]
+                  description: Preferred UI locale applied as the account default.
+                timezone:
+                  type: string
+                  description: IANA timezone applied as the account default; invalid values fall back to UTC.
+                  example: Asia/Shanghai
       responses:
         '201':
           description: Registration completed and session created

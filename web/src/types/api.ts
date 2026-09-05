@@ -72,6 +72,8 @@ export interface RegisterRequest {
   code: string;
   password?: string;
   returnTo?: string;
+  locale?: Locale;
+  timezone?: string;
 }
 
 export interface PasswordCodeRequest {

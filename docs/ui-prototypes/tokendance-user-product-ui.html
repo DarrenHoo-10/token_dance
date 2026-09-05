@@ -27,12 +27,14 @@
     .screen { width: 1440px; height: 960px; margin: 0 auto; position: relative; overflow: hidden; background: linear-gradient(135deg, #fbfcfb 0%, #f6faf3 100%); }
     .mock-label { position: absolute; right: 22px; bottom: 16px; color: #aab2aa; font: 11px/1 monospace; letter-spacing: .08em; z-index: 20; }
     .nav { position: relative; z-index: 10; height: 76px; margin: 22px 44px 0; padding: 0 20px; display: flex; align-items: center; gap: 30px; border: 1px solid rgba(218,225,218,.95); border-radius: 22px; background: rgba(255,255,255,.94); box-shadow: 0 10px 35px rgba(37,60,41,.07); }
-    .brand { display: flex; align-items: center; gap: 10px; min-width: 190px; font-size: 21px; font-weight: 800; letter-spacing: -.04em; }
+    .brand { display: flex; align-items: center; gap: 10px; min-width: 190px; color: inherit; text-decoration: none; font-size: 21px; font-weight: 800; letter-spacing: -.04em; }
     .brand img { width: 34px; height: 34px; object-fit: contain; }
     .nav-links { display: flex; align-items: center; gap: 28px; font-size: 14px; color: #3d443e; }
-    .nav-links span.active { color: var(--ink); font-weight: 750; position: relative; }
-    .nav-links span.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -24px; height: 2px; background: var(--lime); }
-    .nav-search { margin-left: auto; width: 310px; height: 42px; padding: 0 15px; display: flex; align-items: center; border: 1px solid var(--line); border-radius: 12px; color: #9aa19a; font-size: 13px; background: #fbfcfb; }
+    .nav-links a, .nav-links span { position: relative; color: #3d443e; text-decoration: none; }
+    .nav-links a.active, .nav-links span.active { color: var(--ink); font-weight: 750; }
+    .nav-links a.active::after, .nav-links span.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: -24px; height: 2px; background: var(--lime); }
+    .nav-search { margin-left: auto; width: 310px; height: 42px; padding: 0 15px; display: flex; align-items: center; border: 1px solid var(--line); border-radius: 12px; color: #9aa19a; text-decoration: none; font-size: 13px; background: #fbfcfb; }
+    .nav-avatar-link { color: inherit; text-decoration: none; }
     .locale-switch { height: 34px; padding: 3px; display: inline-flex; gap: 2px; border: 1px solid var(--line); border-radius: 10px; background: #f4f7f3; }
     .locale-switch button { min-width: 38px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: #747c75; font-size: 10px; font-weight: 750; }
     .locale-switch button.active { background: #111512; color: white; }
@@ -52,6 +54,11 @@
     .status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
     .status i { width: 8px; height: 8px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 4px rgba(79,182,0,.1); }
     .panel { border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255,255,255,.96); box-shadow: 0 12px 38px rgba(41,63,45,.055); }
+    .home-reference { display: grid; place-items: center; background: #fff; }
+    .home-reference img { width: 100%; height: 100%; object-fit: contain; }
+    .ui-board { width: 2880px; height: 3840px; display: grid; grid-template-columns: repeat(2, 1440px); grid-template-rows: repeat(4, 960px); background: #edf2ed; }
+    .ui-board iframe, .bilingual-board iframe { width: 1440px; height: 960px; border: 0; background: #fff; }
+    .bilingual-board { width: 2880px; height: 960px; display: grid; grid-template-columns: repeat(2, 1440px); background: #edf2ed; }
 
     /* Auth */
     .auth-screen { display: grid; grid-template-columns: 1.05fr .95fr; }
@@ -246,18 +253,19 @@
   <main id="app"></main>
   <script>
     const logo = '../../logo-tokendance-v2.png';
+    const homeImage = '../../tokendance-ui-v2.png';
     const app = document.getElementById('app');
     const params = new URLSearchParams(location.search);
-    const screen = params.get('screen') || 'dashboard';
+    const screen = params.get('screen') || 'home';
     const localeControl = () => `<div class="locale-switch" aria-label="Language"><button type="button" data-lang="zh">中文</button><button type="button" data-lang="en">EN</button></div>`;
 
-    const nav = (active = 'TokenBoard') => `
+    const nav = (active = '') => `
       <header class="nav">
-        <div class="brand"><img src="${logo}" alt=""><span>TokenDance</span></div>
-        <div class="nav-links"><span class="${active === 'TokenBoard' ? 'active' : ''}">TokenBoard</span><span class="${active === 'Explore' ? 'active' : ''}">Explore</span><span>Community</span><span>Teams</span></div>
-        <div class="nav-search">搜索用户、Agent、Skill...</div>
+        <a class="brand" href="?screen=home"><img src="${logo}" alt=""><span>TokenDance</span></a>
+        <nav class="nav-links" aria-label="Primary"><a class="${active === 'TokenBoard' ? 'active' : ''}" href="?screen=home">TokenBoard</a><a class="${active === 'Community' ? 'active' : ''}" href="?screen=explore">Community</a><span class="${active === 'Teams' ? 'active' : ''}">Teams</span></nav>
+        <a class="nav-search" href="?screen=explore">搜索用户、Agent、Skill...</a>
         ${localeControl()}
-        <div class="avatar">HD</div>
+        <a class="nav-avatar-link" href="?screen=dashboard" aria-label="Personal dashboard"><div class="avatar">HD</div></a>
       </header>`;
 
     const metric = (label, value, hint) => `<section class="metric panel"><small>${label}</small><strong>${value}</strong><em>${hint}</em></section>`;
@@ -265,6 +273,15 @@
     const heat = Array.from({ length: 70 }, () => '<i></i>').join('');
 
     const screens = {
+      board: `
+        <section class="ui-board"><iframe src="?screen=home" title="TokenBoard homepage"></iframe><iframe src="?screen=auth" title="Email authentication"></iframe><iframe src="?screen=onboarding" title="Profile onboarding"></iframe><iframe src="?screen=dashboard" title="Personal analytics"></iframe><iframe src="?screen=explore" title="Community search"></iframe><iframe src="?screen=profile" title="Public profile"></iframe><iframe src="?screen=settings" title="Privacy and devices"></iframe><iframe src="?screen=dashboard&lang=en" title="Personal analytics in English"></iframe></section>`,
+
+      bilingual: `
+        <section class="bilingual-board"><iframe src="?screen=dashboard" title="Personal analytics in Chinese"></iframe><iframe src="?screen=dashboard&lang=en" title="Personal analytics in English"></iframe></section>`,
+
+      home: `
+        <section class="screen home-reference"><img src="${homeImage}" alt="TokenDance TokenBoard homepage"></section>`,
+
       auth: `
         <section class="screen auth-screen">
           <div class="auth-brand">
@@ -288,7 +305,7 @@
         </section>`,
 
       dashboard: `
-        <section class="screen">${nav('TokenBoard')}
+        <section class="screen">${nav()}
           <div class="page">
             <header class="page-head"><div><p class="eyebrow">Personal analytics</p><h1>你的 Token 正在起舞</h1><p>费用、代码、上下文和消息数据均为 Mock。</p></div><div class="head-actions"><div class="segmented"><span>今天</span><span>7 天</span><span class="active">30 天</span><span>全部时间</span></div><button class="button">导出</button></div></header>
             <div class="metric-grid">
@@ -316,10 +333,10 @@
         </section>`,
 
       explore: `
-        <section class="screen">${nav('Explore')}<div class="page"><header class="page-head"><div><p class="eyebrow">Search and discovery</p><h1>发现正在用 AI 创造的人</h1><p>搜索用户、Agent 与公开 Skill，并使用同一口径比较。</p></div><button class="button">保存查询</button></header><div class="explore-search"><b>⌕</b><span>codex</span><kbd>⌘ K</kbd></div><div class="filter-row"><span class="filter-chip active">全部</span><span class="filter-chip">用户 18</span><span class="filter-chip">Agent 1</span><span class="filter-chip">Skill 12</span><span class="filter-chip">最近 30 天</span></div><div class="result-grid"><section class="result-panel panel"><div class="panel-head"><div><h2>用户</h2><p>公开资料与排名</p></div><span class="result-count">18 results</span></div><div class="person"><div class="avatar">MB</div><div><h3>maxbauer</h3><p>@maxbauer · Codex 25% · Claude 62%</p></div><div class="person-data"><div><strong>325.7M</strong><small>TOKENS</small></div><div><strong>#1</strong><small>RANK</small></div></div></div><div class="person"><div class="avatar" style="background:#49524b">SD</div><div><h3>sophiadev</h3><p>@sophiadev · Codex 27% · Claude 58%</p></div><div class="person-data"><div><strong>215.4M</strong><small>TOKENS</small></div><div><strong>#2</strong><small>RANK</small></div></div></div><div class="person"><div class="avatar" style="background:#788177">DW</div><div><h3>deworap</h3><p>@deworap · Codex 22% · Claude 55%</p></div><div class="person-data"><div><strong>178.9M</strong><small>TOKENS</small></div><div><strong>#3</strong><small>RANK</small></div></div></div><div class="person"><div class="avatar" style="background:#273029">BD</div><div><h3>builderdan</h3><p>@builderdan · Codex 23% · Claude 60%</p></div><div class="person-data"><div><strong>142.6M</strong><small>TOKENS</small></div><div><strong>#4</strong><small>RANK</small></div></div></div><div class="person"><div class="avatar" style="background:#5d665e">KT</div><div><h3>kaytee</h3><p>@kaytee · Codex 30% · Claude 52%</p></div><div class="person-data"><div><strong>118.3M</strong><small>TOKENS</small></div><div><strong>#5</strong><small>RANK</small></div></div></div></section><section class="result-panel panel"><div class="panel-head"><div><h2>Agent 与 Skill</h2><p>达到公开样本阈值的结果</p></div></div><div class="facet"><header><h3>Codex</h3><span class="tag lime">Agent</span></header><p>48.2K 位开发者在最近 30 天产生 4.8T Token。</p><div class="facet-tags"><span class="tag"># coding</span><span class="tag"># agentic</span><span class="tag"># cli</span></div></div><div class="facet"><header><h3>codex-review</h3><span class="tag">Skill</span></header><p>公开用户中使用 12.8K 次，近 30 天增长 24%。</p><div class="facet-tags"><span class="tag">1.6K users</span><span class="tag">公开</span></div></div><div class="facet"><header><h3>codex-commit</h3><span class="tag">Skill</span></header><p>公开用户中使用 8.4K 次，主要与仓库工作流相关。</p><div class="facet-tags"><span class="tag">980 users</span><span class="tag">热门</span></div></div><div class="facet"><header><h3>Advanced query</h3><span class="tag lime">Ready</span></header><p>当前筛选：Token · 最近 30 天 · Codex。</p><button class="button" style="margin-top:2px">查看筛选排行榜</button></div></section></div></div><div class="compare-tray"><strong>比较用户</strong><div class="compare-user"><i>MB</i>maxbauer</div><div class="compare-user"><i>SD</i>sophiadev</div><button class="button primary">开始比较</button></div>${mockLabel}</section>`,
+        <section class="screen">${nav('Community')}<div class="page"><header class="page-head"><div><p class="eyebrow">Search and discovery</p><h1>发现正在用 AI 创造的人</h1><p>搜索用户、Agent 与公开 Skill，并使用同一口径比较。</p></div><button class="button">保存查询</button></header><div class="explore-search"><b>⌕</b><span>codex</span><kbd>⌘ K</kbd></div><div class="filter-row"><span class="filter-chip active">全部</span><span class="filter-chip">用户 18</span><span class="filter-chip">Agent 1</span><span class="filter-chip">Skill 12</span><span class="filter-chip">最近 30 天</span></div><div class="result-grid"><section class="result-panel panel"><div class="panel-head"><div><h2>用户</h2><p>公开资料与排名</p></div><span class="result-count">18 results</span></div><div class="person"><div class="avatar">MB</div><div><h3>maxbauer</h3><p>@maxbauer · Codex 25% · Claude 62%</p></div><div class="person-data"><div><strong>325.7M</strong><small>TOKENS</small></div><div><strong>#1</strong><small>RANK</small></div></div></div><div class="person"><div class="avatar" style="background:#49524b">SD</div><div><h3>sophiadev</h3><p>@sophiadev · Codex 27% · Claude 58%</p></div><div class="person-data"><div><strong>215.4M</strong><small>TOKENS</small></div><div><strong>#2</strong><small>RANK</small></div></div></div><div class="person"><div class="avatar" style="background:#788177">DW</div><div><h3>deworap</h3><p>@deworap · Codex 22% · Claude 55%</p></div><div class="person-data"><div><strong>178.9M</strong><small>TOKENS</small></div><div><strong>#3</strong><small>RANK</small></div></div></div><div class="person"><div class="avatar" style="background:#273029">BD</div><div><h3>builderdan</h3><p>@builderdan · Codex 23% · Claude 60%</p></div><div class="person-data"><div><strong>142.6M</strong><small>TOKENS</small></div><div><strong>#4</strong><small>RANK</small></div></div></div><div class="person"><div class="avatar" style="background:#5d665e">KT</div><div><h3>kaytee</h3><p>@kaytee · Codex 30% · Claude 52%</p></div><div class="person-data"><div><strong>118.3M</strong><small>TOKENS</small></div><div><strong>#5</strong><small>RANK</small></div></div></div></section><section class="result-panel panel"><div class="panel-head"><div><h2>Agent 与 Skill</h2><p>达到公开样本阈值的结果</p></div></div><div class="facet"><header><h3>Codex</h3><span class="tag lime">Agent</span></header><p>48.2K 位开发者在最近 30 天产生 4.8T Token。</p><div class="facet-tags"><span class="tag"># coding</span><span class="tag"># agentic</span><span class="tag"># cli</span></div></div><div class="facet"><header><h3>codex-review</h3><span class="tag">Skill</span></header><p>公开用户中使用 12.8K 次，近 30 天增长 24%。</p><div class="facet-tags"><span class="tag">1.6K users</span><span class="tag">公开</span></div></div><div class="facet"><header><h3>codex-commit</h3><span class="tag">Skill</span></header><p>公开用户中使用 8.4K 次，主要与仓库工作流相关。</p><div class="facet-tags"><span class="tag">980 users</span><span class="tag">热门</span></div></div><div class="facet"><header><h3>Advanced query</h3><span class="tag lime">Ready</span></header><p>当前筛选：Token · 最近 30 天 · Codex。</p><button class="button" style="margin-top:2px">查看筛选排行榜</button></div></section></div></div><div class="compare-tray"><strong>比较用户</strong><div class="compare-user"><i>MB</i>maxbauer</div><div class="compare-user"><i>SD</i>sophiadev</div><button class="button primary">开始比较</button></div>${mockLabel}</section>`,
 
       profile: `
-        <section class="screen">${nav('TokenBoard')}
+        <section class="screen">${nav('Community')}
           <div class="page">
             <header class="page-head"><div><p class="eyebrow">Public profile</p><h1>公开用户主页</h1><p>只展示用户明确授权公开的字段。</p></div><div class="head-actions"><button class="button">复制链接</button><button class="button primary">加入比较</button></div></header>
             <section class="profile-hero panel"><div class="identity"><div class="avatar">MB</div><div><h1>maxbauer</h1><p>@maxbauer · Building with AI every day.</p><span class="tag lime">Public leaderboard</span> <span class="tag">Updated 4 min ago</span></div></div><div class="hero-stats"><div><small>总 Token</small><strong>325.7M</strong></div><div><small>生成代码行</small><strong>864K</strong></div><div><small>预估费用</small><strong>$1.4K</strong></div></div></section>
@@ -336,10 +353,10 @@
         </section>`,
 
       settings: `
-        <section class="screen">${nav('TokenBoard')}<div class="page"><header class="page-head"><div><p class="eyebrow">Privacy and devices</p><h1>数据由你决定如何出现</h1><p>控制公开范围、设备连接与服务端数据。</p></div><button class="button primary">保存设置</button></header><div class="settings-layout"><aside class="settings-nav panel"><strong>设置</strong><span>个人资料</span><span class="active">隐私与公开</span><span>Collector 设备</span><span>数据导出</span><span>账户安全</span></aside><main class="settings-main"><section class="settings-card panel"><div class="panel-head"><div><h2>排行榜与公开主页</h2><p>默认仅自己可见</p></div><span class="tag lime">Private by default</span></div><div class="setting-row"><div><h3>参加公开排行榜</h3><p>开启后，公开昵称、排名和所选指标会进入排行榜。</p></div><div class="switch on"></div></div><div class="setting-row"><div><h3>公开 Token 总量与趋势</h3><p>显示当前时间范围内的聚合数据，不公开会话明细。</p></div><div class="switch on"></div></div><div class="setting-row"><div><h3>公开 Agent 构成</h3><p>显示各 Agent 百分比，不公开设备和安装信息。</p></div><div class="switch on"></div></div><div class="setting-row"><div><h3>公开活跃日历</h3><p>只展示活跃强度，不展示具体行为内容。</p></div><div class="switch"></div></div></section><section class="settings-card panel"><div class="panel-head"><div><h2>Collector 设备</h2><p>2 台设备已连接，状态正常</p></div><button class="button">连接新设备</button></div><div class="device"><div class="device-icon">WIN</div><div><h3>Windows Studio</h3><p>Windows 11 · Collector 1.2.0 · 刚刚同步</p></div><span class="status"><i></i>正常</span></div><div class="device"><div class="device-icon">MAC</div><div><h3>MacBook Pro</h3><p>macOS · Collector 1.2.0 · 8 分钟前同步</p></div><span class="device-action">管理</span></div></section><section class="settings-card panel"><div class="panel-head"><div><h2>数据操作</h2><p>仅作用于你自己的账户与聚合数据</p></div></div><div class="setting-row"><div><h3>导出我的数据</h3><p>生成不含 Prompt、回复和代码正文的 CSV 文件。</p></div><button class="button">创建导出</button></div><div class="setting-row"><div><h3>删除服务端数据</h3><p>创建删除任务，并从公开查询与排行榜立即移除。</p></div><button class="button" style="color:#c33d2e">请求删除</button></div></section></main></div></div>${mockLabel}</section>`
+        <section class="screen">${nav()}<div class="page"><header class="page-head"><div><p class="eyebrow">Privacy and devices</p><h1>数据由你决定如何出现</h1><p>控制公开范围、设备连接与服务端数据。</p></div><button class="button primary">保存设置</button></header><div class="settings-layout"><aside class="settings-nav panel"><strong>设置</strong><span>个人资料</span><span class="active">隐私与公开</span><span>Collector 设备</span><span>数据导出</span><span>账户安全</span></aside><main class="settings-main"><section class="settings-card panel"><div class="panel-head"><div><h2>排行榜与公开主页</h2><p>默认仅自己可见</p></div><span class="tag lime">Private by default</span></div><div class="setting-row"><div><h3>参加公开排行榜</h3><p>开启后，公开昵称、排名和所选指标会进入排行榜。</p></div><div class="switch on"></div></div><div class="setting-row"><div><h3>公开 Token 总量与趋势</h3><p>显示当前时间范围内的聚合数据，不公开会话明细。</p></div><div class="switch on"></div></div><div class="setting-row"><div><h3>公开 Agent 构成</h3><p>显示各 Agent 百分比，不公开设备和安装信息。</p></div><div class="switch on"></div></div><div class="setting-row"><div><h3>公开活跃日历</h3><p>只展示活跃强度，不展示具体行为内容。</p></div><div class="switch"></div></div></section><section class="settings-card panel"><div class="panel-head"><div><h2>Collector 设备</h2><p>2 台设备已连接，状态正常</p></div><button class="button">连接新设备</button></div><div class="device"><div class="device-icon">WIN</div><div><h3>Windows Studio</h3><p>Windows 11 · Collector 1.2.0 · 刚刚同步</p></div><span class="status"><i></i>正常</span></div><div class="device"><div class="device-icon">MAC</div><div><h3>MacBook Pro</h3><p>macOS · Collector 1.2.0 · 8 分钟前同步</p></div><span class="device-action">管理</span></div></section><section class="settings-card panel"><div class="panel-head"><div><h2>数据操作</h2><p>仅作用于你自己的账户与聚合数据</p></div></div><div class="setting-row"><div><h3>导出我的数据</h3><p>生成不含 Prompt、回复和代码正文的 CSV 文件。</p></div><button class="button">创建导出</button></div><div class="setting-row"><div><h3>删除服务端数据</h3><p>创建删除任务，并从公开查询与排行榜立即移除。</p></div><button class="button" style="color:#c33d2e">请求删除</button></div></section></main></div></div>${mockLabel}</section>`
     };
 
-    app.innerHTML = screens[screen] || screens.dashboard;
+    app.innerHTML = screens[screen] || screens.home;
 
     const translations = {
       '搜索用户、Agent、Skill...': 'Search users, agents, and skills...',

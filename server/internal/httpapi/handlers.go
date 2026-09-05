@@ -171,6 +171,8 @@ type RegisterRequest struct {
 	Code     string `json:"code"`
 	Password string `json:"password"`
 	ReturnTo string `json:"returnTo"`
+	Locale   string `json:"locale"`
+	Timezone string `json:"timezone"`
 }
 
 func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
@@ -180,7 +182,7 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.auth.CompleteRegistration(r.Context(), req.Email, req.Code, req.Password, req.ReturnTo)
+	result, err := h.auth.CompleteRegistration(r.Context(), req.Email, req.Code, req.Password, req.ReturnTo, req.Locale, req.Timezone)
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -191,7 +193,9 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusCreated, map[string]interface{}{
 		"user": map[string]interface{}{
 			"userId":             result.User.UserID,
+			"handle":             result.User.Handle,
 			"displayName":        result.User.DisplayName,
+			"locale":             result.User.Locale,
 			"onboardingRequired": result.User.OnboardingCompletedAt == nil,
 			"productState":       result.User.ProductState(),
 		},

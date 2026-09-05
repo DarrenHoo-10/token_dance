@@ -31,13 +31,13 @@ export const OnboardingPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!displayName.trim() || !handle.trim()) {
+    if (!displayName.trim()) {
       setErrorMessage(t('errors.http_400'));
       return;
     }
 
     const cleanHandle = handle.trim().toLowerCase().replace(/^@/, '');
-    if (!/^[a-z][a-z0-9_]{2,31}$/.test(cleanHandle)) {
+    if (cleanHandle && !/^[a-z][a-z0-9_]{2,31}$/.test(cleanHandle)) {
       setErrorMessage(t('errors.PROFILE_HANDLE_INVALID'));
       return;
     }
@@ -114,7 +114,7 @@ export const OnboardingPage: React.FC = () => {
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 20, fontWeight: 800 }}>
-          <img src="/logo.png" alt="TokenDance" style={{ width: 32, height: 32 }} />
+          <img src="/logo-tokendance-v2.png" alt="TokenDance" style={{ width: 32, height: 32 }} />
           <span>TokenDance</span>
         </div>
 
@@ -269,7 +269,6 @@ export const OnboardingPage: React.FC = () => {
                 value={handle}
                 onChange={(e) => setHandle(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, ''))}
                 hint={t('onboarding.handleHint')}
-                required
               />
             </div>
 

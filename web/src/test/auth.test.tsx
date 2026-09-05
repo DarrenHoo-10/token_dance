@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { LocaleProvider } from '@/context/LocaleContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { AuthProvider } from '@/context/AuthContext';
@@ -139,5 +139,60 @@ describe('Auth & Onboarding Flow Tests', () => {
       expect(screen.getByText('创建你的公开身份')).toBeInTheDocument();
       expect(screen.getByText('仅自己可见 (推荐)')).toBeInTheDocument();
     });
+  });
+
+  it('注册成功后直接进入仪表盘，不再进入 onboarding 设置页', async () => {
+    const registerSpy = vi.spyOn(api, 'register').mockResolvedValue({
+      user: {
+        handle: 'newuser',
+        displayName: 'Token Dancer',
+        avatarUrl: null,
+        locale: 'zh-CN',
+        onboardingRequired: false,
+        productState: 'active_private',
+      },
+      returnTo: '/me',
+    });
+
+    vi.spyOn(api, 'getSession').mockResolvedValue({
+      authenticated: false,
+      user: null,
+    });
+
+    render(
+      <LocaleProvider>
+        <NotificationProvider>
+          <AuthProvider>
+            <MemoryRouter initialEntries={['/register']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+              <Routes>
+                <Route path="/register" element={<RegisterPage />} />
+                <Route path="/onboarding" element={<div>onboarding-shown</div>} />
+                <Route path="/me" element={<div>dashboard-reached</div>} />
+              </Routes>
+            </MemoryRouter>
+          </AuthProvider>
+        </NotificationProvider>
+      </LocaleProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('创建你的 TokenDance 账户')).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByPlaceholderText('name@example.com'), { target: { value: 'newuser@example.com' } });
+    fireEvent.change(screen.getByPlaceholderText('6 位数字验证码'), { target: { value: '123456' } });
+    fireEvent.change(screen.getByPlaceholderText('至少 8 个字符'), { target: { value: 'password123' } });
+    fireEvent.click(screen.getByRole('button', { name: '验证并完成注册' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('dashboard-reached')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('onboarding-shown')).not.toBeInTheDocument();
+    expect(registerSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        locale: 'zh-CN',
+        timezone: expect.any(String),
+      })
+    );
   });
 });

@@ -6,9 +6,10 @@ use std::time::Instant;
 
 use acquisition::SecretResolver;
 use adapter_sdk::{ConfigMutation, SetupPlan};
-use chrono::Utc;
+use chrono::{Local, Utc};
 use collector_service::{detect_local, DetectionSnapshot, ProductionService};
 use config_executor::{EncryptedBackupStore, SemanticVerifier, SetupPlanExecutor};
+use protocol::EventEnvelope;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
@@ -17,6 +18,7 @@ use wal_spool::InjectedKeyProvider;
 use wal_spool::{AckPayload, KeyProvider, OsKeyProvider, WalStore};
 
 use crate::autostart::{AutostartProvider, SystemAutostartManager};
+use crate::usage_ledger::{DayUsage, UsageLedger};
 
 const COLLECTOR_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -64,6 +66,8 @@ pub struct AgentConfig {
     pub capabilities: Vec<String>,
     pub today_tokens: u64,
     pub total_tokens: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub daily_usage: Vec<DayUsage>,
     pub last_active: String,
     pub version: String,
 }
@@ -298,6 +302,7 @@ pub struct AppState {
     start_time: Instant,
     autostart: Arc<dyn AutostartProvider>,
     shutting_down: Arc<StdMutex<bool>>,
+    usage_ledger: Arc<StdMutex<UsageLedger>>,
 }
 
 impl AppState {
@@ -359,10 +364,11 @@ impl AppState {
             service: Arc::new(Mutex::new(service)),
             detection: Arc::new(detection),
             control: Arc::new(RwLock::new(control)),
-            control_dir: Arc::new(root),
+            control_dir: Arc::new(root.clone()),
             start_time: Instant::now(),
             autostart,
             shutting_down: Arc::new(StdMutex::new(false)),
+            usage_ledger: Arc::new(StdMutex::new(UsageLedger::load(&root))),
         };
         state.apply_saved_agent_controls().await?;
         state.persist_control().await?;
@@ -371,6 +377,22 @@ impl AppState {
 
     pub fn control_dir_path(&self) -> PathBuf {
         (*self.control_dir).clone()
+    }
+
+    /// Fold newly collected envelopes into the device-local daily usage ledger
+    /// and persist it when something changed.
+    pub fn record_usage(&self, events: &[EventEnvelope]) -> bool {
+        let mut ledger = self.usage_ledger.lock().expect("usage ledger poisoned");
+        let changed = ledger.record(events);
+        if changed {
+            if let Err(error) = ledger.save() {
+                collector_service::runtime::append_log(
+                    &self.control_dir_path(),
+                    &format!("usage ledger save failed: {error}"),
+                );
+            }
+        }
+        changed
     }
 
     async fn apply_saved_agent_controls(&self) -> Result<(), String> {
@@ -438,6 +460,8 @@ impl AppState {
     pub async fn get_agents(&self) -> Vec<AgentConfig> {
         let control = self.control.read().await;
         let service = self.service.lock().await;
+        let ledger = self.usage_ledger.lock().expect("usage ledger poisoned");
+        let today = Local::now().date_naive();
         agent_metadata()
             .into_iter()
             .filter_map(|(id, name, adapter_id)| {
@@ -447,6 +471,16 @@ impl AppState {
                     .get(id)
                     .copied()
                     .unwrap_or(runtime.enabled);
+                let usage = ledger.agent_usage(id, today);
+                let (accuracy, today_tokens, total_tokens, daily_usage) = match &usage {
+                    Some(usage) => (
+                        usage.accuracy.clone(),
+                        usage.today_tokens,
+                        usage.total_tokens,
+                        usage.daily_usage.clone(),
+                    ),
+                    None => ("unknown".to_string(), 0, 0, Vec::new()),
+                };
                 Some(AgentConfig {
                     id: id.into(),
                     name: name.into(),
@@ -458,15 +492,16 @@ impl AppState {
                         .map(|status| format!("{status:?}").to_uppercase())
                         .unwrap_or_else(|| "UNCONFIGURED".into()),
                     enabled,
-                    accuracy: "unknown".into(),
+                    accuracy,
                     sources: runtime
                         .sources
                         .iter()
                         .map(|source| source.id().to_string())
                         .collect(),
                     capabilities: Vec::new(),
-                    today_tokens: 0,
-                    total_tokens: 0,
+                    today_tokens,
+                    total_tokens,
+                    daily_usage,
                     last_active: if runtime.detected {
                         "DETECTED"
                     } else {

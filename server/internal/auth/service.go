@@ -16,6 +16,7 @@ import (
 	"tokendance/internal/crypto"
 	"tokendance/internal/domain"
 	emailpkg "tokendance/internal/email"
+	"tokendance/internal/profile"
 	"tokendance/internal/store"
 )
 
@@ -26,6 +27,7 @@ type Service struct {
 	clk       clock.Clock
 	cipher    *crypto.AEADCipher
 	emailSink *emailpkg.DeliverySink
+	smtpMail  emailpkg.Provider
 
 	dummyArgonHash string
 }
@@ -62,6 +64,13 @@ func NewService(st store.Store, cfg *config.Config, clk clock.Clock) *Service {
 
 func (s *Service) SetEmailSink(sink *emailpkg.DeliverySink) {
 	s.emailSink = sink
+}
+
+// SetSMTPProvider enables direct in-request delivery through an SMTP provider.
+// Used when the deployment configures a real mail transport; the durable
+// worker outbox path remains the production alternative.
+func (s *Service) SetSMTPProvider(p emailpkg.Provider) {
+	s.smtpMail = p
 }
 
 func (s *Service) EmailSink() *emailpkg.DeliverySink {
@@ -356,17 +365,32 @@ func (s *Service) RequestRegistrationCode(ctx context.Context, email, locale str
 		return domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to create email challenge", nil, err)
 	}
 
-	if s.emailSink != nil {
-		_, _ = s.emailSink.Send(ctx, emailpkg.Message{
-			EmailID:     emailID,
-			Recipient:   normalized,
-			TemplateKey: "auth.register_code",
-			Locale:      locale,
-			PayloadJSON: payloadJSON,
-			CreatedAt:   now,
-		})
+	if err := s.deliverCodeEmail(ctx, emailpkg.Message{
+		EmailID:     emailID,
+		Recipient:   normalized,
+		TemplateKey: "auth.register_code",
+		Locale:      locale,
+		PayloadJSON: payloadJSON,
+		CreatedAt:   now,
+	}); err != nil {
+		return domain.NewAppError(503, "API_EMAIL_UNAVAILABLE", "auth.emailDeliveryUnavailable", "failed to send verification email", nil, err)
 	}
 
+	return nil
+}
+
+// deliverCodeEmail sends a verification code email through the SMTP provider
+// when one is configured, falling back to the dev/test delivery sink.
+func (s *Service) deliverCodeEmail(ctx context.Context, msg emailpkg.Message) error {
+	if s.smtpMail != nil {
+		if _, err := s.smtpMail.Send(ctx, msg); err != nil {
+			return err
+		}
+		return nil
+	}
+	if s.emailSink != nil {
+		_, _ = s.emailSink.Send(ctx, msg)
+	}
 	return nil
 }
 
@@ -378,7 +402,69 @@ type RegistrationResult struct {
 	ReturnTo     string
 }
 
-func (s *Service) CompleteRegistration(ctx context.Context, email, code, password, returnTo string) (*RegistrationResult, error) {
+// defaultHandleFromEmail derives a readable handle candidate from the email
+// local part; ok is false when nothing usable remains after sanitizing.
+func defaultHandleFromEmail(email string) (string, bool) {
+	local := strings.ToLower(strings.SplitN(email, "@", 2)[0])
+	var b strings.Builder
+	for _, r := range local {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+			b.WriteRune(r)
+		}
+	}
+	stem := strings.Trim(b.String(), "_")
+	stem = strings.TrimLeft(stem, "0123456789_")
+	if len(stem) > 24 {
+		stem = stem[:24]
+	}
+	if len(stem) < 3 {
+		return "", false
+	}
+	return stem, true
+}
+
+func randomHandleSuffix(n int) string {
+	b, err := crypto.GenerateRandomBytes(n)
+	if err != nil {
+		return strings.Repeat("x", n)
+	}
+	alphabet := "abcdefghijklmnopqrstuvwxyz0123456789"
+	out := make([]byte, n)
+	for i, v := range b {
+		out[i] = alphabet[int(v)%len(alphabet)]
+	}
+	return string(out)
+}
+
+// reserveDefaultHandle picks an available handle for a brand-new account so
+// registration completes with usable defaults and no manual profile step.
+func (s *Service) reserveDefaultHandle(ctx context.Context, email string, now time.Time) string {
+	stem, ok := defaultHandleFromEmail(email)
+	candidates := make([]string, 0, 5)
+	if ok {
+		candidates = append(candidates, stem)
+	}
+	for i := 0; i < 3; i++ {
+		suffix := randomHandleSuffix(4)
+		if ok {
+			candidates = append(candidates, stem+"_"+suffix)
+		} else {
+			candidates = append(candidates, "dancer_"+suffix)
+		}
+	}
+	for _, candidate := range candidates {
+		if profile.ValidateHandle(candidate) != nil {
+			continue
+		}
+		avail, err := s.pStore.IsHandleAvailable(ctx, candidate, "", now)
+		if err == nil && avail {
+			return candidate
+		}
+	}
+	return "dancer_" + randomHandleSuffix(8)
+}
+
+func (s *Service) CompleteRegistration(ctx context.Context, email, code, password, returnTo, locale, timezone string) (*RegistrationResult, error) {
 	normalized, err := NormalizeEmail(email)
 	if err != nil {
 		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidEmail", "invalid email", nil, err)
@@ -386,6 +472,18 @@ func (s *Service) CompleteRegistration(ctx context.Context, email, code, passwor
 
 	if len(password) < 8 || len(password) > 128 {
 		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "auth.invalidPasswordLength", "password must be between 8 and 128 characters", nil, nil)
+	}
+
+	if locale != "zh-CN" && locale != "en-US" {
+		locale = "en-US"
+	}
+	timezone = strings.TrimSpace(timezone)
+	if timezone != "" {
+		if _, tzErr := time.LoadLocation(timezone); tzErr != nil {
+			timezone = "UTC"
+		}
+	} else {
+		timezone = "UTC"
 	}
 
 	emailHash := s.ComputeEmailLookupHash(normalized)
@@ -426,6 +524,8 @@ func (s *Service) CompleteRegistration(ctx context.Context, email, code, passwor
 	userIDToken, _ := crypto.GenerateOpaqueToken(13)
 	userID := "usr_" + userIDToken
 
+	defaultHandle := s.reserveDefaultHandle(ctx, normalized, now)
+
 	sessionIDToken, _ := crypto.GenerateOpaqueToken(13)
 	sessionID := "ses_" + sessionIDToken
 
@@ -453,12 +553,14 @@ func (s *Service) CompleteRegistration(ctx context.Context, email, code, passwor
 		AuthSubjectHash:       subjectHash,
 		EmailLookupHash:       &emailHash,
 		EmailCiphertext:       userEmailCiphertext,
+		Handle:                &defaultHandle,
 		DisplayName:           "Token Dancer",
 		AccountStatus:         domain.AccountStatusActive,
 		LeaderboardVisibility: domain.LeaderboardVisibilityPrivate,
-		TimezoneName:          "UTC",
-		Locale:                "en-US",
+		TimezoneName:          timezone,
+		Locale:                locale,
 		EmailVerifiedAt:       &now,
+		OnboardingCompletedAt: &now,
 		ProfileVersion:        1,
 		CreatedAt:             now,
 		UpdatedAt:             now,
@@ -513,7 +615,7 @@ func (s *Service) CompleteRegistration(ctx context.Context, email, code, passwor
 		EventType:    "registration_completed",
 		Outcome:      "success",
 		CreatedAt:    now,
-		MetadataJSON: map[string]interface{}{"locale": "en-US"},
+		MetadataJSON: map[string]interface{}{"locale": locale, "handle": defaultHandle},
 	}
 
 	createdSession, err := s.store.CompleteRegistrationTx(ctx, store.RegistrationTxInput{
@@ -828,15 +930,15 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email string) error 
 
 	_, _ = s.store.CreateOrReplaceEmailChallenge(ctx, challenge, outbox)
 
-	if s.emailSink != nil {
-		_, _ = s.emailSink.Send(ctx, emailpkg.Message{
-			EmailID:     emailID,
-			Recipient:   normalized,
-			TemplateKey: "auth.password_reset_code",
-			Locale:      user.Locale,
-			PayloadJSON: payloadJSON,
-			CreatedAt:   now,
-		})
+	if err := s.deliverCodeEmail(ctx, emailpkg.Message{
+		EmailID:     emailID,
+		Recipient:   normalized,
+		TemplateKey: "auth.password_reset_code",
+		Locale:      user.Locale,
+		PayloadJSON: payloadJSON,
+		CreatedAt:   now,
+	}); err != nil {
+		return domain.NewAppError(503, "API_EMAIL_UNAVAILABLE", "auth.emailDeliveryUnavailable", "failed to send verification email", nil, err)
 	}
 
 	return nil

@@ -99,7 +99,11 @@ impl WindowsAutostart {
     }
 
     fn run_reg(&self, args: &[&str]) -> Result<std::process::Output, String> {
+        use std::os::windows::process::CommandExt;
+
         Command::new("reg.exe")
+            // A GUI parent otherwise creates a console on every status poll.
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW
             .args(args)
             .output()
             .map_err(|error| format!("failed to execute reg.exe: {error}"))

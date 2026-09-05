@@ -32,13 +32,17 @@ impl CollectorDaemon {
                 let mut service = state.service.lock().await;
                 let report = collect_tick(&mut service, &snapshot, historical).await;
                 historical = false;
+                let pending = service.wal.unacked_count();
+                let envelopes = service.wal.unacked_events();
+                drop(service);
+                state.record_usage(&envelopes);
                 runtime::append_log(
                     &state.control_dir_path(),
                     &format!(
                         "tick files={} events={} pending={} errors={}",
                         report.files_scanned,
                         report.accepted_events,
-                        service.wal.unacked_count(),
+                        pending,
                         report.errors.len()
                     ),
                 );

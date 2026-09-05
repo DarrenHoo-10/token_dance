@@ -71,7 +71,7 @@ export const ResetPasswordPage: React.FC = () => {
 
       <div className="panel" style={{ width: '100%', maxWidth: 420, padding: 36 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 24 }}>
-          <img src="/logo.png" alt="TokenDance" style={{ width: 28, height: 28 }} />
+          <img src="/logo-tokendance-v2.png" alt="TokenDance" style={{ width: 28, height: 28 }} />
           <strong style={{ fontSize: 18 }}>TokenDance</strong>
         </div>
 

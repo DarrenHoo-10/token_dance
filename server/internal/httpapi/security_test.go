@@ -83,13 +83,13 @@ func TestHTTP_IDOR_SessionRevocation(t *testing.T) {
 	_ = authSvc.RequestRegistrationCode(ctx, "usera@tokendance.dev", "en-US")
 	chA, _ := st.FindPendingEmailChallenge(ctx, domain.ChallengeTypeRegister, authSvc.ComputeEmailLookupHash("usera@tokendance.dev"))
 	codeA := getChallengeCode(authSvc, chA.CodeHash)
-	resA, _ := authSvc.CompleteRegistration(ctx, "usera@tokendance.dev", codeA, "Password123!", "")
+	resA, _ := authSvc.CompleteRegistration(ctx, "usera@tokendance.dev", codeA, "Password123!", "", "en-US", "UTC")
 
 	// Register User B
 	_ = authSvc.RequestRegistrationCode(ctx, "userb@tokendance.dev", "en-US")
 	chB, _ := st.FindPendingEmailChallenge(ctx, domain.ChallengeTypeRegister, authSvc.ComputeEmailLookupHash("userb@tokendance.dev"))
 	codeB := getChallengeCode(authSvc, chB.CodeHash)
-	resB, _ := authSvc.CompleteRegistration(ctx, "userb@tokendance.dev", codeB, "Password123!", "")
+	resB, _ := authSvc.CompleteRegistration(ctx, "userb@tokendance.dev", codeB, "Password123!", "", "en-US", "UTC")
 
 	// User A attempts to DELETE /api/v1/auth/sessions/{userB_session_id}
 	req := httptest.NewRequest(http.MethodDelete, "/api/v1/auth/sessions/"+resB.Session.SessionID, nil)
@@ -121,7 +121,7 @@ func TestHTTP_CSRF_ReloadToWrite(t *testing.T) {
 	_ = authSvc.RequestRegistrationCode(ctx, "csrf_reload@tokendance.dev", "en-US")
 	ch, _ := st.FindPendingEmailChallenge(ctx, domain.ChallengeTypeRegister, authSvc.ComputeEmailLookupHash("csrf_reload@tokendance.dev"))
 	code := getChallengeCode(authSvc, ch.CodeHash)
-	res, _ := authSvc.CompleteRegistration(ctx, "csrf_reload@tokendance.dev", code, "Password123!", "")
+	res, _ := authSvc.CompleteRegistration(ctx, "csrf_reload@tokendance.dev", code, "Password123!", "", "en-US", "UTC")
 
 	// 1. Client reloads page -> GET /api/v1/auth/session
 	reqGet := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
@@ -235,7 +235,7 @@ func TestHTTP_CollectorRegister_GrantScope(t *testing.T) {
 	_ = authSvc.RequestRegistrationCode(ctx, "grant_test@tokendance.dev", "en-US")
 	ch, _ := st.FindPendingEmailChallenge(ctx, domain.ChallengeTypeRegister, authSvc.ComputeEmailLookupHash("grant_test@tokendance.dev"))
 	code := getChallengeCode(authSvc, ch.CodeHash)
-	res, _ := authSvc.CompleteRegistration(ctx, "grant_test@tokendance.dev", code, "Password123!", "")
+	res, _ := authSvc.CompleteRegistration(ctx, "grant_test@tokendance.dev", code, "Password123!", "", "en-US", "UTC")
 	_, _, _ = profileSvc.CompleteOnboarding(ctx, res.User.UserID, profile.OnboardingInput{
 		Handle:      "grantpilot",
 		DisplayName: "Grant Pilot",
@@ -340,7 +340,7 @@ func TestHTTP_CSRFStableAcrossConcurrentTabs(t *testing.T) {
 	_ = authSvc.RequestRegistrationCode(ctx, "tabs@tokendance.dev", "en-US")
 	challenge, _ := st.FindPendingEmailChallenge(ctx, domain.ChallengeTypeRegister, authSvc.ComputeEmailLookupHash("tabs@tokendance.dev"))
 	code := getChallengeCode(authSvc, challenge.CodeHash)
-	registration, err := authSvc.CompleteRegistration(ctx, "tabs@tokendance.dev", code, "Password123!", "")
+	registration, err := authSvc.CompleteRegistration(ctx, "tabs@tokendance.dev", code, "Password123!", "", "en-US", "UTC")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -412,7 +412,7 @@ func TestUSR023_HTTPIngestPauseResumeRevokeLifecycle(t *testing.T) {
 	_ = authSvc.RequestRegistrationCode(ctx, "telemetry_test@tokendance.dev", "en-US")
 	ch, _ := st.FindPendingEmailChallenge(ctx, domain.ChallengeTypeRegister, authSvc.ComputeEmailLookupHash("telemetry_test@tokendance.dev"))
 	code := getChallengeCode(authSvc, ch.CodeHash)
-	res, _ := authSvc.CompleteRegistration(ctx, "telemetry_test@tokendance.dev", code, "Password123!", "")
+	res, _ := authSvc.CompleteRegistration(ctx, "telemetry_test@tokendance.dev", code, "Password123!", "", "en-US", "UTC")
 	_, _, _ = profileSvc.CompleteOnboarding(ctx, res.User.UserID, profile.OnboardingInput{
 		Handle:      "telemetrypilot",
 		DisplayName: "Telemetry Pilot",

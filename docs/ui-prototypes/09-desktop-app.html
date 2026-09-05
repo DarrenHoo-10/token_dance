@@ -1,0 +1,470 @@
+<!doctype html>
+<!--
+  TokenDance 桌面客户端 UI 原型 (Desktop App UI Mock) · v3
+
+  本版按已实现的应用截图对齐 (docs/ui-prototypes/13-desktop-tray-implemented.png、
+  14-desktop-seven-day-trend.png),以 14 号图的七日趋势设计为准:
+
+  1. 面板即主界面:没有独立大主窗口。TD 图标常驻托盘隐藏图标区(?screen=tray),
+     点击打开矩形用量面板(?screen=panel,参考尺寸 420×570)。
+  2. 时间范围只有两档:今日 / 7日(?range=today|7d 可切换,面板内分段控件可点击)。
+     · 今日:大数字 + Agent 堆叠构成条 + Agent 列表(禁用项显示"已关闭")。
+     · 7日:大数字 + 每日趋势折线图(圆点折线、虚线参考线、末日标数)+ 双列 Agent 构成。
+  3. 面板底部状态条:采集中 · 待同步条数 · 暂停/同步;页脚左下「⚙ 设置」打开设置窗口
+     (?screen=settings),右下「网站主页 · 看排名 ↗」跳转 Web 端 —— 排名只在网站看。
+  4. 数据口径与实现对齐:今日 5.1M(Claude Code 2.15M / Codex 1.42M / Grok Build 890K /
+     Cursor 640K),近7日 27.39M(11.55 / 7.63 / 4.78 / 3.44M),每日趋势 3.1~5.1M。
+  5. 桌面端不出现任何排行榜/百分位/社区内容;仅读取本人账户聚合接口(/api/v1/me/*)。
+
+  预览: ?screen=tray|panel|settings & range=today|7d & lang=zh|en
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TokenDance Desktop UI</title>
+  <style>
+    :root {
+      --ink: #111512;
+      --muted: #7d857d;
+      --muted-2: #9aa39b;
+      --line: #e4e9e4;
+      --soft: #f0f2ef;
+      --lime: #b9f600;
+      --lime-soft: #efffd0;
+      --good: #3fae2a;
+      --line-green: #4f9d0a;
+      --radius: 18px;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; overflow: hidden; background: #f4f7f3; color: var(--ink); font-family: Arial, "Microsoft YaHei", sans-serif; }
+    button, input, select { font: inherit; }
+    button { cursor: default; }
+    .mono { font-family: "JetBrains Mono", Consolas, monospace; font-variant-numeric: tabular-nums; }
+    .screen { width: 1440px; height: 960px; margin: 0 auto; position: relative; overflow: hidden; background: radial-gradient(circle at 78% -10%, rgba(185,246,0,.14), rgba(185,246,0,0) 46%), linear-gradient(160deg, #eef2ec 0%, #f6faf3 55%, #eef3ee 100%); }
+    .screen.center { display: grid; place-items: start center; }
+    .mock-label { position: absolute; right: 22px; bottom: 14px; color: #aab2aa; font: 11px/1 monospace; letter-spacing: .08em; z-index: 20; }
+    .canvas-caption { position: absolute; left: 26px; top: 22px; color: #9aa39b; font-size: 12px; font-weight: 700; letter-spacing: .05em; z-index: 20; }
+
+    .button { height: 34px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--line); background: white; color: var(--ink); font-size: 12.5px; font-weight: 700; }
+    .button.ghost { background: transparent; }
+    .button.danger { color: #e9573f; }
+    .tag { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 0 9px; border-radius: 8px; background: #eff2ef; color: #4e554f; font-size: 11px; font-weight: 700; }
+    .tag.lime { background: var(--lime-soft); color: #477800; }
+    .tag.private { background: #111512; color: var(--lime); }
+    .status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+    .status i { width: 8px; height: 8px; border-radius: 50%; background: var(--good); box-shadow: 0 0 0 4px rgba(63,174,42,.1); }
+    .switch { width: 40px; height: 23px; border-radius: 20px; background: #dde3dd; position: relative; flex: 0 0 auto; }
+    .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 17px; height: 17px; border-radius: 50%; background: white; box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+    .switch.on { background: var(--ink); }
+    .switch.on::after { left: 20px; background: var(--lime); }
+
+    /* ================= Tray: icon resident in hidden-icons flyout ================= */
+    .taskbar { position: absolute; left: 0; right: 0; bottom: 0; height: 52px; background: rgba(24,26,24,.95); display: flex; align-items: center; justify-content: flex-end; padding: 0 18px; gap: 14px; z-index: 3; }
+    .taskbar .clock { color: #dfe5df; font-size: 12px; text-align: right; line-height: 1.35; }
+    .taskbar .tray-icons { display: flex; align-items: center; gap: 12px; }
+    .taskbar .tray-icons span { width: 15px; height: 15px; border-radius: 4px; background: #454c46; }
+    .taskbar .chevron { color: #cfd5cf; font-size: 12px; padding: 6px 8px; border-radius: 6px; background: rgba(255,255,255,.08); }
+    .td-tray { width: 24px; height: 24px; border-radius: 6px; background: var(--lime); color: #111512; display: grid; place-items: center; font-size: 10px; font-weight: 900; box-shadow: 0 0 0 3px rgba(185,246,0,.25); }
+    .flyout { position: absolute; right: 150px; bottom: 96px; width: 500px; padding: 20px; border: 1px solid #3a403a; border-radius: 12px; background: #2b2f2b; box-shadow: 0 26px 60px rgba(15,22,16,.45); z-index: 4; display: grid; grid-template-columns: repeat(5, 76px); justify-content: center; gap: 20px; }
+    .flyout > span { position: relative; width: 76px; height: 76px; border-radius: 11px; display: grid; place-items: center; font-size: 15px; font-weight: 800; color: white; }
+    .flyout > span.round { border-radius: 50%; }
+    .flyout > span.td { background: var(--lime); color: #111512; box-shadow: 0 0 0 3px rgba(185,246,0,.35), 0 0 22px rgba(185,246,0,.5); }
+    .flyout span.fi-tip { position: absolute; left: 50%; top: -44px; transform: translateX(-50%); padding: 5px 10px; border-radius: 7px; background: #111512; color: var(--lime); font-size: 11px; font-weight: 750; white-space: nowrap; z-index: 2; }
+    .fi-tip::after { content: ""; position: absolute; left: 50%; bottom: -4px; transform: translateX(-50%); border: 5px solid transparent; border-top-color: #111512; border-bottom: 0; }
+
+    /* ================= Usage panel (main surface, opened from tray icon) ================= */
+    .usage-flyout { position: absolute; right: 150px; bottom: 72px; width: 560px; border: 1px solid #d5ddd5; border-radius: 20px; background: #ffffff; box-shadow: 0 30px 80px rgba(21,34,24,.28); overflow: hidden; z-index: 4; }
+    .up-head { padding: 14px 22px 11px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--line); }
+    .up-head img { width: 28px; height: 28px; object-fit: contain; }
+    .up-head .name { font-size: 19px; font-weight: 800; letter-spacing: -.02em; }
+    .up-head .hdr-right { margin-left: auto; display: flex; align-items: center; gap: 24px; }
+    .up-head .hdr-lang { border: 0; background: transparent; color: #565e56; font-size: 15px; font-weight: 700; }
+    .up-head .hdr-close { border: 0; background: transparent; color: #565e56; font-size: 16px; }
+    .up-body { padding: 12px 22px 0; }
+    .up-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; color: var(--muted); font-size: 12px; line-height: 1.35; }
+    .up-title { margin: 2px 0 10px; font-size: 34px; font-weight: 900; letter-spacing: -.03em; }
+    .up-controls { display: flex; align-items: center; margin-bottom: 12px; }
+    .up-seg { display: inline-flex; gap: 4px; padding: 4px; border-radius: 12px; background: var(--soft); }
+    .up-seg button { border: 0; border-radius: 9px; background: transparent; color: #5d655e; font-size: 16px; font-weight: 700; padding: 6px 18px; }
+    .up-seg button.active { background: #1e2a20; color: white; }
+    .up-range { margin-left: auto; color: var(--muted); font-size: 16px; }
+    .up-label { color: #3f473f; font-size: 17px; font-weight: 600; }
+    .up-hero { display: flex; align-items: baseline; gap: 10px; margin-top: 2px; }
+    .up-hero .big { font-size: 70px; font-weight: 900; letter-spacing: -.045em; line-height: 1.02; color: #0e120e; }
+    .up-hero .unit { color: var(--muted); font-size: 18px; font-weight: 600; }
+    .up-tagline { margin-top: 5px; color: var(--muted); font-size: 15px; }
+    .up-sect { display: flex; align-items: baseline; gap: 10px; margin: 16px 0 4px; }
+    .up-sect h2 { margin: 0; font-size: 19px; font-weight: 800; letter-spacing: -.02em; }
+    .up-sect .note { margin-left: auto; color: var(--muted); font-size: 13px; }
+    .up-chart { margin-top: 4px; }
+    .up-stackbar { display: flex; gap: 4px; height: 18px; border-radius: 7px; overflow: hidden; margin-top: 8px; }
+    .up-stackbar i { display: block; height: 100%; }
+    .up-agents { display: grid; grid-template-columns: 1fr 1fr; column-gap: 36px; margin-top: 4px; }
+    .up-agents.single { grid-template-columns: 1fr; }
+    .up-agent { display: flex; align-items: center; gap: 10px; padding: 9px 0; }
+    .up-agent i { width: 11px; height: 11px; border-radius: 4px; flex: 0 0 auto; }
+    .up-agent .n { font-size: 16px; font-weight: 600; }
+    .up-agent .off { color: var(--muted-2); font-size: 13px; margin-left: auto; }
+    .up-agent .v { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .up-agent .v.solo { margin-left: auto; }
+    .up-agent .off + .v { margin-left: 0; }
+    .up-status { margin-top: 14px; padding: 12px 22px; background: #edf4df; display: flex; align-items: center; gap: 10px; }
+    .up-status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); }
+    .up-status b { font-size: 15px; font-weight: 800; }
+    .up-status .pending { color: var(--muted); font-size: 13px; }
+    .up-status .act { margin-left: auto; display: flex; gap: 28px; }
+    .up-status .act button { border: 0; background: transparent; color: #1c241c; font-size: 14px; font-weight: 600; }
+    .up-foot { padding: 11px 18px 11px 22px; display: flex; align-items: center; border-top: 1px solid var(--line); background: white; }
+    .up-foot .settings-link { display: flex; align-items: center; gap: 8px; border: 0; background: transparent; color: #1c241c; font-size: 15px; font-weight: 600; }
+    .up-foot .settings-link .gear { font-size: 17px; }
+    .up-foot .web-btn { margin-left: auto; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 12px; background: var(--lime); color: #131a10; font-size: 15px; font-weight: 800; padding: 11px 20px; }
+    .up-foot .web-btn .arr { font-size: 14px; }
+
+    /* ================= Settings window (opened from panel bottom-left) ================= */
+    .app-window { width: 1316px; height: 864px; margin-top: 48px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid #d5ddd5; border-radius: 14px; background: rgba(255,255,255,.98); box-shadow: 0 40px 90px rgba(21,34,24,.20), 0 4px 14px rgba(21,34,24,.08); }
+    .titlebar { height: 48px; flex: 0 0 48px; padding: 0 6px 0 16px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid var(--line); background: #fcfdfc; }
+    .titlebar .brand { display: flex; align-items: center; gap: 9px; font-size: 14px; font-weight: 800; letter-spacing: -.02em; }
+    .titlebar .brand img { width: 22px; height: 22px; object-fit: contain; }
+    .titlebar .ver { color: var(--muted-2); font-size: 11px; }
+    .titlebar-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+    .locale-switch { height: 30px; padding: 3px; display: inline-flex; gap: 2px; border: 1px solid var(--line); border-radius: 9px; background: #f4f7f3; }
+    .locale-switch button { min-width: 36px; padding: 0 7px; border: 0; border-radius: 6px; background: transparent; color: #747c75; font-size: 10px; font-weight: 750; }
+    .locale-switch button.active { background: #111512; color: white; }
+    .win-controls { display: flex; align-self: stretch; }
+    .win-controls span { width: 44px; display: grid; place-items: center; color: #6d756e; font-size: 12px; }
+    .win-body { flex: 1; min-height: 0; padding: 22px 28px 20px; display: flex; flex-direction: column; gap: 16px; }
+    .eyebrow { margin: 0 0 8px; color: #6d756e; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { margin-bottom: 8px; font-size: 25px; letter-spacing: -.035em; line-height: 1.05; }
+    h2 { margin-bottom: 4px; font-size: 16px; letter-spacing: -.02em; }
+    h3 { margin-bottom: 3px; font-size: 13px; }
+    .subtle { color: var(--muted); }
+    .page-head { display: flex; align-items: end; gap: 20px; }
+    .page-head .head-actions { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+    .settings-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 13px; }
+    .settings-col { display: flex; flex-direction: column; gap: 13px; min-height: 0; }
+    .settings-card { padding: 18px 20px; border: 1px solid var(--line); border-radius: var(--radius); background: rgba(255,255,255,.96); box-shadow: 0 12px 38px rgba(41,63,45,.055); }
+    .settings-card.compact { flex: 1; min-height: 0; }
+    .panel-head { display: flex; align-items: start; gap: 12px; margin-bottom: 6px; }
+    .panel-head p { margin: 0; color: var(--muted); font-size: 11.5px; }
+    .setting-row { display: grid; grid-template-columns: 1fr auto; gap: 18px; align-items: center; padding: 9px 0; border-bottom: 1px solid #edf0ed; }
+    .setting-row:last-child { border-bottom: 0; }
+    .setting-row p { margin: 4px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
+    .kv { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px dashed #e7ebe7; font-size: 12.5px; }
+    .kv:last-child { border-bottom: 0; }
+    .kv span { color: var(--muted); }
+    .agent-line { display: grid; grid-template-columns: auto 1fr auto auto; gap: 10px; align-items: center; padding: 7px 0; border-bottom: 1px solid #edf0ed; }
+    .agent-line:last-child { border-bottom: 0; }
+    .agent-line .st { width: 8px; height: 8px; border-radius: 50%; }
+    .st.ok { background: var(--good); box-shadow: 0 0 0 3px rgba(63,174,42,.12); }
+    .st.warn { background: #f2a600; box-shadow: 0 0 0 3px rgba(242,166,0,.14); }
+    .agent-line b { font-size: 12.5px; }
+    .agent-line small { display: block; color: var(--muted); font-size: 10.5px; margin-top: 1px; }
+    .agent-line .today { color: var(--muted); font-size: 11px; }
+    .device-row { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid #edf0ed; }
+    .device-row:last-child { border-bottom: 0; }
+    .device-row .dev-text b { display: block; font-size: 12.5px; }
+    .device-row .dev-text small { display: block; margin-top: 2px; font-size: 10.5px; }
+    .device-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 10px; background: #f5f7f4; color: #4e554f; font-size: 10px; font-weight: 800; }
+    .settings-foot { flex: 0 0 34px; display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 11.5px; }
+    .settings-foot .right { margin-left: auto; display: flex; gap: 8px; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script>
+    const logo = '../../logo-tokendance-v2.png';
+    const app = document.getElementById('app');
+    const params = new URLSearchParams(location.search);
+    const state = {
+      screen: params.get('screen') || 'panel',
+      range: params.get('range') === 'today' ? 'today' : '7d',
+      lang: params.get('lang') === 'en' ? 'en' : 'zh',
+    };
+    const mockLabel = `<div class="mock-label">TOKENDANCE DESKTOP MOCK · 2026</div>`;
+    const winControls = `<div class="win-controls"><span>─</span><span>▢</span><span class="close">✕</span></div>`;
+
+    // ---- Data aligned with the implemented app (13/14 screenshots) ----
+    const agentColors = ['#b9f600', '#3d5245', '#a5bd9a', '#dcefc6', '#e5b566', '#9fb3c8'];
+    const todayAgents = [
+      ['Claude Code', '2.15M', 2.15, false], ['Codex', '1.42M', 1.42, false],
+      ['Grok Build', '890K', 0.89, false], ['Cursor', '640K', 0.64, false],
+      ['ZCode', '0', 0, true], ['DeepSeek Harness', '0', 0, true],
+    ];
+    const weekAgents = [
+      ['Claude Code', '11.55M', 0, false], ['Codex', '7.63M', 0, false],
+      ['Grok Build', '4.78M', 0, false], ['Cursor', '3.44M', 0, false],
+      ['ZCode', '0', 0, true], ['DeepSeek Harness', '0', 0, true],
+    ];
+    const weekTrend = [3.1, 3.6, 3.3, 4.2, 3.7, 4.4, 5.1];
+    const weekDates = ['8/30', '8/31', '9/1', '9/2', '9/3', '9/4', '9/5'];
+
+    function trendChartSvg(values, labels) {
+      const W = 552, H = 136, N = values.length;
+      const ymin = Math.min(...values) * 0.8, ymax = Math.max(...values) * 1.04;
+      const x = (i) => 16 + (i * (W - 56)) / (N - 1);
+      const y = (v) => 24 + (1 - (v - ymin) / (ymax - ymin)) * (H - 58);
+      const pts = values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+      const dots = values.map((v, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="5" fill="#ffffff" stroke="#4f9d0a" stroke-width="3"/>`).join('');
+      const lastLabel = `<text x="${(x(N - 1) - 14).toFixed(1)}" y="${(y(values[N - 1]) - 12).toFixed(1)}" font-size="14" font-weight="700" fill="#3f473f" text-anchor="end">${values[N - 1].toFixed(1)}M</text>`;
+      const dateLabels = labels.map((t, i) => `<text x="${x(i).toFixed(1)}" y="${H - 4}" font-size="13" fill="#8a938a" text-anchor="middle">${t}</text>`).join('');
+      return `<svg viewBox="0 0 ${W} ${H}" width="100%" style="display:block">
+        <line x1="10" y1="${y(ymax).toFixed(1)}" x2="${W - 10}" y2="${y(ymax).toFixed(1)}" stroke="#dfe6df" stroke-width="1.4" stroke-dasharray="5 6"/>
+        <line x1="10" y1="${y(ymin).toFixed(1)}" x2="${W - 10}" y2="${y(ymin).toFixed(1)}" stroke="#dfe6df" stroke-width="1.4" stroke-dasharray="5 6"/>
+        <polyline points="${pts}" fill="none" stroke="#4f9d0a" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/>
+        ${dots}${lastLabel}${dateLabels}
+      </svg>`;
+    }
+
+    function agentGrid(agents, single) {
+      return `<div class="up-agents${single ? ' single' : ''}">` + agents.map(([name, val, , off], i) => `
+        <div class="up-agent">
+          <i style="background:${agentColors[i]}"></i>
+          <span class="n">${name}</span>
+          ${off ? `<span class="off" data-i18n>已关闭</span>` : ''}
+          <span class="v${off ? '' : ' solo'}">${val}</span>
+        </div>`).join('') + `</div>`;
+    }
+
+    function buildPanel() {
+      const isToday = state.range === 'today';
+      const seg = `<div class="up-seg">
+        <button type="button" data-range="today" class="${isToday ? 'active' : ''}"><span data-i18n>今日</span></button>
+        <button type="button" data-range="7d" class="${isToday ? '' : 'active'}"><span data-i18n>7日</span></button>
+      </div>`;
+      const rangeText = isToday ? `<span class="up-range" data-i18n>9月5日</span>` : `<span class="up-range">08/30 – 09/05</span>`;
+      const hero = `
+        <div class="up-label"><span data-i18n>${isToday ? '今日 Token 用量' : '近7日 Token 用量'}</span></div>
+        <div class="up-hero"><span class="big">${isToday ? '5.1M' : '27.39M'}</span><span class="unit">tokens</span></div>
+        <div class="up-tagline" data-i18n>记录你的每一次 AI 创作</div>`;
+      const section = isToday ? `
+        <div class="up-sect"><h2 data-i18n>Agent 构成</h2><span class="note" data-i18n>Token 用量</span></div>
+        <div class="up-stackbar">${todayAgents.filter(([, , , off]) => !off).map(([, , share, ], i) => `<i style="flex:${share};background:${agentColors[i]}"></i>`).join('')}</div>
+        ${agentGrid(todayAgents, true)}` : `
+        <div class="up-sect"><h2 data-i18n>每日趋势</h2><span class="note" data-i18n>含今日 · 今日持续更新</span></div>
+        <div class="up-chart">${trendChartSvg(weekTrend, weekDates)}</div>
+        <div class="up-sect"><h2 data-i18n>Agent 构成</h2><span class="note" data-i18n>Token 用量</span></div>
+        ${agentGrid(weekAgents.map(([n, v]) => [n, v, false]), false)}`;
+      return `
+      <section class="screen">
+        <span class="canvas-caption">TOKENDANCE 桌面端 · 用量面板（点击托盘图标打开 · 参考尺寸 420×570）</span>
+        <div class="usage-flyout">
+          <div class="up-head">
+            <img src="${logo}" alt=""><span class="name">TokenDance</span>
+            <div class="hdr-right">
+              <button type="button" class="hdr-lang" data-toggle-lang>${state.lang === 'zh' ? 'EN' : '中'}</button>
+              <button type="button" class="hdr-close">✕</button>
+            </div>
+          </div>
+          <div class="up-body">
+            <div class="up-meta"><span data-i18n>浏览器预览 · 示例数据</span><span data-i18n>本机数据</span></div>
+            <h1 class="up-title" data-i18n>我的用量</h1>
+            <div class="up-controls">${seg}${rangeText}</div>
+            ${hero}
+            ${section}
+          </div>
+          <div class="up-status">
+            <span class="dot"></span><b data-i18n>采集中</b>
+            <span class="pending" data-i18n>2 条待同步</span>
+            <div class="act"><button type="button" data-i18n>暂停</button><button type="button" data-i18n>同步</button></div>
+          </div>
+          <div class="up-foot">
+            <button type="button" class="settings-link"><span class="gear">⚙</span><span data-i18n>设置</span></button>
+            <button type="button" class="web-btn"><span data-i18n>网站主页 · 看排名</span><span class="arr">↗</span></button>
+          </div>
+        </div>
+        <div class="taskbar">
+          <div class="tray-icons"><span></span><span></span><span></span></div>
+          <span class="chevron">∧</span>
+          <div class="td-tray">TD</div>
+          <div class="clock">2026/09/05<br>15:18</div>
+        </div>
+        <div class="mock-label" style="bottom:64px">TOKENDANCE DESKTOP MOCK · 2026</div>
+      </section>`;
+    }
+
+    function buildTray() {
+      const genericIcons = [
+        ['N', '#4f8ef7', 'round'], ['Z', '#20242b', ''], ['◆', '#7ab648', 'round'], ['L', '#2b6fe3', 'round'],
+        ['✦', '#1d7bff', ''], ['AI', '#e8eaed', ''], ['W', '#2563eb', 'round'], ['⚠', '#f5b301', 'round'],
+        ['G', '#e35b2b', ''], ['52', '#d8c104', ''], ['T', '#39c5cf', 'round'], ['iKu', '#8f9aa6', ''],
+        ['P', '#d24a94', 'round'], ['▣', '#546e7a', ''],
+      ].map(([ch, bg, shape]) => `<span class="${shape}" style="background:${bg};${bg === '#e8eaed' ? 'color:#111512;' : ''}">${ch}</span>`).join('');
+      return `
+      <section class="screen">
+        <span class="canvas-caption">TOKENDANCE 桌面端 · 图标常驻托盘隐藏区（点击图标打开用量面板）</span>
+        <div class="flyout">
+          <span class="td"><span class="fi-tip">TokenDance</span>TD</span>
+          ${genericIcons}
+        </div>
+        <div class="taskbar">
+          <div class="tray-icons"><span></span><span></span><span></span></div>
+          <span class="chevron">∧</span>
+          <div class="clock">2026/09/05<br>15:18</div>
+        </div>
+        <div class="mock-label" style="bottom:64px">TOKENDANCE DESKTOP MOCK · 2026</div>
+      </section>`;
+    }
+
+    function buildSettings() {
+      const titlebar = `
+        <header class="titlebar">
+          <div class="brand"><img src="${logo}" alt=""><span>TokenDance</span></div>
+          <span class="ver">桌面客户端 · 1.2.0</span>
+          <span class="tag lime" style="border:0"><span class="status" style="gap:6px;font-size:11px;color:#477800"><i></i></span><span data-i18n>采集中</span></span>
+          <div class="titlebar-right">
+            <div class="locale-switch" aria-label="Language"><button type="button" data-lang="zh" class="${state.lang === 'zh' ? 'active' : ''}">中文</button><button type="button" data-lang="en" class="${state.lang === 'en' ? 'active' : ''}">EN</button></div>
+          </div>
+          ${winControls}
+        </header>`;
+      return `
+      <section class="screen center">
+        <div class="app-window">
+          ${titlebar}
+          <div class="win-body">
+            <div class="page-head">
+              <div>
+                <p class="eyebrow">Collector settings</p>
+                <h1 data-i18n>采集与设置</h1>
+                <p class="subtle" style="font-size:12.5px" data-i18n>从用量面板左下角进入；守护进程、Agent、上报与设备集中管理。</p>
+              </div>
+              <div class="head-actions"><span class="tag lime" data-i18n>运行正常</span><span class="tag">Collector 1.2.0</span></div>
+            </div>
+
+            <div class="settings-grid">
+              <div class="settings-col">
+                <section class="settings-card">
+                  <div class="panel-head"><div><h2 data-i18n>采集状态</h2><p data-i18n>守护进程与资源占用</p></div><span class="status"><i></i><span data-i18n>运行中</span></span></div>
+                  <div class="kv"><span data-i18n>运行时长</span><b class="mono">1 小时 02 分</b></div>
+                  <div class="kv"><span data-i18n>内存 / CPU</span><b class="mono">43.2MB · 0.8%</b></div>
+                  <div class="kv"><span data-i18n>累计采集事件</span><b class="mono">12,480</b></div>
+                  <div class="kv"><span data-i18n>累计已上报</span><b class="mono">12,478</b></div>
+                  <div class="setting-row"><div><h3 data-i18n>开机自启动</h3><p data-i18n>随系统静默启动，常驻托盘。</p></div><div class="switch on"></div></div>
+                </section>
+                <section class="settings-card compact">
+                  <div class="panel-head" style="margin-bottom:2px"><div><h2 data-i18n>Agent 数据源</h2><p data-i18n>6 个适配器 · 关闭后停止采集对应数据</p></div></div>
+                  <div class="agent-line"><span class="st ok"></span><div><b>Claude Code</b><small data-i18n>精确匹配 · OTLP + 运行时流</small></div><span class="today mono" data-i18n>今日 +2.15M</span><div class="switch on"></div></div>
+                  <div class="agent-line"><span class="st ok"></span><div><b>Codex</b><small data-i18n>精确匹配 · OTLP + 文件快照</small></div><span class="today mono" data-i18n>今日 +1.42M</span><div class="switch on"></div></div>
+                  <div class="agent-line"><span class="st ok"></span><div><b>Grok Build</b><small data-i18n>推导匹配 · 本地 HTTP API</small></div><span class="today mono" data-i18n>今日 +890K</span><div class="switch on"></div></div>
+                  <div class="agent-line"><span class="st ok"></span><div><b>Cursor</b><small data-i18n>关联匹配 · SQLite + JSONL</small></div><span class="today mono" data-i18n>今日 +640K</span><div class="switch on"></div></div>
+                  <div class="agent-line"><span class="st warn"></span><div><b>ZCode</b><small data-i18n>等待配置 · 预估精度</small></div><span class="today" data-i18n>未连接</span><div class="switch"></div></div>
+                  <div class="agent-line"><span class="st warn"></span><div><b>DeepSeek Harness</b><small data-i18n>需要授权 · 推导精度</small></div><span class="today" data-i18n>等待授权</span><div class="switch"></div></div>
+                </section>
+              </div>
+
+              <div class="settings-col">
+                <section class="settings-card">
+                  <div class="panel-head" style="margin-bottom:4px"><div><h2 data-i18n>上报与隐私</h2><p data-i18n>上传前在本地完成脱敏</p></div><span class="tag lime" data-i18n>脱敏已启用</span></div>
+                  <div class="setting-row"><div><h3 data-i18n>自动上报</h3><p data-i18n>每 5 分钟批量上传，失败进入本地队列重试。</p></div><div class="switch on"></div></div>
+                  <div class="setting-row"><div><h3 data-i18n>仅聚合数据</h3><p data-i18n>Prompt、回复、代码正文与绝对路径永不采集上传。</p></div><span class="tag" data-i18n>强制开启</span></div>
+                  <div class="setting-row"><div><h3 data-i18n>待上报队列</h3><p data-i18n>本地暂存 2 条事件 · WAL 加密存储。</p></div><button class="button" data-i18n>预览上报内容</button></div>
+                </section>
+                <section class="settings-card">
+                  <div class="panel-head" style="margin-bottom:2px"><div><h2 data-i18n>设备</h2><p data-i18n>2 台设备已连接</p></div><button class="button" data-i18n>绑定新设备</button></div>
+                  <div class="device-row"><div class="device-icon">WIN</div><div class="dev-text"><b>Windows Studio</b><small class="subtle" data-i18n>本机 · Windows 11 · 刚刚同步</small></div><span class="status" style="gap:0"><i></i></span></div>
+                  <div class="device-row"><div class="device-icon">MAC</div><div class="dev-text"><b>MacBook Pro</b><small class="subtle" data-i18n>macOS Sonoma · 8 分钟前 · 待上报 3</small></div><span class="status" style="gap:0"><i style="background:#f2a600;box-shadow:0 0 0 4px rgba(242,166,0,.14)"></i></span></div>
+                </section>
+                <section class="settings-card">
+                  <div class="panel-head" style="margin-bottom:2px"><div><h2 data-i18n>数据操作</h2><p data-i18n>仅作用于你自己的账户</p></div></div>
+                  <div class="setting-row"><div><h3 data-i18n>清空本地待发队列</h3><p data-i18n>删除本机尚未上报的事件。</p></div><button class="button danger" data-i18n>清空</button></div>
+                  <div class="setting-row"><div><h3 data-i18n>请求删除服务端数据</h3><p data-i18n>创建异步删除任务并出具审计结果。</p></div><button class="button danger" data-i18n>请求删除</button></div>
+                </section>
+              </div>
+            </div>
+
+            <div class="settings-foot">
+              <span data-i18n>配置快照 v1.0.2 · 昨日 22:14</span>
+              <div class="right">
+                <button class="button ghost" data-i18n>查看快照与回滚</button>
+                <span class="tag private" data-i18n>无排行榜 · 仅自己可见</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        ${mockLabel}
+      </section>`;
+    }
+
+    function render() {
+      app.innerHTML = state.screen === 'tray' ? buildTray() : state.screen === 'settings' ? buildSettings() : buildPanel();
+      app.querySelectorAll('[data-range]').forEach((b) => b.addEventListener('click', () => { state.range = b.dataset.range; render(); }));
+      app.querySelectorAll('[data-toggle-lang]').forEach((b) => b.addEventListener('click', () => { state.lang = state.lang === 'zh' ? 'en' : 'zh'; render(); }));
+      app.querySelectorAll('[data-lang]').forEach((b) => b.addEventListener('click', () => { state.lang = b.dataset.lang; render(); }));
+      applyLanguage(state.lang);
+    }
+
+    const translations = {
+      '采集中': 'Collecting',
+      'TOKENDANCE 桌面端 · 图标常驻托盘隐藏区（点击图标打开用量面板）': 'TOKENDANCE DESKTOP · TRAY ICON RESIDENT (CLICK TO OPEN THE USAGE PANEL)',
+      'TOKENDANCE 桌面端 · 用量面板（点击托盘图标打开 · 参考尺寸 420×570）': 'TOKENDANCE DESKTOP · USAGE PANEL (OPENED FROM TRAY ICON · REFERENCE SIZE 420×570)',
+      '浏览器预览 · 示例数据': 'Browser preview · Sample data',
+      '本机数据': 'On-device data',
+      '我的用量': 'My usage',
+      '今日': 'Today', '7日': '7 Days',
+      '9月5日': 'Sep 5',
+      '今日 Token 用量': 'Tokens today', '近7日 Token 用量': 'Tokens · last 7 days',
+      '记录你的每一次 AI 创作': 'Every AI creation you make, recorded.',
+      '每日趋势': 'Daily trend', '含今日 · 今日持续更新': 'Includes today · updating live',
+      'Agent 构成': 'Agent breakdown', 'Token 用量': 'Token usage',
+      '已关闭': 'Off',
+      '2 条待同步': '2 pending sync',
+      '暂停': 'Pause', '同步': 'Sync',
+      '设置': 'Settings', '网站主页 · 看排名': 'Website · View rankings',
+      'Collector settings': 'Collector settings',
+      '采集与设置': 'Collection & settings',
+      '从用量面板左下角进入；守护进程、Agent、上报与设备集中管理。': 'Opened from the panel bottom-left; daemon, agents, upload, and devices managed in one place.',
+      '运行正常': 'Healthy',
+      '桌面客户端 · 1.2.0': 'Desktop · 1.2.0',
+      '采集状态': 'Collector status', '守护进程与资源占用': 'Daemon and resource usage', '运行中': 'Running',
+      '运行时长': 'Uptime', '1 小时 02 分': '1h 02m', '内存 / CPU': 'Memory / CPU',
+      '43.2MB · 0.8%': '43.2MB · 0.8%', '累计采集事件': 'Events collected', '累计已上报': 'Uploaded total',
+      '开机自启动': 'Launch at login', '随系统静默启动，常驻托盘。': 'Start silently with the system and stay in the tray.',
+      'Agent 数据源': 'Agent sources', '6 个适配器 · 关闭后停止采集对应数据': '6 adapters · disable to stop collecting that agent',
+      '精确匹配 · OTLP + 运行时流': 'Exact · OTLP + runtime stream',
+      '精确匹配 · OTLP + 文件快照': 'Exact · OTLP + file snapshot',
+      '推导匹配 · 本地 HTTP API': 'Derived · local HTTP API',
+      '关联匹配 · SQLite + JSONL': 'Correlated · SQLite + JSONL',
+      '等待配置 · 预估精度': 'Awaiting setup · estimated accuracy',
+      '需要授权 · 推导精度': 'Permission required · derived accuracy',
+      '未连接': 'Not connected', '等待授权': 'Awaiting approval',
+      '今日 +2.15M': 'Today +2.15M', '今日 +1.42M': 'Today +1.42M', '今日 +890K': 'Today +890K', '今日 +640K': 'Today +640K',
+      '上报与隐私': 'Upload & privacy', '上传前在本地完成脱敏': 'Redaction happens locally before upload',
+      '脱敏已启用': 'Redaction on',
+      '自动上报': 'Auto upload', '每 5 分钟批量上传，失败进入本地队列重试。': 'Batched every 5 minutes; failures retry from the local queue.',
+      '仅聚合数据': 'Aggregates only', 'Prompt、回复、代码正文与绝对路径永不采集上传。': 'Prompts, responses, source code, and absolute paths are never collected.',
+      '强制开启': 'Always on',
+      '待上报队列': 'Pending queue', '本地暂存 2 条事件 · WAL 加密存储。': '2 events buffered locally · encrypted WAL storage.',
+      '预览上报内容': 'Preview payload',
+      '设备': 'Devices', '2 台设备已连接': '2 devices connected', '绑定新设备': 'Bind device',
+      '本机 · Windows 11 · 刚刚同步': 'This device · Windows 11 · synced just now',
+      'macOS Sonoma · 8 分钟前 · 待上报 3': 'macOS Sonoma · 8 min ago · 3 pending',
+      '数据操作': 'Data actions', '仅作用于你自己的账户': 'Only affects your own account',
+      '清空本地待发队列': 'Purge local queue', '删除本机尚未上报的事件。': 'Delete events not yet uploaded from this machine.',
+      '清空': 'Purge', '请求删除服务端数据': 'Delete server data', '创建异步删除任务并出具审计结果。': 'Creates an async deletion job with an audit result.',
+      '请求删除': 'Request deletion',
+      '配置快照 v1.0.2 · 昨日 22:14': 'Config snapshot v1.0.2 · yesterday 22:14',
+      '查看快照与回滚': 'Snapshots & rollback',
+      '无排行榜 · 仅自己可见': 'No leaderboard · private'
+    };
+
+    const originalText = new WeakMap();
+    function applyLanguage(language) {
+      const walker = document.createTreeWalker(app, NodeFilter.SHOW_TEXT);
+      const nodes = [];
+      while (walker.nextNode()) nodes.push(walker.currentNode);
+      nodes.forEach((node) => {
+        if (!originalText.has(node)) originalText.set(node, node.nodeValue);
+        const source = originalText.get(node);
+        const trimmed = source.trim();
+        if (!trimmed) return;
+        const replacement = language === 'en' ? (translations[trimmed] || trimmed) : trimmed;
+        node.nodeValue = source.replace(trimmed, replacement);
+      });
+      document.documentElement.lang = language === 'en' ? 'en' : 'zh-CN';
+    }
+
+    render();
+  </script>
+</body>
+</html>
