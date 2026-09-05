@@ -1208,3 +1208,18 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .podium-avatar-wrap .avatar-fallback { width: 56px; height: 56px; font-size: 22px; }
 .rank-person .avatar-fallback { width: 32px; height: 32px; font-size: 13px; }
 .side-card-empty { margin: 8px 0 0; color: #686d68; font-size: 13px; line-height: 1.5; }
+
+.avatar-settings { display:flex; align-items:center; gap:24px; padding-bottom:24px; margin-bottom:24px; border-bottom:1px solid var(--border-light); }
+.profile-avatar-preview { width:96px; height:96px; border-radius:50%; overflow:hidden; flex-shrink:0; display:grid; place-items:center; background:#edf6d4; color:#25391b; font-size:32px; font-weight:700; }
+.profile-avatar-preview img { width:100%; height:100%; object-fit:cover; }
+.avatar-settings h3 { margin:0 0 4px; }.avatar-settings p { margin:4px 0 12px; font-size:13px; }
+.avatar-actions { display:flex; flex-wrap:wrap; gap:8px; }.avatar-error { color:#b3261e; }
+.leaderboard-list-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; padding:20px 25px 12px; }.leaderboard-list-heading h2 { font-size:17px; margin:0; }.leaderboard-list-heading a { color:#456416; font-size:13px; font-weight:600; }
+.leaderboard-table-scroll { overflow-x:auto; padding:0 24px 16px; }.leaderboard-data-table { width:100%; border-collapse:collapse; text-align:left; font-size:14px; }
+.leaderboard-data-table th { color:#606c62; font-size:12px; font-weight:600; padding:12px 8px; border-bottom:1px solid #dce3d9; }.leaderboard-data-table td { padding:16px 8px; border-bottom:1px solid #ecf0e9; }
+.leaderboard-data-table th:first-child { width:64px; }.leaderboard-data-table th:nth-child(n+3),.leaderboard-data-table td:nth-child(n+3) { text-align:right; white-space:nowrap; }
+.leaderboard-person { display:flex; align-items:center; gap:12px; color:inherit; text-decoration:none; min-width:150px; }.leaderboard-person:hover strong { text-decoration:underline; }.leaderboard-person strong { display:block; }.leaderboard-person small { display:block; color:#657066; margin-top:3px; }
+.leaderboard-person img,.list-avatar { width:40px; height:40px; flex-shrink:0; border-radius:50%; object-fit:cover; }.list-avatar { display:grid; place-items:center; background:#edf6d4; color:#364e19; font-weight:700; }.list-rank { font-weight:700; }
+.leaderboard-pagination { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; padding:20px 24px; color:#606c62; font-size:13px; }.leaderboard-pagination>div { display:flex; gap:8px; }
+.leaderboard-list-panel { padding:0; overflow:hidden; }.leaderboard-list-page { max-width:1200px; margin:0 auto; }
+@media(max-width:600px) { .avatar-settings { align-items:flex-start; gap:16px; }.profile-avatar-preview { width:72px; height:72px; }.leaderboard-table-scroll { padding:0 12px 12px; }.leaderboard-list-heading { padding:16px 20px; } }

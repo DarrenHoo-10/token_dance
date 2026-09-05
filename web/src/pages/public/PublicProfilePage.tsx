@@ -1,3 +1,4 @@
+import { avatarUrl } from '@/utils/avatar';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link2, LockKeyhole } from 'lucide-react';
 import { Link, Navigate, useParams } from 'react-router-dom';
@@ -107,7 +108,7 @@ const PublicProfileContent: React.FC = () => {
     <section className="product-page-shell public-data-page" aria-labelledby="public-data-title">
       <div className="public-data-header">
         <div className="public-identity">
-          <div className="public-avatar">{profile.avatarUrl ? <img src={profile.avatarUrl} alt={profile.displayName} /> : <span>{initials}</span>}</div>
+          <div className="public-avatar">{profile.avatarUrl ? <img src={avatarUrl(profile.avatarUrl)} alt={profile.displayName} /> : <span>{initials}</span>}</div>
           <div><span>{zh ? '个人数据页' : 'Personal Data'}</span><h1 id="public-data-title">{profile.displayName}</h1><p>@{profile.handle}{profile.bio ? `  ${profile.bio}` : ''}</p></div>
         </div>
         <Button variant="outline" onClick={() => { navigator.clipboard.writeText(window.location.href); showToast(t('publicProfile.linkCopied'), 'success'); }}><Link2 size={16} aria-hidden="true" />{zh ? '复制链接' : 'Copy link'}</Button>

@@ -3,6 +3,7 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -14,6 +15,35 @@ func seedRankUsage(t *testing.T, db *sql.DB, userID, date, agent string, exact, 
 	VALUES (?,?,?,?,?,?,2)`, date, userID, agent, exact, derived, estimated)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLeaderboardTop1000MySQL(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	date := now.Format("2006-01-02")
+	for n := 1; n <= 1001; n++ {
+		id := fmt.Sprintf("usr_cap_%04d", n)
+		handle := fmt.Sprintf("cap_%04d", n)
+		seedTestUser(t, db, st, id, handle, handle, handle+"@cap.test", true, now)
+		if _, err := db.Exec("UPDATE user_privacy_settings SET show_token_total=TRUE WHERE user_id=?", id); err != nil {
+			t.Fatal(err)
+		}
+		seedRankUsage(t, db, id, date, "codex", 2000-n, 0, 0)
+	}
+	cursor := "980"
+	board, err := st.Leaderboard().GetLeaderboard(ctx, "global", "today", "tokens", &cursor, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(board.Entries) != 20 || board.Entries[19].RankNo != 1000 || board.NextCursor != nil {
+		t.Fatalf("top 1000 boundary failed: %+v", board)
+	}
+	cursor = "1000"
+	if _, err := st.Leaderboard().GetLeaderboard(ctx, "global", "today", "tokens", &cursor, 20); err == nil {
+		t.Fatal("cursor beyond top 1000 accepted")
 	}
 }
 

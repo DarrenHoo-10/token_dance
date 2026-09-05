@@ -3,6 +3,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { useNotification } from '@/context/NotificationContext';
 import { Input } from '@/components/common/Input';
+import { AvatarSettings } from '@/components/common/AvatarSettings';
 import { Select } from '@/components/common/Select';
 import { Button } from '@/components/common/Button';
 import { LoadingState } from '@/components/states/LoadingState';
@@ -19,6 +20,7 @@ export const ProfileSettingsPage: React.FC = () => {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [avatarBusy, setAvatarBusy] = useState(false);
   const [error, setError] = useState<ApiError | Error | null>(null);
 
   const [displayName, setDisplayName] = useState('');
@@ -50,7 +52,7 @@ export const ProfileSettingsPage: React.FC = () => {
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!displayName.trim()) return;
+    if (!displayName.trim() || saving || avatarBusy) return;
 
     try {
       setSaving(true);
@@ -102,6 +104,7 @@ export const ProfileSettingsPage: React.FC = () => {
         </div>
       </div>
 
+      {profile && <AvatarSettings profile={profile} onUpdated={setProfile} onBusy={setAvatarBusy} disabled={saving} />}
       <form onSubmit={handleSave}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <Input
@@ -157,7 +160,7 @@ export const ProfileSettingsPage: React.FC = () => {
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 24 }}>
-          <Button type="submit" variant="dark" loading={saving}>
+          <Button type="submit" variant="dark" loading={saving} disabled={avatarBusy}>
             {t('common.save')}
           </Button>
         </div>

@@ -278,8 +278,14 @@ class ApiHttpClient {
     });
   }
 
-  public async completeAvatarUpload(intentId: string): Promise<UserProfile> {
-    return this.request<UserProfile>(`/me/avatar-upload-intents/${encodeURIComponent(intentId)}/complete`, {
+  public async uploadAvatarContent(intentId: string, file: File): Promise<void> {
+    return this.request<void>(`/me/avatar-upload-intents/${encodeURIComponent(intentId)}/content`, {
+      method: 'PUT', body: file, headers: { 'Content-Type': file.type },
+    });
+  }
+
+  public async completeAvatarUpload(intentId: string): Promise<{ objectId: string; uploadStatus: string }> {
+    return this.request<{ objectId: string; uploadStatus: string }>(`/me/avatar-upload-intents/${encodeURIComponent(intentId)}/complete`, {
       method: 'POST',
     });
   }
