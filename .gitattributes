@@ -1,0 +1,4 @@
+# rustfmt is configured with newline_style = "Unix". Force LF so Windows
+# checkouts (core.autocrlf=true) do not convert *.rs to CRLF and fail
+# `cargo fmt --check`.
+*.rs text eol=lf
