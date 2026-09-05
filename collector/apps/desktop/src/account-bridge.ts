@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getWebsiteUrl, isTauriEnvironment } from "./tauri-bridge";
-import { resolveWebsiteOrigin } from "./website";
+import { resolveWebsiteOrigin, websitePageUrl } from "./website";
 
 export interface AccountUser {
   userId: string;
@@ -20,7 +20,7 @@ export async function logoutAccount(website: string): Promise<void> {
   if (isTauriEnvironment()) await invoke("logout_account", { website });
 }
 export async function openAccountWebsite(path: "/register" | "/forgot-password" | "/onboarding"): Promise<void> {
-  const url = new URL(path, accountWebsite()).href;
+  const url = websitePageUrl(accountWebsite(), path);
   if (isTauriEnvironment()) await invoke("open_website", { url });
   else window.open(url, "_blank", "noopener,noreferrer");
 }
