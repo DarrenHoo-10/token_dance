@@ -1,5 +1,14 @@
 import { invoke } from "@tauri-apps/api/core";
 import { lastSevenDays } from "./weekly-usage.ts";
+import type { AgentQuota } from "./usage-analytics";
+
+export async function getAgentQuotas(): Promise<AgentQuota[]> {
+  if (isTauriEnvironment()) return invoke<AgentQuota[]>("get_agent_quotas");
+  return [{ agentId: "codex", plan: "Pro", observedAt: new Date().toISOString(), windows: [
+    { usedPercent: 12, windowMinutes: 300, resetsAt: Math.floor(Date.now() / 1000) + 7200 },
+    { usedPercent: 37, windowMinutes: 10080, resetsAt: Math.floor(Date.now() / 1000) + 518400 },
+  ] }];
+}
 import {
   WEBSITE_URL_STORAGE_KEY,
   parseWebsiteOrigin,
@@ -29,7 +38,9 @@ export interface AgentConfig {
   todayTokens: number;
   totalTokens: number;
   // Local calendar-day aggregates. Omitted when the native collector has no history yet.
-  dailyUsage?: { date: string; tokens: number }[];
+  dailyUsage?: { date: string; tokens: number; costs?: Record<string, number> }[];
+  totalCosts?: Record<string, number>;
+  historyStart?: string | null;
   lastActive: string;
   version: string;
 }

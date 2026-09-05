@@ -21,8 +21,8 @@ pub fn show_usage_panel(app: &AppHandle, point: PhysicalPosition<f64>) -> tauri:
             let gap = (12.0 * scale).round() as i32;
             // Compute in target-monitor physical pixels, including mixed DPI and negative origins.
             let size = PhysicalSize::new(
-                ((420.0 * scale).round() as u32).min(area.size.width),
-                ((560.0 * scale).round() as u32).min(area.size.height),
+                ((480.0 * scale).round() as u32).min(area.size.width),
+                ((780.0 * scale).round() as u32).min(area.size.height),
             );
             window.set_position(panel_position(area.position, area.size, size, gap))?;
             window.set_size(size)?;

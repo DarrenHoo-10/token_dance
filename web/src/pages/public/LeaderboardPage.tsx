@@ -70,6 +70,7 @@ export const LeaderboardPage: React.FC = () => {
   const [loadError, setLoadError] = useState(false);
 
   const [summary, setSummary] = useState<PersonalSummary | null>(null);
+  const [allTimeSummary, setAllTimeSummary] = useState<PersonalSummary | null>(null);
   const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
   const [streak, setStreak] = useState(0);
   const [agentTools, setAgentTools] = useState<BreakdownItem[]>([]);
@@ -93,6 +94,7 @@ export const LeaderboardPage: React.FC = () => {
   }, [fetchLeaderboard]);
 
   useEffect(() => {
+    setAllTimeSummary(null);
     if (!authenticated) {
       setSummary(null);
       setCalendarDays([]);
@@ -101,6 +103,9 @@ export const LeaderboardPage: React.FC = () => {
       return;
     }
     let cancelled = false;
+    api.getPersonalSummary('all')
+      .then((result) => { if (!cancelled) setAllTimeSummary(result); })
+      .catch(() => { /* Keep unavailable historical totals distinct from zero. */ });
     (async () => {
       try {
         const [summaryRes, calRes, agentsRes] = await Promise.all([
@@ -118,7 +123,7 @@ export const LeaderboardPage: React.FC = () => {
       }
     })();
     return () => { cancelled = true; };
-  }, [authenticated]);
+  }, [authenticated, user?.userId]);
 
   const podium = entries.length >= 3 ? [entries[1], entries[0], entries[2]] : entries.slice(0, entries.length);
   const rows = entries.filter((entry) => entry.rankNo > 3);
@@ -127,6 +132,8 @@ export const LeaderboardPage: React.FC = () => {
     : undefined;
   const rankValue = summary?.ranking?.rank ?? null;
   const todayTokens = summary?.metrics?.totalTokens?.value ?? null;
+  const allTimeTokens = allTimeSummary?.metrics.totalTokens.supported
+    ? allTimeSummary.metrics.totalTokens.value : null;
   const monthLabel = calendarDays.length
     ? new Date(calendarDays[calendarDays.length - 1].date).toLocaleDateString(zh ? 'zh-CN' : 'en-US', { month: 'short', year: 'numeric' })
     : '';
@@ -198,6 +205,7 @@ export const LeaderboardPage: React.FC = () => {
         {authenticated ? <>
           <div className="stat-block"><span>{zh ? '全球排名' : 'Global Rank'}</span><div className="stat-line"><strong>{rankValue ?? '—'}</strong><TrendBadge value={summary?.ranking?.delta ?? null} />{summary?.ranking?.percentile != null && <em>{zh ? `前 ${summary.ranking.percentile}%` : `Top ${summary.ranking.percentile}%`}</em>}</div></div>
           <div className="stat-block"><span>{zh ? '今日 Token' : 'Today’s Tokens'}</span><div className="stat-line"><strong>{formatTokens(todayTokens)}</strong></div></div>
+          <div className="stat-block"><span>{zh ? '累计 Token · All time' : 'All time Tokens'}</span><div className="stat-line"><strong>{allTimeTokens === '0' ? '0' : formatTokens(allTimeTokens)}</strong></div></div>
           <div className="streak-line"><span>{zh ? '连续活跃' : 'Streak'}</span><div><Flame /><strong>{streak || 0}</strong>{zh ? '天' : 'days'}</div></div>
         </> : <p className="side-card-empty">{zh ? '登录后查看你的排名与统计。' : 'Sign in to see your rank and stats.'}</p>}
       </section>

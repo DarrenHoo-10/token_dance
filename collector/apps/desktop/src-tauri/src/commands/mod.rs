@@ -7,6 +7,7 @@ pub mod deletion;
 pub mod device;
 pub mod upload;
 pub mod window;
+pub mod quotas;
 
 pub use agents::*;
 pub use autostart::*;
