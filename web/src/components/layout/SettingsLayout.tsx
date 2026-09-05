@@ -29,7 +29,7 @@ export const SettingsLayout: React.FC = () => {
         <p className="text-muted">{t('settings.subheadline')}</p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 24 }}>
+      <div className="settings-layout">
         <aside>
           <div
             className="panel"
@@ -55,7 +55,7 @@ export const SettingsLayout: React.FC = () => {
             <NavLink
               to="/settings/profile"
               className={({ isActive }) =>
-                `btn btn-ghost ${isActive ? 'btn-dark' : ''}`
+                `btn ${isActive ? 'btn-dark' : 'btn-ghost'}`
               }
               style={{ justifyContent: 'flex-start', textAlign: 'left', width: '100%' }}
             >
@@ -65,7 +65,7 @@ export const SettingsLayout: React.FC = () => {
             <NavLink
               to="/settings/privacy"
               className={({ isActive }) =>
-                `btn btn-ghost ${isActive ? 'btn-dark' : ''}`
+                `btn ${isActive ? 'btn-dark' : 'btn-ghost'}`
               }
               style={{ justifyContent: 'flex-start', textAlign: 'left', width: '100%' }}
             >
@@ -75,7 +75,7 @@ export const SettingsLayout: React.FC = () => {
             <NavLink
               to="/settings/devices"
               className={({ isActive }) =>
-                `btn btn-ghost ${isActive ? 'btn-dark' : ''}`
+                `btn ${isActive ? 'btn-dark' : 'btn-ghost'}`
               }
               style={{ justifyContent: 'flex-start', textAlign: 'left', width: '100%' }}
             >
@@ -85,7 +85,7 @@ export const SettingsLayout: React.FC = () => {
             <NavLink
               to="/settings/exports"
               className={({ isActive }) =>
-                `btn btn-ghost ${isActive ? 'btn-dark' : ''}`
+                `btn ${isActive ? 'btn-dark' : 'btn-ghost'}`
               }
               style={{ justifyContent: 'flex-start', textAlign: 'left', width: '100%' }}
             >

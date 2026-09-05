@@ -265,7 +265,18 @@ export const enUS = {
     snapshotAt: 'Snapshot generated at',
     loadMore: 'Load more',
   },
+  teams: {
+    label: 'Teams',
+    title: 'Team Token Analytics',
+    unavailableTitle: 'Teams are not available yet',
+    unavailableDesc: 'Team data is not available yet. You can view your personal token usage and activity in the meantime.',
+  },
   publicProfile: {
+    unavailableTitle: 'Public profile unavailable',
+    unavailableDesc: 'This profile does not exist or is not public. Return to TokenBoard to explore public profiles.',
+    ownerUnavailableDesc: 'Your public profile is not published or is currently unavailable. You can still view your personal data and manage visibility in privacy settings.',
+    viewOwnData: 'View personal data',
+    backToLeaderboard: 'Back to TokenBoard',
     headline: 'Personal Data',
     subheadline: 'Publicly shared token, code, cost, activity, and skill metrics.',
     copyLink: 'Copy link',

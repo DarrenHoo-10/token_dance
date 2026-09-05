@@ -15,6 +15,7 @@ import { PersonalDashboardPage } from '@/pages/me/PersonalDashboardPage';
 import { PrivacySettingsPage } from '@/pages/settings/PrivacySettingsPage';
 import { DevicesSettingsPage } from '@/pages/settings/DevicesSettingsPage';
 import { ExportsSettingsPage } from '@/pages/settings/ExportsSettingsPage';
+import { SettingsLayout } from '@/components/layout/SettingsLayout';
 import { ProfileSettingsPage } from '@/pages/settings/ProfileSettingsPage';
 
 function renderWithProviders(ui: React.ReactElement, initialRoute = '/') {
@@ -75,11 +76,14 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       expect(screen.getByText('这里暂时留白')).toBeInTheDocument();
     });
 
-    it('renders team token analytics instead of user comparison', () => {
+    it('shows teams as unavailable without fabricated metrics or controls', () => {
       renderWithProviders(<TeamDashboardPage />, '/teams');
       expect(screen.getByRole('heading', { name: '小团队 Token 分析' })).toBeInTheDocument();
-      expect(screen.getByText('团队 Token 趋势')).toBeInTheDocument();
-      expect(screen.getByText('成员消耗')).toBeInTheDocument();
+      expect(screen.getByText('团队功能尚未开放')).toBeInTheDocument();
+      expect(screen.queryByText('410.1M')).not.toBeInTheDocument();
+      expect(screen.queryByText('Max Bauer')).not.toBeInTheDocument();
+      expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+      expect(screen.getByRole('link', { name: '查看个人数据' })).toHaveAttribute('href', '/me');
     });
   });
 
@@ -140,7 +144,9 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       });
     });
 
-    it('renders ErrorState when public profile is not found (404)', async () => {
+    it('shows a neutral unavailable state and skips metrics for a private or missing profile', async () => {
+      const trendsSpy = vi.spyOn(api, 'getPublicTokenTrends');
+      const skillsSpy = vi.spyOn(api, 'getPublicSkills');
       vi.spyOn(api, 'getPublicProfile').mockRejectedValue(
         new ApiError(404, { code: 'PUBLIC_PROFILE_NOT_FOUND', messageKey: 'errors.PUBLIC_PROFILE_NOT_FOUND' })
       );
@@ -160,9 +166,57 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByText('数据加载失败')).toBeInTheDocument();
-        expect(screen.getByText('PUBLIC_PROFILE_NOT_FOUND')).toBeInTheDocument();
+        expect(screen.getByText('公开主页暂不可用')).toBeInTheDocument();
+        expect(screen.queryByText('PUBLIC_PROFILE_NOT_FOUND')).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument();
+        expect(screen.getByRole('link', { name: '返回 TokenBoard' })).toHaveAttribute('href', '/leaderboard');
+        expect(screen.queryByRole('link', { name: '隐私与公开' })).not.toBeInTheDocument();
+        expect(trendsSpy).not.toHaveBeenCalled();
+        expect(skillsSpy).not.toHaveBeenCalled();
       });
+    });
+  });
+
+  describe('Unavailable profiles and settings navigation', () => {
+    const signedIn = {
+      authenticated: true,
+      user: { userId: 'usr_01', displayName: 'Test User', handle: 'testuser', avatarUrl: null,
+        locale: 'zh-CN' as const, onboardingRequired: false, productState: 'active_private' as const },
+    };
+
+    it('lets the owner manage privacy without changing it automatically', async () => {
+      vi.spyOn(api, 'getSession').mockResolvedValue(signedIn);
+      vi.spyOn(api, 'getPublicProfile').mockRejectedValue(new ApiError(404, {
+        code: 'PUBLIC_PROFILE_NOT_FOUND', messageKey: 'errors.PUBLIC_PROFILE_NOT_FOUND',
+      }));
+      const privacySpy = vi.spyOn(api, 'updatePrivacy');
+      renderWithProviders(<Routes><Route path="/u/:handle" element={<PublicProfilePage />} /></Routes>, '/u/testuser');
+      expect(await screen.findByRole('link', { name: '隐私与公开' })).toHaveAttribute('href', '/settings/privacy');
+      expect(screen.getByRole('link', { name: '查看个人数据' })).toHaveAttribute('href', '/me');
+      expect(privacySpy).not.toHaveBeenCalled();
+    });
+
+    it('keeps retry available for actual service failures', async () => {
+      vi.spyOn(api, 'getSession').mockResolvedValue({ authenticated: false, user: null });
+      const profileSpy = vi.spyOn(api, 'getPublicProfile').mockRejectedValue(new ApiError(503, {
+        code: 'SERVICE_UNAVAILABLE', messageKey: 'errors.unknown',
+      }));
+      renderWithProviders(<Routes><Route path="/u/:handle" element={<PublicProfilePage />} /></Routes>, '/u/testuser');
+      fireEvent.click(await screen.findByRole('button', { name: '重试' }));
+      await waitFor(() => expect(profileSpy).toHaveBeenCalledTimes(2));
+      expect(screen.queryByText('公开主页暂不可用')).not.toBeInTheDocument();
+    });
+
+    it('uses only the dark button variant for the selected settings section', async () => {
+      vi.spyOn(api, 'getSession').mockResolvedValue(signedIn);
+      renderWithProviders(<Routes><Route path="/settings" element={<SettingsLayout />}>
+        <Route path="devices" element={<div>Device content</div>} />
+      </Route></Routes>, '/settings/devices');
+      const selected = await screen.findByRole('link', { name: 'Collector 设备' });
+      expect(selected).toHaveAttribute('aria-current', 'page');
+      expect(selected).toHaveClass('btn-dark');
+      expect(selected).not.toHaveClass('btn-ghost');
+      expect(screen.getByRole('link', { name: '个人资料' })).toHaveClass('btn-ghost');
     });
   });
 

@@ -265,7 +265,18 @@ export const zhCN = {
     snapshotAt: '快照生成时间',
     loadMore: '加载更多',
   },
+  teams: {
+    label: '团队',
+    title: '小团队 Token 分析',
+    unavailableTitle: '团队功能尚未开放',
+    unavailableDesc: '团队数据暂不可用。你可以先查看个人 Token 消耗与活跃记录。',
+  },
   publicProfile: {
+    unavailableTitle: '公开主页暂不可用',
+    unavailableDesc: '该主页不存在或尚未公开。你可以返回 TokenBoard 查看其他公开资料。',
+    ownerUnavailableDesc: '你的公开主页尚未开放或暂时不可用。你仍可查看个人数据，也可以前往隐私设置管理公开范围。',
+    viewOwnData: '查看个人数据',
+    backToLeaderboard: '返回 TokenBoard',
     headline: '个人数据页',
     subheadline: '展示用户公开授权的 Token、代码、费用、活跃与 Skill 数据。',
     copyLink: '复制链接',
