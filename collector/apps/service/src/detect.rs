@@ -6,6 +6,8 @@ use std::time::SystemTime;
 use crate::{adapter_id, AgentDetection, DetectedSourceConfig, DetectionSnapshot, OfficialAgent};
 
 const MAX_JSONL_FILES: usize = 8;
+const GROK_HISTORY_FILE_LIMIT: usize = 512;
+const GROK_UPDATES_FILE_NAME: &str = "updates.jsonl";
 
 pub fn detect_local() -> DetectionSnapshot {
     detect_from_home(&user_home())
@@ -133,20 +135,15 @@ fn detect_grok(home: &Path, snapshot: &mut DetectionSnapshot) {
             read_json_version(&root.join("version.json")).unwrap_or_else(|| "1.0.0".into()),
         ),
     );
-    let unified = root.join("logs").join("unified.jsonl");
     let sessions = root.join("sessions");
-    let path = if unified.is_file() {
-        unified
-    } else if sessions.is_dir() {
-        sessions
-    } else {
+    if !sessions.is_dir() {
         return;
-    };
+    }
     snapshot.configure_source(
         OfficialAgent::GrokBuild,
         adapter_grok_build::HISTORY_SOURCE_ID,
         DetectedSourceConfig {
-            path: Some(path),
+            path: Some(sessions),
             ..DetectedSourceConfig::default()
         },
     );
@@ -289,6 +286,78 @@ pub fn default_jsonl_limit() -> usize {
     MAX_JSONL_FILES
 }
 
+pub fn grok_history_limit() -> usize {
+    GROK_HISTORY_FILE_LIMIT
+}
+
+pub fn list_grok_history_files(root: &Path, limit: usize) -> Vec<PathBuf> {
+    if root.is_file() {
+        return if is_grok_updates_file(root) {
+            vec![root.to_path_buf()]
+        } else {
+            Vec::new()
+        };
+    }
+    if !root.is_dir() {
+        return Vec::new();
+    }
+    let mut files = Vec::new();
+    walk_grok_updates(root, &mut files);
+    files.sort_by_key(|(mtime, _)| Reverse(*mtime));
+    files
+        .into_iter()
+        .take(limit.max(1))
+        .map(|(_, path)| path)
+        .collect()
+}
+
+fn walk_grok_updates(dir: &Path, out: &mut Vec<(SystemTime, PathBuf)>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with('.')
+            || matches!(
+                name.as_ref(),
+                "node_modules" | "target" | "bin" | "vendor" | "cache" | "subagents"
+            )
+        {
+            continue;
+        }
+        if path.is_dir() {
+            walk_grok_updates(&path, out);
+        } else if is_grok_updates_file(&path) {
+            let mtime = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .unwrap_or(SystemTime::UNIX_EPOCH);
+            out.push((mtime, path));
+        }
+    }
+}
+
+fn is_grok_updates_file(path: &Path) -> bool {
+    path.file_name().and_then(|name| name.to_str()) == Some(GROK_UPDATES_FILE_NAME)
+        && !grok_session_is_subagent(path.parent().unwrap_or(path))
+}
+
+fn grok_session_is_subagent(session_dir: &Path) -> bool {
+    let summary = session_dir.join("summary.json");
+    let Ok(text) = fs::read_to_string(summary) else {
+        return false;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return false;
+    };
+    value
+        .get("session_kind")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|kind| kind.starts_with("subagent"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,5 +374,43 @@ mod tests {
         let files = list_jsonl_files(root.path(), 8);
         assert_eq!(files.len(), 2);
         assert!(files[0].ends_with("new.jsonl"));
+    }
+
+    #[test]
+    fn grok_detection_reads_primary_session_updates_not_unified_logs() {
+        let home = tempfile::tempdir().unwrap();
+        let grok = home.path().join(".grok");
+        let primary = grok.join("sessions").join("proj").join("primary");
+        let subagent = grok.join("sessions").join("proj").join("child");
+        fs::create_dir_all(grok.join("logs")).unwrap();
+        fs::create_dir_all(&primary).unwrap();
+        fs::create_dir_all(&subagent).unwrap();
+        fs::write(grok.join("version.json"), "{\"version\":\"1.0.13\"}\n").unwrap();
+        fs::write(
+            grok.join("logs").join("unified.jsonl"),
+            "{\"msg\":\"shell.turn.inference_done\"}\n",
+        )
+        .unwrap();
+        fs::write(primary.join("updates.jsonl"), "{}\n").unwrap();
+        fs::write(primary.join("events.jsonl"), "{}\n").unwrap();
+        fs::write(subagent.join("updates.jsonl"), "{}\n").unwrap();
+        fs::write(
+            subagent.join("summary.json"),
+            "{\"session_kind\":\"subagent\"}\n",
+        )
+        .unwrap();
+        let snapshot = detect_from_home(home.path());
+        assert!(snapshot.is_installed(OfficialAgent::GrokBuild));
+        let source = snapshot
+            .source(
+                OfficialAgent::GrokBuild,
+                adapter_grok_build::HISTORY_SOURCE_ID,
+            )
+            .unwrap();
+        assert_eq!(source.path.as_ref().unwrap(), &grok.join("sessions"));
+        let files = list_grok_history_files(source.path.as_ref().unwrap(), 32);
+        assert_eq!(files.len(), 1);
+        assert!(files[0].ends_with("updates.jsonl"));
+        assert!(files[0].to_string_lossy().contains("primary"));
     }
 }
