@@ -1,4 +1,5 @@
 pub mod autostart;
+pub mod auto_sync;
 pub mod commands;
 pub mod daemon;
 pub mod state;
@@ -48,13 +49,6 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
-    let sync_item = MenuItem::with_id(
-        app,
-        "sync_now",
-        "立即同步数据 / Sync Now",
-        true,
-        None::<&str>,
-    )?;
     let quit_item = MenuItem::with_id(
         app,
         "quit",
@@ -64,7 +58,7 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
     )?;
     let tray_menu = Menu::with_items(
         app,
-        &[&open_item, &toggle_pause_item, &sync_item, &quit_item],
+        &[&open_item, &toggle_pause_item, &quit_item],
     )?;
 
     // tauri.conf.json already creates `main-tray`. Rebuilding the same id panics
@@ -91,12 +85,6 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
             let state = app.state::<AppState>().inner().clone();
             tauri::async_runtime::spawn(async move {
                 let _ = state.toggle_global_pause().await;
-            });
-        }
-        "sync_now" => {
-            let state = app.state::<AppState>().inner().clone();
-            tauri::async_runtime::spawn(async move {
-                let _ = state.trigger_sync_now().await;
             });
         }
         "quit" => {
@@ -187,7 +175,8 @@ pub fn run() {
                 }
             }
             let state = app.state::<AppState>().inner().clone();
-            CollectorDaemon::new(state).start();
+            CollectorDaemon::new(state.clone()).start();
+            commands::account::start_auto_sync(app.handle().clone(), state);
             if let Err(error) = install_tray(app) {
                 write_crash_log(&format!("tray setup failed: {error}"));
             }
@@ -243,7 +232,7 @@ mod tests {
         }
     }
 
-    async fn state() -> (tempfile::TempDir, AppState) {
+    pub(crate) async fn state() -> (tempfile::TempDir, AppState) {
         let root = tempfile::tempdir().unwrap();
         let state = AppState::test(root.path().to_path_buf(), Arc::new(MockAutostart::new()))
             .await

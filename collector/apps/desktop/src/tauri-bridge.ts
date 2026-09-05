@@ -87,6 +87,8 @@ export interface UploadBatchPreview {
 }
 
 export interface DaemonStatus {
+  syncStatus?: "LOGIN_REQUIRED" | "WAITING" | "SYNCING" | "SYNCED" | "RETRYING" | "PAUSED" | "NEEDS_PROFILE" | "NEEDS_ATTENTION";
+  lastSyncAt?: string | null;
   status: "RUNNING" | "PAUSED" | "DEGRADED" | "STOPPED";
   globalPaused: boolean;
   pid: number;
@@ -500,18 +502,7 @@ export async function previewUploadBatch(): Promise<UploadBatchPreview> {
 }
 
 export async function triggerSyncNow(): Promise<SyncRequestState> {
-  if (isTauriEnvironment()) {
-    const ack = await invoke<OperationAck<SyncRequestState>>("trigger_sync_now");
-    return ack.state;
-  }
-  if (mockState.globalPaused) {
-    throw new Error("全局采集已暂停，无法上报");
-  }
-  const count = mockState.outbox.filter((e) => e.deliveryStatus !== "ACKED").length;
-  return {
-    queuedEvents: count,
-    message: "Upload request accepted locally; server confirmation is pending.",
-  };
+  throw new Error("登录后会自动同步，无需手动操作");
 }
 
 export async function getPendingEnvelopes(): Promise<OutboxEnvelope[]> {

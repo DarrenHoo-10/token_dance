@@ -1,15 +1,19 @@
+use crate::{auto_sync, state::AppState};
 use std::collections::BTreeMap;
 use std::fs;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use uploader::{DeviceSigner, HttpTransport, InMemoryDeviceSigner, IngestTransport};
+use wal_spool::{KeyProvider, OsKeyProvider};
 
 use reqwest::{Client, Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{State, Url};
+use tauri::{Manager, State, Url};
 use tokio::sync::Mutex;
 
-// Passwords are never saved. Session cookies stay in native memory, scoped to
-// one website origin, and are never returned across the WebView IPC boundary.
+// Passwords are never saved. Native session cookies are scoped to one website
+// origin and are never returned across the WebView IPC boundary.
 #[derive(Default)]
 pub struct AccountState(Mutex<Option<Connection>>);
 
@@ -18,6 +22,10 @@ struct Connection {
     client: Client,
     cookies: BTreeMap<String, String>,
     csrf: String,
+    transport: Option<HttpTransport>,
+    retry_at: Option<Instant>,
+    failures: u32,
+    blocked: bool,
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -61,6 +69,10 @@ impl Connection {
             client,
             cookies: BTreeMap::new(),
             csrf: String::new(),
+            transport: None,
+            retry_at: None,
+            failures: 0,
+            blocked: false,
         })
     }
 
@@ -157,6 +169,10 @@ impl Connection {
     }
 
     async fn login(&mut self, email: &str, password: &str) -> Result<AccountSession, String> {
+        self.transport = None;
+        self.retry_at = None;
+        self.failures = 0;
+        self.blocked = false;
         self.cookies.clear();
         self.csrf.clear();
         let result = self.request(Method::POST, "/api/v1/auth/login", Some(json!({
@@ -171,6 +187,193 @@ impl Connection {
         }
         Ok(session)
     }
+}
+
+impl Connection {
+    async fn register_sync_device(&mut self, signer: Arc<dyn DeviceSigner>) -> Result<(), String> {
+        let grant = self
+            .request(Method::POST, "/api/v1/me/device-grants", Some(json!({})))
+            .await?
+            .and_then(|value| value["grantToken"].as_str().map(str::to_owned))
+            .filter(|token| token.starts_with("dgt_"))
+            .ok_or("INVALID_RESPONSE")?;
+        let public_key = signer
+            .public_key()
+            .map_err(|_| "DEVICE_KEY_ERROR")?
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let response = self
+            .client
+            .post(
+                self.origin
+                    .join("/v1/installations/register")
+                    .map_err(|_| "INVALID_WEBSITE")?,
+            )
+            .bearer_auth(grant)
+            .json(&json!({
+                "publicKey": public_key, "deviceName": "TokenDance Desktop",
+                "osType": std::env::consts::OS, "architecture": std::env::consts::ARCH,
+                "collectorVersion": env!("CARGO_PKG_VERSION")
+            }))
+            .send()
+            .await
+            .map_err(|_| "NETWORK_ERROR")?;
+        if !response.status().is_success() {
+            return Err(match response.status().as_u16() {
+                401 | 403 | 409 => "DEVICE_UNAVAILABLE",
+                _ => "NETWORK_ERROR",
+            }
+            .into());
+        }
+        let value: Value = response.json().await.map_err(|_| "INVALID_RESPONSE")?;
+        if value["status"] != "active" {
+            return Err("DEVICE_UNAVAILABLE".into());
+        }
+        let installation = value["installationId"]
+            .as_str()
+            .filter(|id| id.starts_with("ins_"))
+            .ok_or("INVALID_RESPONSE")?;
+        self.transport = Some(HttpTransport::new_claimed(
+            self.origin.as_str(),
+            self.client.clone(),
+            installation,
+            signer,
+        ));
+        Ok(())
+    }
+
+    async fn sync_once(&mut self, app: &AppState) -> Result<&'static str, String> {
+        if self.cookies.is_empty() {
+            return Ok("LOGIN_REQUIRED");
+        }
+        let session = self.session().await?;
+        let Some(user) = session.user else {
+            self.transport = None;
+            return Ok("LOGIN_REQUIRED");
+        };
+        if user.onboarding_required {
+            return Ok("NEEDS_PROFILE");
+        }
+        let status = app.get_daemon_status().await;
+        if status.global_paused {
+            return Ok("PAUSED");
+        }
+        if status.events_pending > 0 {
+            *app.sync_status.write().await = "SYNCING".into();
+        }
+        if self.transport.is_none() {
+            let seed = OsKeyProvider::new("io.tokendance.desktop", "collector-device-ed25519")
+                .data_key()
+                .map_err(|_| "DEVICE_KEY_ERROR")?;
+            self.register_sync_device(Arc::new(InMemoryDeviceSigner::from_seed(seed)))
+                .await?;
+        }
+        let transport = self.transport.as_ref().ok_or("DEVICE_UNAVAILABLE")?;
+        let events = { app.service.lock().await.wal.unacked_events() };
+        if events.is_empty() {
+            return Ok("SYNCED");
+        }
+        let batch = auto_sync::batch(transport.installation_id(), events)?;
+        let ack = transport
+            .upload(&batch)
+            .await
+            .map_err(|error| match error {
+                uploader::TransportError::Auth => "DEVICE_UNAVAILABLE",
+                _ => "UPLOAD_FAILED",
+            })?;
+        let checked = auto_sync::checked_ack(&batch, &ack)?;
+        if !checked.acked_event_ids.is_empty() {
+            app.acknowledge_auto_sync(checked).await?;
+        }
+        if ack.rejected.iter().any(|item| !item.retryable) {
+            return Err("REJECTED_EVENTS".into());
+        }
+        if !ack.rejected.is_empty() {
+            return Err("UPLOAD_FAILED".into());
+        }
+        let pending = app.service.lock().await.wal.unacked_count();
+        Ok(if pending == 0 { "SYNCED" } else { "WAITING" })
+    }
+}
+
+impl AccountState {
+    async fn auto_sync_tick(&self, app: &AppState) {
+        // Keep one batch serialized with login/logout; after sign-out completes
+        // no request can use an old account or device transport.
+        let mut guard = self.0.lock().await;
+        let Some(current) = guard.as_mut() else {
+            *app.sync_status.write().await = "LOGIN_REQUIRED".into();
+            return;
+        };
+        if current
+            .retry_at
+            .is_some_and(|deadline| Instant::now() < deadline)
+        {
+            return;
+        }
+        let next = match current.sync_once(app).await {
+            Ok(status) => {
+                current.failures = 0;
+                current.retry_at = None;
+                current.blocked = false;
+                status
+            }
+            Err(error) => {
+                current.failures = current.failures.saturating_add(1);
+                current.retry_at = Some(
+                    Instant::now() + Duration::from_secs(10 * (1u64 << current.failures.min(5))),
+                );
+                current.blocked = matches!(
+                    error.as_str(),
+                    "DEVICE_UNAVAILABLE"
+                        | "DEVICE_KEY_ERROR"
+                        | "REJECTED_EVENTS"
+                        | "EVENT_TOO_LARGE"
+                        | "ACCOUNT_FORBIDDEN"
+                );
+                if current.blocked {
+                    // Recheck slowly so a device resumed on the website can
+                    // recover without requiring a manual desktop action.
+                    current.retry_at = Some(Instant::now() + Duration::from_secs(300));
+                    "NEEDS_ATTENTION"
+                } else {
+                    "RETRYING"
+                }
+            }
+        };
+        *app.sync_status.write().await = next.into();
+    }
+}
+
+pub fn start_auto_sync(handle: tauri::AppHandle, app: AppState) {
+    tauri::async_runtime::spawn(async move {
+        let account = handle.state::<AccountState>();
+        {
+            let mut guard = account.0.lock().await;
+            if guard.is_none() {
+                if let Ok(bytes) = fs::read(persist_path()) {
+                    if let Ok(saved) = serde_json::from_slice::<PersistedAccount>(&bytes) {
+                        if saved.expires_at > unix_now() {
+                            if let Ok(origin) = account_origin(&saved.origin) {
+                                if let Ok(mut current) = Connection::new(origin) {
+                                    current.cookies = saved.cookies;
+                                    current.csrf = saved.csrf;
+                                    *guard = Some(current);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut interval = tokio::time::interval(Duration::from_secs(10));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            account.auto_sync_tick(&app).await;
+        }
+    });
 }
 
 const SESSION_TTL_SECS: u64 = 30 * 24 * 60 * 60;
@@ -217,7 +420,9 @@ fn save_account(connection: &Connection) {
 fn load_account(origin: &Url) -> Option<(BTreeMap<String, String>, String)> {
     let body = fs::read(persist_path()).ok()?;
     let stored: PersistedAccount = serde_json::from_slice(&body).ok()?;
-    if stored.origin != origin.as_str() || stored.expires_at <= unix_now() || stored.cookies.is_empty()
+    if stored.origin != origin.as_str()
+        || stored.expires_at <= unix_now()
+        || stored.cookies.is_empty()
     {
         let _ = fs::remove_file(persist_path());
         return None;
@@ -269,6 +474,7 @@ pub async fn login_account(
     email: String,
     password: String,
     state: State<'_, AccountState>,
+    app: State<'_, AppState>,
 ) -> Result<AccountSession, String> {
     if email.trim().is_empty() || password.is_empty() {
         return Err("MISSING_CREDENTIALS".into());
@@ -276,13 +482,20 @@ pub async fn login_account(
     let mut guard = state.0.lock().await;
     let current = connection(&mut guard, account_origin(&website)?)?;
     // Read back the authenticated session, rather than trusting a successful POST alone.
+    let _ = fs::remove_file(persist_path());
+    *app.sync_status.write().await = "LOGIN_REQUIRED".into();
     let session = current.login(&email, &password).await?;
     save_account(current);
+    *app.sync_status.write().await = "WAITING".into();
     Ok(session)
 }
 
 #[tauri::command]
-pub async fn logout_account(website: String, state: State<'_, AccountState>) -> Result<(), String> {
+pub async fn logout_account(
+    website: String,
+    state: State<'_, AccountState>,
+    app: State<'_, AppState>,
+) -> Result<(), String> {
     let mut guard = state.0.lock().await;
     let origin = account_origin(&website)?;
     if let Some(current) = guard.as_mut().filter(|current| current.origin == origin) {
@@ -294,6 +507,7 @@ pub async fn logout_account(website: String, state: State<'_, AccountState>) -> 
     }
     *guard = None;
     let _ = fs::remove_file(persist_path());
+    *app.sync_status.write().await = "LOGIN_REQUIRED".into();
     Ok(())
 }
 
@@ -336,8 +550,31 @@ mod tests {
                             }
                         }
                     }
+                    let request = String::from_utf8_lossy(&bytes).into_owned();
+                    let response = if response.contains("$BATCH") {
+                        let batch_id = request
+                            .lines()
+                            .find_map(|line| line.strip_prefix("idempotency-key: "))
+                            .unwrap();
+                        let (headers, body) = response.split_once("\r\n\r\n").unwrap();
+                        let body = body.replace("$BATCH", batch_id);
+                        let headers = headers
+                            .lines()
+                            .map(|line| {
+                                if line.starts_with("Content-Length:") {
+                                    format!("Content-Length: {}", body.len())
+                                } else {
+                                    line.to_owned()
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("\r\n");
+                        format!("{headers}\r\n\r\n{body}")
+                    } else {
+                        response
+                    };
                     socket.write_all(response.as_bytes()).unwrap();
-                    String::from_utf8(bytes).unwrap()
+                    request
                 })
                 .collect()
         });
@@ -346,6 +583,108 @@ mod tests {
 
     fn response(status: &str, headers: &str, body: &str) -> String {
         format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{headers}\r\n{body}", body.len())
+    }
+
+    fn session_response() -> String {
+        response(
+            "200 OK",
+            "",
+            r#"{"authenticated":true,"user":{"userId":"fixture-user","displayName":"Test User"},"csrfToken":"fixture-csrf"}"#,
+        )
+    }
+
+    #[tokio::test]
+    async fn auto_sync_registers_with_grant_and_only_removes_server_confirmed_events() {
+        let (_root, app) = crate::auto_sync::tests::seeded_app().await;
+        let (origin, server) = mock_server(vec![
+            response("201 Created", "", r#"{"grantToken":"dgt_fixture"}"#),
+            response(
+                "200 OK",
+                "",
+                r#"{"installationId":"ins_fixture","status":"active"}"#,
+            ),
+            session_response(),
+            response(
+                "200 OK",
+                "",
+                r#"{"batchId":"$BATCH","installationId":"ins_fixture","accepted":2,"duplicates":0,"rejected":[],"serverTime":"2026-09-05T00:00:00Z"}"#,
+            ),
+        ]);
+        let mut client = Connection::new(origin).unwrap();
+        client
+            .cookies
+            .insert("tokendance_session".into(), "fixture-session".into());
+        client.csrf = "fixture-csrf".into();
+        client
+            .register_sync_device(Arc::new(InMemoryDeviceSigner::from_seed([7; 32])))
+            .await
+            .unwrap();
+        let account = AccountState(Mutex::new(Some(client)));
+        account.auto_sync_tick(&app).await;
+        assert_eq!(app.sync_status.read().await.as_str(), "SYNCED");
+        let status = app.get_daemon_status().await;
+        assert_eq!(status.events_pending, 0);
+        assert_eq!(status.events_uploaded, 2);
+        assert!(status.last_sync_at.is_some());
+        let requests = server.join().unwrap();
+        assert!(requests[0].starts_with("POST /api/v1/me/device-grants "));
+        assert!(requests[0].contains("x-csrf-token: fixture-csrf"));
+        assert!(requests[1].contains("authorization: Bearer dgt_fixture"));
+        assert!(requests[3].contains("authorization: Device ins_fixture:"));
+        assert!(!requests[3].contains("fixture-session"));
+        *account.0.lock().await = None;
+        account.auto_sync_tick(&app).await;
+        assert_eq!(app.sync_status.read().await.as_str(), "LOGIN_REQUIRED");
+    }
+
+    #[tokio::test]
+    async fn failed_upload_keeps_queue_and_retries_without_manual_input() {
+        let (_root, app) = crate::auto_sync::tests::seeded_app().await;
+        let (origin, server) = mock_server(vec![
+            session_response(),
+            response("503 Service Unavailable", "", "{}"),
+            session_response(),
+            response(
+                "200 OK",
+                "",
+                r#"{"batchId":"$BATCH","accepted":2,"duplicates":0,"rejected":[],"serverTime":"2026-09-05T00:00:00Z"}"#,
+            ),
+        ]);
+        let mut client = Connection::new(origin.clone()).unwrap();
+        client
+            .cookies
+            .insert("tokendance_session".into(), "fixture-session".into());
+        client.transport = Some(HttpTransport::new_claimed(
+            origin.as_str(),
+            client.client.clone(),
+            "ins_fixture",
+            Arc::new(InMemoryDeviceSigner::from_seed([7; 32])),
+        ));
+        let account = AccountState(Mutex::new(Some(client)));
+        account.auto_sync_tick(&app).await;
+        assert_eq!(app.sync_status.read().await.as_str(), "RETRYING");
+        assert_eq!(app.get_daemon_status().await.events_pending, 2);
+        assert_eq!(app.get_daemon_status().await.events_uploaded, 0);
+        account.auto_sync_tick(&app).await; // Backoff performs no network request.
+        account.0.lock().await.as_mut().unwrap().retry_at = None;
+        account.auto_sync_tick(&app).await;
+        assert_eq!(app.get_daemon_status().await.events_pending, 0);
+        assert_eq!(server.join().unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn expired_session_never_uploads_pending_records() {
+        let (_root, app) = crate::auto_sync::tests::seeded_app().await;
+        let (origin, server) = mock_server(vec![response("204 No Content", "", "")]);
+        let mut client = Connection::new(origin).unwrap();
+        client
+            .cookies
+            .insert("tokendance_session".into(), "expired".into());
+        let account = AccountState(Mutex::new(Some(client)));
+        account.auto_sync_tick(&app).await;
+        assert_eq!(app.sync_status.read().await.as_str(), "LOGIN_REQUIRED");
+        assert_eq!(app.get_daemon_status().await.events_pending, 2);
+        assert_eq!(server.join().unwrap().len(), 1);
     }
 
     #[tokio::test]

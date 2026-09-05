@@ -8,6 +8,9 @@ import { Button } from '@/components/common/Button';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
 import { ApiError } from '@/api/client';
 import { getApiErrorMessage } from '@/i18n';
+import { ArrowRight, CircleAlert, Eye, EyeOff, LockKeyhole, Pause, Play, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { LoginCompanions, TokenOrbit, type CompanionMood } from './LoginArt';
+import './login.css';
 
 function safeReturnTo(value: string | null): string | undefined {
   if (!value || !value.startsWith('/') || value.startsWith('//')) {
@@ -25,6 +28,9 @@ export const LoginPage: React.FC = () => {
 
   const rawReturnTo = searchParams.get('return_to');
 
+  const [focusedField, setFocusedField] = useState<'email' | 'password' | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [motionPaused, setMotionPaused] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [keepSignedIn, setKeepSignedIn] = useState(true);
@@ -78,203 +84,70 @@ export const LoginPage: React.FC = () => {
     return null;
   }
 
+  const mood: CompanionMood = focusedField === 'password' || showPassword ? 'password'
+    : loading ? 'loading' : focusedField === 'email' ? 'email' : errorMessage ? 'error' : 'idle';
+  const caption = t(`auth.companion${mood[0].toUpperCase()}${mood.slice(1)}`);
+
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(320px, 1fr) minmax(360px, 1fr)',
-        minHeight: '100vh',
-        backgroundColor: 'var(--bg-app)',
-      }}
-    >
-      {/* Left editorial brand panel */}
-      <aside
-        style={{
-          backgroundColor: 'var(--bg-dark)',
-          color: 'var(--text-inverse)',
-          padding: '48px',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-        }}
-      >
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 22, fontWeight: 800 }}>
-            <img src="/logo-tokendance-v2.png" alt="TokenDance" style={{ width: 36, height: 36 }} />
-            <span>TokenDance</span>
+    <div className="login-page" data-motion={motionPaused ? 'paused' : 'playing'}>
+      <aside className="login-brand">
+        <NavLink to="/" className="login-brand__logo" aria-label="TokenDance">
+          <img src="/logo-tokendance-v2.png" alt="" /><span>TokenDance</span>
+        </NavLink>
+        <button type="button" className="login-motion-toggle" onClick={() => setMotionPaused(!motionPaused)}
+          aria-label={t(motionPaused ? 'auth.resumeMotion' : 'auth.pauseMotion')} aria-pressed={motionPaused}>
+          {motionPaused ? <Play size={13} aria-hidden="true" /> : <Pause size={13} aria-hidden="true" />}
+        </button>
+        <div className="login-brand__body">
+          <div className="login-brand__copy">
+            <p className="eyebrow">{t('common.brandTagline')}</p>
+            <h1>{t('auth.loginHeroLine1')} <br /><span>{t('auth.loginHeroLine2')}</span></h1>
+            <p>{t('common.heroSub')}</p>
           </div>
-
-          <div style={{ marginTop: 120, maxWidth: 440 }}>
-            <p className="eyebrow" style={{ color: 'var(--lime)' }}>
-              {t('common.brandTagline')}
-            </p>
-            <h1 style={{ fontSize: 48, color: 'white', letterSpacing: '-0.05em', lineHeight: 1.05 }}>
-              {t('auth.loginHeroLine1')} <br />
-              <span style={{ color: 'var(--lime)' }}>{t('auth.loginHeroLine2')}</span>
-            </h1>
-            <p style={{ marginTop: 20, color: '#b2bbb4', fontSize: 16, lineHeight: 1.6 }}>
-              {t('common.heroSub')}
-            </p>
-          </div>
+          <TokenOrbit />
         </div>
-
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, 1fr)',
-            gap: 12,
-            borderTop: '1px solid var(--border-dark)',
-            paddingTop: 24,
-          }}
-        >
-          <div>
-            <strong style={{ display: 'block', fontSize: 15 }}>{t('auth.editorialPrivacyTitle')}</strong>
-            <small style={{ display: 'block', color: '#88928a', fontSize: 11, marginTop: 4 }}>
-              {t('auth.editorialPrivacyCopy')}
-            </small>
-          </div>
-          <div>
-            <strong style={{ display: 'block', fontSize: 15 }}>{t('auth.editorialControlTitle')}</strong>
-            <small style={{ display: 'block', color: '#88928a', fontSize: 11, marginTop: 4 }}>
-              {t('auth.editorialControlCopy')}
-            </small>
-          </div>
-          <div>
-            <strong style={{ display: 'block', fontSize: 15 }}>{t('auth.editorialInsightTitle')}</strong>
-            <small style={{ display: 'block', color: '#88928a', fontSize: 11, marginTop: 4 }}>
-              {t('auth.editorialInsightCopy')}
-            </small>
-          </div>
+        <div className="login-brand__footer">
+          <div><ShieldCheck size={17} aria-hidden="true" /><strong>{t('auth.editorialPrivacyTitle')}</strong><small>{t('auth.editorialPrivacyCopy')}</small></div>
+          <div><SlidersHorizontal size={17} aria-hidden="true" /><strong>{t('auth.editorialControlTitle')}</strong><small>{t('auth.editorialControlCopy')}</small></div>
+          <div><LockKeyhole size={17} aria-hidden="true" /><strong>{t('auth.editorialInsightTitle')}</strong><small>{t('auth.editorialInsightCopy')}</small></div>
         </div>
       </aside>
-
-      {/* Right sign in form */}
-      <main
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: '48px 32px',
-          position: 'relative',
-        }}
-      >
-        <div style={{ position: 'absolute', top: 24, right: 32 }}>
-          <LocaleSwitcher />
-        </div>
-
-        <div style={{ width: '100%', maxWidth: 400 }}>
-          <div style={{ marginBottom: 28 }}>
-            <p className="eyebrow">{t('common.appName')}</p>
-            <h2 style={{ fontSize: 26 }}>{t('auth.titleLogin')}</h2>
-            <p className="text-muted" style={{ fontSize: 13, marginTop: 4 }}>
-              {t('auth.loginSub')}
-            </p>
+      <main className="login-main">
+        <div className="login-locale"><LocaleSwitcher /></div>
+        <div className="login-form-shell">
+          <LoginCompanions mood={mood} caption={caption} />
+          <div className="login-heading">
+            <h2>{t('auth.titleLogin')}</h2>
+            <p>{t('auth.loginSub')}</p>
           </div>
-
-          <div
-            style={{
-              display: 'flex',
-              gap: 16,
-              borderBottom: '1px solid var(--border-light)',
-              marginBottom: 24,
-            }}
-          >
-            <span
-              style={{
-                paddingBottom: 8,
-                fontWeight: 700,
-                borderBottom: '2px solid var(--bg-dark)',
-                fontSize: 13,
-              }}
-            >
-              {t('auth.tabLogin')}
-            </span>
-            <NavLink
-              to={rawReturnTo ? `/register?return_to=${encodeURIComponent(rawReturnTo)}` : '/register'}
-              style={{ paddingBottom: 8, color: 'var(--text-muted)', fontSize: 13 }}
-            >
-              {t('auth.tabRegister')}
-            </NavLink>
+          <div className="login-tabs">
+            <span>{t('auth.tabLogin')}</span>
+            <NavLink to={rawReturnTo ? `/register?return_to=${encodeURIComponent(rawReturnTo)}` : '/register'}>{t('auth.tabRegister')}</NavLink>
           </div>
-
-          {errorMessage && (
-            <div
-              style={{
-                backgroundColor: 'var(--danger-bg)',
-                border: '1px solid var(--danger-border)',
-                color: 'var(--danger)',
-                padding: '10px 14px',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: 12,
-                marginBottom: 16,
-              }}
-            >
-              {errorMessage}
+          {errorMessage && <div className="login-error" role="alert" id="login-error"><CircleAlert size={14} aria-hidden="true" />{errorMessage}</div>}
+          <form onSubmit={handleSubmit} aria-busy={loading}>
+            <Input label={t('auth.email')} type="email" autoComplete="username" name="email"
+              placeholder={t('auth.emailPlaceholder')} value={email}
+              onChange={(e) => setEmail(e.target.value)} onFocus={() => setFocusedField('email')}
+              onBlur={() => setFocusedField(null)} required />
+            <Input label={t('auth.password')} type={showPassword ? 'text' : 'password'} autoComplete="current-password" name="password"
+              placeholder={t('auth.passwordPlaceholder')} value={password}
+              onChange={(e) => setPassword(e.target.value)} onFocus={() => setFocusedField('password')}
+              onBlur={() => setFocusedField(null)} required
+              suffix={<button type="button" className="login-password-toggle"
+                aria-label={t(showPassword ? 'auth.hidePassword' : 'auth.showPassword')} aria-pressed={showPassword}
+                onClick={() => setShowPassword(!showPassword)}>
+                {showPassword ? <EyeOff size={17} aria-hidden="true" /> : <Eye size={17} aria-hidden="true" />}
+              </button>} />
+            <div className="login-options">
+              <label><input type="checkbox" checked={keepSignedIn} onChange={(e) => setKeepSignedIn(e.target.checked)} /><span>{t('auth.keepSignedIn')}</span></label>
+              <NavLink to={rawReturnTo ? `/forgot-password?return_to=${encodeURIComponent(rawReturnTo)}` : '/forgot-password'}>{t('auth.forgotPassword')}</NavLink>
             </div>
-          )}
-
-          <form onSubmit={handleSubmit}>
-            <Input
-              label={t('auth.email')}
-              type="email"
-              placeholder={t('auth.emailPlaceholder')}
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
-
-            <Input
-              label={t('auth.password')}
-              type="password"
-              placeholder={t('auth.passwordPlaceholder')}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: 24,
-                fontSize: 12,
-              }}
-            >
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={keepSignedIn}
-                  onChange={(event) => setKeepSignedIn(event.target.checked)}
-                />
-                <span>{t('auth.keepSignedIn')}</span>
-              </label>
-
-              <NavLink
-                to={rawReturnTo ? `/forgot-password?return_to=${encodeURIComponent(rawReturnTo)}` : '/forgot-password'}
-                style={{ color: 'var(--text-muted)' }}
-              >
-                {t('auth.forgotPassword')}
-              </NavLink>
-            </div>
-
-            <Button type="submit" variant="primary" size="lg" loading={loading} style={{ width: '100%' }}>
-              {t('auth.submitLogin')}
+            <Button type="submit" variant="primary" size="lg" loading={loading} className="login-submit">
+              {t('auth.submitLogin')}{!loading && <ArrowRight size={16} aria-hidden="true" />}
             </Button>
           </form>
-
-          <p
-            style={{
-              fontSize: 11,
-              color: 'var(--text-subtle)',
-              textAlign: 'center',
-              marginTop: 24,
-              lineHeight: 1.5,
-            }}
-          >
-            {t('auth.termsNotice')}
-          </p>
+          <p className="login-terms">{t('auth.termsNotice')}</p>
         </div>
       </main>
     </div>

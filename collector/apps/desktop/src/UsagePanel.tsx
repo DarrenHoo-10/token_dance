@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { getAgentConfigs, getDaemonStatus, hideWindow, isTauriEnvironment, openSettings, openWebsite, quitApp, toggleGlobalPause, triggerSyncNow } from "./tauri-bridge";
+import { getAgentConfigs, getDaemonStatus, hideWindow, isTauriEnvironment, openSettings, openWebsite, quitApp, toggleGlobalPause } from "./tauri-bridge";
+import { syncStatusText } from "./sync-status";
 import type { AgentConfig, DaemonStatus } from "./tauri-bridge";
 import { weeklyUsage } from "./weekly-usage";
 import { WeeklyTrend } from "./components/WeeklyTrend";
@@ -120,9 +121,8 @@ export function UsagePanel() {
       </main>
 
       <div className="usage-status-bar">
-        <div><span className={`usage-status-dot ${healthy ? "running" : ""}`} /><span>{error ? text("连接中断", "Disconnected") : !status ? text("连接中", "Connecting") : paused ? text("已暂停", "Paused") : healthy ? text("采集中", "Collecting") : text("需检查", "Check collector")}</span><span className="usage-queue">{status ? text(`${status.eventsPending} 条待同步`, `${status.eventsPending} pending`) : ""}</span></div>
+        <div><span className={`usage-status-dot ${healthy ? "running" : ""}`} /><span>{error ? text("连接中断", "Disconnected") : !status ? text("连接中", "Connecting") : paused ? text("已暂停", "Paused") : healthy ? text("采集中", "Collecting") : text("需检查", "Check collector")}</span><span className="usage-queue" role="status" title={status ? text(`${status.eventsPending} 条记录保留在本机，等待服务器确认`, `${status.eventsPending} records stored locally, awaiting server confirmation`) : undefined}>{status && !error ? syncStatusText(status.syncStatus, status.eventsPending, zh) : ""}</span></div>
         <button disabled={!status || busy || error} onClick={() => void act(() => toggleGlobalPause())}>{paused ? text("继续", "Resume") : text("暂停", "Pause")}</button>
-        <button disabled={!status || busy || error} onClick={() => void act(triggerSyncNow, text("同步请求已排队", "Sync request queued"))}>{text("同步", "Sync")}</button>
       </div>
       <footer className="usage-footer">
         <button onClick={() => void act(openSettings)}><span aria-hidden="true">⚙</span>{text("设置", "Settings")}</button>

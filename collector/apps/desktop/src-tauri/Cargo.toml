@@ -15,6 +15,7 @@ collector-service = { path = "../../service" }
 config-executor = { path = "../../../crates/config-executor" }
 protocol = { path = "../../../crates/protocol" }
 wal-spool = { path = "../../../crates/wal-spool" }
+uploader = { path = "../../../crates/uploader" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
@@ -28,6 +29,7 @@ tauri = { version = "2", features = ["tray-icon"] }
 
 [dev-dependencies]
 tempfile = "3"
+privacy = { path = "../../../crates/privacy" }
 
 [build-dependencies]
 tauri-build = "2"
