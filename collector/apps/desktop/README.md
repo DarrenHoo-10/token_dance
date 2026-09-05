@@ -27,9 +27,9 @@ Codex 额度从 CODEX_HOME（默认用户目录 .codex）的近期 sessions 日�
 
 设置采用网站的浅色、深绿和青柠色，单页显示账号、开机启动和采集开关，语言只通过右上角切换。Agent 来源默认折叠；原运维仪表盘、上传预览、配置快照和数据删除不再作为日常桌面入口。移除“更多设置”说明和快捷入口；左下角保留可点击的网站地址，底部不再显示“网站连接”和“完成”。
 
-账号卡片可展开邮箱/密码登录，注册与找回密码直接打开网站 `/register` 和 `/forgot-password`。登录通过原生 HTTP 客户端调用现有 `/api/v1/auth/login`，再读取 `/api/v1/auth/session` 确认用户；退出登录调用 `/api/v1/auth/logout`。密码不落盘；沿用桌面端的本机会话恢复，按网站 origin 隔离。桌面登录和默认浏览器登录是独立会话。桌面登录且网站资料已完善后，后台通过短期 device grant 注册当前设备，再使用设备签名自动上传本机用量。
+账号卡片的“登录”直接打开默认浏览器中的网站登录页。已有网页登录状态时自动完成，无需重复输入密码；未登录时完成网页登录后返回本机。原生端仅监听随机的 `127.0.0.1` 端口，使用随机 state 和 SHA-256 校验的一次性授权码交换独立桌面会话，随后读取 `/api/v1/auth/session` 确认用户；授权码两分钟内有效且只能使用一次，浏览器等待上限五分钟。网站需同时部署 `/desktop-login` 回传页和 `/api/v1/auth/desktop/authorize`、`/api/v1/auth/desktop/exchange` 接口。临时授权码只保存在 API 进程内存，API 重启后重新点击登录即可。退出客户端只撤销桌面会话；按网站 origin 隔离的本机会话恢复及设备签名同步保持有效。
 
-浏览器预览不接受真实登录，只展示交互；原生 HTTP 测试使用本地模拟服务，覆盖登录读回、Cookie/CSRF、会话失效、失败提示和禁止重定向。截图位于 `docs/ui-prototypes/16-desktop-settings-redesign.png`、`17-desktop-settings-login.png` 和 `18-desktop-settings-signed-in.png`（最后一张为测试用户）。
+浏览器预览不接受真实登录，只展示交互；原生 HTTP 测试使用本地模拟服务，覆盖登录读回、Cookie/CSRF、会话失效、失败提示和禁止重定向。历史界面截图位于 `docs/ui-prototypes/16-desktop-settings-redesign.png`、`17-desktop-settings-login.png` 和 `18-desktop-settings-signed-in.png`（最后一张为测试用户）。
 
 人工验收：托盘图标展开、弹窗外部点击收起、Escape 收起、左下设置及关闭回托盘、右下默认浏览器跳转；另外检查多显示器与 125%/150% 缩放。Windows 可将新托盘图标放在折叠区，显示位置由系统管理。
 

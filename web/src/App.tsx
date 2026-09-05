@@ -8,6 +8,7 @@ import { SettingsLayout } from '@/components/layout/SettingsLayout';
 
 // Auth Pages
 import { LoginPage } from '@/pages/auth/LoginPage';
+import { DesktopLoginPage } from '@/pages/auth/DesktopLoginPage';
 import { RegisterPage } from '@/pages/auth/RegisterPage';
 import { ForgotPasswordPage } from '@/pages/auth/ForgotPasswordPage';
 import { ResetPasswordPage } from '@/pages/auth/ResetPasswordPage';
@@ -47,6 +48,7 @@ export const App: React.FC = () => {
             <Routes>
               {/* Standalone Auth & Onboarding */}
               <Route path="/login" element={<LoginPage />} />
+              <Route path="/desktop-login" element={<DesktopLoginPage />} />
               <Route path="/register" element={<RegisterPage />} />
               <Route path="/forgot-password" element={<ForgotPasswordPage />} />
               <Route path="/reset-password" element={<ResetPasswordPage />} />
