@@ -8,6 +8,7 @@ use adapter_sdk::{
 };
 
 const HISTORY: &str = include_str!("../fixtures/contract/history.jsonl");
+const SESSION_UPDATES: &str = include_str!("../fixtures/contract/session-updates.jsonl");
 const HMAC_KEY: &[u8] = b"tokenshow-adapter-fixture-hmac-key-v1";
 const OTLP: &str = include_str!("../fixtures/contract/otlp.jsonl");
 
@@ -27,7 +28,7 @@ fn manifest_and_compatibility_matrix_are_valid() {
     validate_manifest(&manifest).unwrap();
     let matrix: serde_json::Value =
         serde_json::from_str(adapter_grok_build::COMPATIBILITY_JSON).unwrap();
-    assert!(matrix.as_array().is_some_and(|rows| rows.len() >= 3));
+    assert!(matrix.as_array().is_some_and(|rows| rows.len() >= 4));
     assert!(adapter_grok_build::COMPATIBILITY_MARKDOWN.contains("degraded"));
 }
 
@@ -298,4 +299,58 @@ async fn explicit_version_bounds_and_cross_source_semantic_ids_are_stable() {
         .collect::<std::collections::HashSet<_>>();
     assert_eq!(otlp_ids, history_ids);
     assert_eq!(otlp_ids.len(), 2);
+}
+
+#[tokio::test]
+async fn session_updates_emit_exact_tokens_and_ignore_message_chunks() {
+    let adapter = GrokBuildAdapter::new(HMAC_KEY);
+    let events = adapter
+        .decode(RawFrame::jsonl(
+            "ins_00000000000000000000000000",
+            HISTORY_SOURCE_ID,
+            "0",
+            SESSION_UPDATES.as_bytes(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 3);
+    let usage = events
+        .iter()
+        .map(|event| match &event.payload {
+            EventPayload::ModelUsageRecorded(payload) => (
+                payload.provider_id.as_str(),
+                payload.model_id.as_str(),
+                payload.tokens.input_tokens.as_deref(),
+                payload.tokens.output_tokens.as_deref(),
+                payload.tokens.total_tokens.as_deref(),
+            ),
+            other => panic!("unexpected payload {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        usage,
+        vec![
+            (
+                "xai",
+                "grok-4.6-build",
+                Some("100"),
+                Some("20"),
+                Some("125")
+            ),
+            (
+                "anthropic",
+                "claude-sonnet-4-6",
+                Some("10"),
+                Some("20"),
+                Some("30")
+            ),
+            ("xai", "grok", Some("7"), Some("8"), Some("15")),
+        ]
+    );
+    assert!(events.iter().all(|event| event.accuracy == Accuracy::Exact));
+    assert!(events.iter().all(|event| event.session_hash.is_some()));
+    let encoded = serde_json::to_string(&events).unwrap();
+    assert!(!encoded.contains("TOKSHOW_TEST_PROMPT_SECRET"));
+    assert!(!encoded.contains("session-secret"));
+    assert!(!encoded.contains("turn-secret"));
 }

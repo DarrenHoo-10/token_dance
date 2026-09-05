@@ -2,20 +2,19 @@ name: cross-platform-packaging
 
 on:
   workflow_dispatch:
+    inputs:
+      sign_release:
+        description: "Sign and notarize a release (requires configured certificates)"
+        type: boolean
+        default: false
   push:
     paths:
-      - collector/crates/platform-windows/**
-      - collector/crates/platform-macos/**
-      - collector/packaging/**
-      - collector/apps/desktop/**
+      - collector/**
       - .github/workflows/cross-platform-packaging.yml
       - .gitattributes
   pull_request:
     paths:
-      - collector/crates/platform-windows/**
-      - collector/crates/platform-macos/**
-      - collector/packaging/**
-      - collector/apps/desktop/**
+      - collector/**
       - .github/workflows/cross-platform-packaging.yml
       - .gitattributes
 
@@ -80,15 +79,17 @@ jobs:
       - name: Build Windows release executable
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           npm --prefix collector/apps/desktop ci
           npm --prefix collector/apps/desktop run build
-          cargo build --locked --release --manifest-path collector/apps/desktop/src-tauri/Cargo.toml
+          cargo build --locked --release --manifest-path collector/apps/desktop/src-tauri/Cargo.toml --features custom-protocol
           $artifact = 'collector/apps/desktop/src-tauri/target/release/tokendance-desktop.exe'
           if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
             throw "BLOCKED: Windows release executable was not produced: $artifact"
           }
       - name: Sign and verify Windows release executable
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch' && inputs.sign_release
         shell: pwsh
         env:
           WINDOWS_SIGNING_CERT_PFX_BASE64: ${{ secrets.WINDOWS_SIGNING_CERT_PFX_BASE64 }}
@@ -124,15 +125,22 @@ jobs:
             }
             Remove-Item -LiteralPath $pfxPath -Force -ErrorAction SilentlyContinue
           }
-      - name: Record pull-request signing block
-        if: github.event_name == 'pull_request'
+      - name: Record unsigned build status
+        if: github.event_name != 'workflow_dispatch' || !inputs.sign_release
         shell: pwsh
         run: |
-          Add-Content $env:GITHUB_STEP_SUMMARY 'BLOCKED: Authenticode release signing is intentionally not claimed for pull requests because protected signing credentials are unavailable.'
+          Add-Content $env:GITHUB_STEP_SUMMARY 'Unsigned CI build. Request sign_release explicitly to produce a verified Authenticode release.'
       - uses: actions/upload-artifact@v4
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch' && inputs.sign_release
         with:
           name: tokendance-desktop-windows-signed
+          path: collector/apps/desktop/src-tauri/target/release/tokendance-desktop.exe
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'workflow_dispatch' || !inputs.sign_release
+        with:
+          name: tokendance-desktop-windows-unsigned
           path: collector/apps/desktop/src-tauri/target/release/tokendance-desktop.exe
           if-no-files-found: error
 
@@ -191,14 +199,14 @@ jobs:
         run: |
           npm --prefix collector/apps/desktop ci
           npm --prefix collector/apps/desktop run build
-          cargo build --locked --release --manifest-path collector/apps/desktop/src-tauri/Cargo.toml
+          cargo build --locked --release --manifest-path collector/apps/desktop/src-tauri/Cargo.toml --features custom-protocol
           rm -rf collector/packaging/macos/release
           mkdir -p collector/packaging/macos/release
           bash collector/packaging/macos/Build-App-Bundle.sh \
             collector/apps/desktop/src-tauri/target/release/tokendance-desktop \
             collector/packaging/macos/release/TokenDance.app
       - name: Sign, notarize, staple, and verify bound macOS release artifact
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch' && inputs.sign_release
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
@@ -255,13 +263,22 @@ jobs:
           bash collector/packaging/macos/sign-notarize.sh \
             collector/packaging/macos/release/TokenDance.app \
             collector/packaging/macos/release/tokendance-desktop-macos.zip
-      - name: Record pull-request notarization block
-        if: github.event_name == 'pull_request'
+      - name: Record unsigned build status
+        if: github.event_name != 'workflow_dispatch' || !inputs.sign_release
         run: |
-          echo 'BLOCKED: Developer ID signing and Apple notarization are intentionally not claimed for pull requests because protected release credentials are unavailable.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Unsigned CI build. Request sign_release explicitly to produce a signed and notarized macOS release.' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
-        if: github.event_name != 'pull_request'
+        if: github.event_name == 'workflow_dispatch' && inputs.sign_release
         with:
           name: tokendance-desktop-macos-notarized
           path: collector/packaging/macos/release/tokendance-desktop-macos.zip
+          if-no-files-found: error
+      - name: Archive unsigned macOS build
+        if: github.event_name != 'workflow_dispatch' || !inputs.sign_release
+        run: ditto -c -k --keepParent collector/packaging/macos/release/TokenDance.app collector/packaging/macos/release/tokendance-desktop-macos-unsigned.zip
+      - uses: actions/upload-artifact@v4
+        if: github.event_name != 'workflow_dispatch' || !inputs.sign_release
+        with:
+          name: tokendance-desktop-macos-unsigned
+          path: collector/packaging/macos/release/tokendance-desktop-macos-unsigned.zip
           if-no-files-found: error
