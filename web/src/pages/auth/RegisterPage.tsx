@@ -1,13 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { NavLink, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { useNotification } from '@/context/NotificationContext';
 import { Input } from '@/components/common/Input';
 import { Button } from '@/components/common/Button';
-import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
 import { api, ApiError } from '@/api/client';
 import { getApiErrorMessage } from '@/i18n';
+import { ArrowRight } from 'lucide-react';
+import type { CompanionMood } from './LoginArt';
+import { AuthLayout } from './AuthLayout';
+import { AuthPasswordInput } from './AuthPasswordInput';
 
 export const RegisterPage: React.FC = () => {
   const { register } = useAuth();
@@ -18,6 +21,8 @@ export const RegisterPage: React.FC = () => {
 
   const rawReturnTo = searchParams.get('return_to');
 
+  const [focusedField, setFocusedField] = useState<'email' | 'password' | null>(null);
+  const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
@@ -102,186 +107,42 @@ export const RegisterPage: React.FC = () => {
     }
   };
 
+  const mood: CompanionMood = focusedField === 'password' || showPassword ? 'password'
+    : submitting || sendingCode ? 'loading' : focusedField === 'email' ? 'email' : errorMessage ? 'error' : 'idle';
+
   return (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(320px, 1fr) minmax(360px, 1fr)',
-        minHeight: '100vh',
-        backgroundColor: 'var(--bg-app)',
-      }}
-    >
-      <aside
-        style={{
-          backgroundColor: 'var(--bg-dark)',
-          color: 'var(--text-inverse)',
-          padding: '48px',
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'space-between',
-        }}
-      >
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 22, fontWeight: 800 }}>
-            <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="TokenDance" style={{ width: 36, height: 36 }} />
-            <span>TokenDance</span>
-          </div>
-
-          <div style={{ marginTop: 120, maxWidth: 440 }}>
-            <p className="eyebrow" style={{ color: 'var(--lime)' }}>
-              {t('common.brandTagline')}
-            </p>
-            <h1 style={{ fontSize: 48, color: 'white', letterSpacing: '-0.05em', lineHeight: 1.05 }}>
-              {t('auth.registerHeroLine1')} <br />
-              <span style={{ color: 'var(--lime)' }}>{t('auth.registerHeroLine2')}</span>
-            </h1>
-            <p style={{ marginTop: 20, color: '#b2bbb4', fontSize: 16, lineHeight: 1.6 }}>
-              {t('common.heroSub')}
-            </p>
-          </div>
-        </div>
-
-        <div
-          style={{
-            borderTop: '1px solid var(--border-dark)',
-            paddingTop: 24,
-          }}
-        >
-          <strong style={{ display: 'block', color: 'white', fontSize: 14 }}>
-            {t('auth.privacyPledge')}
-          </strong>
-          <p style={{ color: '#88928a', fontSize: 12, marginTop: 6, lineHeight: 1.5 }}>
-            {t('auth.privacyPledgeDesc')}
-          </p>
-        </div>
-      </aside>
-
-      {/* Right registration form */}
-      <main
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          justifyContent: 'center',
-          alignItems: 'center',
-          padding: '48px 32px',
-          position: 'relative',
-        }}
-      >
-        <div style={{ position: 'absolute', top: 24, right: 32 }}>
-          <LocaleSwitcher />
-        </div>
-
-        <div style={{ width: '100%', maxWidth: 400 }}>
-          <div style={{ marginBottom: 28 }}>
-            <p className="eyebrow">{t('common.appName')}</p>
-            <h2 style={{ fontSize: 26 }}>{t('auth.titleRegister')}</h2>
-            <p className="text-muted" style={{ fontSize: 13, marginTop: 4 }}>
-              {t('auth.registerSub')}
-            </p>
-          </div>
-
-          <div
-            style={{
-              display: 'flex',
-              gap: 16,
-              borderBottom: '1px solid var(--border-light)',
-              marginBottom: 24,
-            }}
+    <AuthLayout mode="register" returnTo={rawReturnTo} mood={mood} errorMessage={errorMessage}>
+      <form onSubmit={handleSubmit} aria-busy={submitting}>
+        <div className="auth-email-code-row">
+          <Input
+            label={t('auth.email')} type="email" autoComplete="email" name="email"
+            placeholder={t('auth.emailPlaceholder')} value={email}
+            onChange={(e) => setEmail(e.target.value)} onFocus={() => setFocusedField('email')}
+            onBlur={() => setFocusedField(null)} required
+          />
+          <Button
+            type="button" variant="outline" className="auth-send-code"
+            onClick={handleSendCode} loading={sendingCode} disabled={cooldown > 0 || !email}
           >
-            <NavLink
-              to={rawReturnTo ? `/login?return_to=${encodeURIComponent(rawReturnTo)}` : '/login'}
-              style={{ paddingBottom: 8, color: 'var(--text-muted)', fontSize: 13 }}
-            >
-              {t('auth.tabLogin')}
-            </NavLink>
-            <span
-              style={{
-                paddingBottom: 8,
-                fontWeight: 700,
-                borderBottom: '2px solid var(--bg-dark)',
-                fontSize: 13,
-              }}
-            >
-              {t('auth.tabRegister')}
-            </span>
-          </div>
-
-          {errorMessage && (
-            <div
-              style={{
-                backgroundColor: 'var(--danger-bg)',
-                border: '1px solid var(--danger-border)',
-                color: 'var(--danger)',
-                padding: '10px 14px',
-                borderRadius: 'var(--radius-sm)',
-                fontSize: 12,
-                marginBottom: 16,
-              }}
-            >
-              {errorMessage}
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit}>
-            <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', marginBottom: 16 }}>
-              <div style={{ flex: 1 }}>
-                <Input
-                  label={t('auth.email')}
-                  type="email"
-                  placeholder={t('auth.emailPlaceholder')}
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleSendCode}
-                loading={sendingCode}
-                disabled={cooldown > 0 || !email}
-                style={{ height: 42, marginBottom: 0, whiteSpace: 'nowrap' }}
-              >
-                {cooldown > 0 ? `${cooldown}${t('auth.cooldownSec')}` : t('auth.sendCode')}
-              </Button>
-            </div>
-
-            <Input
-              label={t('auth.code')}
-              type="text"
-              placeholder={t('auth.codePlaceholder')}
-              value={code}
-              onChange={(e) => setCode(e.target.value.trim())}
-              required
-            />
-
-            <Input
-              label={t('auth.password')}
-              type="password"
-              placeholder={t('auth.newPasswordPlaceholder')}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-
-            <Button type="submit" variant="primary" size="lg" loading={submitting} style={{ width: '100%', marginTop: 8 }}>
-              {t('auth.submitRegister')}
-            </Button>
-          </form>
-
-          <p
-            style={{
-              fontSize: 11,
-              color: 'var(--text-subtle)',
-              textAlign: 'center',
-              marginTop: 24,
-              lineHeight: 1.5,
-            }}
-          >
-            {t('auth.termsNotice')}
-          </p>
+            {cooldown > 0 ? `${cooldown}${t('auth.cooldownSec')}` : t('auth.sendCode')}
+          </Button>
         </div>
-      </main>
-    </div>
+        <Input
+          label={t('auth.code')} type="text" autoComplete="one-time-code" name="code" inputMode="numeric"
+          placeholder={t('auth.codePlaceholder')} value={code}
+          onChange={(e) => setCode(e.target.value.trim())} required
+        />
+        <AuthPasswordInput
+          label={t('auth.password')} autoComplete="new-password" name="password"
+          placeholder={t('auth.newPasswordPlaceholder')} value={password}
+          onChange={(e) => setPassword(e.target.value)} onFocus={() => setFocusedField('password')}
+          onBlur={() => setFocusedField(null)} required
+          visible={showPassword} onToggleVisibility={() => setShowPassword(!showPassword)}
+        />
+        <Button type="submit" variant="primary" size="lg" loading={submitting} className="login-submit auth-register-submit">
+          {t('auth.submitRegister')}{!submitting && <ArrowRight size={16} aria-hidden="true" />}
+        </Button>
+      </form>
+    </AuthLayout>
   );
 };
