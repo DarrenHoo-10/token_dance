@@ -122,6 +122,7 @@ func NewRouterWithReadiness(
 			pr.Get("/users/{handle}/skills", handlers.GetPublicSkills)
 			pr.Get("/search", handlers.Search)
 			pr.Get("/leaderboards", handlers.GetLeaderboards)
+			pr.Get("/avatars/{id}", handlers.GetAvatarContent)
 			pr.Get("/compare", handlers.CompareUsers)
 		})
 
@@ -141,6 +142,7 @@ func NewRouterWithReadiness(
 
 			// Media / Avatar
 			mr.With(mw.RequireCSRF).Post("/avatar-upload-intents", handlers.CreateAvatarIntent)
+			mr.With(mw.RequireCSRF).Put("/avatar-upload-intents/{id}/content", handlers.UploadAvatarContent)
 			mr.With(mw.RequireCSRF).Post("/avatar-upload-intents/{id}/complete", handlers.CompleteAvatarIntent)
 			mr.With(mw.RequireCSRF).Delete("/avatar", handlers.ClearAvatar)
 

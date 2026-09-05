@@ -1,3 +1,4 @@
+import { LeaderboardListPage } from '@/pages/public/LeaderboardListPage';
 import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { LocaleProvider } from '@/context/LocaleContext';
@@ -77,6 +78,7 @@ export const App: React.FC = () => {
                 <Route path="/u/:handle" element={<PublicProfilePage />} />
                 <Route path="/community" element={<CommunityPage />} />
                 <Route path="/leaderboard" element={<LeaderboardPage />} />
+                <Route path="/leaderboard/list" element={<LeaderboardListPage />} />
                 <Route path="/teams" element={<TeamDashboardPage />} />
 
                 {/* 404 catch-all */}

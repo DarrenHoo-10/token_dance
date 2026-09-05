@@ -1,3 +1,4 @@
+import { avatarUrl } from '@/utils/avatar';
 import React, { useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { ChevronDown, Database, FileText, LogOut, Settings, UserRound } from 'lucide-react';
@@ -115,7 +116,7 @@ export const Navbar: React.FC = () => {
             >
               <span className="avatar">
                 {user.avatarUrl ? (
-                  <img src={user.avatarUrl} alt="" />
+                  <img src={avatarUrl(user.avatarUrl)} alt="" />
                 ) : (
                   <span>{initials}</span>
                 )}

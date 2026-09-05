@@ -573,6 +573,33 @@ func (h *Handlers) CompleteAvatarIntent(w http.ResponseWriter, r *http.Request) 
 	WriteJSON(w, http.StatusOK, obj)
 }
 
+func (h *Handlers) UploadAvatarContent(w http.ResponseWriter, r *http.Request) {
+	user := GetUserFromContext(r.Context())
+	if err := h.media.UploadAvatarContent(r.Context(), chi.URLParam(r, "id"), user.UserID, r.Body); err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handlers) GetAvatarContent(w http.ResponseWriter, r *http.Request) {
+	viewerID := ""
+	if user := GetUserFromContext(r.Context()); user != nil {
+		viewerID = user.UserID
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Vary", "Cookie")
+	data, contentType, err := h.media.ReadAvatar(r.Context(), chi.URLParam(r, "id"), viewerID)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
+}
+
 func (h *Handlers) ClearAvatar(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	if err := h.media.ClearAvatar(r.Context(), user.UserID); err != nil {

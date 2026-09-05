@@ -1,5 +1,7 @@
+import { LeaderboardTable } from '@/components/analytics/LeaderboardTable';
+import { avatarUrl } from '@/utils/avatar';
 import React, { useCallback, useRef, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowUpRight, BarChart3, ChevronLeft, ChevronRight, CircleHelp,
   Flame, TrendingDown, TrendingUp, Users,
@@ -31,7 +33,7 @@ function TrendBadge({ value }: { value: number | null | undefined }) {
 
 function PersonAvatar({ entry, className = '' }: { entry: LeaderboardEntry; className?: string }) {
   if (entry.avatarUrl) {
-    return <img className={`leader-avatar ${className}`} src={entry.avatarUrl} alt={`${entry.displayName} profile`} />;
+    return <img className={`leader-avatar ${className}`} src={avatarUrl(entry.avatarUrl)} alt={`${entry.displayName} profile`} />;
   }
   return <span className={`leader-avatar ${className} avatar-fallback`} aria-hidden="true">{entry.displayName.slice(0, 1).toUpperCase()}</span>;
 }
@@ -45,16 +47,6 @@ function PodiumCard({ entry }: { entry: LeaderboardEntry }) {
     <div className="podium-score-row"><span>{formatTokens(entry.metricValue)}</span><small><TrendBadge value={entry.rankDelta ?? null} /></small></div>
     <p>{entry.topAgent || '—'}</p>
   </article>;
-}
-
-function RankingRow({ entry }: { entry: LeaderboardEntry }) {
-  return <div className="ranking-row">
-    <span className="rank-number">{entry.rankNo}</span>
-    <div className="rank-person"><PersonAvatar entry={entry} className="row-avatar" /><span>{entry.handle}</span></div>
-    <strong className="rank-tokens">{formatTokens(entry.metricValue)}</strong>
-    <span className="rank-tools">{entry.topAgent || '—'}{entry.activeDays ? ` · ${entry.activeDays}d` : ''}</span>
-    <TrendBadge value={entry.rankDelta ?? null} />
-  </div>;
 }
 
 export const LeaderboardPage: React.FC = () => {
@@ -135,7 +127,6 @@ export const LeaderboardPage: React.FC = () => {
   }, [authenticated, user?.userId]);
 
   const podium = entries.length >= 3 ? [entries[1], entries[0], entries[2]] : entries.slice(0, entries.length);
-  const rows = entries.filter((entry) => entry.rankNo > 3);
   const rankValue = summary?.ranking?.rank ?? null;
   const todayTokens = summary?.metrics?.totalTokens?.value ?? null;
   const allTimeTokens = allTimeSummary?.metrics.totalTokens.supported
@@ -166,10 +157,8 @@ export const LeaderboardPage: React.FC = () => {
     }
     return <>
       {podium.length > 0 && <div className="podium-grid">{podium.map((entry) => <PodiumCard key={entry.rankNo} entry={entry} />)}</div>}
-      <div className="ranking-table">
-        {rows.map((entry) => <RankingRow key={entry.rankNo} entry={entry} />)}
-
-      </div>
+      <div className="leaderboard-list-heading"><h2>{zh ? '排行榜列表' : 'Rankings'}</h2><Link to={`/leaderboard/list?window=${windowByRange[range]}`}>{zh ? '查看完整列表' : 'View full list'} →</Link></div>
+      <LeaderboardTable entries={entries} />
     </>;
   };
 

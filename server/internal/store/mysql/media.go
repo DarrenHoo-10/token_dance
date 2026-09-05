@@ -16,6 +16,26 @@ type mediaStore struct {
 	db *sql.DB
 }
 
+func (s *mediaStore) GetVisibleAvatar(ctx context.Context, objectID, viewerID string) (*domain.UserUploadObject, error) {
+	var obj domain.UserUploadObject
+	var contentType string
+	err := s.db.QueryRowContext(ctx, `SELECT o.object_id, o.object_key, o.content_type
+	FROM user_upload_objects o JOIN users u ON u.avatar_object_id=o.object_id AND u.user_id=o.user_id
+	LEFT JOIN user_privacy_settings priv ON priv.user_id=u.user_id
+	LEFT JOIN public_user_profiles p ON p.user_id=u.user_id
+	WHERE o.object_id=? AND o.object_type='avatar' AND o.upload_status='ready'
+	AND u.account_status='active' AND (u.user_id=? OR
+	(u.leaderboard_visibility='public' AND priv.public_profile_enabled=TRUE AND p.profile_status='published'))`, objectID, viewerID).Scan(&obj.ObjectID, &obj.ObjectKey, &contentType)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	obj.ContentType = &contentType
+	return &obj, nil
+}
+
 func (s *mediaStore) CreateAvatarUploadIntent(ctx context.Context, obj domain.UserUploadObject) (*domain.UserUploadObject, error) {
 	var byteSize sql.NullInt64
 	if obj.ByteSize != nil {
@@ -156,7 +176,7 @@ func (s *mediaStore) CompleteAvatarUploadIntent(ctx context.Context, objectID, u
 		return nil, fmt.Errorf("failed to mark upload object ready: %w", err)
 	}
 
-	avatarURL := fmt.Sprintf("https://cdn.tokendance.dev/%s", objKey)
+	avatarURL := "/api/v1/public/avatars/" + objectID
 	updateUserSQL := `
 		UPDATE users
 		SET avatar_object_id = ?, avatar_url = ?, profile_version = profile_version + 1, updated_at = ?

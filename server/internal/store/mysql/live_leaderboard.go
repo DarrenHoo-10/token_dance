@@ -60,15 +60,19 @@ func (s *leaderboardStore) getLiveTokenLeaderboard(ctx context.Context, window s
 	after := 0
 	if cursor != nil {
 		after, err = strconv.Atoi(*cursor)
-		if err != nil || after < 0 || after > 10000000 {
+		if err != nil || after < 0 || after >= 1000 {
 			return nil, domain.ErrInvalidArgument
 		}
+	}
+	endRank := after + limit
+	if endRank > 1000 {
+		endRank = 1000
 	}
 	rows, err := s.db.QueryContext(ctx, liveTokenRanking+`
 	SELECT stats.participants, stats.tokens, stats.watermark,
 	       ranked.rank_no, ranked.handle, ranked.display_name, ranked.avatar_url, ranked.tokens
 	FROM stats LEFT JOIN ranked ON ranked.rank_no > ? AND ranked.rank_no <= ?
-	ORDER BY ranked.rank_no`, from, to, after, after+limit)
+	ORDER BY ranked.rank_no`, from, to, after, endRank)
 	if err != nil {
 		return nil, fmt.Errorf("query live token leaderboard: %w", err)
 	}
@@ -93,7 +97,7 @@ func (s *leaderboardStore) getLiveTokenLeaderboard(ctx context.Context, window s
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if len(response.Entries) > 0 && after+len(response.Entries) < count {
+	if len(response.Entries) > 0 && after+len(response.Entries) < count && after+len(response.Entries) < 1000 {
 		next := strconv.Itoa(after + len(response.Entries))
 		response.NextCursor = &next
 	}

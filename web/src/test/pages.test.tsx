@@ -57,7 +57,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       renderWithProviders(<LeaderboardPage />, '/leaderboard');
       await waitFor(() => expect(screen.getByText('ada')).toBeInTheDocument());
       expect(screen.getByText('grace')).toBeInTheDocument();
-      expect(screen.getByText('325.7M')).toBeInTheDocument();
+      expect(screen.getAllByText('325.7M')).toHaveLength(2);
       expect(spy).toHaveBeenCalledWith({ window: 'today', limit: 10 });
     });
 

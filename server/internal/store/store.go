@@ -124,6 +124,7 @@ type AvatarReadyMeta struct {
 }
 
 type MediaStore interface {
+	GetVisibleAvatar(ctx context.Context, objectID, viewerID string) (*domain.UserUploadObject, error)
 	CreateAvatarUploadIntent(ctx context.Context, obj domain.UserUploadObject) (*domain.UserUploadObject, error)
 	GetUploadObject(ctx context.Context, objectID, userID string) (*domain.UserUploadObject, error)
 	UpdateUploadObjectStatus(ctx context.Context, objectID string, status domain.UploadStatus, errorCode *string, now time.Time) error

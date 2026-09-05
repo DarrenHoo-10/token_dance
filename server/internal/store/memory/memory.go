@@ -2016,6 +2016,27 @@ func (m *MemoryStore) GetUploadObject(ctx context.Context, objectID, userID stri
 	return &objCopy, nil
 }
 
+func (m *MemoryStore) GetVisibleAvatar(ctx context.Context, objectID, viewerID string) (*domain.UserUploadObject, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	obj := m.uploadObjects[objectID]
+	if obj == nil || obj.ObjectType != "avatar" || obj.UploadStatus != domain.UploadStatusReady {
+		return nil, domain.ErrNotFound
+	}
+	u := m.users[obj.UserID]
+	if u == nil || u.AccountStatus != domain.AccountStatusActive || u.AvatarObjectID == nil || *u.AvatarObjectID != objectID {
+		return nil, domain.ErrNotFound
+	}
+	if viewerID != u.UserID {
+		priv, pub := m.privacySettings[u.UserID], m.publicProfiles[u.UserID]
+		if u.LeaderboardVisibility != domain.LeaderboardVisibilityPublic || priv == nil || !priv.PublicProfileEnabled || pub == nil || pub.ProfileStatus != "published" {
+			return nil, domain.ErrNotFound
+		}
+	}
+	copy := *obj
+	return &copy, nil
+}
+
 func (m *MemoryStore) UpdateUploadObjectStatus(ctx context.Context, objectID string, status domain.UploadStatus, errorCode *string, now time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2059,7 +2080,7 @@ func (m *MemoryStore) CompleteAvatarUploadIntent(ctx context.Context, objectID, 
 
 	if u, ok := m.users[userID]; ok {
 		u.AvatarObjectID = &objectID
-		avatarURL := fmt.Sprintf("https://cdn.tokendance.dev/%s", obj.ObjectKey)
+		avatarURL := "/api/v1/public/avatars/" + objectID
 		u.AvatarURL = &avatarURL
 		u.ProfileVersion++
 		u.UpdatedAt = now
