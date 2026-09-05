@@ -1,4 +1,4 @@
-export const DEFAULT_WEBSITE_ORIGIN = "http://127.0.0.1:3000";
+export const DEFAULT_WEBSITE_ORIGIN = "https://www.nexorai.com.cn/token-dance";
 export const WEBSITE_URL_STORAGE_KEY = "tokendance.websiteUrl";
 
 export function parseWebsiteOrigin(value: string): string {
@@ -6,21 +6,29 @@ export function parseWebsiteOrigin(value: string): string {
   if (!["http:", "https:"].includes(url.protocol) || !url.host || url.username || url.password) {
     throw new Error("请输入有效的 HTTP / HTTPS 网站地址");
   }
-  return url.origin;
+  return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
 }
 
 export function resolveWebsiteOrigin(stored: string | null | undefined): string {
   const raw = (stored ?? "").trim();
   if (!raw) return DEFAULT_WEBSITE_ORIGIN;
-  return parseWebsiteOrigin(raw);
+  const base = parseWebsiteOrigin(raw);
+  if (["http://127.0.0.1:3000", "http://localhost:3000", "https://www.nexorai.com.cn"].includes(base)) {
+    return DEFAULT_WEBSITE_ORIGIN;
+  }
+  return base;
 }
 
 export function websiteHomeUrl(origin: string): string {
-  return new URL("/", `${resolveWebsiteOrigin(origin)}/`).href;
+  return `${resolveWebsiteOrigin(origin)}/`;
+}
+
+export function websitePageUrl(origin: string, path: string): string {
+  return new URL(path.replace(/^\/+/, ""), websiteHomeUrl(origin)).href;
 }
 
 export function websiteLoginUrl(origin: string, returnTo: string): string {
-  const url = new URL("/login", `${resolveWebsiteOrigin(origin)}/`);
+  const url = new URL(websitePageUrl(origin, "/login"));
   url.searchParams.set("return_to", returnTo);
   return url.href;
 }

@@ -6,6 +6,7 @@ import {
   resolveWebsiteOrigin,
   websiteHomeUrl,
   websiteLoginUrl,
+  websitePageUrl,
 } from "../src/website.ts";
 
 test("empty stored URL falls back to the built-in origin", () => {
@@ -15,13 +16,28 @@ test("empty stored URL falls back to the built-in origin", () => {
 });
 
 test("the tray button opens the site home; login is only used with an explicit return path", () => {
-  assert.equal(parseWebsiteOrigin("https://tokendance.example/app"), "https://tokendance.example");
+  assert.equal(parseWebsiteOrigin("https://tokendance.example/app"), "https://tokendance.example/app");
   assert.equal(websiteHomeUrl("https://tokendance.example"), "https://tokendance.example/");
-  assert.equal(websiteHomeUrl(""), "http://127.0.0.1:3000/");
+  assert.equal(websiteHomeUrl(""), "https://www.nexorai.com.cn/token-dance/");
   assert.equal(
-    websiteLoginUrl("http://127.0.0.1:3000", "/settings/profile"),
-    "http://127.0.0.1:3000/login?return_to=%2Fsettings%2Fprofile",
+    websiteLoginUrl("http://127.0.0.1:5173", "/settings/profile"),
+    "http://127.0.0.1:5173/login?return_to=%2Fsettings%2Fprofile",
   );
+});
+
+test("production links preserve the deployment prefix and remove query/fragment from the base", () => {
+  assert.equal(parseWebsiteOrigin("https://www.nexorai.com.cn/token-dance/?old=1#test"), DEFAULT_WEBSITE_ORIGIN);
+  assert.equal(websiteLoginUrl("", "/settings/profile"), "https://www.nexorai.com.cn/token-dance/login?return_to=%2Fsettings%2Fprofile");
+  for (const path of ["/register", "/forgot-password", "/onboarding"]) {
+    assert.equal(websitePageUrl("", path), `https://www.nexorai.com.cn/token-dance${path}`);
+  }
+});
+
+test("previously saved default URLs migrate to the production application", () => {
+  for (const old of ["http://127.0.0.1:3000/", "http://localhost:3000", "https://www.nexorai.com.cn/"]) {
+    assert.equal(resolveWebsiteOrigin(old), DEFAULT_WEBSITE_ORIGIN);
+  }
+  assert.equal(resolveWebsiteOrigin("https://custom.example/nested/app/"), "https://custom.example/nested/app");
 });
 
 test("credentialed and non-http URLs are rejected", () => {
