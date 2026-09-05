@@ -205,10 +205,11 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 }
 
 type LoginRequest struct {
-	Email       string `json:"email"`
-	Password    string `json:"password"`
-	ReturnTo    string `json:"returnTo"`
-	DeviceLabel string `json:"deviceLabel"`
+	Email        string `json:"email"`
+	Password     string `json:"password"`
+	ReturnTo     string `json:"returnTo"`
+	DeviceLabel  string `json:"deviceLabel"`
+	KeepSignedIn *bool  `json:"keepSignedIn"`
 }
 
 func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
@@ -218,7 +219,12 @@ func (h *Handlers) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.auth.Login(r.Context(), req.Email, req.Password, req.ReturnTo, req.DeviceLabel)
+	keepSignedIn := true
+	if req.KeepSignedIn != nil {
+		keepSignedIn = *req.KeepSignedIn
+	}
+
+	result, err := h.auth.Login(r.Context(), req.Email, req.Password, req.ReturnTo, req.DeviceLabel, keepSignedIn)
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -1660,13 +1666,23 @@ func (h *Handlers) CompareUsers(w http.ResponseWriter, r *http.Request) {
 
 // --- Cookie Helper ---
 
+func sessionCookieMaxAge(expiresAt time.Time) int {
+	seconds := int(time.Until(expiresAt).Seconds())
+	if seconds < 1 {
+		return 1
+	}
+	return seconds
+}
+
 func (h *Handlers) setSessionCookie(w http.ResponseWriter, token string, expiresAt time.Time) {
+	maxAge := sessionCookieMaxAge(expiresAt)
 	if h.auth.IsProduction() {
 		http.SetCookie(w, &http.Cookie{
 			Name:     SessionCookieName,
 			Value:    token,
 			Path:     "/",
 			Expires:  expiresAt,
+			MaxAge:   maxAge,
 			HttpOnly: true,
 			SameSite: http.SameSiteLaxMode,
 			Secure:   true,
@@ -1679,6 +1695,7 @@ func (h *Handlers) setSessionCookie(w http.ResponseWriter, token string, expires
 		Value:    token,
 		Path:     "/",
 		Expires:  expiresAt,
+		MaxAge:   maxAge,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   false,
@@ -1688,6 +1705,7 @@ func (h *Handlers) setSessionCookie(w http.ResponseWriter, token string, expires
 		Value:    token,
 		Path:     "/",
 		Expires:  expiresAt,
+		MaxAge:   maxAge,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   false,

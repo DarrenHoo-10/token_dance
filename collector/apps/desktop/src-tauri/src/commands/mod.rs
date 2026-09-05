@@ -1,4 +1,5 @@
 pub mod agents;
+pub mod account;
 pub mod autostart;
 pub mod config;
 pub mod daemon;

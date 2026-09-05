@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schemas.tokenshow.dev/adapter-manifest/v1.json",
+  "manifestVersion": "1.0",
+  "id": "dev.tokenshow.adapter.pi",
+  "name": "Pi",
+  "version": "1.0.0",
+  "protocolVersion": "1.0",
+  "agent": { "id": "pi", "versionRange": ">=0.2.0 <2.0.0" },
+  "platforms": ["windows-x64", "windows-arm64", "macos-x64", "macos-arm64"],
+  "sources": ["jsonl_tail"],
+  "permissions": {
+    "readPaths": [{ "template": "AGENT_CONFIG_HOME", "relativeGlob": "agent/sessions/**", "access": "read" }],
+    "writePaths": [],
+    "commands": [],
+    "networkDomains": []
+  },
+  "capabilities": ["tokens", "sessions", "turns", "tools"]
+}

@@ -70,7 +70,9 @@ pub async fn collect_tick(
         if path
             .extension()
             .and_then(|ext| ext.to_str())
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("sqlite") || ext.eq_ignore_ascii_case("vscdb"))
+            .is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("sqlite") || ext.eq_ignore_ascii_case("vscdb")
+            })
         {
             match service.poll_sqlite(adapter, source_id).await {
                 Ok(count) => report.accepted_events += count,
@@ -87,10 +89,9 @@ pub async fn collect_tick(
                 .await
             {
                 Ok(count) => report.accepted_events += count,
-                Err(error) => report.errors.push(format!(
-                    "{adapter}/{source_id} {}: {error}",
-                    file.display()
-                )),
+                Err(error) => report
+                    .errors
+                    .push(format!("{adapter}/{source_id} {}: {error}", file.display())),
             }
         }
     }
@@ -107,7 +108,8 @@ pub async fn assemble_local_service(
         "collector-wal-key",
     ));
     let key = key_provider.data_key().map_err(|error| error.to_string())?;
-    let wal = WalStore::open(root.join("spool"), key_provider).map_err(|error| error.to_string())?;
+    let wal =
+        WalStore::open(root.join("spool"), key_provider).map_err(|error| error.to_string())?;
     let installation_id = load_or_create_installation_id(root)?;
     let service = ProductionService::assemble(
         installation_id,

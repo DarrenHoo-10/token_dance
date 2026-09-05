@@ -21,8 +21,10 @@ pub const UNKNOWN_JSON: &str = include_str!("../fixtures/contract/unknown.json")
 pub const RUNTIME_JSON: &str = include_str!("../fixtures/contract/runtime.json");
 pub const FINGERPRINT_V1: &str = "zcode-sqlite-v1-uv7";
 pub const FINGERPRINT_V2: &str = "zcode-sqlite-v2-uv9";
+pub const FINGERPRINT_V3: &str = "zcode-sqlite-v3-uv0";
 const V1_QUERIES: &[&str] = &["SELECT id, created_at, model FROM sessions WHERE id > ? ORDER BY id", "SELECT id, session_id, finished_at, input_tokens, output_tokens, tool_count FROM steps WHERE id > ? ORDER BY id"];
 const V2_QUERIES: &[&str] = &["SELECT id, created_at, model FROM sessions WHERE id > ? ORDER BY id", "SELECT id, session_id, finished_at, input_tokens, output_tokens, total_tokens, tool_count, skill_name FROM step_metrics WHERE id > ? ORDER BY id"];
+const V3_QUERIES: &[&str] = &["SELECT rowid AS id, id AS session_ref, time_created FROM session WHERE rowid > ? ORDER BY rowid", "SELECT rowid AS id, session_id, provider_id, model_id, input_tokens, output_tokens, computed_total_tokens, tool_call_count, completed_at FROM model_usage WHERE rowid > ? AND status = 'completed' ORDER BY rowid"];
 
 pub fn load_manifest() -> AdapterManifest {
     serde_json::from_str(MANIFEST_JSON).expect("ZCode manifest")
@@ -31,6 +33,7 @@ pub fn verified_query_plan(fingerprint: &str) -> Option<&'static [&'static str]>
     match fingerprint {
         FINGERPRINT_V1 => Some(V1_QUERIES),
         FINGERPRINT_V2 => Some(V2_QUERIES),
+        FINGERPRINT_V3 => Some(V3_QUERIES),
         _ => None,
     }
 }
@@ -43,6 +46,7 @@ pub fn compatibility_supported(version: &str, fingerprint: &str) -> bool {
     match fingerprint {
         FINGERPRINT_V1 => ((1, 0, 0)..(1, 2, 0)).contains(&version),
         FINGERPRINT_V2 => ((1, 2, 0)..(2, 0, 0)).contains(&version),
+        FINGERPRINT_V3 => ((0, 0, 0)..(1, 0, 0)).contains(&version),
         _ => false,
     }
 }

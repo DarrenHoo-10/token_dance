@@ -653,7 +653,7 @@ type LoginResult struct {
 	ReturnTo     string
 }
 
-func (s *Service) Login(ctx context.Context, email, password, returnTo, deviceLabel string) (*LoginResult, error) {
+func (s *Service) Login(ctx context.Context, email, password, returnTo, deviceLabel string, keepSignedIn bool) (*LoginResult, error) {
 	normalized, err := NormalizeEmail(email)
 	if err != nil {
 		return nil, domain.NewAppError(401, "AUTH_INVALID_CREDENTIALS", "auth.invalidCredentials", "invalid email or password", nil, nil)
@@ -711,6 +711,13 @@ func (s *Service) Login(ctx context.Context, email, password, returnTo, deviceLa
 		label = &deviceLabel
 	}
 
+	idleTTL := s.cfg.SessionIdleTTL
+	absoluteTTL := s.cfg.SessionAbsoluteTTL
+	if !keepSignedIn {
+		idleTTL = 24 * time.Hour
+		absoluteTTL = 24 * time.Hour
+	}
+
 	session := domain.UserSession{
 		SessionID:         sessionID,
 		UserID:            user.UserID,
@@ -720,8 +727,8 @@ func (s *Service) Login(ctx context.Context, email, password, returnTo, deviceLa
 		SessionStatus:     domain.SessionStatusActive,
 		DeviceLabel:       label,
 		LastSeenAt:        now,
-		IdleExpiresAt:     now.Add(s.cfg.SessionIdleTTL),
-		AbsoluteExpiresAt: now.Add(s.cfg.SessionAbsoluteTTL),
+		IdleExpiresAt:     now.Add(idleTTL),
+		AbsoluteExpiresAt: now.Add(absoluteTTL),
 		CreatedAt:         now,
 		UpdatedAt:         now,
 	}

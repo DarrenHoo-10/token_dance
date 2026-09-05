@@ -1,0 +1,4 @@
+[
+  {"versionRange": ">=0.2.0 <2.0.0", "sessionFormatVersion": 3, "source_kind": "jsonl_tail", "schema_fingerprint": "pi agent session JSONL: header type=session with cwd, entries type=message with message.usage{input,output,cacheRead,cacheWrite,totalTokens}, toolResult messages", "eventSchemaHash": "sha256:8f1c2a3b4d5e6f70-pi-v3", "capabilities": ["tokens", "sessions", "turns", "tools"], "test_fixture_version": "1", "result": "supported"},
+  {"versionRange": ">=2.0.0", "source_kind": "jsonl_tail", "schema_fingerprint": "unverified", "eventSchemaHash": "sha256:unknown-pi", "capabilities": ["tokens", "sessions"], "test_fixture_version": "1", "result": "degraded"}
+]

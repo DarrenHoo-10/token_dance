@@ -432,6 +432,82 @@ async fn remote_api_uses_secret_cursor_overlap_and_retry_after() {
 }
 
 #[test]
+fn zcode_v3_snapshot_maps_sessions_and_model_usage() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db.sqlite");
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "PRAGMA user_version = 0;
+             CREATE TABLE session(id TEXT PRIMARY KEY, project_id TEXT, workspace_id TEXT, parent_id TEXT, slug TEXT, directory TEXT, path TEXT, title TEXT, version TEXT, share_url TEXT, summary_additions INTEGER, summary_deletions INTEGER, summary_files INTEGER, summary_diffs TEXT, revert TEXT, permission TEXT, time_created INTEGER, time_updated INTEGER, time_compacting INTEGER, time_archived INTEGER, task_type TEXT, title_source TEXT, title_message_id TEXT, time_title_updated INTEGER, trace_id TEXT);
+             CREATE TABLE model_usage(id TEXT PRIMARY KEY, logical_request_id TEXT, attempt_index INTEGER, session_id TEXT, turn_id TEXT, trace_id TEXT, span_id TEXT, assistant_message_id TEXT, parent_user_message_id TEXT, query_source TEXT, provider_id TEXT, model_id TEXT, variant TEXT, agent TEXT, mode TEXT, task_type TEXT, status TEXT, started_at INTEGER, first_token_at INTEGER, completed_at INTEGER, duration_ms INTEGER, time_to_first_token_ms INTEGER, finish_reason TEXT, tool_call_count INTEGER, input_tokens INTEGER, output_tokens INTEGER, reasoning_tokens INTEGER, cache_creation_input_tokens INTEGER, cache_read_input_tokens INTEGER, provider_total_tokens INTEGER, computed_total_tokens INTEGER, retry_count INTEGER, retryable INTEGER, cancelled_by_user INTEGER, context_exceeded INTEGER, error_type TEXT, error_code TEXT, error_message TEXT, raw_usage_json TEXT, provider_metadata_json TEXT);
+             INSERT INTO session(id, time_created) VALUES('sess_a', 1788594825649);
+             INSERT INTO model_usage(id, session_id, provider_id, model_id, status, completed_at, tool_call_count, input_tokens, output_tokens, computed_total_tokens) VALUES('mu_1', 'sess_a', 'builtin:zai', 'glm-5.3', 'completed', 1788606721923, 2, 100, 20, 120);
+             INSERT INTO model_usage(id, session_id, provider_id, model_id, status, completed_at) VALUES('mu_failed', 'sess_a', 'builtin:zai', 'glm-5.3', 'error', 1788606721000);",
+        )
+        .unwrap();
+    drop(connection);
+
+    let detected = crate::detect_zcode_sqlite(&path).unwrap();
+    assert_eq!(detected.fingerprint, "zcode-sqlite-v3-uv0");
+
+    let mut driver = SqliteSnapshotDriver::new(
+        INSTALL,
+        "zcode-sqlite",
+        &path,
+        SqliteAdapterPlan::ZcodeV3,
+        "zcode-sqlite-v3-uv0",
+    )
+    .unwrap();
+    let batch = driver.poll().unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&batch.frames[0].payload).unwrap();
+    assert_eq!(payload["fingerprint"], "zcode-sqlite-v3-uv0");
+    let records = payload["records"].as_array().unwrap();
+    assert_eq!(records.len(), 2, "failed usage rows are filtered out");
+    let session = records
+        .iter()
+        .find(|record| record["type"] == "session")
+        .unwrap();
+    assert_eq!(session["sessionId"], "sess_a");
+    assert!(
+        session["timestamp"]
+            .as_str()
+            .unwrap()
+            .starts_with("2026-09-05T07:53:45"),
+        "time_created ms must become RFC3339: {:?}",
+        session["timestamp"]
+    );
+    let usage = records
+        .iter()
+        .find(|record| record["type"] == "step_finish")
+        .unwrap();
+    assert_eq!(usage["sessionId"], "sess_a");
+    assert_eq!(usage["provider"], "builtin:zai");
+    assert_eq!(usage["model"], "glm-5.3");
+    assert_eq!(usage["inputTokens"], 100);
+    assert_eq!(usage["outputTokens"], 20);
+    assert_eq!(usage["totalTokens"], 120);
+    assert_eq!(usage["toolCount"], 2);
+    assert!(
+        usage["timestamp"]
+            .as_str()
+            .unwrap()
+            .starts_with("2026-09-05T11:12:01"),
+        "completed_at ms must become RFC3339: {:?}",
+        usage["timestamp"]
+    );
+
+    let second = driver.poll().unwrap();
+    let second_payload: serde_json::Value =
+        serde_json::from_slice(&second.frames[0].payload).unwrap();
+    assert_eq!(
+        second_payload["records"].as_array().unwrap().len(),
+        0,
+        "cursors must advance past polled rows"
+    );
+}
+
+#[test]
 fn sqlite_snapshot_executes_only_fixed_plan_for_trusted_fingerprint() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("zcode.sqlite");

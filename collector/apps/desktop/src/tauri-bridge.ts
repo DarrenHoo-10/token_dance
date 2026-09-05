@@ -1,5 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import { lastSevenDays } from "./weekly-usage.ts";
+import {
+  WEBSITE_URL_STORAGE_KEY,
+  parseWebsiteOrigin,
+  resolveWebsiteOrigin,
+  websiteHomeUrl,
+  websiteLoginUrl,
+} from "./website";
+
+export {
+  DEFAULT_WEBSITE_ORIGIN,
+  WEBSITE_URL_STORAGE_KEY,
+  websiteHomeUrl,
+  websiteLoginUrl,
+} from "./website";
 
 export interface AgentConfig {
   id: string;
@@ -227,6 +241,22 @@ const mockState = {
       version: "0.9.1-preview",
     },
     {
+      id: "pi",
+      name: "Pi",
+      adapterId: "adapter-pi",
+      adapterVersion: "1.0.0",
+      status: "CONFIGURING" as const,
+      setupPlanStatus: "PROPOSED" as const,
+      enabled: false,
+      accuracy: "unknown" as const,
+      sources: ["jsonl"],
+      capabilities: ["tokens", "sessions", "turns", "tools"],
+      todayTokens: 0,
+      totalTokens: 0,
+      lastActive: "未连接",
+      version: "0.3.0",
+    },
+    {
       id: "deepseek-harness",
       name: "DeepSeek Harness",
       adapterId: "adapter-deepseek-harness",
@@ -282,6 +312,7 @@ const mockState = {
           "grok-build": true,
           cursor: true,
           zcode: false,
+          pi: false,
           "deepseek-harness": false,
         },
         metricToggles: {
@@ -633,20 +664,21 @@ export async function openSettings(): Promise<void> {
 }
 
 export function getWebsiteUrl(): string {
-  return localStorage.getItem("tokendance.websiteUrl") ?? "";
+  return localStorage.getItem(WEBSITE_URL_STORAGE_KEY) ?? "";
 }
 
 export function saveWebsiteUrl(value: string): void {
-  const url = new URL(value);
-  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
-    throw new Error("请输入有效的 HTTP / HTTPS 网站地址");
+  const trimmed = value.trim();
+  if (!trimmed) {
+    localStorage.removeItem(WEBSITE_URL_STORAGE_KEY);
+    return;
   }
-  localStorage.setItem("tokendance.websiteUrl", url.href);
+  localStorage.setItem(WEBSITE_URL_STORAGE_KEY, parseWebsiteOrigin(trimmed));
 }
 
-export async function openWebsite(): Promise<void> {
-  const url = getWebsiteUrl();
-  if (!url) throw new Error("请在设置中填写网站主页地址 / Set your website URL in Settings");
+export async function openWebsite(path?: "/settings/profile" | "/settings/privacy" | "/settings/devices"): Promise<void> {
+  const origin = resolveWebsiteOrigin(getWebsiteUrl());
+  const url = path ? websiteLoginUrl(origin, path) : websiteHomeUrl(origin);
   if (isTauriEnvironment()) await invoke("open_website", { url });
   else window.open(url, "_blank", "noopener,noreferrer");
 }

@@ -89,6 +89,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "adapter-pi"
+version = "0.1.0"
+dependencies = [
+ "adapter-sdk",
+ "async-trait",
+ "protocol",
+ "serde_json",
+]
+
+[[package]]
 name = "adapter-sdk"
 version = "0.1.0"
 dependencies = [
@@ -572,6 +582,7 @@ dependencies = [
  "adapter-cursor",
  "adapter-deepseek-harness",
  "adapter-grok-build",
+ "adapter-pi",
  "adapter-sdk",
  "adapter-zcode",
  "async-trait",
@@ -4405,7 +4416,9 @@ dependencies = [
  "collector-core",
  "collector-service",
  "config-executor",
+ "cookie",
  "protocol",
+ "reqwest 0.12.28",
  "serde",
  "serde_json",
  "tauri",

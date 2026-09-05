@@ -4,7 +4,7 @@
 > 文档状态：研发基线草案  
 > 更新时间：2026-08-30  
 > 目标系统：Windows、macOS  
-> 首期 Agent：Codex、Claude Code、Grok Build、Cursor、ZCode、DeepSeek Harness  
+> 首期 Agent：Codex、Claude Code、Grok Build、Cursor、ZCode、DeepSeek Harness、Pi  
 > 主轴：`adapter_runtime.status`、`event_delivery.status`  
 > 子轴：`setup_plan.status`、`source_checkpoint.status`、`upload_batch.status`  
 > 本地运行状态：文件型 append-only WAL、checkpoint、未 ACK spool、加密配置备份；Collector 不创建本地数据库  
@@ -78,9 +78,9 @@
 绘制 TokenDance 数据采集系统分层架构图，不画节点间连线，按以下层级从上到下排列：
 
 - 用户界面层：`TokenDance Web (React 19 + TypeScript)`、`TokenDance Desktop Settings (Tauri 2)`。
-- Agent 层：`Codex`、`Claude Code`、`Grok Build`、`Cursor`、`ZCode`、`DeepSeek Harness`。
+- Agent 层：`Codex`、`Claude Code`、`Grok Build`、`Cursor`、`ZCode`、`DeepSeek Harness`、`Pi`。
 - 本地采集层：`collector-core`、`adapter-host`、`acquisition`、`normalization`、`privacy`、`wal-spool`、`uploader`。
-- Adapter 层：`adapter-codex`、`adapter-claude`、`adapter-grok-build`、`adapter-cursor`、`adapter-zcode`、`adapter-deepseek-harness`。
+- Adapter 层：`adapter-codex`、`adapter-claude`、`adapter-grok-build`、`adapter-cursor`、`adapter-zcode`、`adapter-deepseek-harness`、`adapter-pi`。
 - 本地运行状态层：`collector.wal`、`checkpoint snapshots`、`OS Keychain/Credential Manager`、加密的 `config-backups/` 文件；不创建 SQLite/MySQL 等本地数据库。
 - 服务端层：`TokenDance Go API`、`Go Aggregation Worker`、`Leaderboard API`、`Adapter Registry`。
 - 服务端存储层：`MySQL 8.0`、后续可选 `ClickHouse`、对象存储中的脱敏诊断包。
@@ -960,6 +960,46 @@ Harness 的 session log 包含 turn、step、user/message、assistant、tool/cal
 
 - [DeepSeek Harness SessionTelemetryBackend](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/session-telemetry.md)
 - [DeepSeek Harness Core/Session](https://deepseek-harness.github.io/deepseek-harness/en/reference/subsystems/core)
+
+### 7.7 Pi Adapter
+
+#### 检测
+
+- 探测用户目录 `.pi`（Pi coding agent 的全局数据目录）。
+- 会话根目录：`.pi/agent/sessions/`，按编码后的工作目录分桶，每个会话一个 JSONL 文件。
+- 版本优先读取 `.pi/agent/version.json`，读取失败时按兼容矩阵内的默认版本处理。
+
+#### 数据源优先级
+
+1. `sessions/**/*.jsonl` 只读 JSONL tail。Pi 未公开 OTLP 契约，Adapter 只声明 `jsonl_tail` 单一数据源。
+
+#### 解码口径
+
+- 首行 `type: "session"` 头（id、timestamp、cwd、version）映射为 `session_started`，`cwd` 仅保留 HMAC 后的 `workspaceHash`。
+- `type: "message"` 且 `role: "assistant"` 的条目：`message.usage{input,output,cacheRead,cacheWrite,totalTokens}` 映射为 `model_usage_recorded`（`exact`）；`stopReason` 映射为派生 `turn_completed`（`derived`），`error`/`aborted`/`length` 记为失败并附带 `errorClass`。
+- `role: "toolResult"` 条目映射为 `tool_invoked`，`isError` 取反为成功标记，`toolCallId` 仅保留 HMAC。
+- Pi 条目不含会话 id，Adapter 使用 JSONL tailer 写入 frame cursor 的稳定文件身份作为会话 HMAC 键；`model_change`、`compaction`、`custom_message` 等条目忽略。
+
+#### 隐私边界
+
+- 用户消息、assistant 文本、thinking、toolCall arguments、toolResult 输出一律不进入标准化事件。
+- 不读取 `.pi/agent` 下的认证文件（如 provider API keys）。
+
+#### 指标映射
+
+| TokenDance 指标 | 数据来源 | Accuracy |
+| --- | --- | --- |
+| token | assistant `message.usage` | `exact` |
+| session | session header + 文件身份 | `exact` |
+| turn | assistant `stopReason` | `derived` |
+| tool | `toolResult` 条目 | `exact` |
+| skill | 未公开稳定事件 | `unavailable` |
+| code | Core diff | `correlated` |
+
+#### 依据与限制
+
+- [Pi Session File Format](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/session-format.md)
+- 兼容矩阵：session format version 3、CLI 版本 `>=0.2.0 <2.0.0`；超出范围时进入 `DEGRADED`，仅保留已验证的会话历史解码。
 
 ## 8、Windows 与 macOS 平台设计
 

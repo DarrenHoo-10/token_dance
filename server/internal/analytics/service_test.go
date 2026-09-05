@@ -44,18 +44,18 @@ func TestActivityFiltersAndPagination(t *testing.T) {
 	clk := clock.NewMockClock(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC))
 	svc := NewService(st, clk)
 	_, _, _ = st.SeedUserForTest("usr_activity", "activity", "activity@example.com", clk.Now())
-	first, err := svc.GetActivity(ctx, "usr_activity", "7d", "", "", "claude-code", "", "", "", 2)
+
+	// No collected data: empty activity page without a cursor.
+	first, err := svc.GetActivity(ctx, "usr_activity", "7d", "", "", "", "", "", "", 20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(first.Items) != 2 || first.NextCursor == nil {
-		t.Fatalf("expected first activity page with cursor: %+v", first)
+	if len(first.Items) != 0 || first.NextCursor != nil {
+		t.Fatalf("expected empty activity page, got %+v", first)
 	}
-	second, err := svc.GetActivity(ctx, "usr_activity", "7d", "", "", "claude-code", "", "", *first.NextCursor, 2)
-	if err != nil || len(second.Items) == 0 || second.Items[0].Date == first.Items[0].Date {
-		t.Fatalf("expected distinct second page: %+v %v", second, err)
-	}
-	if _, err := svc.GetActivity(ctx, "usr_activity", "7d", "", "", "unknown-agent", "", "", "", 20); err == nil {
+
+	// Filters the user has no data for are rejected.
+	if _, err := svc.GetActivity(ctx, "usr_activity", "7d", "", "", "claude-code", "", "", "", 20); err == nil {
 		t.Fatal("expected unavailable filter rejection")
 	}
 	if _, err := svc.GetActivity(ctx, "usr_activity", "7d", "", "", "", "", "", "tampered", 20); err == nil {
@@ -73,65 +73,54 @@ func TestAnalyticsService(t *testing.T) {
 	now := clk.Now()
 	_, _, _ = st.SeedUserForTest(userID, "anuser", "an@tokendance.dev", now)
 
-	// 1. Personal Summary (10 core metrics)
+	// 1. Personal Summary: empty metrics until collector data arrives
 	summary, err := svc.GetPersonalSummary(ctx, userID, "30d")
 	if err != nil {
 		t.Fatalf("failed to get personal summary: %v", err)
 	}
-	if summary.Metrics.EstimatedCost.Amount == nil || *summary.Metrics.EstimatedCost.Amount != "1428.60000000" {
-		t.Errorf("expected cost 1428.60000000")
+	if summary.Metrics.TotalTokens.Supported {
+		t.Errorf("expected total tokens to be unsupported without data")
 	}
-	if summary.Metrics.TotalTokens.Value == nil || *summary.Metrics.TotalTokens.Value != "325700000" {
-		t.Errorf("expected total tokens 325700000")
+	if summary.Metrics.TotalTokens.Value != nil {
+		t.Errorf("expected nil total tokens value without data")
 	}
-	if summary.Metrics.GeneratedCodeLines.Value == nil || *summary.Metrics.GeneratedCodeLines.Value != "864200" {
-		t.Errorf("expected generated code lines 864200")
-	}
-	if summary.Metrics.TokensPerCodeLine.Value == nil || *summary.Metrics.TokensPerCodeLine.Value != "376.88" {
-		t.Errorf("expected tokens per code line 376.88")
+	if summary.Metrics.EstimatedCost.Amount != nil {
+		t.Errorf("expected nil cost amount without data")
 	}
 
-	// 2. Token Trends
+	// 2. Token Trends: empty until data arrives
 	trendTotal, err := svc.GetTokenTrend(ctx, userID, "7d", "total", nil, nil, nil)
 	if err != nil {
 		t.Fatalf("failed to get token trends: %v", err)
 	}
-	if len(trendTotal.Points) != 7 {
-		t.Errorf("expected 7 points for 7d range, got %d", len(trendTotal.Points))
+	if len(trendTotal.Points) != 0 {
+		t.Errorf("expected empty trend points without data, got %d", len(trendTotal.Points))
 	}
 
-	trendStruct, err := svc.GetTokenTrend(ctx, userID, "7d", "structure", nil, nil, nil)
-	if err != nil {
-		t.Fatalf("failed to get structure trend: %v", err)
-	}
-	if trendStruct.Points[0].InputTokens == nil {
-		t.Errorf("expected inputTokens to be present in structure mode")
-	}
-
-	// 3. Agent & Model Breakdowns
+	// 3. Agent & Model Breakdowns: empty until data arrives
 	agentBd, err := svc.GetAgentBreakdown(ctx, userID, "30d")
 	if err != nil {
 		t.Fatalf("failed to get agent breakdown: %v", err)
 	}
-	if len(agentBd.Items) == 0 {
-		t.Errorf("expected agent breakdown items")
+	if len(agentBd.Items) != 0 {
+		t.Errorf("expected empty agent breakdown without data, got %d", len(agentBd.Items))
 	}
 
 	modelBd, err := svc.GetModelBreakdown(ctx, userID, "30d")
 	if err != nil {
 		t.Fatalf("failed to get model breakdown: %v", err)
 	}
-	if len(modelBd.Items) == 0 {
-		t.Errorf("expected model breakdown items")
+	if len(modelBd.Items) != 0 {
+		t.Errorf("expected empty model breakdown without data, got %d", len(modelBd.Items))
 	}
 
-	// 4. Skills & Calendar
+	// 4. Skills & Calendar: empty/zero until data arrives
 	skills, err := svc.GetSkillRanking(ctx, userID, "30d")
 	if err != nil {
 		t.Fatalf("failed to get skills: %v", err)
 	}
-	if len(skills.Skills) == 0 {
-		t.Errorf("expected skills to be populated")
+	if len(skills.Skills) != 0 {
+		t.Errorf("expected empty skills without data, got %d", len(skills.Skills))
 	}
 
 	cal, err := svc.GetActivityCalendar(ctx, userID, "30d")
@@ -140,5 +129,13 @@ func TestAnalyticsService(t *testing.T) {
 	}
 	if len(cal.Days) != 30 {
 		t.Errorf("expected 30 days in calendar, got %d", len(cal.Days))
+	}
+	for _, day := range cal.Days {
+		if day.Active || day.Level != 0 {
+			t.Errorf("expected inactive calendar day without data, got %+v", day)
+		}
+	}
+	if cal.CurrentStreak != 0 || cal.LongestStreak != 0 {
+		t.Errorf("expected zero streaks without data")
 	}
 }

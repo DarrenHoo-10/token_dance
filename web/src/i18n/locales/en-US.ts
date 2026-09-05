@@ -87,7 +87,7 @@ export const enUS = {
     emailDeliveryUnavailable: 'Failed to send the verification email. Please try again shortly.',
     codeSentLocal: 'Local test code: {code}. It has been filled in automatically.',
     cooldownSec: 's to retry',
-    keepSignedIn: 'Keep me signed in (14 days)',
+    keepSignedIn: 'Keep me signed in (1 month)',
     forgotPassword: 'Forgot password?',
     submitLogin: 'Sign in to TokenDance',
     submitRegister: 'Verify & Create Account',

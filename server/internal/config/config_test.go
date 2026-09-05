@@ -16,8 +16,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.HTTPAddr != ":8080" {
 		t.Errorf("expected :8080, got %s", cfg.HTTPAddr)
 	}
-	if cfg.SessionIdleTTL != 336*time.Hour {
-		t.Errorf("expected 336h, got %v", cfg.SessionIdleTTL)
+	if cfg.SessionIdleTTL != 720*time.Hour {
+		t.Errorf("expected 720h, got %v", cfg.SessionIdleTTL)
 	}
 	if cfg.SessionAbsoluteTTL != 720*time.Hour {
 		t.Errorf("expected 720h, got %v", cfg.SessionAbsoluteTTL)

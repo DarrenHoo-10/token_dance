@@ -139,6 +139,7 @@ pub fn run() {
 
     let builder = tauri::Builder::default()
         .manage(app_state)
+        .manage(commands::account::AccountState::default())
         .invoke_handler(tauri::generate_handler![
             commands::daemon::get_daemon_status,
             commands::daemon::toggle_global_pause,
@@ -164,6 +165,9 @@ pub fn run() {
             commands::window::quit_app,
             commands::window::open_settings,
             commands::window::open_website,
+            commands::account::get_account_session,
+            commands::account::login_account,
+            commands::account::logout_account,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
@@ -252,7 +256,7 @@ mod tests {
         let (_root, state) = state().await;
         let status = state.get_daemon_status().await;
         assert_eq!(status.status, "RUNNING");
-        assert_eq!(status.total_adapters_count, 6);
+        assert_eq!(status.total_adapters_count as usize, state.get_agents().await.len());
         let paused = state.toggle_global_pause().await.unwrap();
         assert_eq!(paused.status, "ACKNOWLEDGED");
         assert!(paused.state.global_paused);

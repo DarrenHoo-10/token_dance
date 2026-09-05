@@ -103,7 +103,7 @@ func TestAuthFlows(t *testing.T) {
 	clk.Set(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)) // reset clock
 
 	// 6. Login with correct password
-	loginResult, err := svc.Login(ctx, email, password, "/settings", "Chrome / macOS")
+	loginResult, err := svc.Login(ctx, email, password, "/settings", "Chrome / macOS", true)
 	if err != nil {
 		t.Fatalf("failed to login: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestAuthFlows(t *testing.T) {
 	}
 
 	// 7. Login with wrong password
-	_, err = svc.Login(ctx, email, "WrongPassword!", "/home", "Safari")
+	_, err = svc.Login(ctx, email, "WrongPassword!", "/home", "Safari", true)
 	if err == nil {
 		t.Errorf("expected login error with wrong password")
 	}
@@ -143,6 +143,52 @@ func TestAuthFlows(t *testing.T) {
 	_, _, err = svc.ResolveSession(ctx, loginResult.SessionToken)
 	if err == nil {
 		t.Errorf("logged out session should be revoked")
+	}
+}
+
+func TestLoginKeepSignedInDefaultMonth(t *testing.T) {
+	ctx := context.Background()
+	svc, st, clk := setupAuthService(t)
+	email := "month-session@example.com"
+	password := "SecretPass123!"
+	if err := svc.RequestRegistrationCode(ctx, email, "zh-CN"); err != nil {
+		t.Fatalf("request code: %v", err)
+	}
+	if _, err := st.FindPendingEmailChallenge(ctx, domain.ChallengeTypeRegister, svc.ComputeEmailLookupHash(email)); err != nil {
+		t.Fatalf("pending challenge: %v", err)
+	}
+	code := svc.EmailSink().LatestCode(email)
+	if code == "" {
+		t.Fatal("missing registration code")
+	}
+	if _, err := svc.CompleteRegistration(ctx, email, code, password, "", "zh-CN", "UTC"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	kept, err := svc.Login(ctx, email, password, "/leaderboard", "TokenDance Desktop", true)
+	if err != nil {
+		t.Fatalf("keep-signed-in login: %v", err)
+	}
+	wantMonth := clk.Now().Add(30 * 24 * time.Hour)
+	if !kept.Session.AbsoluteExpiresAt.Equal(wantMonth) || !kept.Session.IdleExpiresAt.Equal(wantMonth) {
+		t.Fatalf("keep-signed-in session should last 30 days, idle=%s absolute=%s", kept.Session.IdleExpiresAt, kept.Session.AbsoluteExpiresAt)
+	}
+
+	ephemeral, err := svc.Login(ctx, email, password, "/leaderboard", "TokenDance Desktop", false)
+	if err != nil {
+		t.Fatalf("short login: %v", err)
+	}
+	wantDay := clk.Now().Add(24 * time.Hour)
+	if !ephemeral.Session.AbsoluteExpiresAt.Equal(wantDay) {
+		t.Fatalf("unchecked keep-signed-in should last 1 day, got %s", ephemeral.Session.AbsoluteExpiresAt)
+	}
+
+	clk.Add(25 * time.Hour)
+	if _, _, err := svc.ResolveSession(ctx, ephemeral.SessionToken); err == nil {
+		t.Fatal("short session should expire after 25 hours")
+	}
+	if _, _, err := svc.ResolveSession(ctx, kept.SessionToken); err != nil {
+		t.Fatalf("month-long session should still be valid: %v", err)
 	}
 }
 

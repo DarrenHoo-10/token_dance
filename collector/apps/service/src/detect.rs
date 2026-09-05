@@ -3,9 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use crate::{
-    adapter_id, AgentDetection, DetectedSourceConfig, DetectionSnapshot, OfficialAgent,
-};
+use crate::{adapter_id, AgentDetection, DetectedSourceConfig, DetectionSnapshot, OfficialAgent};
 
 const MAX_JSONL_FILES: usize = 8;
 
@@ -21,6 +19,7 @@ pub fn detect_from_home(home: &Path) -> DetectionSnapshot {
     detect_zcode(home, &mut snapshot);
     detect_cursor(home, &mut snapshot);
     detect_deepseek(home, &mut snapshot);
+    detect_pi(home, &mut snapshot);
     snapshot
 }
 
@@ -66,7 +65,9 @@ fn detect_claude(home: &Path, snapshot: &mut DetectionSnapshot) {
     if !root.is_dir() {
         return;
     }
-    let mut detection = AgentDetection::installed(read_json_version(&root.join("settings.json")).unwrap_or_else(|| "1.0.0".into()));
+    let mut detection = AgentDetection::installed(
+        read_json_version(&root.join("settings.json")).unwrap_or_else(|| "1.0.0".into()),
+    );
     detection.otlp_available = false;
     snapshot.insert(OfficialAgent::ClaudeCode, detection);
     let jsonl_root = if projects.is_dir() {
@@ -156,10 +157,31 @@ fn detect_zcode(home: &Path, snapshot: &mut DetectionSnapshot) {
     if !root.is_dir() {
         return;
     }
-    snapshot.insert(
-        OfficialAgent::Zcode,
-        AgentDetection::installed("1.0.0"),
-    );
+    let db = root.join("cli/db/db.sqlite");
+    // Collection is gated on the verified on-disk schema fingerprint, never on
+    // the version string alone; unknown schemas stay unverified ("unverified").
+    let verified = db
+        .is_file()
+        .then(|| acquisition::detect_zcode_sqlite(&db))
+        .flatten();
+    match verified {
+        Some(schema) => {
+            let mut item = AgentDetection::installed(schema.app_version.as_deref().unwrap_or("0"));
+            item.sqlite_fingerprint = Some(schema.fingerprint.to_string());
+            snapshot.insert(OfficialAgent::Zcode, item);
+            snapshot.configure_source(
+                OfficialAgent::Zcode,
+                "zcode-sqlite",
+                DetectedSourceConfig {
+                    path: Some(db),
+                    ..DetectedSourceConfig::default()
+                },
+            );
+        }
+        None => {
+            snapshot.insert(OfficialAgent::Zcode, AgentDetection::installed("0"));
+        }
+    }
 }
 
 fn detect_cursor(home: &Path, snapshot: &mut DetectionSnapshot) {
@@ -196,6 +218,31 @@ fn detect_deepseek(home: &Path, snapshot: &mut DetectionSnapshot) {
     }
 }
 
+fn detect_pi(home: &Path, snapshot: &mut DetectionSnapshot) {
+    let root = home.join(".pi");
+    if !root.is_dir() {
+        return;
+    }
+    snapshot.insert(
+        OfficialAgent::Pi,
+        AgentDetection::installed(
+            read_json_version(&root.join("agent").join("version.json"))
+                .unwrap_or_else(|| "0.3.0".into()),
+        ),
+    );
+    let sessions = root.join("agent").join("sessions");
+    if sessions.is_dir() {
+        snapshot.configure_source(
+            OfficialAgent::Pi,
+            adapter_pi::HISTORY_SOURCE_ID,
+            DetectedSourceConfig {
+                path: Some(sessions),
+                ..DetectedSourceConfig::default()
+            },
+        );
+    }
+}
+
 fn read_json_version(path: &Path) -> Option<String> {
     let text = fs::read_to_string(path).ok()?;
     let value: serde_json::Value = serde_json::from_str(&text).ok()?;
@@ -214,7 +261,12 @@ fn walk_jsonl(dir: &Path, out: &mut Vec<(SystemTime, PathBuf)>) {
         let path = entry.path();
         let name = entry.file_name();
         let name = name.to_string_lossy();
-        if name.starts_with('.') || matches!(name.as_ref(), "node_modules" | "target" | "bin" | "vendor" | "cache") {
+        if name.starts_with('.')
+            || matches!(
+                name.as_ref(),
+                "node_modules" | "target" | "bin" | "vendor" | "cache"
+            )
+        {
             continue;
         }
         if path.is_dir() {
