@@ -140,7 +140,7 @@ describe('Navigation & Locale Switching Tests', () => {
     expect(screen.getByRole('menu')).toBeInTheDocument();
     expect(screen.getByRole('menuitem', { name: 'Personal Data' })).toHaveAttribute(
       'href',
-      '/u/maxbauer'
+      '/me'
     );
     expect(screen.getByRole('menuitem', { name: 'Settings' })).toHaveAttribute(
       'href',
