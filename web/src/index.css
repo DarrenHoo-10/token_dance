@@ -321,6 +321,26 @@ h3 { font-size: 15px; margin-bottom: 4px; }
   border-color: var(--lime-border);
 }
 
+.settings-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 24px;
+}
+
+.settings-layout > main { min-width: 0; }
+
+.unavailable-actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+@media (max-width: 720px) {
+  .settings-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
 .btn-dark {
   background-color: var(--bg-dark);
   border-color: var(--bg-dark);
