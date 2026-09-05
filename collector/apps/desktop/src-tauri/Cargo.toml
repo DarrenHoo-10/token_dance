@@ -7,6 +7,9 @@ edition = "2021"
 authors = ["TokenDance Team"]
 description = "TokenDance Desktop Collector Settings Shell"
 
+[features]
+custom-protocol = ["tauri/custom-protocol"]
+
 [dependencies]
 acquisition = { path = "../../../crates/acquisition" }
 adapter-sdk = { path = "../../../crates/adapter-sdk" }

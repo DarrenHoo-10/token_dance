@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
     "preview": "vite preview",
     "test": "node scripts/verify-desktop.mjs",
-    "test:usage": "node --experimental-strip-types --test scripts/weekly-usage.test.mjs scripts/website.test.mjs scripts/sync-status.test.mjs"
+    "test:usage": "node --experimental-strip-types --test scripts/weekly-usage.test.mjs scripts/website.test.mjs scripts/sync-status.test.mjs scripts/usage-analytics.test.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

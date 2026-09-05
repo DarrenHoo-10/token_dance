@@ -5,9 +5,9 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// One extra day beyond the panel's 7-day window so late-arriving events still
-// land in a live bucket instead of being dropped at the retention edge.
-const RETAINED_DAYS: i64 = 8;
+// Keep recorded history and deduplication IDs across acknowledgements/restarts.
+// Only the IPC daily series is limited to a year; All time sums the full ledger.
+const DISPLAY_DAYS: i64 = 366;
 const LEDGER_FILE: &str = "usage-ledger.json";
 
 fn accuracy_rank(accuracy: &Accuracy) -> u8 {
@@ -29,8 +29,12 @@ fn accuracy_name(rank: u8) -> &'static str {
     }
 }
 
-fn oldest_retained() -> NaiveDate {
-    Local::now().date_naive() - chrono::Duration::days(RETAINED_DAYS - 1)
+fn cost_units(value: &str) -> Option<u64> {
+    let (whole, fraction) = value.split_once('.').unwrap_or((value, ""));
+    if whole.is_empty() || !whole.bytes().all(|c| c.is_ascii_digit())
+        || !fraction.bytes().all(|c| c.is_ascii_digit()) || fraction.len() > 8 { return None; }
+    whole.parse::<u64>().ok()?.checked_mul(100_000_000)?
+        .checked_add(format!("{fraction:0<8}").parse::<u64>().ok()?)
 }
 
 fn local_date(occurred_at: &str) -> Option<NaiveDate> {
@@ -68,6 +72,8 @@ fn event_tokens(event: &EventEnvelope) -> Option<u64> {
 pub struct DayUsage {
     pub date: String,
     pub tokens: u64,
+    #[serde(default)]
+    pub costs: BTreeMap<String, u64>,
 }
 
 pub struct AgentUsageSnapshot {
@@ -75,6 +81,8 @@ pub struct AgentUsageSnapshot {
     pub total_tokens: u64,
     pub accuracy: String,
     pub daily_usage: Vec<DayUsage>,
+    pub total_costs: BTreeMap<String, u64>,
+    pub history_start: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -83,6 +91,8 @@ struct AgentDay {
     // Weakest accuracy merged into this day, so the panel never overstates
     // precision. 0 only means "no usage event recorded on this day".
     accuracy: u8,
+    #[serde(default)]
+    costs: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -115,13 +125,19 @@ impl UsageLedger {
     pub fn record(&mut self, events: &[EventEnvelope]) -> bool {
         let mut changed = false;
         for event in events {
-            let Some(tokens) = event_tokens(event) else {
-                continue;
+            let tokens = event_tokens(event);
+            let cost = match &event.payload {
+                EventPayload::CostRecorded(payload) if payload.currency.len() == 3 && payload.currency.bytes().all(|c| c.is_ascii_uppercase()) =>
+                    cost_units(&payload.amount).map(|amount| (payload.currency.clone(), amount)),
+                _ => None,
             };
+            if tokens.is_none() && cost.is_none() {
+                continue;
+            }
             let Some(date) = local_date(&event.occurred_at) else {
                 continue;
             };
-            if date < oldest_retained() {
+            if date > Local::now().date_naive() {
                 continue;
             }
             let date_key = date.format("%Y-%m-%d").to_string();
@@ -131,31 +147,25 @@ impl UsageLedger {
             }
             let day = self.file.days.entry(date_key.clone()).or_default();
             let agent_day = day.entry(event.agent_id.clone()).or_default();
+            if let Some(tokens) = tokens {
             agent_day.tokens = agent_day.tokens.saturating_add(tokens);
             // Weakest accuracy wins so the panel never overstates precision.
             agent_day.accuracy = match agent_day.accuracy {
                 0 => accuracy_rank(&event.accuracy),
                 current => current.min(accuracy_rank(&event.accuracy)),
             };
+            }
+            if let Some((currency, amount)) = cost {
+                let total = agent_day.costs.entry(currency).or_default();
+                *total = total.saturating_add(amount);
+            }
             seen.insert(event.event_id.clone());
-            changed = true;
-        }
-        if self.retain() {
             changed = true;
         }
         changed
     }
 
-    fn retain(&mut self) -> bool {
-        let cutoff = oldest_retained().format("%Y-%m-%d").to_string();
-        let days_before = self.file.days.len();
-        let seen_before = self.file.seen.len();
-        self.file.days.retain(|date, _| date.as_str() >= cutoff.as_str());
-        self.file.seen.retain(|date, _| date.as_str() >= cutoff.as_str());
-        self.file.days.len() != days_before || self.file.seen.len() != seen_before
-    }
-
-    /// Per-agent snapshot over the retained window; `None` while the agent has
+    /// Per-agent lifetime totals plus a year of daily buckets; `None` while the agent has
     /// never produced a usage event (the panel then shows its "待接入" state).
     pub fn agent_usage(&self, agent_id: &str, today: NaiveDate) -> Option<AgentUsageSnapshot> {
         let known = self
@@ -166,26 +176,39 @@ impl UsageLedger {
         if !known {
             return None;
         }
-        let mut week = Vec::with_capacity(RETAINED_DAYS as usize);
+        let mut week = Vec::with_capacity(DISPLAY_DAYS as usize);
         let mut total = 0u64;
         let mut accuracy = u8::MAX;
-        for offset in (0..RETAINED_DAYS).rev() {
+        let mut total_costs = BTreeMap::<String, u64>::new();
+        let mut history_start = String::new();
+        for (date, agents) in &self.file.days {
+            if date.as_str() > today.format("%Y-%m-%d").to_string().as_str() { continue; }
+            if let Some(day) = agents.get(agent_id) {
+                if history_start.is_empty() { history_start = date.clone(); }
+                total = total.saturating_add(day.tokens);
+                if day.accuracy > 0 { accuracy = accuracy.min(day.accuracy); }
+                for (currency, amount) in &day.costs {
+                    let sum = total_costs.entry(currency.clone()).or_default();
+                    *sum = sum.saturating_add(*amount);
+                }
+            }
+        }
+        for offset in (0..DISPLAY_DAYS).rev() {
             let date = (today - chrono::Duration::days(offset))
                 .format("%Y-%m-%d")
                 .to_string();
             let day = self.file.days.get(&date).and_then(|agents| agents.get(agent_id));
-            if let Some(day) = day {
-                accuracy = accuracy.min(day.accuracy);
-            }
             let tokens = day.map_or(0, |day| day.tokens);
-            total = total.saturating_add(tokens);
-            week.push(DayUsage { date, tokens });
+            let costs = day.map_or_else(BTreeMap::new, |day| day.costs.clone());
+            week.push(DayUsage { date, tokens, costs });
         }
         Some(AgentUsageSnapshot {
             today_tokens: week.last().map_or(0, |day| day.tokens),
             total_tokens: total,
-            accuracy: accuracy_name(accuracy.min(4)).into(),
+            accuracy: accuracy_name(if accuracy == u8::MAX { 0 } else { accuracy }).into(),
             daily_usage: week,
+            total_costs,
+            history_start,
         })
     }
 
@@ -289,22 +312,21 @@ mod tests {
     }
 
     #[test]
-    fn retains_only_the_recent_window() {
+    fn retains_history_beyond_the_display_window_and_dedupes_it() {
         let mut ledger = UsageLedger::load(Path::new("/nonexistent"));
-        let old = (Local::now().date_naive() - chrono::Duration::days(RETAINED_DAYS))
+        let old = (Local::now().date_naive() - chrono::Duration::days(400))
             .and_hms_opt(12, 0, 0)
             .unwrap()
             .and_local_timezone(Local)
             .unwrap()
             .to_rfc3339();
-        assert!(
-            !ledger.record(&[envelope("codex", &old, 500, Accuracy::Exact)]),
-            "events older than the window must be skipped entirely"
-        );
-        assert!(
-            ledger.agent_usage("codex", Local::now().date_naive()).is_none(),
-            "stale events must not resurrect a known agent"
-        );
+        let event = envelope("codex", &old, 500, Accuracy::Exact);
+        assert!(ledger.record(&[event.clone()]));
+        assert!(!ledger.record(&[event]));
+        let snapshot = ledger.agent_usage("codex", Local::now().date_naive()).unwrap();
+        assert_eq!(snapshot.total_tokens, 500);
+        assert_eq!(snapshot.daily_usage.iter().map(|day| day.tokens).sum::<u64>(), 0);
+        assert_eq!(snapshot.accuracy, "exact");
     }
 
     #[test]
@@ -334,5 +356,40 @@ mod tests {
             .unwrap();
         assert_eq!(snapshot.total_tokens, 42);
         assert_eq!(snapshot.accuracy, "derived");
+    }
+
+    #[test]
+    fn costs_use_fixed_precision_and_preserve_currency_after_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut ledger = UsageLedger::load(dir.path());
+        let mut event = envelope("codex", &today_utc_noon(0), 0, Accuracy::Exact);
+        event.payload = EventPayload::CostRecorded(protocol::CostRecordedPayload {
+            amount: "1.23456789".into(), currency: "USD".into(),
+            source: protocol::CostSource::ProviderReported, discount_amount: None,
+        });
+        assert!(ledger.record(&[event.clone()]));
+        ledger.save().unwrap();
+        let mut ledger = UsageLedger::load(dir.path());
+        assert!(!ledger.record(&[event]));
+        let snapshot = ledger.agent_usage("codex", Local::now().date_naive()).unwrap();
+        assert_eq!(snapshot.total_costs["USD"], 123456789);
+        assert_eq!(snapshot.daily_usage.last().unwrap().costs["USD"], 123456789);
+        assert_eq!(snapshot.accuracy, "unknown", "cost alone does not establish token coverage");
+        assert_eq!(cost_units("0"), Some(0));
+        assert_eq!(cost_units("-1"), None);
+        assert_eq!(cost_units("NaN"), None);
+    }
+
+    #[test]
+    fn legacy_eight_day_ledger_migrates_without_losing_totals() {
+        let dir = tempfile::tempdir().unwrap();
+        let date = Local::now().format("%Y-%m-%d").to_string();
+        let old = serde_json::json!({"days": {date.clone(): {"codex": {"tokens": 90, "accuracy": 4}}}, "seen": {date: ["old-id"]}});
+        fs::write(dir.path().join(LEDGER_FILE), serde_json::to_vec(&old).unwrap()).unwrap();
+        let ledger = UsageLedger::load(dir.path());
+        let snapshot = ledger.agent_usage("codex", Local::now().date_naive()).unwrap();
+        assert_eq!(snapshot.total_tokens, 90);
+        assert!(snapshot.total_costs.is_empty());
+        assert_eq!(snapshot.daily_usage.len(), 366);
     }
 }

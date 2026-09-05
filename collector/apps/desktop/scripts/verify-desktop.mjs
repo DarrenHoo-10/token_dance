@@ -53,6 +53,7 @@ const requiredCommands = [
   "set_global_pause",
   "get_collector_metrics",
   "get_agent_configs",
+  "get_agent_quotas",
   "toggle_agent",
   "set_agent_status",
   "preview_upload_batch",

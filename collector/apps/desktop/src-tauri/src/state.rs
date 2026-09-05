@@ -68,6 +68,8 @@ pub struct AgentConfig {
     pub total_tokens: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub daily_usage: Vec<DayUsage>,
+    pub total_costs: std::collections::BTreeMap<String, u64>,
+    pub history_start: Option<String>,
     pub last_active: String,
     pub version: String,
 }
@@ -508,6 +510,8 @@ impl AppState {
                     today_tokens,
                     total_tokens,
                     daily_usage,
+                    total_costs: usage.as_ref().map(|item| item.total_costs.clone()).unwrap_or_default(),
+                    history_start: usage.as_ref().map(|item| item.history_start.clone()),
                     last_active: if runtime.detected {
                         "DETECTED"
                     } else {

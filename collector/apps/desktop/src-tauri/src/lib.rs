@@ -134,6 +134,7 @@ pub fn run() {
             commands::daemon::set_global_pause,
             commands::daemon::get_collector_metrics,
             commands::agents::get_agent_configs,
+            commands::quotas::get_agent_quotas,
             commands::agents::toggle_agent,
             commands::agents::set_agent_status,
             commands::upload::preview_upload_batch,
@@ -158,6 +159,9 @@ pub fn run() {
             commands::account::logout_account,
         ])
         .on_window_event(|window, event| {
+            if matches!(event, WindowEvent::Focused(false)) && window.label() == "main" {
+                let _ = window.hide();
+            }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
                 let _ = window.hide();
@@ -170,8 +174,16 @@ pub fn run() {
                 if std::env::args().any(|arg| arg == "--minimized") {
                     let _ = window.hide();
                 } else {
-                    let _ = window.show();
-                    let _ = window.set_focus();
+                    if let Ok(Some(monitor)) = window.current_monitor() {
+                        let point = tauri::PhysicalPosition::new(
+                            (monitor.position().x + 1) as f64,
+                            (monitor.position().y + 1) as f64,
+                        );
+                        let _ = commands::window::show_usage_panel(app.handle(), point);
+                    } else {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
                 }
             }
             let state = app.state::<AppState>().inner().clone();

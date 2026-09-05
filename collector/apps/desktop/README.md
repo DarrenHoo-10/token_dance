@@ -2,14 +2,18 @@
 
 启动后常驻 Windows 通知区域，主窗口和设置窗口默认隐藏，不占任务栏。
 
-- 左键点击 TokenDance 图标：在所在显示器工作区右下角打开 420 × 560 逻辑像素的用量面板。
-- 按 Escape 或点击右上角 −：收起面板到托盘，后台采集继续。
-- 点击右上角 ×：保存状态并退出 TokenDance，停止后台采集。窗口控件有操作提示；最小化悬停为浅绿，退出悬停为红色。
+- 左键点击 TokenDance 图标：在所在显示器工作区右下角打开 480 × 780 逻辑像素的用量面板，小屏幕自动限制在工作区内。内容滚动，状态栏和底部入口固定。
+- 点击面板外部、按 Escape 或点击右上角 −：收起面板到托盘，后台采集继续。
+- 托盘面板标题栏仅保留语言和 −，退出应用使用托盘右键菜单。界面采用白底、石墨灰文字、蓝灰图表和细边框。
 - 左下角「设置」：打开桌面设置窗口；− 或 Escape 收起到托盘，× 退出应用。
 - 右下角「网站主页 · 看排名」：打开官网首页（默认 `http://127.0.0.1:3000/`）。未登录会转到登录页；登录成功后本机保存 Session（默认一个月），再次点击直接进入官网首页。设置左下角显示当前网站地址，点击可打开官网。
 - 托盘右键菜单：设置、暂停/恢复、退出；不再提供手动同步入口。
 
-面板展示本机今日/近7日 Token、Agent 构成、采集状态和自动同步状态（待确认记录数可悬停查看）。「7日」包含今天及前六个本地日历日期，展示每日趋势线，节点支持悬停和键盘查看精确值；总量、折线和 Agent 明细使用同一份七日日聚合。数据通过已有 Tauri IPC 读取，每 3 秒刷新，隐藏时停止前端轮询。浏览器预览明确标记为示例数据。当前原生 `get_agents` 尚未计算 Token 聚合，返回 `accuracy: unknown`，且没有 `dailyUsage` 历史数据，面板因此显示待接入，不会用累计值或补零伪造七日趋势。接入时 `dailyUsage` 应包含七个本地日期及每日 Token 值（真实无用量的日期明确返回 0）。
+面板并排展示今日、近 7 日、全部时间（All time）的本机 Token 和已记录费用；选择周期同步切换 Agent 明细。7 日折线始终展示，包含今天及前六个本地日历日期。年度热力图展示过去 12 个月，未记录的日期与真实零用量分开显示。数据每 3 秒刷新，隐藏时停止前端轮询，后台采集和自动同步继续运行。浏览器预览明确标记为示例数据。
+
+原生 usage-ledger.json 持久化所有已记录日期及去重 ID，All time 不再等于旧版 8 天窗口。旧格式自动兼容，升级前已经清理并确认上传的历史无法从本地恢复；界面的 All time 指本机仍有记录的全部历史。IPC 每次返回最近 366 天以及全部历史累计。费用来自 CostRecorded 事件，按币种分别汇总，以亿分之一货币单位整数持久化；未接入或缺少记录显示 —，不把部分费用当成完整账单，也不根据总 Token 随意套单价。
+
+Codex 额度从 CODEX_HOME（默认用户目录 .codex）的近期 sessions 日志中读取 token_count 的 primary/secondary rate_limits。只扫描有上限的文件尾部、每分钟缓存，不读取登录凭据，也不把对话内容传给前端。额度显示已用比例和重置倒计时，记录超过 30 分钟或已过重置时间显示待更新。其他 Agent 尚无额度来源时显示“额度未接入”；不影响 Token 采集。
 
 `npm run test:usage` 在 Node 22.6+ 检查七日汇总、跨年日期、缺失历史和零用量。
 
@@ -17,7 +21,7 @@
 
 在本目录执行 `npm ci`、`npm run dev`，然后在另一个终端执行 `cargo run --manifest-path src-tauri/Cargo.toml`。浏览器预览为本地 1420 端口，`?view=settings` 可预览设置页。
 
-`npm run build` 检查 TypeScript 并构建前端；`npm test` 检查桌面配置、IPC 对齐并运行 Rust 测试。`cargo build --release --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol` 生成包含前端产物的 Windows 程序，构建前必须运行 `npm run build`。直接用 Cargo 发布时必须启用此 feature，否则仍会访问开发服务器。
+`npm run build` 检查 TypeScript 并构建前端；`npm test` 检查桌面配置、IPC 对齐并运行 Rust 测试。Windows 发布统一使用 `npm run build:windows`：先构建前端，再使用 `--features custom-protocol` 嵌入到原生程序，输出独立的 `release/TokenDance.exe` 和包含文件哈希的 `release/build-info.json`。桌面快捷方式应指向该发布文件，不再指向可能被其他 Cargo 构建覆盖的 target 目录。未启用 custom-protocol 的 release 构建会明确报错，避免生成依赖开发服务器的程序。
 
 ## 精简设置与桌面登录
 
