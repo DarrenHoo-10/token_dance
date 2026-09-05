@@ -60,6 +60,7 @@ export interface LoginRequest {
   password?: string;
   returnTo?: string;
   deviceLabel?: string;
+  keepSignedIn?: boolean;
 }
 
 export interface RegisterCodeRequest {

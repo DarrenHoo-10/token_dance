@@ -32,10 +32,10 @@ import { CommunityPage } from '@/pages/public/CommunityPage';
 import { TeamDashboardPage } from '@/pages/teams/TeamDashboardPage';
 import { NotFoundPage } from '@/pages/system/NotFoundPage';
 
-const RootRedirect: React.FC = () => {
+export const RootRedirect: React.FC = () => {
   const { authenticated, loading } = useAuth();
   if (loading) return null;
-  return authenticated ? <Navigate to="/me" replace /> : <Navigate to="/leaderboard" replace />;
+  return authenticated ? <Navigate to="/leaderboard" replace /> : <Navigate to="/login?return_to=/" replace />;
 };
 
 export const App: React.FC = () => {

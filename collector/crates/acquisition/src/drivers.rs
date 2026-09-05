@@ -303,6 +303,7 @@ pub enum SqliteAdapterPlan {
     CursorPersonalV1,
     ZcodeV1,
     ZcodeV2,
+    ZcodeV3,
 }
 
 impl SqliteAdapterPlan {
@@ -311,6 +312,7 @@ impl SqliteAdapterPlan {
             Self::CursorPersonalV1 => "cursor-local-v1",
             Self::ZcodeV1 => "zcode-sqlite-v1-uv7",
             Self::ZcodeV2 => "zcode-sqlite-v2-uv9",
+            Self::ZcodeV3 => "zcode-sqlite-v3-uv0",
         }
     }
 
@@ -319,6 +321,7 @@ impl SqliteAdapterPlan {
             Self::CursorPersonalV1 => 0,
             Self::ZcodeV1 => 7,
             Self::ZcodeV2 => 9,
+            Self::ZcodeV3 => 0,
         }
     }
 
@@ -355,6 +358,83 @@ impl SqliteAdapterPlan {
                     ],
                 ),
             ],
+            Self::ZcodeV3 => &[
+                (
+                    "session",
+                    &[
+                        "id",
+                        "project_id",
+                        "workspace_id",
+                        "parent_id",
+                        "slug",
+                        "directory",
+                        "path",
+                        "title",
+                        "version",
+                        "share_url",
+                        "summary_additions",
+                        "summary_deletions",
+                        "summary_files",
+                        "summary_diffs",
+                        "revert",
+                        "permission",
+                        "time_created",
+                        "time_updated",
+                        "time_compacting",
+                        "time_archived",
+                        "task_type",
+                        "title_source",
+                        "title_message_id",
+                        "time_title_updated",
+                        "trace_id",
+                    ],
+                ),
+                (
+                    "model_usage",
+                    &[
+                        "id",
+                        "logical_request_id",
+                        "attempt_index",
+                        "session_id",
+                        "turn_id",
+                        "trace_id",
+                        "span_id",
+                        "assistant_message_id",
+                        "parent_user_message_id",
+                        "query_source",
+                        "provider_id",
+                        "model_id",
+                        "variant",
+                        "agent",
+                        "mode",
+                        "task_type",
+                        "status",
+                        "started_at",
+                        "first_token_at",
+                        "completed_at",
+                        "duration_ms",
+                        "time_to_first_token_ms",
+                        "finish_reason",
+                        "tool_call_count",
+                        "input_tokens",
+                        "output_tokens",
+                        "reasoning_tokens",
+                        "cache_creation_input_tokens",
+                        "cache_read_input_tokens",
+                        "provider_total_tokens",
+                        "computed_total_tokens",
+                        "retry_count",
+                        "retryable",
+                        "cancelled_by_user",
+                        "context_exceeded",
+                        "error_type",
+                        "error_code",
+                        "error_message",
+                        "raw_usage_json",
+                        "provider_metadata_json",
+                    ],
+                ),
+            ],
         }
     }
 
@@ -368,6 +448,10 @@ impl SqliteAdapterPlan {
             Self::ZcodeV2 => &[
                 "SELECT id, created_at, model FROM sessions WHERE id > ?1 ORDER BY id",
                 "SELECT id, session_id, finished_at, input_tokens, output_tokens, total_tokens, tool_count, skill_name FROM step_metrics WHERE id > ?1 ORDER BY id",
+            ],
+            Self::ZcodeV3 => &[
+                "SELECT rowid AS id, id AS session_ref, time_created FROM session WHERE rowid > ?1 ORDER BY rowid",
+                "SELECT rowid AS id, session_id, provider_id, model_id, input_tokens, output_tokens, computed_total_tokens, tool_call_count, completed_at FROM model_usage WHERE rowid > ?1 AND status = 'completed' ORDER BY rowid",
             ],
         }
     }
@@ -435,6 +519,7 @@ impl SqliteSnapshotDriver {
                 .iter()
                 .map(|name| (*name).to_owned())
                 .collect();
+
             let rows = statement
                 .query_map([query_cursor], |row| {
                     let mut object = Map::new();
@@ -553,32 +638,65 @@ fn sqlite_value(value: ValueRef<'_>) -> Value {
 }
 
 fn normalize_sqlite_record(plan: SqliteAdapterPlan, row: &mut Map<String, Value>) {
-    let session_id = row.remove("session_id");
-    let timestamp = row
-        .remove("created_at")
-        .or_else(|| row.remove("finished_at"));
     match plan {
+        SqliteAdapterPlan::ZcodeV3 => {
+            // Session probe rows carry `session_ref`; usage rows carry `session_id`.
+            let session_ref = row.remove("session_ref");
+            let timestamp = row
+                .remove("completed_at")
+                .or_else(|| row.remove("time_created"));
+            match session_ref {
+                Some(session_ref) => {
+                    row.insert("type".into(), Value::String("session".into()));
+                    row.insert("sessionId".into(), session_ref);
+                }
+                None => {
+                    row.insert("type".into(), Value::String("step_finish".into()));
+                    rename(row, "session_id", "sessionId");
+                    rename(row, "id", "stepId");
+                    rename(row, "provider_id", "provider");
+                    rename(row, "model_id", "model");
+                    rename(row, "input_tokens", "inputTokens");
+                    rename(row, "output_tokens", "outputTokens");
+                    rename(row, "computed_total_tokens", "totalTokens");
+                    rename(row, "tool_call_count", "toolCount");
+                }
+            }
+            if let Some(tokens) = timestamp.as_ref().and_then(Value::as_i64) {
+                if let Some(timestamp) = unix_ms_to_rfc3339(tokens) {
+                    row.insert("timestamp".into(), Value::String(timestamp));
+                }
+            }
+        }
         SqliteAdapterPlan::CursorPersonalV1 => {
             row.insert("type".into(), Value::String("conversation".into()));
             rename(row, "id", "conversationId");
         }
-        SqliteAdapterPlan::ZcodeV1 | SqliteAdapterPlan::ZcodeV2 if session_id.is_some() => {
-            row.insert("type".into(), Value::String("step_finish".into()));
-            row.insert("sessionId".into(), session_id.unwrap());
-            rename(row, "id", "stepId");
-            rename(row, "input_tokens", "inputTokens");
-            rename(row, "output_tokens", "outputTokens");
-            rename(row, "total_tokens", "totalTokens");
-            rename(row, "tool_count", "toolCount");
-            rename(row, "skill_name", "skillName");
-        }
         SqliteAdapterPlan::ZcodeV1 | SqliteAdapterPlan::ZcodeV2 => {
-            row.insert("type".into(), Value::String("session".into()));
-            rename(row, "id", "sessionId");
+            let session_id = row.remove("session_id");
+            let timestamp = row
+                .remove("created_at")
+                .or_else(|| row.remove("finished_at"));
+            match session_id {
+                Some(session_id) => {
+                    row.insert("type".into(), Value::String("step_finish".into()));
+                    row.insert("sessionId".into(), session_id);
+                    rename(row, "id", "stepId");
+                    rename(row, "input_tokens", "inputTokens");
+                    rename(row, "output_tokens", "outputTokens");
+                    rename(row, "total_tokens", "totalTokens");
+                    rename(row, "tool_count", "toolCount");
+                    rename(row, "skill_name", "skillName");
+                }
+                None => {
+                    row.insert("type".into(), Value::String("session".into()));
+                    rename(row, "id", "sessionId");
+                }
+            }
+            if let Some(timestamp) = timestamp {
+                row.insert("timestamp".into(), timestamp);
+            }
         }
-    }
-    if let Some(timestamp) = timestamp {
-        row.insert("timestamp".into(), timestamp);
     }
 }
 
@@ -586,6 +704,46 @@ fn rename(row: &mut Map<String, Value>, from: &str, to: &str) {
     if let Some(value) = row.remove(from) {
         row.insert(to.into(), value);
     }
+}
+
+fn unix_ms_to_rfc3339(milliseconds: i64) -> Option<String> {
+    time::OffsetDateTime::from_unix_timestamp_nanos((milliseconds * 1_000_000).into())
+        .ok()?
+        .format(&time::format_description::well_known::Rfc3339)
+        .ok()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ZcodeSqliteDetection {
+    pub fingerprint: &'static str,
+    pub app_version: Option<String>,
+}
+
+/// Probe a ZCode CLI database and return the verified schema fingerprint, so
+/// detection can gate collection on the actual on-disk schema instead of a
+/// version string. `None` means the schema matches no verified plan.
+pub fn detect_zcode_sqlite(path: &Path) -> Option<ZcodeSqliteDetection> {
+    let connection = open_snapshot(path).ok()?;
+    for plan in [
+        SqliteAdapterPlan::ZcodeV3,
+        SqliteAdapterPlan::ZcodeV2,
+        SqliteAdapterPlan::ZcodeV1,
+    ] {
+        if verify_sqlite_plan(&connection, plan).is_ok() {
+            let app_version = connection
+                .query_row(
+                    "SELECT app_version FROM schema_migration ORDER BY id DESC LIMIT 1",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .ok();
+            return Some(ZcodeSqliteDetection {
+                fingerprint: plan.fingerprint(),
+                app_version,
+            });
+        }
+    }
+    None
 }
 
 #[derive(Debug)]

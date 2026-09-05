@@ -137,5 +137,6 @@ mod tests {
         }
         assert!(website_url("https://example.com/").is_ok());
         assert!(website_url("http://localhost:3000/").is_ok());
+        assert!(website_url("http://127.0.0.1:3000/login?return_to=%2Fleaderboard").is_ok());
     }
 }

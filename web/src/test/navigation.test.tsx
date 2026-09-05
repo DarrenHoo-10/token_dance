@@ -1,11 +1,12 @@
 import React from 'react';
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { LocaleProvider, useLocale } from '@/context/LocaleContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { AuthProvider } from '@/context/AuthContext';
 import { Navbar } from '@/components/layout/Navbar';
+import { RootRedirect } from '@/App';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
 import { api } from '@/api/client';
 
@@ -154,6 +155,79 @@ describe('Navigation & Locale Switching Tests', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(menuTrigger).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('sends signed-out visitors from the site home to login', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue({
+      authenticated: false,
+      user: null,
+    });
+
+    const LocationProbe = () => {
+      const location = useLocation();
+      return <div data-testid="current-path">{location.pathname + location.search}</div>;
+    };
+
+    render(
+      <LocaleProvider>
+        <NotificationProvider>
+          <AuthProvider>
+            <MemoryRouter initialEntries={['/']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+              <LocationProbe />
+              <Routes>
+                <Route path="/" element={<RootRedirect />} />
+                <Route path="/login" element={<div>login-page</div>} />
+                <Route path="/leaderboard" element={<div>home-page</div>} />
+              </Routes>
+            </MemoryRouter>
+          </AuthProvider>
+        </NotificationProvider>
+      </LocaleProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('current-path')).toHaveTextContent('/login?return_to=/');
+    });
+  });
+
+  it('sends signed-in visitors from the site home to the official homepage', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue({
+      authenticated: true,
+      user: {
+        handle: 'maxbauer',
+        displayName: 'Max Bauer',
+        avatarUrl: null,
+        locale: 'zh-CN',
+        onboardingRequired: false,
+        productState: 'active_private',
+      },
+    });
+
+    const LocationProbe = () => {
+      const location = useLocation();
+      return <div data-testid="current-path">{location.pathname + location.search}</div>;
+    };
+
+    render(
+      <LocaleProvider>
+        <NotificationProvider>
+          <AuthProvider>
+            <MemoryRouter initialEntries={['/']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+              <LocationProbe />
+              <Routes>
+                <Route path="/" element={<RootRedirect />} />
+                <Route path="/login" element={<div>login-page</div>} />
+                <Route path="/leaderboard" element={<div>home-page</div>} />
+              </Routes>
+            </MemoryRouter>
+          </AuthProvider>
+        </NotificationProvider>
+      </LocaleProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('current-path')).toHaveTextContent('/leaderboard');
+    });
   });
 
 });

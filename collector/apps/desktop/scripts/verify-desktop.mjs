@@ -45,7 +45,7 @@ const libRsContent = fs.readFileSync(libRsPath, "utf-8");
 
 const tauriBridgePath = path.join(desktopRoot, "src", "tauri-bridge.ts");
 assert(fs.existsSync(tauriBridgePath), "src/tauri-bridge.ts exists");
-const bridgeContent = fs.readFileSync(tauriBridgePath, "utf-8");
+const bridgeContent = fs.readFileSync(tauriBridgePath, "utf-8") + fs.readFileSync(path.join(desktopRoot, "src", "account-bridge.ts"), "utf-8");
 
 const requiredCommands = [
   "get_daemon_status",
@@ -72,6 +72,9 @@ const requiredCommands = [
   "quit_app",
   "open_settings",
   "open_website",
+  "get_account_session",
+  "login_account",
+  "logout_account",
 ];
 
 for (const cmd of requiredCommands) {
@@ -107,17 +110,13 @@ assert(
 // 4. Verify Frontend Components & UX Reusability
 console.log("\n[4/5] Verifying Frontend Components...");
 const components = [
-  "DaemonStatusCard.tsx",
-  "AgentsMatrixCard.tsx",
-  "UploadPreviewCard.tsx",
-  "AutostartLifecycleCard.tsx",
-  "DevicesRevokeCard.tsx",
-  "ConfigBackupRestoreCard.tsx",
-  "DataDeletionCard.tsx",
+  "SettingsPage.tsx",
+  "DesktopAccountCard.tsx",
+  "UsagePanel.tsx",
 ];
 
 for (const comp of components) {
-  const compPath = path.join(desktopRoot, "src", "components", comp);
+  const compPath = path.join(desktopRoot, "src", comp);
   assert(fs.existsSync(compPath), `Component ${comp} exists`);
 }
 

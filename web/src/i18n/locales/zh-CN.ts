@@ -87,7 +87,7 @@ export const zhCN = {
     emailDeliveryUnavailable: '验证码邮件发送失败，请稍后重试',
     codeSentLocal: '本地测试验证码：{code}，已自动填入',
     cooldownSec: '秒后重试',
-    keepSignedIn: '保持登录 (14 天)',
+    keepSignedIn: '保持登录（一个月）',
     forgotPassword: '忘记密码？',
     submitLogin: '登录 TokenDance',
     submitRegister: '验证并完成注册',

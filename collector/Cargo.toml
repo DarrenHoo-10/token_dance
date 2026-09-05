@@ -16,6 +16,7 @@ members = [
     "adapters/grok-build",
     "adapters/cursor",
     "adapters/zcode",
+    "adapters/pi",
     "adapters/deepseek-harness",
     "apps/service",
 ]
@@ -42,6 +43,7 @@ adapter-claude = { path = "adapters/claude" }
 adapter-grok-build = { path = "adapters/grok-build" }
 adapter-cursor = { path = "adapters/cursor" }
 adapter-zcode = { path = "adapters/zcode" }
+adapter-pi = { path = "adapters/pi" }
 adapter-deepseek-harness = { path = "adapters/deepseek-harness" }
 collector-service = { path = "apps/service" }
 

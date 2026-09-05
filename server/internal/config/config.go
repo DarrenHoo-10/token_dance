@@ -130,7 +130,7 @@ func DefaultConfig() *Config {
 		HTTPAddr:             ":8080",
 		Environment:          "development",
 		RateLimitMaxEntries:  10000,
-		SessionIdleTTL:       14 * 24 * time.Hour,
+		SessionIdleTTL:       30 * 24 * time.Hour,
 		SessionAbsoluteTTL:   30 * 24 * time.Hour,
 		AuthCodeTTL:          10 * time.Minute,
 		AuthBindCodeTTL:      5 * time.Minute,

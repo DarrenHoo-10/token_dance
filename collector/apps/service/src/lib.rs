@@ -35,16 +35,18 @@ pub enum OfficialAgent {
     Cursor,
     Zcode,
     DeepseekHarness,
+    Pi,
 }
 
 impl OfficialAgent {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Codex,
         Self::ClaudeCode,
         Self::GrokBuild,
         Self::Cursor,
         Self::Zcode,
         Self::DeepseekHarness,
+        Self::Pi,
     ];
 }
 
@@ -150,6 +152,7 @@ pub struct OfficialAdapters {
     pub cursor: Arc<dyn AgentAdapter>,
     pub zcode: Arc<dyn AgentAdapter>,
     pub deepseek_harness: Arc<dyn AgentAdapter>,
+    pub pi: Arc<dyn AgentAdapter>,
 }
 
 impl OfficialAdapters {
@@ -164,6 +167,7 @@ impl OfficialAdapters {
                 snapshot.get(OfficialAgent::DeepseekHarness),
                 hmac_key,
             ),
+            pi: pi_adapter(snapshot.get(OfficialAgent::Pi), hmac_key),
         })
     }
 
@@ -175,6 +179,7 @@ impl OfficialAdapters {
             self.cursor,
             self.zcode,
             self.deepseek_harness,
+            self.pi,
         ]
     }
 }
@@ -284,6 +289,16 @@ fn deepseek_adapter(detection: Option<&AgentDetection>, key: &[u8]) -> Arc<dyn A
         None => {
             Arc::new(adapter_deepseek_harness::DeepSeekHarnessAdapter::undetected(key.to_vec()))
         }
+    }
+}
+
+fn pi_adapter(detection: Option<&AgentDetection>, key: &[u8]) -> Arc<dyn AgentAdapter> {
+    match detection {
+        Some(item) => Arc::new(adapter_pi::PiAdapter::for_version(
+            item.version.clone(),
+            key.to_vec(),
+        )),
+        None => Arc::new(adapter_pi::PiAdapter::undetected(key.to_vec())),
     }
 }
 
@@ -423,12 +438,8 @@ impl ProductionService {
         path: &Path,
         historical: bool,
     ) -> Result<usize, acquisition::AcquisitionError> {
-        let mut tailer = JsonlTailer::new(
-            self.collector.installation_id(),
-            source_id,
-            source_id,
-            path,
-        );
+        let mut tailer =
+            JsonlTailer::new(self.collector.installation_id(), source_id, source_id, path);
         tailer.restore_matching(&self.wal);
         let collector = &self.collector;
         let wal = &mut self.wal;
@@ -714,6 +725,7 @@ fn build_driver(
                 "cursor-local-v1" => SqliteAdapterPlan::CursorPersonalV1,
                 "zcode-sqlite-v1-uv7" => SqliteAdapterPlan::ZcodeV1,
                 "zcode-sqlite-v2-uv9" => SqliteAdapterPlan::ZcodeV2,
+                "zcode-sqlite-v3-uv0" => SqliteAdapterPlan::ZcodeV3,
                 _ => {
                     return Err(acquisition::AcquisitionError::Other(
                         "untrusted_sqlite_schema_fingerprint".into(),
@@ -840,6 +852,7 @@ pub fn adapter_id(agent: OfficialAgent) -> &'static str {
         OfficialAgent::Cursor => adapter_cursor::ADAPTER_ID,
         OfficialAgent::Zcode => adapter_zcode::ADAPTER_ID,
         OfficialAgent::DeepseekHarness => adapter_deepseek_harness::ADAPTER_ID,
+        OfficialAgent::Pi => adapter_pi::ADAPTER_ID,
     }
 }
 
@@ -936,7 +949,7 @@ mod tests {
         )
         .unwrap();
         collector.probe_all().await;
-        assert_eq!(collector.runtimes().len(), 6);
+        assert_eq!(collector.runtimes().len(), 7);
         assert!(collector.runtimes().into_iter().all(|runtime| {
             !runtime.detected
                 && runtime.agent_version.is_none()
@@ -945,7 +958,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn six_official_adapters_map_discovered_sources_to_drivers() {
+    async fn seven_official_adapters_map_discovered_sources_to_drivers() {
         let mut snapshot = DetectionSnapshot::default()
             .with(
                 OfficialAgent::Codex,
@@ -979,7 +992,8 @@ mod tests {
             .with(
                 OfficialAgent::DeepseekHarness,
                 AgentDetection::installed("1.0.0"),
-            );
+            )
+            .with(OfficialAgent::Pi, AgentDetection::installed("0.3.0"));
         snapshot.configure_source(
             OfficialAgent::Cursor,
             "cursor-personal-local",
@@ -993,6 +1007,14 @@ mod tests {
             "zcode-sqlite",
             DetectedSourceConfig {
                 path: Some(PathBuf::from("zcode.sqlite")),
+                ..DetectedSourceConfig::default()
+            },
+        );
+        snapshot.configure_source(
+            OfficialAgent::Pi,
+            adapter_pi::HISTORY_SOURCE_ID,
+            DetectedSourceConfig {
+                path: Some(PathBuf::from("pi-session.jsonl")),
                 ..DetectedSourceConfig::default()
             },
         );

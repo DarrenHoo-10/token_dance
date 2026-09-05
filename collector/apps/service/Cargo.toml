@@ -18,6 +18,7 @@ adapter-codex = { path = "../../adapters/codex" }
 adapter-cursor = { path = "../../adapters/cursor" }
 adapter-deepseek-harness = { path = "../../adapters/deepseek-harness" }
 adapter-grok-build = { path = "../../adapters/grok-build" }
+adapter-pi = { path = "../../adapters/pi" }
 adapter-zcode = { path = "../../adapters/zcode" }
 collector-core = { path = "../../crates/collector-core" }
 config-executor = { path = "../../crates/config-executor" }

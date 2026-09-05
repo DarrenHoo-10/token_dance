@@ -1108,44 +1108,26 @@ func (m *MemoryStore) GetPersonalSummary(ctx context.Context, userID string, r d
 
 	fix, hasFixture := m.userMetricFixtures[userID]
 	if !hasFixture {
-		costAmount := "1428.60000000"
-		costCurrency := "USD"
-		totalTokens := "325700000"
-		codeLines := "864200"
-		tokensPerCodeLine := "376.88"
-		inputTokens := "184600000"
-		outputTokens := "78300000"
-		cacheHitRate := "0.386"
-		activeDurationMs := "1737360000"
-		messageCount := "42800"
-		userMessageCount := "18400"
-
+		// No collected data for this user yet: return an honest empty summary
+		// instead of demo numbers.
 		return &domain.PersonalSummary{
 			Range: r,
 			Metrics: domain.PersonalSummaryMetrics{
-				EstimatedCost:      domain.MetricCost{Amount: &costAmount, Currency: &costCurrency, Supported: true},
-				TotalTokens:        domain.MetricBigInt{Value: &totalTokens, Supported: true},
-				GeneratedCodeLines: domain.MetricBigInt{Value: &codeLines, Supported: true},
-				TokensPerCodeLine:  domain.MetricDecimal{Value: &tokensPerCodeLine, Supported: true},
-				InputContextTokens: domain.MetricBigInt{Value: &inputTokens, Supported: true},
-				OutputTokens:       domain.MetricBigInt{Value: &outputTokens, Supported: true},
-				CacheHitRate:       domain.MetricDecimal{Value: &cacheHitRate, Supported: true},
-				ActiveDurationMs:   domain.MetricBigInt{Value: &activeDurationMs, Supported: true},
-				MessageCount:       domain.MetricBigInt{Value: &messageCount, Supported: true},
-				UserMessageCount:   domain.MetricBigInt{Value: &userMessageCount, Supported: true},
+				EstimatedCost:      domain.MetricCost{Supported: false},
+				TotalTokens:        domain.MetricBigInt{Supported: false},
+				GeneratedCodeLines: domain.MetricBigInt{Supported: false},
+				TokensPerCodeLine:  domain.MetricDecimal{Supported: false},
+				InputContextTokens: domain.MetricBigInt{Supported: false},
+				OutputTokens:       domain.MetricBigInt{Supported: false},
+				CacheHitRate:       domain.MetricDecimal{Supported: false},
+				ActiveDurationMs:   domain.MetricBigInt{Supported: false},
+				MessageCount:       domain.MetricBigInt{Supported: false},
+				UserMessageCount:   domain.MetricBigInt{Supported: false},
 			},
 			Ranking: domain.PersonalSummaryRanking{
 				Visibility: u.LeaderboardVisibility,
-				Rank:       rank,
-				Delta:      delta,
-				Percentile: percentile,
 			},
-			Sync: domain.PersonalSummarySync{
-				LastCommittedAt:   &now,
-				PendingLocalCount: nil,
-			},
-			DataWatermarkAt:    &now,
-			AggregationVersion: 2,
+			Sync: domain.PersonalSummarySync{},
 		}, nil
 	}
 
@@ -1229,50 +1211,15 @@ func (m *MemoryStore) GetTokenTrend(ctx context.Context, userID string, r domain
 	fixtures, hasFixtures := m.userTrendFixtures[userID]
 
 	if !hasFixtures {
-		var points []domain.TrendPoint
-		days := 7
-		if r.Key == domain.TimeRange30d {
-			days = 30
-		} else if r.Key == domain.TimeRangeToday {
-			days = 1
-		}
-
-		for i := days - 1; i >= 0; i-- {
-			d := now.AddDate(0, 0, -i).Format("2006-01-02")
-			tot := fmt.Sprintf("%d", 10000000+i*500000)
-			inp := fmt.Sprintf("%d", 6000000+i*300000)
-			out := fmt.Sprintf("%d", 2500000+i*100000)
-			cr := fmt.Sprintf("%d", 1500000+i*100000)
-			cw := "0"
-			rsn := fmt.Sprintf("%d", 500000+i*20000)
-
-			if mode == "structure" {
-				points = append(points, domain.TrendPoint{
-					Date:             d,
-					InputTokens:      &inp,
-					OutputTokens:     &out,
-					CacheReadTokens:  &cr,
-					CacheWriteTokens: &cw,
-					ReasoningTokens:  &rsn,
-				})
-			} else {
-				points = append(points, domain.TrendPoint{
-					Date:       d,
-					TokenTotal: &tot,
-				})
-			}
-		}
-
+		// No collected data yet: empty trend.
 		return &domain.TrendResponse{
-			Range:              r,
-			Mode:               mode,
-			AgentID:            agentID,
-			ProviderID:         providerID,
-			ModelID:            modelID,
-			Granularity:        "day",
-			Points:             points,
-			DataWatermarkAt:    &now,
-			AggregationVersion: 2,
+			Range:       r,
+			Mode:        mode,
+			AgentID:     agentID,
+			ProviderID:  providerID,
+			ModelID:     modelID,
+			Granularity: "day",
+			Points:      []domain.TrendPoint{},
 		}, nil
 	}
 
@@ -1360,31 +1307,11 @@ func (m *MemoryStore) GetTokenTrend(ctx context.Context, userID string, r domain
 }
 
 func (m *MemoryStore) GetAgentBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error) {
-	now := time.Now().UTC()
-	return &domain.BreakdownResponse{
-		Range: r,
-		Items: []domain.BreakdownItem{
-			{Key: "claude-code", Label: "Claude Code", TokenTotal: "185000000", Percentage: 56.8},
-			{Key: "cursor", Label: "Cursor", TokenTotal: "98000000", Percentage: 30.1},
-			{Key: "codex", Label: "Codex CLI", TokenTotal: "42700000", Percentage: 13.1},
-		},
-		DataWatermarkAt:    &now,
-		AggregationVersion: 2,
-	}, nil
+	return &domain.BreakdownResponse{Range: r, Items: []domain.BreakdownItem{}}, nil
 }
 
 func (m *MemoryStore) GetModelBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error) {
-	now := time.Now().UTC()
-	return &domain.BreakdownResponse{
-		Range: r,
-		Items: []domain.BreakdownItem{
-			{Key: "claude-3-7-sonnet", Label: "Claude 3.7 Sonnet", TokenTotal: "190000000", Percentage: 58.3},
-			{Key: "gpt-4o", Label: "GPT-4o", TokenTotal: "85000000", Percentage: 26.1},
-			{Key: "o3-mini", Label: "o3-mini", TokenTotal: "50700000", Percentage: 15.6},
-		},
-		DataWatermarkAt:    &now,
-		AggregationVersion: 2,
-	}, nil
+	return &domain.BreakdownResponse{Range: r, Items: []domain.BreakdownItem{}}, nil
 }
 
 func (m *MemoryStore) GetSkillRanking(ctx context.Context, userID string, r domain.TimeRange) (*domain.SkillsResponse, error) {
@@ -1395,20 +1322,7 @@ func (m *MemoryStore) GetSkillRanking(ctx context.Context, userID string, r doma
 	fixtures, hasFixtures := m.userSkillFixtures[userID]
 
 	if !hasFixtures {
-		sr1 := 0.98
-		d1 := 12.5
-		sr2 := 0.94
-		d2 := -4.2
-		return &domain.SkillsResponse{
-			Range: r,
-			Skills: []domain.SkillItem{
-				{SkillID: "skl_git_diff", SkillPublicName: "Git Smart Diff", UseCount: "1420", ActiveDays: 24, SuccessRate: &sr1, PreviousDeltaPct: &d1},
-				{SkillID: "skl_ast_search", SkillPublicName: "AST Code Search", UseCount: "890", ActiveDays: 18, SuccessRate: &sr2, PreviousDeltaPct: &d2},
-				{SkillID: "skl_test_gen", SkillPublicName: "Unit Test Synthesizer", UseCount: "630", ActiveDays: 15},
-			},
-			DataWatermarkAt:    &now,
-			AggregationVersion: 2,
-		}, nil
+		return &domain.SkillsResponse{Range: r, Skills: []domain.SkillItem{}}, nil
 	}
 
 	type sortableSkill struct {
@@ -1462,72 +1376,24 @@ func (m *MemoryStore) GetActivityCalendar(ctx context.Context, userID string, r 
 	from, to := r.From.In(loc), r.To.In(loc)
 	start := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, loc)
 	end := time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, loc)
+	// No collected data yet: render an all-zero calendar.
 	var days []domain.CalendarDay
-	activeDays := 0
-	index := 0
 	for day := start; !day.After(end); day = day.AddDate(0, 0, 1) {
-		active := index%7 != 0
-		level, tokens := 0, "0"
-		if active {
-			level = (index % 4) + 1
-			tokens = fmt.Sprintf("%d", level*2500000)
-			activeDays++
-		}
-		days = append(days, domain.CalendarDay{Date: day.Format("2006-01-02"), Active: active, Level: level, TokenTotal: tokens})
-		index++
+		days = append(days, domain.CalendarDay{Date: day.Format("2006-01-02"), Active: false, Level: 0, TokenTotal: "0"})
 	}
-	now := time.Now().UTC()
-	return &domain.CalendarResponse{Days: days, CurrentStreak: 6, LongestStreak: 14, TotalActiveDays: activeDays, DataWatermarkAt: &now, AggregationVersion: 2}, nil
+	return &domain.CalendarResponse{Days: days}, nil
 }
 
 func (m *MemoryStore) GetActivity(ctx context.Context, userID string, q domain.ActivityQuery) ([]domain.ActivityRow, error) {
-	loc, err := time.LoadLocation(q.Range.Timezone)
-	if err != nil {
-		loc = time.UTC
-	}
-	rows := make([]domain.ActivityRow, 0, q.Limit)
-	agents := []string{"claude-code", "cursor", "codex"}
-	start := q.Range.To.In(loc)
-	for dayIndex := 0; len(rows) < q.Offset+q.Limit && dayIndex < 400; dayIndex++ {
-		date := start.AddDate(0, 0, -dayIndex)
-		if date.Before(q.Range.From.In(loc)) {
-			break
-		}
-		for _, agent := range agents {
-			if q.AgentID != nil && *q.AgentID != agent {
-				continue
-			}
-			provider, model := "anthropic", "claude-3-7-sonnet"
-			if q.ProviderID != nil && *q.ProviderID != provider {
-				continue
-			}
-			if q.ModelID != nil && *q.ModelID != model {
-				continue
-			}
-			row := domain.ActivityRow{Date: date.Format("2006-01-02"), AgentID: agent, TokenTotal: "2500000", GeneratedCodeLines: "120"}
-			messages, duration := "24", "3600000"
-			row.MessageCount, row.ActiveDurationMs = &messages, &duration
-			if q.ProviderID != nil || q.ModelID != nil {
-				row.ProviderID, row.ModelID = &provider, &model
-			}
-			rows = append(rows, row)
-		}
-	}
-	if q.Offset >= len(rows) {
-		return []domain.ActivityRow{}, nil
-	}
-	end := q.Offset + q.Limit
-	if end > len(rows) {
-		end = len(rows)
-	}
-	return rows[q.Offset:end], nil
+	// No collected data yet: empty activity list.
+	return []domain.ActivityRow{}, nil
 }
 
 func (m *MemoryStore) GetFilterOptions(ctx context.Context, userID string) (*domain.FilterOptions, error) {
 	return &domain.FilterOptions{
-		Agents:    []string{"claude-code", "cursor", "codex"},
-		Providers: []string{"anthropic", "openai", "bedrock"},
-		Models:    []string{"claude-3-7-sonnet", "gpt-4o", "o3-mini"},
+		Agents:    []string{},
+		Providers: []string{},
+		Models:    []string{},
 	}, nil
 }
 

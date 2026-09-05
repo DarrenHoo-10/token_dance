@@ -61,6 +61,7 @@ describe('Auth & Onboarding Flow Tests', () => {
         expect.objectContaining({
           email: 'test@example.com',
           password: 'password123',
+          keepSignedIn: true,
         })
       );
     });
