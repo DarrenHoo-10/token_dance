@@ -37,17 +37,33 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
   });
 
   describe('LeaderboardPage', () => {
-    it('renders the approved high-fidelity leaderboard home', () => {
+    const leaderboardPayload = {
+      snapshotId: 'snap-1',
+      boardKey: 'global',
+      window: 'today',
+      metric: 'tokens',
+      entries: [
+        { rankNo: 1, handle: 'ada', displayName: 'Ada Lovelace', avatarUrl: null, metricValue: '325700000', rankDelta: 2, topAgent: 'Claude Code', activeDays: 21 },
+        { rankNo: 2, handle: 'grace', displayName: 'Grace Hopper', avatarUrl: null, metricValue: '215400000', rankDelta: -1, topAgent: 'Codex CLI', activeDays: 18 },
+        { rankNo: 3, handle: 'linus', displayName: 'Linus Torvalds', avatarUrl: null, metricValue: '178900000', rankDelta: 0, topAgent: 'Cursor', activeDays: 15 },
+        { rankNo: 4, handle: 'margaret', displayName: 'Margaret Hamilton', avatarUrl: null, metricValue: '142600000', rankDelta: 1, topAgent: 'Claude Code', activeDays: 12 },
+      ],
+      dataWatermarkAt: null,
+    };
+
+    it('renders real leaderboard entries returned by the API', async () => {
+      const spy = vi.spyOn(api, 'getLeaderboard').mockResolvedValue(leaderboardPayload);
       renderWithProviders(<LeaderboardPage />, '/leaderboard');
-      expect(screen.getByRole('heading', { name: 'Let Token Dance' })).toBeInTheDocument();
-      expect(screen.getByText('maxbauer')).toBeInTheDocument();
-      expect(screen.getByText('sophiadev')).toBeInTheDocument();
-      expect(screen.getByText('12.4B')).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByText('ada')).toBeInTheDocument());
+      expect(screen.getByText('grace')).toBeInTheDocument();
+      expect(screen.getByText('325.7M')).toBeInTheDocument();
+      expect(spy).toHaveBeenCalledWith({ window: 'today', limit: 10 });
     });
 
-    it('does not expose unsupported search controls', () => {
+    it('shows an empty state instead of mock data when the API returns no entries', async () => {
+      vi.spyOn(api, 'getLeaderboard').mockResolvedValue({ ...leaderboardPayload, entries: [] });
       renderWithProviders(<LeaderboardPage />, '/leaderboard');
-      expect(screen.getByText('maxbauer')).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByText('还没有上榜数据。连接你的编码工具并把资料设为公开后，这里会展示真实排行。')).toBeInTheDocument());
       expect(screen.queryByRole('search')).not.toBeInTheDocument();
     });
   });

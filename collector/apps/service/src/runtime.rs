@@ -202,7 +202,10 @@ fn process_is_running(pid: &str) -> bool {
     }
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
+
         let output = std::process::Command::new("tasklist")
+            .creation_flags(0x08000000) // CREATE_NO_WINDOW for GUI callers
             .args(["/FI", &format!("PID eq {pid}"), "/NH"])
             .output();
         return output

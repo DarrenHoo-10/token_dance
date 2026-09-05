@@ -3,6 +3,7 @@ package auth
 import (
 	"bytes"
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"tokendance/internal/config"
 	"tokendance/internal/domain"
 	emailpkg "tokendance/internal/email"
+	"tokendance/internal/profile"
 	"tokendance/internal/store/memory"
 )
 
@@ -47,7 +49,7 @@ func TestAuthFlows(t *testing.T) {
 	}
 
 	// 2. Complete Registration with wrong code
-	_, err = svc.CompleteRegistration(ctx, email, "999999", password, "/dashboard")
+	_, err = svc.CompleteRegistration(ctx, email, "999999", password, "/dashboard", "en-US", "UTC")
 	if err == nil {
 		t.Fatalf("expected error on wrong verification code")
 	}
@@ -68,7 +70,7 @@ func TestAuthFlows(t *testing.T) {
 	}
 
 	// 3. Complete Registration with valid code
-	regResult, err := svc.CompleteRegistration(ctx, email, code, password, "/dashboard")
+	regResult, err := svc.CompleteRegistration(ctx, email, code, password, "/dashboard", "en-US", "UTC")
 	if err != nil {
 		t.Fatalf("failed to complete registration: %v", err)
 	}
@@ -180,7 +182,7 @@ func TestAEADCiphertext_NoPlaintextInDB(t *testing.T) {
 	}
 
 	// 2. Complete Registration
-	regResult, err := svc.CompleteRegistration(ctx, email, code, password, "/dashboard")
+	regResult, err := svc.CompleteRegistration(ctx, email, code, password, "/dashboard", "en-US", "UTC")
 	if err != nil {
 		t.Fatalf("failed to complete registration: %v", err)
 	}
@@ -227,7 +229,7 @@ func TestTestAuthCode_EnvBehavior(t *testing.T) {
 	}
 
 	// Verification with 778899 must succeed
-	regResult, err := svc.CompleteRegistration(ctx, email, "778899", "Password123!", "/")
+	regResult, err := svc.CompleteRegistration(ctx, email, "778899", "Password123!", "/", "en-US", "UTC")
 	if err != nil {
 		t.Fatalf("expected registration to succeed with test auth code: %v", err)
 	}
@@ -256,4 +258,77 @@ func formatCode(n int) string {
 		n /= 10
 	}
 	return s
+}
+
+// 注册即默认建档：新账号无需手动 onboarding 即可用默认资料直接进入应用。
+func TestCompleteRegistration_DefaultProfile(t *testing.T) {
+	ctx := context.Background()
+	svc, st, _ := setupAuthService(t)
+
+	registerUser := func(email, locale, timezone string) *domain.User {
+		if err := svc.RequestRegistrationCode(ctx, email, locale); err != nil {
+			t.Fatalf("failed to request code for %s: %v", email, err)
+		}
+		code := svc.EmailSink().LatestCode(email)
+		if code == "" {
+			t.Fatalf("expected verification code for %s", email)
+		}
+		res, err := svc.CompleteRegistration(ctx, email, code, "Password123!", "/", locale, timezone)
+		if err != nil {
+			t.Fatalf("failed to complete registration for %s: %v", email, err)
+		}
+		return res.User
+	}
+
+	// 1. Registration completes onboarding with an email-derived handle and
+	//    the client-provided locale/timezone; visibility defaults to private.
+	u := registerUser("darthcoder@tokendance.dev", "zh-CN", "Asia/Shanghai")
+	if u.OnboardingCompletedAt == nil {
+		t.Errorf("expected onboarding completed at registration")
+	}
+	if u.Handle == nil || *u.Handle != "darthcoder" {
+		t.Errorf("expected email-derived handle darthcoder, got %v", u.Handle)
+	}
+	if u.Locale != "zh-CN" || u.TimezoneName != "Asia/Shanghai" {
+		t.Errorf("expected client locale/timezone defaults, got %s/%s", u.Locale, u.TimezoneName)
+	}
+	if u.LeaderboardVisibility != domain.LeaderboardVisibilityPrivate {
+		t.Errorf("expected private default visibility, got %s", u.LeaderboardVisibility)
+	}
+	priv, err := st.Privacy().GetPrivacy(ctx, u.UserID)
+	if err != nil {
+		t.Fatalf("failed to load privacy settings: %v", err)
+	}
+	if priv.PublicProfileEnabled || priv.LeaderboardVisibility != domain.LeaderboardVisibilityPrivate {
+		t.Errorf("expected all-private privacy defaults, got %+v", priv)
+	}
+
+	// 2. Unsupported locale/timezone fall back to safe defaults.
+	u2 := registerUser("fallbacks@tokendance.dev", "fr-FR", "Mars/Olympus")
+	if u2.Locale != "en-US" {
+		t.Errorf("expected locale fallback en-US, got %s", u2.Locale)
+	}
+	if u2.TimezoneName != "UTC" {
+		t.Errorf("expected timezone fallback UTC, got %s", u2.TimezoneName)
+	}
+
+	// 3. Same local part on another domain gets a unique suffixed handle.
+	u3 := registerUser("darthcoder@other.dev", "en-US", "UTC")
+	if u3.Handle == nil || *u3.Handle == "darthcoder" {
+		t.Errorf("expected suffixed handle for duplicated local part, got %v", u3.Handle)
+	}
+	if u3.Handle != nil {
+		if !strings.HasPrefix(*u3.Handle, "darthcoder_") {
+			t.Errorf("expected stem-prefixed handle, got %s", *u3.Handle)
+		}
+		if err := profile.ValidateHandle(*u3.Handle); err != nil {
+			t.Errorf("expected valid generated handle, got %s (%v)", *u3.Handle, err)
+		}
+	}
+
+	// 4. A local part without usable handle characters falls back to dancer_.
+	u4 := registerUser("12345@tokendance.dev", "en-US", "UTC")
+	if u4.Handle == nil || !strings.HasPrefix(*u4.Handle, "dancer_") {
+		t.Errorf("expected dancer_ fallback handle, got %v", u4.Handle)
+	}
 }

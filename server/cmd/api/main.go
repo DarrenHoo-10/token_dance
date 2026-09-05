@@ -17,6 +17,7 @@ import (
 	"tokendance/internal/clock"
 	"tokendance/internal/config"
 	"tokendance/internal/device"
+	"tokendance/internal/email"
 	"tokendance/internal/export"
 	"tokendance/internal/httpapi"
 	"tokendance/internal/leaderboard"
@@ -81,6 +82,15 @@ func main() {
 	}
 
 	authService := auth.NewService(st, cfg, clk)
+
+	if cfg.EmailProvider == "smtp" {
+		emailProvider, err := email.NewProvider(cfg)
+		if err != nil {
+			log.Fatalf("Fatal email provider configuration error: %v", err)
+		}
+		authService.SetSMTPProvider(emailProvider)
+		log.Printf("SMTP email delivery enabled via %s:%d", cfg.SMTPHost, cfg.SMTPPort)
+	}
 	profileService := profile.NewService(st, clk)
 	privacyService := privacy.NewService(st, clk)
 	analyticsService := analytics.NewServiceWithConfig(st, cfg, clk)

@@ -37,10 +37,12 @@ import { AutostartLifecycleCard } from "./components/AutostartLifecycleCard.tsx"
 import { DevicesRevokeCard } from "./components/DevicesRevokeCard.tsx";
 import { ConfigBackupRestoreCard } from "./components/ConfigBackupRestoreCard.tsx";
 import { DataDeletionCard } from "./components/DataDeletionCard.tsx";
+import { WebsiteSettingsCard } from "./components/WebsiteSettingsCard.tsx";
+import { brandLogo } from "./brand";
 import "./styles/desktop.css";
 
 export const App: React.FC = () => {
-  const [lang, setLang] = useState<"zh" | "en">("zh");
+  const [lang, setLang] = useState<"zh" | "en">(() => localStorage.getItem("tokendance.language") === "en" ? "en" : "zh");
   const [activeTab, setActiveTab] = useState<
     "daemon" | "agents" | "upload" | "autostart" | "devices" | "backups" | "deletion"
   >("daemon");
@@ -87,14 +89,22 @@ export const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    refreshAllState();
+    const onFocus = () => {
+      setLang(localStorage.getItem("tokendance.language") === "en" ? "en" : "zh");
+      void refreshAllState();
+    };
+    if (!document.hidden) void refreshAllState();
+    window.addEventListener("focus", onFocus);
     // Poll status every 3 seconds
     const timer = setInterval(() => {
+      if (document.hidden) return;
       getDaemonStatus().then(setDaemonStatus).catch(() => {});
       getCollectorMetrics().then(setMetrics).catch(() => {});
     }, 3000);
-    return () => clearInterval(timer);
+    return () => { clearInterval(timer); window.removeEventListener("focus", onFocus); };
   }, [refreshAllState]);
+
+  useEffect(() => { localStorage.setItem("tokendance.language", lang); }, [lang]);
 
   // Actions
   const handleTogglePause = async () => {
@@ -226,9 +236,9 @@ export const App: React.FC = () => {
       {/* Header */}
       <header className="desktop-header">
         <div className="brand-section">
-          <div className="brand-icon">TD</div>
+          <img src={brandLogo} alt="" width={32} height={32} style={{ objectFit: "contain" }} />
           <div>
-            <span className="brand-title">TokenDance Desktop</span>
+            <span className="brand-title">{isZh ? "TokenDance · 采集与设置" : "TokenDance · Settings"}</span>
             <span className="brand-badge" style={{ marginLeft: "8px" }}>
               {daemonStatus?.status === "RUNNING"
                 ? isZh ? "采集中" : "ACTIVE"
@@ -342,6 +352,7 @@ export const App: React.FC = () => {
 
         {/* Dynamic Content View */}
         <main className="desktop-content">
+          {activeTab === "daemon" && <WebsiteSettingsCard lang={lang} />}
           {activeTab === "daemon" && (
             <DaemonStatusCard
               status={daemonStatus}

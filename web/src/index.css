@@ -1181,3 +1181,10 @@ h3 { font-size: 15px; margin-bottom: 4px; }
     grid-template-columns: 1fr;
   }
 }
+
+/* Leaderboard real-data states */
+.leaderboard-empty { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 48px 24px; color: #686d68; font-size: 14px; text-align: center; }
+.avatar-fallback { display: flex; align-items: center; justify-content: center; color: #4b554b; font-weight: 600; }
+.podium-avatar-wrap .avatar-fallback { width: 56px; height: 56px; font-size: 22px; }
+.rank-person .avatar-fallback { width: 32px; height: 32px; font-size: 13px; }
+.side-card-empty { margin: 8px 0 0; color: #686d68; font-size: 13px; line-height: 1.5; }

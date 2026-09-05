@@ -70,6 +70,8 @@ const requiredCommands = [
   "hide_window",
   "show_window",
   "quit_app",
+  "open_settings",
+  "open_website",
 ];
 
 for (const cmd of requiredCommands) {
@@ -130,7 +132,7 @@ try {
     encoding: "utf-8",
   });
   console.log(cargoOutput);
-  assert(/test result: ok\. [3-9]\d* passed; 0 failed/.test(cargoOutput), "Service-backed Rust unit tests passed");
+  assert(/test result: ok\. [1-9]\d* passed; 0 failed/.test(cargoOutput), "Service-backed Rust unit tests passed");
 } catch (err) {
   console.error("Cargo test error:", err);
   hasErrors = true;

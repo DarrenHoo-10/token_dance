@@ -116,6 +116,19 @@ func NewMemoryStore() *MemoryStore {
 	}
 }
 
+// MutateUser applies fn to the stored user in place; intended for tests that
+// need to simulate legacy account states (e.g. onboarding not completed).
+func (m *MemoryStore) MutateUser(userID string, fn func(*domain.User)) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[userID]
+	if !ok {
+		return false
+	}
+	fn(u)
+	return true
+}
+
 func (m *MemoryStore) Auth() store.AuthStore               { return m }
 func (m *MemoryStore) Profile() store.ProfileStore         { return m }
 func (m *MemoryStore) Privacy() store.PrivacyStore         { return m }

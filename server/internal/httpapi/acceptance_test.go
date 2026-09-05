@@ -555,7 +555,7 @@ func TestUSR007_SafeReturnToFuzzingAndEncodedAttacks(t *testing.T) {
 	}
 }
 
-// USR-008: 首次建档 (未建档访问 `/me` -> 只允许 onboarding/logout；完成后回原 returnTo)
+// USR-008: 首次建档 (注册即默认建档直接进入应用；存量未建档用户仍只允许 onboarding/logout，完成后回原 returnTo)
 func TestUSR008_MandatoryOnboardingRouteGate(t *testing.T) {
 	router, authSvc, st := setupTestRouter(t)
 
@@ -581,6 +581,11 @@ func TestUSR008_MandatoryOnboardingRouteGate(t *testing.T) {
 	router.ServeHTTP(rec, req)
 
 	var regResp struct {
+		User struct {
+			UserID             string  `json:"userId"`
+			Handle             *string `json:"handle"`
+			OnboardingRequired bool    `json:"onboardingRequired"`
+		} `json:"user"`
 		CSRFToken string `json:"csrfToken"`
 		ReturnTo  string `json:"returnTo"`
 	}
@@ -591,10 +596,32 @@ func TestUSR008_MandatoryOnboardingRouteGate(t *testing.T) {
 		t.Errorf("expected returnTo /me/settings, got %s", regResp.ReturnTo)
 	}
 
-	// 1. Attempt accessing /me/profile before onboarding -> BLOCKED 403 ONBOARDING_REQUIRED
+	// 0. New registrations complete onboarding by default: onboardingRequired
+	//    is false and a unique email-derived handle was reserved.
+	if regResp.User.OnboardingRequired {
+		t.Errorf("expected onboardingRequired=false for fresh registration, got true")
+	}
+	if regResp.User.Handle == nil || *regResp.User.Handle != "newuserusr008" {
+		t.Errorf("expected default handle newuserusr008 derived from email, got %v", regResp.User.Handle)
+	}
+
 	reqProfile := httptest.NewRequest(http.MethodGet, "/api/v1/me/profile", nil)
 	reqProfile.AddCookie(cookie)
 	recProfile := httptest.NewRecorder()
+	router.ServeHTTP(recProfile, reqProfile)
+	if recProfile.Code != http.StatusOK {
+		t.Fatalf("expected 200 on /me/profile for freshly registered user, got %d: %s", recProfile.Code, recProfile.Body.String())
+	}
+
+	// Simulate a legacy account created before default onboarding.
+	if !st.MutateUser(regResp.User.UserID, func(u *domain.User) { u.OnboardingCompletedAt = nil }) {
+		t.Fatalf("legacy user %s not found in store", regResp.User.UserID)
+	}
+
+	// 1. Attempt accessing /me/profile before onboarding -> BLOCKED 403 ONBOARDING_REQUIRED
+	reqProfile = httptest.NewRequest(http.MethodGet, "/api/v1/me/profile", nil)
+	reqProfile.AddCookie(cookie)
+	recProfile = httptest.NewRecorder()
 	router.ServeHTTP(recProfile, reqProfile)
 
 	if recProfile.Code != http.StatusForbidden {

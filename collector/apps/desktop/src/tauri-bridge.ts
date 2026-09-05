@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { lastSevenDays } from "./weekly-usage.ts";
 
 export interface AgentConfig {
   id: string;
@@ -8,11 +9,13 @@ export interface AgentConfig {
   status: "UNDETECTED" | "DETECTED" | "ACTIVE" | "CONFIGURING" | "NEEDS_PERMISSION" | "DISABLED" | "DEGRADED" | "ERROR" | "PAUSED";
   setupPlanStatus: "APPLIED" | "PROPOSED" | "ROLLED_BACK";
   enabled: boolean;
-  accuracy: "exact" | "derived" | "correlated" | "estimated";
+  accuracy: "exact" | "derived" | "correlated" | "estimated" | "unknown";
   sources: string[];
   capabilities: string[];
   todayTokens: number;
   totalTokens: number;
+  // Local calendar-day aggregates. Omitted when the native collector has no history yet.
+  dailyUsage?: { date: string; tokens: number }[];
   lastActive: string;
   version: string;
 }
@@ -402,7 +405,12 @@ export async function getAgentConfigs(): Promise<AgentConfig[]> {
   if (isTauriEnvironment()) {
     return await invoke<AgentConfig[]>("get_agent_configs");
   }
-  return [...mockState.agents];
+  // Browser preview only: seven explicit daily samples, never lifetime totals.
+  const weights = [0.54, 0.72, 0.61, 0.88, 0.69, 0.93, 1];
+  return mockState.agents.map(agent => ({
+    ...agent,
+    dailyUsage: lastSevenDays().map((date, index) => ({ date, tokens: Math.round(agent.todayTokens * weights[index]) })),
+  }));
 }
 
 export async function toggleAgent(agentId: string): Promise<AgentConfig> {
@@ -617,4 +625,28 @@ export async function quitApp(): Promise<void> {
   if (isTauriEnvironment()) {
     await invoke("quit_app");
   }
+}
+
+export async function openSettings(): Promise<void> {
+  if (isTauriEnvironment()) await invoke("open_settings");
+  else window.location.search = "?view=settings";
+}
+
+export function getWebsiteUrl(): string {
+  return localStorage.getItem("tokendance.websiteUrl") ?? "";
+}
+
+export function saveWebsiteUrl(value: string): void {
+  const url = new URL(value);
+  if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) {
+    throw new Error("请输入有效的 HTTP / HTTPS 网站地址");
+  }
+  localStorage.setItem("tokendance.websiteUrl", url.href);
+}
+
+export async function openWebsite(): Promise<void> {
+  const url = getWebsiteUrl();
+  if (!url) throw new Error("请在设置中填写网站主页地址 / Set your website URL in Settings");
+  if (isTauriEnvironment()) await invoke("open_website", { url });
+  else window.open(url, "_blank", "noopener,noreferrer");
 }

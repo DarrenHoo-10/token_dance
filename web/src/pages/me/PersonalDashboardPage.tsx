@@ -24,57 +24,6 @@ import type {
   FilterOptionsResponse,
 } from '@/types/api';
 
-const mockSummary: PersonalSummary = {
-  range: { key: '30d', from: '2026-08-01', to: '2026-08-30', timezone: 'Asia/Shanghai' },
-  metrics: {
-    estimatedCost: { amount: '1428.60', currency: 'USD', supported: true },
-    totalTokens: { value: '325700000', supported: true, change: '▲ 18.7%' },
-    generatedCodeLines: { value: '864200', supported: true, change: '▲ 12.4%' },
-    tokensPerCodeLine: { value: '286.4', supported: true },
-    inputContextTokens: { value: '184600000', supported: true },
-    outputTokens: { value: '78300000', supported: true },
-    cacheHitRate: { value: '0.386', supported: true, change: '▲ 4.2%' },
-    activeDurationMs: { value: '1737360000', supported: true },
-    messageCount: { value: '42800', supported: true, change: '▲ 9.1%' },
-    userMessageCount: { value: '18600', supported: true, change: '▲ 7.8%' },
-  },
-  ranking: { visibility: 'public', rank: 37, delta: 5, percentile: 1 },
-  sync: { lastCommittedAt: new Date(Date.now() - 8 * 60 * 1000).toISOString(), pendingLocalCount: 12, status: 'healthy' },
-  aggregationVersion: 1,
-};
-
-const mockTrends = Array.from({ length: 30 }, (_, index) => {
-  const total = 5_800_000 + index * 205_000 + Math.sin(index * 0.72) * 1_350_000;
-  return {
-    date: `08-${String(index + 1).padStart(2, '0')}`,
-    tokenTotal: String(Math.round(total)),
-    inputTokens: String(Math.round(total * 0.57)),
-    outputTokens: String(Math.round(total * 0.24)),
-    cacheReadTokens: String(Math.round(total * 0.19)),
-  };
-});
-
-const mockAgents: BreakdownItem[] = [
-  { key: 'claude-code', label: 'Claude Code', tokenTotal: '136800000', percentage: 42 },
-  { key: 'codex', label: 'Codex', tokenTotal: '101000000', percentage: 31 },
-  { key: 'cursor', label: 'Cursor', tokenTotal: '55400000', percentage: 17 },
-  { key: 'others', label: 'Others', tokenTotal: '32500000', percentage: 10 },
-];
-
-const mockSkills: SkillItem[] = [
-  { skillId: 'codex-review', skillPublicName: 'codex-review', useCount: '1284', activeDays: 26, rankNo: 1 },
-  { skillId: 'commit-context', skillPublicName: 'commit-context', useCount: '936', activeDays: 21, rankNo: 2 },
-  { skillId: 'imagegen', skillPublicName: 'imagegen', useCount: '622', activeDays: 18, rankNo: 3 },
-];
-
-const mockCalendar: CalendarDay[] = Array.from({ length: 70 }, (_, index) => ({
-  date: `day-${index + 1}`,
-  tokenTotal: String((index % 9) * 540000),
-  level: Math.max(0, Math.min(4, Math.round(2 + Math.sin(index * 0.48) * 2))),
-}));
-
-const mockAnalyticsEnabled = import.meta.env.VITE_ENABLE_MOCK_ANALYTICS === 'true';
-
 export const PersonalDashboardPage: React.FC = () => {
   const { user, authenticated, loading: authLoading } = useAuth();
   const { t } = useLocale();
@@ -167,20 +116,14 @@ export const PersonalDashboardPage: React.FC = () => {
     return <LoadingState message={t('common.loading')} />;
   }
 
-  const hasCollectedData = Number(summary?.metrics?.totalTokens?.value || 0) > 0;
-  const useMockAnalytics = mockAnalyticsEnabled && !hasCollectedData;
-  const displaySummary = useMockAnalytics ? mockSummary : summary;
   const fetchedTrends = trends?.points || trends?.trends || [];
-  const displayTrends = fetchedTrends.length ? fetchedTrends : useMockAnalytics ? mockTrends : [];
-  const displayAgents = agentBreakdowns.length ? agentBreakdowns : useMockAnalytics ? mockAgents : [];
-  const displaySkills = skills.length ? skills : useMockAnalytics ? mockSkills : [];
-  const displayCalendar = calendarDays.length ? calendarDays : useMockAnalytics ? mockCalendar : [];
-  const displayStreak = calendarStreak || (useMockAnalytics ? 23 : 0);
-  const displayFilters: FilterOptionsResponse = {
-    agents: filterOptions.agents.length ? filterOptions.agents : useMockAnalytics ? [{ id: 'claude-code', name: 'Claude Code' }, { id: 'codex', name: 'Codex' }, { id: 'cursor', name: 'Cursor' }] : [],
-    providers: filterOptions.providers,
-    models: filterOptions.models.length ? filterOptions.models : useMockAnalytics ? [{ id: 'claude-sonnet-4', name: 'Claude Sonnet 4' }, { id: 'gpt-5', name: 'GPT-5' }, { id: 'gemini-2.5-pro', name: 'Gemini 2.5 Pro' }] : [],
-  };
+  const displaySummary = summary;
+  const displayTrends = fetchedTrends;
+  const displayAgents = agentBreakdowns;
+  const displaySkills = skills;
+  const displayCalendar = calendarDays;
+  const displayStreak = calendarStreak;
+  const displayFilters: FilterOptionsResponse = filterOptions;
   const syncStatus = displaySummary.sync.status || (displaySummary.sync.lastCommittedAt ? 'healthy' : 'unknown');
 
   return (
@@ -239,9 +182,6 @@ export const PersonalDashboardPage: React.FC = () => {
       </div>
 
       {/* Ten Core Metrics Grid */}
-      {useMockAnalytics && (
-        <p className="mock-disclosure">{t('common.loading').startsWith('加载') ? '开发模式已启用 Mock 分析数据。' : 'Mock analytics data is enabled for development.'}</p>
-      )}
       <MetricGrid metrics={displaySummary.metrics} />
 
       {/* Middle Grid: Token Trend + Agent Breakdown */}

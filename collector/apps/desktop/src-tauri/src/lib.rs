@@ -2,6 +2,7 @@ pub mod autostart;
 pub mod commands;
 pub mod daemon;
 pub mod state;
+pub mod usage_ledger;
 
 use std::fs;
 use std::panic;
@@ -9,7 +10,7 @@ use std::panic;
 use daemon::CollectorDaemon;
 use state::AppState;
 use tauri::menu::{Menu, MenuItem};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{Manager, WindowEvent};
 
 fn crash_log_path() -> std::path::PathBuf {
@@ -81,8 +82,11 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
     };
     tray.set_tooltip(Some("TokenDance Collector 运行中"))?;
     tray.set_menu(Some(tray_menu))?;
+    tray.set_show_menu_on_left_click(false)?;
     tray.on_menu_event(|app, event| match event.id.as_ref() {
-        "open_settings" => {}
+        "open_settings" => {
+            let _ = commands::window::open_settings(app.clone());
+        }
         "toggle_pause" => {
             let state = app.state::<AppState>().inner().clone();
             tauri::async_runtime::spawn(async move {
@@ -105,8 +109,17 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
         }
         _ => {}
     });
-    tray.on_tray_icon_event(|_tray, _event| {
-        // Background collector mode: do not surface the settings window.
+    tray.on_tray_icon_event(|tray, event| {
+        if let TrayIconEvent::Click {
+            button: MouseButton::Left,
+            button_state: MouseButtonState::Up,
+            position,
+            ..
+        } = event {
+            if let Err(error) = commands::window::show_usage_panel(tray.app_handle(), position) {
+                eprintln!("failed to show usage panel: {error}");
+            }
+        }
     });
     Ok(())
 }
@@ -149,6 +162,8 @@ pub fn run() {
             commands::window::hide_window,
             commands::window::show_window,
             commands::window::quit_app,
+            commands::window::open_settings,
+            commands::window::open_website,
         ])
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
@@ -158,7 +173,14 @@ pub fn run() {
         })
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.hide();
+                // Autostart passes --minimized to stay in the tray; a normal
+                // launch opens the usage panel directly.
+                if std::env::args().any(|arg| arg == "--minimized") {
+                    let _ = window.hide();
+                } else {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
             }
             let state = app.state::<AppState>().inner().clone();
             CollectorDaemon::new(state).start();

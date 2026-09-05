@@ -70,6 +70,9 @@ func NewSMTPProvider(opts SMTPOptions) (*SMTPProvider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("invalid SMTP from address: %w", err)
 	}
+	if from.Name == "" {
+		from.Name = "TokenDance"
+	}
 	if opts.TLSMode != "starttls" && opts.TLSMode != "tls" && opts.TLSMode != "none" {
 		return nil, fmt.Errorf("SMTP TLS mode must be starttls, tls, or none")
 	}
@@ -154,15 +157,16 @@ func (p *SMTPProvider) dial(ctx context.Context) (net.Conn, error) {
 }
 
 func writeSMTPMessage(w io.Writer, from, recipient mail.Address, msg Message, providerID string) error {
+	subject, body := renderEmail(msg.TemplateKey, msg.Locale, msg.PayloadJSON)
 	bw := bufio.NewWriter(w)
 	headers := []string{
 		"From: " + from.String(),
 		"To: " + recipient.String(),
-		"Subject: " + smtpSubject(msg.TemplateKey),
+		"Subject: " + subject,
 		"Date: " + time.Now().UTC().Format(time.RFC1123Z),
 		"Message-ID: <" + providerID + "@tokendance>",
 		"MIME-Version: 1.0",
-		"Content-Type: application/json; charset=UTF-8",
+		"Content-Type: text/plain; charset=UTF-8",
 		"Content-Transfer-Encoding: 8bit",
 	}
 	for _, header := range headers {
@@ -170,17 +174,10 @@ func writeSMTPMessage(w io.Writer, from, recipient mail.Address, msg Message, pr
 			return err
 		}
 	}
-	if _, err := bw.WriteString("\r\n" + normalizeCRLF(msg.PayloadJSON) + "\r\n"); err != nil {
+	if _, err := bw.WriteString("\r\n" + normalizeCRLF(body) + "\r\n"); err != nil {
 		return err
 	}
 	return bw.Flush()
-}
-
-func smtpSubject(templateKey string) string {
-	if templateKey == "" {
-		return "TokenDance notification"
-	}
-	return "TokenDance: " + strings.ReplaceAll(templateKey, "_", " ")
 }
 
 func hasHeaderInjection(value string) bool { return strings.ContainsAny(value, "\r\n") }

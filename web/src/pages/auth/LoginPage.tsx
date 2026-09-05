@@ -80,7 +80,7 @@ export const LoginPage: React.FC = () => {
       >
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 22, fontWeight: 800 }}>
-            <img src="/logo.png" alt="TokenDance" style={{ width: 36, height: 36 }} />
+            <img src="/logo-tokendance-v2.png" alt="TokenDance" style={{ width: 36, height: 36 }} />
             <span>TokenDance</span>
           </div>
 
