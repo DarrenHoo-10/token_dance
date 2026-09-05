@@ -16,6 +16,8 @@ use protocol::{
 };
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use time::format_description::well_known::Rfc3339;
+use time::OffsetDateTime;
 
 pub const ADAPTER_ID: &str = "dev.tokenshow.adapter.grok-build";
 pub const OTLP_SOURCE_ID: &str = "grok-build-otlp";
@@ -476,6 +478,11 @@ fn version_major(version: &str) -> Option<u64> {
 }
 
 fn normalize_records(value: Value, source_kind: SourceKind) -> Result<Vec<Value>, AdapterError> {
+    if source_kind == SourceKind::JsonlTail {
+        if let Some(records) = session_update_records(&value) {
+            return Ok(records);
+        }
+    }
     if source_kind != SourceKind::Otlp {
         return Ok(normalize_non_counter(value, source_kind)?
             .into_iter()
@@ -598,6 +605,257 @@ fn parse_temporality(value: &Value) -> Option<Temporality> {
         }
         _ => None,
     }
+}
+
+fn session_update_records(value: &Value) -> Option<Vec<Value>> {
+    let source = value.as_object()?;
+    if !is_session_update(source) {
+        return None;
+    }
+    let params = source.get("params").and_then(Value::as_object);
+    let session_id = params
+        .and_then(|params| {
+            params
+                .get("sessionId")
+                .or_else(|| params.get("session_id"))
+                .and_then(Value::as_str)
+        })
+        .map(str::to_owned);
+    let update = nested_session_update(source, params)?;
+    if session_update_name(update) != Some("turn_completed") {
+        return Some(Vec::new());
+    }
+    let Some(usage) = update.get("usage").and_then(Value::as_object) else {
+        return Some(Vec::new());
+    };
+    let Some(occurred_at) = occurred_at_from(source).or_else(|| occurred_at_from(update)) else {
+        return Some(Vec::new());
+    };
+    let turn_id = update
+        .get("prompt_id")
+        .or_else(|| update.get("promptId"))
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let mut records = Vec::new();
+    if let Some(models) = usage
+        .get("modelUsage")
+        .or_else(|| usage.get("model_usage"))
+        .and_then(Value::as_object)
+    {
+        for (model_id, row) in models {
+            let Some(row) = row.as_object() else {
+                continue;
+            };
+            if let Some(record) = usage_record(
+                &occurred_at,
+                session_id.as_deref(),
+                turn_id.as_deref(),
+                model_id,
+                row,
+            ) {
+                records.push(record);
+            }
+        }
+    }
+    if records.is_empty() {
+        if let Some(model_id) = usage
+            .get("model")
+            .or_else(|| update.get("model"))
+            .and_then(Value::as_str)
+            .or(Some("grok"))
+        {
+            if let Some(record) = usage_record(
+                &occurred_at,
+                session_id.as_deref(),
+                turn_id.as_deref(),
+                model_id,
+                usage,
+            ) {
+                records.push(record);
+            }
+        }
+    }
+    Some(records)
+}
+
+fn is_session_update(source: &Map<String, Value>) -> bool {
+    matches!(
+        source.get("method").and_then(Value::as_str),
+        Some("session/update" | "_x.ai/session/update")
+    ) || nested_session_update(source, source.get("params").and_then(Value::as_object))
+        .and_then(session_update_name)
+        .is_some()
+}
+
+fn nested_session_update<'a>(
+    source: &'a Map<String, Value>,
+    params: Option<&'a Map<String, Value>>,
+) -> Option<&'a Map<String, Value>> {
+    let update = params
+        .and_then(|params| params.get("update"))
+        .or_else(|| source.get("update"))
+        .and_then(Value::as_object)?;
+    Some(
+        update
+            .get("update")
+            .and_then(Value::as_object)
+            .unwrap_or(update),
+    )
+}
+
+fn session_update_name(update: &Map<String, Value>) -> Option<&str> {
+    update
+        .get("sessionUpdate")
+        .or_else(|| update.get("session_update"))
+        .and_then(Value::as_str)
+}
+
+fn usage_record(
+    occurred_at: &str,
+    session_id: Option<&str>,
+    turn_id: Option<&str>,
+    model_id: &str,
+    usage: &Map<String, Value>,
+) -> Option<Value> {
+    let model_id = model_id.trim();
+    if model_id.is_empty() {
+        return None;
+    }
+    let input = token_u64(
+        usage,
+        &["inputTokens", "input_tokens", "uncachedInputTokens"],
+    );
+    let output = token_u64(usage, &["outputTokens", "output_tokens"]);
+    let cache_read = token_u64(
+        usage,
+        &[
+            "cachedReadTokens",
+            "cacheReadTokens",
+            "cache_read_tokens",
+            "cacheReadInputTokens",
+        ],
+    );
+    let cache_write = token_u64(
+        usage,
+        &[
+            "cacheCreationTokens",
+            "cacheWriteTokens",
+            "cache_write_tokens",
+            "cacheCreationInputTokens",
+        ],
+    );
+    let reasoning = token_u64(usage, &["reasoningTokens", "reasoning_tokens"]);
+    let total = token_u64(usage, &["totalTokens", "total_tokens"]).or_else(|| {
+        let parts = [input, output, cache_read, cache_write];
+        parts
+            .iter()
+            .copied()
+            .flatten()
+            .reduce(|a, b| a.saturating_add(b))
+    });
+    if input.or(output).or(total).is_none() {
+        return None;
+    }
+    let semantic = match turn_id {
+        Some(turn_id) => format!("{turn_id}:{model_id}"),
+        None => format!("{occurred_at}:{model_id}"),
+    };
+    let mut record = Map::new();
+    record.insert("type".into(), Value::String("model_usage_recorded".into()));
+    record.insert("occurredAt".into(), Value::String(occurred_at.to_owned()));
+    if let Some(session_id) = session_id {
+        record.insert("sessionId".into(), Value::String(session_id.to_owned()));
+    }
+    if let Some(turn_id) = turn_id {
+        record.insert("turnId".into(), Value::String(turn_id.to_owned()));
+    }
+    record.insert("semanticEventId".into(), Value::String(semantic));
+    record.insert(
+        "providerId".into(),
+        Value::String(provider_for_model(model_id).into()),
+    );
+    record.insert("modelId".into(), Value::String(model_id.to_owned()));
+    let mut tokens = Map::new();
+    insert_token(&mut tokens, "input", input);
+    insert_token(&mut tokens, "output", output);
+    insert_token(&mut tokens, "cacheRead", cache_read);
+    insert_token(&mut tokens, "cacheWrite", cache_write);
+    insert_token(&mut tokens, "reasoning", reasoning);
+    insert_token(&mut tokens, "total", total);
+    record.insert("tokens".into(), Value::Object(tokens));
+    Some(Value::Object(record))
+}
+
+fn insert_token(tokens: &mut Map<String, Value>, key: &str, value: Option<u64>) {
+    if let Some(value) = value {
+        tokens.insert(key.into(), Value::Number(value.into()));
+    }
+}
+
+fn token_u64(source: &Map<String, Value>, keys: &[&str]) -> Option<u64> {
+    keys.iter().find_map(|key| match source.get(*key)? {
+        Value::Number(number) => number
+            .as_u64()
+            .or_else(|| number.as_i64().and_then(|value| u64::try_from(value).ok()))
+            .or_else(|| {
+                number
+                    .as_f64()
+                    .and_then(|value| (value >= 0.0).then_some(value as u64))
+            }),
+        Value::String(value) => value.parse().ok(),
+        _ => None,
+    })
+}
+
+fn provider_for_model(model: &str) -> &'static str {
+    let model = model.to_ascii_lowercase();
+    if model.contains("claude") || model.contains("anthropic") {
+        "anthropic"
+    } else if model.contains("gemini") {
+        "google"
+    } else if model.contains("deepseek") {
+        "deepseek"
+    } else if model.starts_with("gpt")
+        || model.contains("codex")
+        || model.starts_with("o1")
+        || model.starts_with("o3")
+        || model.starts_with("o4")
+    {
+        "openai"
+    } else {
+        "xai"
+    }
+}
+
+fn occurred_at_from(source: &Map<String, Value>) -> Option<String> {
+    let value = source
+        .get("timestamp")
+        .or_else(|| source.get("ts"))
+        .or_else(|| source.get("occurredAt"))?;
+    match value {
+        Value::String(value) if value.contains('T') => OffsetDateTime::parse(value, &Rfc3339)
+            .ok()
+            .and_then(|time| time.format(&Rfc3339).ok())
+            .or_else(|| Some(value.clone())),
+        Value::String(value) => value.parse::<i64>().ok().and_then(unix_to_rfc3339),
+        Value::Number(number) => number
+            .as_i64()
+            .or_else(|| number.as_u64().and_then(|value| i64::try_from(value).ok()))
+            .and_then(unix_to_rfc3339),
+        _ => None,
+    }
+}
+
+fn unix_to_rfc3339(timestamp: i64) -> Option<String> {
+    let seconds = if timestamp.abs() > 1_000_000_000_000 {
+        timestamp / 1000
+    } else {
+        timestamp
+    };
+    OffsetDateTime::from_unix_timestamp(seconds)
+        .ok()?
+        .format(&Rfc3339)
+        .ok()
 }
 
 fn normalize_non_counter(
