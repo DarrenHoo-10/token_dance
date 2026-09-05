@@ -9,13 +9,16 @@ use wal_spool::{KeyProvider, OsKeyProvider};
 use reqwest::{Client, Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicU64, Ordering};
 use tauri::{Manager, State, Url};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
 // Passwords are never saved. Native session cookies are scoped to one website
 // origin and are never returned across the WebView IPC boundary.
 #[derive(Default)]
-pub struct AccountState(Mutex<Option<Connection>>);
+pub struct AccountState(Mutex<Option<Connection>>, Mutex<()>, AtomicU64);
 
 struct Connection {
     origin: Url,
@@ -174,6 +177,28 @@ impl Connection {
         }
     }
 
+    async fn finish_browser_login(
+        &mut self,
+        code: &str,
+        verifier: &str,
+        redirect: &str,
+    ) -> Result<AccountSession, String> {
+        self.request(
+            Method::POST,
+            "/api/v1/auth/desktop/exchange",
+            Some(json!({
+                "code": code, "codeVerifier": verifier, "redirectUri": redirect
+            })),
+        )
+        .await?;
+        let session = self.session().await?;
+        if session.user.is_none() {
+            return Err("INVALID_RESPONSE".to_string());
+        }
+        Ok(session)
+    }
+
+    #[cfg(test)]
     async fn login(&mut self, email: &str, password: &str) -> Result<AccountSession, String> {
         self.transport = None;
         self.retry_at = None;
@@ -477,23 +502,162 @@ pub async fn get_account_session(
 #[tauri::command]
 pub async fn login_account(
     website: String,
-    email: String,
-    password: String,
     state: State<'_, AccountState>,
     app: State<'_, AppState>,
 ) -> Result<AccountSession, String> {
-    if email.trim().is_empty() || password.is_empty() {
-        return Err("MISSING_CREDENTIALS".into());
+    let _login = state.1.try_lock().map_err(|_| "LOGIN_IN_PROGRESS")?;
+    let generation = state.2.fetch_add(1, Ordering::SeqCst) + 1;
+    let origin = account_origin(&website)?;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .map_err(|_| "CALLBACK_UNAVAILABLE")?;
+    let redirect = format!(
+        "http://127.0.0.1:{}/callback",
+        listener
+            .local_addr()
+            .map_err(|_| "CALLBACK_UNAVAILABLE")?
+            .port()
+    );
+    let verifier = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let nonce = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let challenge = format!("{:x}", Sha256::digest(verifier.as_bytes()));
+    let mut return_to = Url::parse("https://local.invalid/desktop-login").unwrap();
+    return_to
+        .query_pairs_mut()
+        .append_pair("redirect_uri", &redirect)
+        .append_pair("code_challenge", &challenge)
+        .append_pair("state", &nonce);
+    let mut login_url = origin.join("login").map_err(|_| "INVALID_WEBSITE")?;
+    login_url.query_pairs_mut().append_pair(
+        "return_to",
+        &format!("{}?{}", return_to.path(), return_to.query().unwrap()),
+    );
+    super::window::open_website(login_url.to_string())?;
+    let (mut stream, code) = tokio::time::timeout(
+        Duration::from_secs(300),
+        wait_browser_callback(&listener, &redirect, &nonce),
+    )
+    .await
+    .map_err(|_| "LOGIN_TIMEOUT")??;
+    let mut current = Connection::new(origin)?;
+    let result: Result<AccountSession, String> = async {
+        let session = current
+            .finish_browser_login(&code, &verifier, &redirect)
+            .await?;
+        let mut guard = state.0.lock().await;
+        if state.2.load(Ordering::SeqCst) != generation {
+            return Err("LOGIN_CANCELLED".into());
+        }
+        save_account(&current);
+        *guard = Some(current);
+        Ok(session)
     }
-    let mut guard = state.0.lock().await;
-    let current = connection(&mut guard, account_origin(&website)?)?;
-    // Read back the authenticated session, rather than trusting a successful POST alone.
-    let _ = fs::remove_file(persist_path());
-    *app.sync_status.write().await = "LOGIN_REQUIRED".into();
-    let session = current.login(&email, &password).await?;
-    save_account(current);
+    .await;
+    let message = if result.is_ok() {
+        "TokenDance 登录成功。可以关闭此页面并返回桌面应用。<br>Signed in. You can close this page and return to TokenDance."
+    } else {
+        "登录未完成，请返回 TokenDance 重试。<br>Sign-in failed. Return to TokenDance and retry."
+    };
+    let _ = send_browser_result(&mut stream, "200 OK", message).await;
+    let session = result?;
     *app.sync_status.write().await = "WAITING".into();
     Ok(session)
+}
+
+async fn send_browser_result(
+    stream: &mut tokio::net::TcpStream,
+    status: &str,
+    message: &str,
+) -> Result<(), String> {
+    let body = format!("<!doctype html><html lang=zh-CN><meta charset=utf-8><meta name=viewport content=\"width=device-width,initial-scale=1\"><title>TokenDance</title><body><h1>TokenDance</h1><p>{message}</p></body></html>");
+    let response = format!("HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}", body.len());
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        stream.write_all(response.as_bytes()),
+    )
+    .await
+    .map_err(|_| "CALLBACK_ERROR")?
+    .map_err(|_| "CALLBACK_ERROR")?;
+    Ok(())
+}
+
+fn callback_code(request: &str, redirect: &str, state: &str) -> Option<String> {
+    let mut lines = request.split("\r\n");
+    let mut line = lines.next()?.split_whitespace();
+    if line.next()? != "GET" {
+        return None;
+    }
+    let target = line.next()?;
+    if !target.starts_with("/callback?") {
+        return None;
+    }
+    let expected = Url::parse(redirect).ok()?;
+    let host = lines.find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.eq_ignore_ascii_case("host").then(|| value.trim())
+    })?;
+    if host != format!("127.0.0.1:{}", expected.port()?) {
+        return None;
+    }
+    let url = expected.join(target).ok()?;
+    let pairs: Vec<_> = url.query_pairs().collect();
+    if pairs.len() != 2 || pairs.iter().filter(|(key, _)| key == "state").count() != 1 {
+        return None;
+    }
+    if pairs.iter().find(|(key, _)| key == "state")?.1 != state {
+        return None;
+    }
+    let code = &pairs.iter().find(|(key, _)| key == "code")?.1;
+    if code.len() < 32
+        || code.len() > 128
+        || !code
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+    {
+        return None;
+    }
+    Some(code.to_string())
+}
+
+async fn wait_browser_callback(
+    listener: &tokio::net::TcpListener,
+    redirect: &str,
+    state: &str,
+) -> Result<(tokio::net::TcpStream, String), String> {
+    loop {
+        let (mut stream, _) = listener.accept().await.map_err(|_| "CALLBACK_ERROR")?;
+        let request = tokio::time::timeout(Duration::from_secs(3), async {
+            let mut data = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while data.len() < 8192 {
+                let count = stream.read(&mut chunk).await.ok()?;
+                if count == 0 {
+                    return None;
+                }
+                data.extend_from_slice(&chunk[..count]);
+                if data.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    return String::from_utf8(data).ok();
+                }
+            }
+            None
+        })
+        .await
+        .ok()
+        .flatten();
+        if let Some(code) = request.and_then(|request| callback_code(&request, redirect, state)) {
+            return Ok((stream, code));
+        }
+        let _ =
+            send_browser_result(&mut stream, "400 Bad Request", "Invalid sign-in callback.").await;
+    }
 }
 
 #[tauri::command]
@@ -502,6 +666,7 @@ pub async fn logout_account(
     state: State<'_, AccountState>,
     app: State<'_, AppState>,
 ) -> Result<(), String> {
+    state.2.fetch_add(1, Ordering::SeqCst);
     let mut guard = state.0.lock().await;
     let origin = account_origin(&website)?;
     if let Some(current) = guard.as_mut().filter(|current| current.origin == origin) {
@@ -522,6 +687,54 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    #[test]
+    fn browser_callback_is_bound_to_loopback_host_path_and_state() {
+        let redirect = "http://127.0.0.1:49152/callback";
+        let code = "c".repeat(43);
+        let valid = format!(
+            "GET /callback?code={code}&state=expected HTTP/1.1\r\nHost: 127.0.0.1:49152\r\n\r\n"
+        );
+        assert_eq!(callback_code(&valid, redirect, "expected"), Some(code));
+        for invalid in [
+            valid.replace("state=expected", "state=wrong"),
+            valid.replace("Host: 127.0.0.1", "Host: evil.example"),
+            valid.replace("GET /callback", "GET /other"),
+            valid.replace("GET ", "POST "),
+            valid.replace("state=expected", "state=expected&state=expected"),
+        ] {
+            assert!(callback_code(&invalid, redirect, "expected").is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn browser_exchange_checks_real_session_without_exposing_secrets() {
+        let (origin, server) = mock_server(vec![
+            response(
+                "200 OK",
+                "Set-Cookie: tokendance_session=desktop-session; HttpOnly; Path=/\r\n",
+                r#"{"csrfToken":"desktop-csrf"}"#,
+            ),
+            session_response(),
+        ]);
+        let mut client = Connection::new(origin).unwrap();
+        let session = client
+            .finish_browser_login(
+                "one-time-code",
+                "native-verifier",
+                "http://127.0.0.1:49152/callback",
+            )
+            .await
+            .unwrap();
+        assert!(session.user.is_some());
+        let json = serde_json::to_string(&session).unwrap();
+        assert!(!json.contains("desktop-session") && !json.contains("desktop-csrf"));
+        let requests = server.join().unwrap();
+        assert!(requests[0].starts_with("POST /api/v1/auth/desktop/exchange "));
+        assert!(requests[0].contains("native-verifier"));
+        assert!(!requests[0].contains("password"));
+        assert!(requests[1].contains("tokendance_session=desktop-session"));
+    }
 
     fn mock_server(responses: Vec<String>) -> (Url, std::thread::JoinHandle<Vec<String>>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -626,7 +839,7 @@ mod tests {
             .register_sync_device(Arc::new(InMemoryDeviceSigner::from_seed([7; 32])))
             .await
             .unwrap();
-        let account = AccountState(Mutex::new(Some(client)));
+        let account = AccountState(Mutex::new(Some(client)), Mutex::new(()), AtomicU64::new(0));
         account.auto_sync_tick(&app).await;
         assert_eq!(app.sync_status.read().await.as_str(), "SYNCED");
         let status = app.get_daemon_status().await;
@@ -670,7 +883,7 @@ mod tests {
             "ins_fixture",
             Arc::new(InMemoryDeviceSigner::from_seed([7; 32])),
         ));
-        let account = AccountState(Mutex::new(Some(client)));
+        let account = AccountState(Mutex::new(Some(client)), Mutex::new(()), AtomicU64::new(0));
         account.auto_sync_tick(&app).await;
         assert_eq!(app.sync_status.read().await.as_str(), "RETRYING");
         assert_eq!(app.get_daemon_status().await.events_pending, 2);
@@ -690,7 +903,7 @@ mod tests {
         client
             .cookies
             .insert("tokendance_session".into(), "expired".into());
-        let account = AccountState(Mutex::new(Some(client)));
+        let account = AccountState(Mutex::new(Some(client)), Mutex::new(()), AtomicU64::new(0));
         account.auto_sync_tick(&app).await;
         assert_eq!(app.sync_status.read().await.as_str(), "LOGIN_REQUIRED");
         assert_eq!(app.get_daemon_status().await.events_pending, 2);
