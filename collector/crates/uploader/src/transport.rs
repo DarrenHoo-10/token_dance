@@ -338,20 +338,89 @@ async fn decode_claimed_response(response: reqwest::Response) -> Result<UploadAc
         .await
         .map_err(|error| TransportError::Decode(error.to_string()))?;
     match status {
-        200..=202 => {
-            let mut value: Value = serde_json::from_str(&body)
-                .map_err(|error| TransportError::Decode(error.to_string()))?;
-            if let Some(object) = value.as_object_mut() {
-                object.remove("installationId");
-            }
-            serde_json::from_value(value).map_err(|error| TransportError::Decode(error.to_string()))
-        }
+        200..=202 => decode_claimed_ack(&body),
         401 | 403 => Err(TransportError::Auth),
         other => Err(TransportError::Http {
             status: other,
             retry_after,
             body,
         }),
+    }
+}
+
+fn decode_claimed_ack(body: &str) -> Result<UploadAck, TransportError> {
+    let mut value: Value =
+        serde_json::from_str(body).map_err(|error| TransportError::Decode(error.to_string()))?;
+    if let Some(object) = value.as_object_mut() {
+        object.remove("installationId");
+        if let Some(Value::Array(rejected)) = object.get_mut("rejected") {
+            for rejection in rejected {
+                // The claimed-installation API returns {eventId, code}; the
+                // protocol transport returns {eventId, errorCode, retryable}.
+                // Normalize only the former, retaining strict ACK validation.
+                if let Some(item) = rejection.as_object_mut() {
+                    if item.contains_key("code")
+                        && !item.contains_key("errorCode")
+                        && !item.contains_key("retryable")
+                    {
+                        let code = item
+                            .remove("code")
+                            .and_then(|code| code.as_str().map(str::to_owned))
+                            .filter(|code| !code.is_empty())
+                            .ok_or_else(|| {
+                                TransportError::Decode("invalid rejection code".into())
+                            })?;
+                        let mapped = match code.as_str() {
+                            "FORBIDDEN_METADATA" | "PRIVACY_REJECTED" => "PRIVACY_REJECTED",
+                            "EVENT_TOO_LARGE" => "EVENT_TOO_LARGE",
+                            "UNSUPPORTED_VERSION" => "UNSUPPORTED_VERSION",
+                            "INTERNAL_RETRYABLE" => "INTERNAL_RETRYABLE",
+                            _ => "SCHEMA_INVALID",
+                        };
+                        item.insert("errorCode".into(), json!(mapped));
+                        item.insert("retryable".into(), json!(mapped == "INTERNAL_RETRYABLE"));
+                    }
+                }
+            }
+        }
+    }
+    serde_json::from_value(value).map_err(|error| TransportError::Decode(error.to_string()))
+}
+
+#[cfg(test)]
+mod claimed_ack_tests {
+    use super::*;
+
+    #[test]
+    fn partial_server_ack_preserves_counts_and_rejected_ids() {
+        let ack = decode_claimed_ack(r#"{"batchId":"batch-1","installationId":"ins_1","accepted":22,"duplicates":0,"rejected":[{"eventId":"event-1","code":"INVALID_EVENT_SOURCE"}],"serverTime":"2026-09-06T00:00:00Z"}"#).unwrap();
+        assert_eq!(ack.accepted, 22);
+        assert_eq!(ack.duplicates, 0);
+        assert_eq!(ack.rejected[0].event_id, "event-1");
+        assert_eq!(
+            ack.rejected[0].error_code,
+            RejectedEventErrorCode::SchemaInvalid
+        );
+        assert!(!ack.rejected[0].retryable);
+    }
+
+    #[test]
+    fn protocol_ack_and_retryable_rejections_still_work() {
+        let ack = decode_claimed_ack(r#"{"batchId":"batch-1","accepted":0,"duplicates":1,"rejected":[{"eventId":"event-1","errorCode":"INTERNAL_RETRYABLE","retryable":true}],"serverTime":"2026-09-06T00:00:00Z"}"#).unwrap();
+        assert_eq!(ack.duplicates, 1);
+        assert!(ack.rejected[0].retryable);
+    }
+
+    #[test]
+    fn malformed_rejections_cannot_be_acknowledged() {
+        for rejection in [
+            json!({"code": "INVALID_EVENT_SOURCE"}),
+            json!({"eventId":"e", "code":42}),
+            json!({"eventId":"e", "code":"INVALID_EVENT_SOURCE", "unexpected":true}),
+        ] {
+            let body = json!({"batchId":"b", "accepted":0,"duplicates":0,"rejected":[rejection],"serverTime":"2026-09-06T00:00:00Z"});
+            assert!(decode_claimed_ack(&body.to_string()).is_err());
+        }
     }
 }
 

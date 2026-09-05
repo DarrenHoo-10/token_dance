@@ -1168,7 +1168,7 @@ func normalizeTelemetryEvent(in *TelemetryEventInput) (*domain.UsageEvent, strin
 	if !telemetry.ValidIdentifier(in.AdapterID, 64) || !telemetry.ValidVersion(in.AdapterVersion) || !telemetry.ValidIdentifier(in.AgentID, 64) {
 		return nil, "INVALID_EVENT_SOURCE"
 	}
-	if !validOptionalTelemetryVersion(in.AgentVersion) || !validOptionalTelemetryIdentifier(in.ProviderID, 64) || !validOptionalTelemetryIdentifier(in.ModelID, 128) {
+	if !validOptionalTelemetryVersion(in.AgentVersion) || !validOptionalUsageIdentifier(in.ProviderID, 64) || !validOptionalUsageIdentifier(in.ModelID, 128) {
 		return nil, "INVALID_EVENT_SOURCE"
 	}
 	if !validOptionalTelemetryIdentifier(in.ToolCategory, 64) || !validOptionalTelemetryIdentifier(in.SkillPublicName, 120) {
@@ -1253,6 +1253,10 @@ func decodeOptionalTelemetryHash(value *string) *[32]byte {
 
 func validOptionalTelemetryIdentifier(value *string, maxBytes int) bool {
 	return value == nil || telemetry.ValidIdentifier(*value, maxBytes)
+}
+
+func validOptionalUsageIdentifier(value *string, maxBytes int) bool {
+	return value == nil || telemetry.ValidUsageIdentifier(*value, maxBytes)
 }
 
 func validOptionalTelemetryVersion(value *string) bool {

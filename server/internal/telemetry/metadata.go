@@ -33,6 +33,7 @@ type fieldSpec struct {
 
 var (
 	normalizedIdentifierPattern = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$`)
+	usageIdentifierPattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*$`)
 	versionPattern              = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+){0,3}(?:-[a-z0-9]+(?:[.-][a-z0-9]+)*)?$`)
 	decimalAmountPattern        = regexp.MustCompile(`^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,8})?$`)
 	currencyPattern             = regexp.MustCompile(`^[A-Z]{3}$`)
@@ -40,6 +41,16 @@ var (
 
 func ValidIdentifier(value string, maxBytes int) bool {
 	return value != "" && len(value) <= maxBytes && utf8.ValidString(value) && normalizedIdentifierPattern.MatchString(value)
+}
+
+// Provider namespaces and model names are external identifiers, not our
+// lowercase classification vocabulary. Keep their spelling while excluding
+// free text, paths and the credential prefixes rejected by the collector.
+func ValidUsageIdentifier(value string, maxBytes int) bool {
+	lower := strings.ToLower(value)
+	secret := (strings.HasPrefix(lower, "sk-") && len(value) > 20) ||
+		strings.HasPrefix(lower, "ghp_") || strings.HasPrefix(lower, "xoxb-") || strings.HasPrefix(lower, "bearer")
+	return len(value) <= maxBytes && usageIdentifierPattern.MatchString(value) && !secret
 }
 
 func ValidVersion(value string) bool {
