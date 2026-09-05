@@ -14,6 +14,7 @@ import { SkillRanking } from '@/components/analytics/SkillRanking';
 import { SyncStatusCard } from '@/components/analytics/SyncStatusCard';
 import { Button } from '@/components/common/Button';
 import { Badge } from '@/components/common/Badge';
+import { ProfileVisibilitySwitch } from '@/components/analytics/ProfileVisibilitySwitch';
 import { api, ApiError } from '@/api/client';
 import type {
   PersonalSummary,
@@ -141,7 +142,7 @@ export const PersonalDashboardPage: React.FC = () => {
       >
         <div>
           <p className="eyebrow">{t('nav.tokenBoard')}</p>
-          <h1>{t('dashboard.headline')}</h1>
+          <h1>{t('publicProfile.headline')}</h1>
           <p className="text-muted" style={{ fontSize: 13 }}>
             {t('dashboard.subheadline')}
           </p>
@@ -180,6 +181,8 @@ export const PersonalDashboardPage: React.FC = () => {
           </Button>
         </div>
       </div>
+
+      <ProfileVisibilitySwitch />
 
       {/* Ten Core Metrics Grid */}
       <MetricGrid metrics={displaySummary.metrics} />

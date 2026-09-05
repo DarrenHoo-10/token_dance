@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link2, LockKeyhole } from 'lucide-react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, Navigate, useParams } from 'react-router-dom';
 import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
 import { AgentBreakdown } from '@/components/analytics/AgentBreakdown';
 import { MetricGrid } from '@/components/analytics/MetricGrid';
@@ -18,8 +18,17 @@ import type { PersonalSummaryMetrics, PublicUserProfile, SkillItem, TokenTrendPo
 
 export const PublicProfilePage: React.FC = () => {
   const { handle } = useParams<{ handle: string }>();
+  const { user, loading } = useAuth();
+  if (loading) return <LoadingState />;
+  if (user?.handle && user.handle.toLowerCase() === handle?.toLowerCase()) {
+    return <Navigate to="/me" replace />;
+  }
+  return <PublicProfileContent />;
+};
+
+const PublicProfileContent: React.FC = () => {
+  const { handle } = useParams<{ handle: string }>();
   const { locale, t } = useLocale();
-  const { user } = useAuth();
   const { showToast } = useNotification();
   const zh = locale === 'zh-CN';
   const [profile, setProfile] = useState<PublicUserProfile | null>(null);
@@ -70,18 +79,16 @@ export const PublicProfilePage: React.FC = () => {
 
   if (loading) return <LoadingState />;
   if (error instanceof ApiError && error.status === 404 && error.code === 'PUBLIC_PROFILE_NOT_FOUND') {
-    const isOwner = Boolean(user?.handle && user.handle.toLowerCase() === handle?.toLowerCase());
     return (
       <section className="product-page-shell">
         <EmptyState
           icon={<LockKeyhole size={32} aria-hidden="true" />}
           title={t('publicProfile.unavailableTitle')}
-          description={t(isOwner ? 'publicProfile.ownerUnavailableDesc' : 'publicProfile.unavailableDesc')}
+          description={t('publicProfile.unavailableDesc')}
         />
         <div className="unavailable-actions">
-          {isOwner && <Link className="btn btn-dark" to="/settings/privacy">{t('settings.tabPrivacy')}</Link>}
-          <Link className={`btn ${isOwner ? 'btn-outline' : 'btn-dark'}`} to={isOwner ? '/me' : '/leaderboard'}>
-            {t(isOwner ? 'publicProfile.viewOwnData' : 'publicProfile.backToLeaderboard')}
+          <Link className="btn btn-dark" to="/leaderboard">
+            {t('publicProfile.backToLeaderboard')}
           </Link>
         </div>
       </section>

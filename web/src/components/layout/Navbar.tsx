@@ -137,16 +137,14 @@ export const Navbar: React.FC = () => {
                   </div>
                 </div>
 
-                {user.handle && (
-                  <NavLink
-                    to={`/u/${user.handle}`}
-                    className="user-menu-item"
-                    role="menuitem"
-                  >
-                    <UserRound size={16} aria-hidden="true" />
-                    {t('publicProfile.headline')}
-                  </NavLink>
-                )}
+                <NavLink
+                  to="/me"
+                  className="user-menu-item"
+                  role="menuitem"
+                >
+                  <UserRound size={16} aria-hidden="true" />
+                  {t('publicProfile.headline')}
+                </NavLink>
 
                 <NavLink
                   to="/settings/privacy"

@@ -3,7 +3,7 @@ import type { AgentConfig } from '../tauri-bridge';
 import { annualUsage, quotaStale, type AgentQuota } from '../usage-analytics';
 
 export function QuotaRings({ quota, zh }: { quota?: AgentQuota; zh: boolean }) {
-  if (!quota?.windows.length) return <div className="usage-quota-empty"><span className="usage-ring unavailable">—</span><span>{zh ? '额度未接入' : 'Quota unavailable'}<small>{zh ? '用量采集不受影响' : 'Usage collection continues'}</small></span></div>;
+  if (!quota?.windows.length) return <div className="usage-quota-empty"><span className="usage-ring unavailable">—</span><span>{zh ? '套餐额度暂不支持查询' : 'Plan quota unavailable'}<small>{zh ? 'Token 用量单独统计' : 'Token usage is tracked separately'}</small></span></div>;
   return <div className="usage-quotas">{quota.windows.map((window, index) => {
     const stale = quotaStale(quota, window.resetsAt);
     const mins = window.windowMinutes;

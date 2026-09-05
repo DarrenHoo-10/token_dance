@@ -184,15 +184,15 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         locale: 'zh-CN' as const, onboardingRequired: false, productState: 'active_private' as const },
     };
 
-    it('lets the owner manage privacy without changing it automatically', async () => {
+    it('opens the owner personal dashboard without requesting public data or changing privacy', async () => {
       vi.spyOn(api, 'getSession').mockResolvedValue(signedIn);
-      vi.spyOn(api, 'getPublicProfile').mockRejectedValue(new ApiError(404, {
+      const profileSpy = vi.spyOn(api, 'getPublicProfile').mockRejectedValue(new ApiError(404, {
         code: 'PUBLIC_PROFILE_NOT_FOUND', messageKey: 'errors.PUBLIC_PROFILE_NOT_FOUND',
       }));
       const privacySpy = vi.spyOn(api, 'updatePrivacy');
-      renderWithProviders(<Routes><Route path="/u/:handle" element={<PublicProfilePage />} /></Routes>, '/u/testuser');
-      expect(await screen.findByRole('link', { name: '隐私与公开' })).toHaveAttribute('href', '/settings/privacy');
-      expect(screen.getByRole('link', { name: '查看个人数据' })).toHaveAttribute('href', '/me');
+      renderWithProviders(<Routes><Route path="/u/:handle" element={<PublicProfilePage />} /><Route path="/me" element={<h1>自己的数据</h1>} /></Routes>, '/u/TestUser');
+      expect(await screen.findByRole('heading', { name: '自己的数据' })).toBeInTheDocument();
+      expect(profileSpy).not.toHaveBeenCalled();
       expect(privacySpy).not.toHaveBeenCalled();
     });
 
@@ -648,7 +648,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       renderWithProviders(<PersonalDashboardPage />, '/me');
 
       await waitFor(() => {
-        expect(screen.getByText('你的 Token 正在起舞')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: '个人数据页' })).toBeInTheDocument();
         expect(screen.getByText('$120.50')).toBeInTheDocument();
         expect(screen.getByText('50.0M')).toBeInTheDocument();
         expect(screen.getByText('Claude Code')).toBeInTheDocument();
