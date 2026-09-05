@@ -64,7 +64,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
     it('shows an empty state instead of mock data when the API returns no entries', async () => {
       vi.spyOn(api, 'getLeaderboard').mockResolvedValue({ ...leaderboardPayload, entries: [] });
       renderWithProviders(<LeaderboardPage />, '/leaderboard');
-      await waitFor(() => expect(screen.getByText('还没有上榜数据。连接你的编码工具并把资料设为公开后，这里会展示真实排行。')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText('本周期暂无公开排行数据。只有已公开 Token 用量的用户会参与排名。')).toBeInTheDocument());
       expect(screen.queryByRole('search')).not.toBeInTheDocument();
     });
   });

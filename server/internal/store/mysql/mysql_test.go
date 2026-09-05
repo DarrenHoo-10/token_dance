@@ -1034,6 +1034,12 @@ func TestUSR015_ImmediatePrivacyClosureMySQL(t *testing.T) {
 	bobID := "usr_snap_bob"
 	seedTestUser(t, db, st, aliceID, "alice_snap", "Alice Snap", "alice@snap.test", true, now)
 	seedTestUser(t, db, st, bobID, "bob_snap", "Bob Snap", "bob@snap.test", true, now)
+	// The live token board reads committed usage and only explicitly shared totals.
+	if _, err := db.Exec("UPDATE user_privacy_settings SET show_token_total=TRUE WHERE user_id IN (?, ?)", aliceID, bobID); err != nil {
+		t.Fatal(err)
+	}
+	seedRankUsage(t, db, aliceID, time.Now().UTC().Format("2006-01-02"), "codex", 5000000, 0, 0)
+	seedRankUsage(t, db, bobID, time.Now().UTC().Format("2006-01-02"), "codex", 3000000, 0, 0)
 
 	// Publish snapshot containing Alice (#1) and Bob (#2)
 	snapID := "snp_closure_01"

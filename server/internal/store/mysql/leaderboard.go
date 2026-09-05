@@ -107,6 +107,9 @@ func (s *leaderboardStore) GetLeaderboard(ctx context.Context, boardKey, window,
 	if limit <= 0 || limit > 100 {
 		limit = 50
 	}
+	if boardKey == "global" && metric == "tokens" {
+		return s.getLiveTokenLeaderboard(ctx, window, cursor, limit, time.Now())
+	}
 
 	queries := sqlcgen.New(s.db)
 	snapshot, err := queries.GetLatestPublishedSnapshot(ctx, sqlcgen.GetLatestPublishedSnapshotParams{

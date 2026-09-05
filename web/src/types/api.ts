@@ -520,4 +520,6 @@ export interface LeaderboardResponse {
   agent?: string;
   generatedAt?: string;
   totalEntries?: number;
+  totalTokens?: string;
+  timezone?: string;
 }
