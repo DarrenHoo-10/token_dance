@@ -53,7 +53,18 @@ describe('Auth & Onboarding Flow Tests', () => {
     const submitBtn = screen.getByRole('button', { name: '登录 TokenDance' });
 
     fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
+    fireEvent.focus(passwordInput);
+    expect(document.querySelector('.login-companions')).toHaveAttribute('data-mood', 'password');
     fireEvent.change(passwordInput, { target: { value: 'password123' } });
+    fireEvent.click(screen.getByRole('button', { name: '显示密码' }));
+    expect(passwordInput).toHaveAttribute('type', 'text');
+    fireEvent.blur(passwordInput);
+    expect(document.querySelector('.login-companions')).toHaveAttribute('data-mood', 'password');
+    expect(loginSpy).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '隐藏密码' }));
+    expect(passwordInput).toHaveAttribute('type', 'password');
+    fireEvent.click(screen.getByRole('button', { name: '暂停动画' }));
+    expect(document.querySelector('.login-page')).toHaveAttribute('data-motion', 'paused');
     fireEvent.click(submitBtn);
 
     await waitFor(() => {

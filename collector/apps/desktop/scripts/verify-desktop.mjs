@@ -56,7 +56,6 @@ const requiredCommands = [
   "toggle_agent",
   "set_agent_status",
   "preview_upload_batch",
-  "trigger_sync_now",
   "get_pending_envelopes",
   "create_config_backup",
   "restore_config_backup",

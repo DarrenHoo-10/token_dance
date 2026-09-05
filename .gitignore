@@ -56,3 +56,4 @@ Thumbs.db
 *.sln
 *.sw?
 web/tsconfig.tsbuildinfo
+mysql-tunnel.py

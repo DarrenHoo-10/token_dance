@@ -152,6 +152,8 @@ pub struct DaemonStatus {
     pub total_adapters_count: usize,
     pub autostart_enabled: bool,
     pub last_heartbeat_at: String,
+    pub sync_status: String,
+    pub last_sync_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -297,6 +299,7 @@ impl EncryptedBackupStore for MemoryBackupStore {
 pub struct AppState {
     pub service: Arc<Mutex<ProductionService>>,
     pub detection: Arc<DetectionSnapshot>,
+    pub sync_status: Arc<RwLock<String>>,
     control: Arc<RwLock<PersistedControl>>,
     control_dir: Arc<PathBuf>,
     start_time: Instant,
@@ -363,6 +366,7 @@ impl AppState {
         let state = Self {
             service: Arc::new(Mutex::new(service)),
             detection: Arc::new(detection),
+            sync_status: Arc::new(RwLock::new("LOGIN_REQUIRED".into())),
             control: Arc::new(RwLock::new(control)),
             control_dir: Arc::new(root.clone()),
             start_time: Instant::now(),
@@ -440,6 +444,8 @@ impl AppState {
             total_adapters_count: runtimes.len(),
             autostart_enabled: self.autostart.is_enabled().unwrap_or(false),
             last_heartbeat_at: Utc::now().to_rfc3339(),
+            sync_status: self.sync_status.read().await.clone(),
+            last_sync_at: control.last_sync_time.clone(),
         }
     }
 
@@ -613,14 +619,23 @@ impl AppState {
     }
 
     pub async fn trigger_sync_now(&self) -> Result<OperationAck<SyncRequestState>, String> {
-        if self.control.read().await.global_paused {
-            return Err("collection is paused".into());
+        Err("Manual sync was replaced by automatic sync after sign-in.".into())
+    }
+
+    pub async fn acknowledge_auto_sync(&self, ack: AckPayload) -> Result<(), String> {
+        let count = ack.acked_event_ids.len() as u64;
+        let server_time = ack.server_acked_at.clone();
+        {
+            let mut service = self.service.lock().await;
+            service.wal.append_ack(ack).map_err(|_| "LOCAL_STORAGE_ERROR")?;
+            let _ = service.wal.compact();
         }
-        let queued_events = self.service.lock().await.wal.unacked_count();
-        Ok(OperationAck::pending(SyncRequestState {
-            queued_events,
-            message: "Upload request accepted locally; server confirmation is pending.".into(),
-        }))
+        {
+            let mut control = self.control.write().await;
+            control.events_uploaded = control.events_uploaded.saturating_add(count);
+            control.last_sync_time = Some(server_time);
+        }
+        self.persist_control().await
     }
 
     pub async fn create_config_backup(
