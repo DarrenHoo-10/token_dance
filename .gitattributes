@@ -6,3 +6,6 @@
 # Preserve committed SQL bytes: historical migrations include both LF and CRLF.
 # Checkout normalization would change their already-applied SHA-256 checksums.
 *.sql -text
+
+# Shell hooks must remain executable with LF line endings on all platforms.
+.githooks/* text eol=lf
