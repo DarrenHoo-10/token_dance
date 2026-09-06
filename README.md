@@ -10,9 +10,9 @@
 
 | 下载 | 说明 |
 | --- | --- |
-| [TokenDance.exe](https://github.com/DarrenHoo-10/token_dance/releases/download/v0.1.10/TokenDance.exe) | Windows x64 便携版，下载后双击运行 |
-| [Windows ZIP 压缩包](https://github.com/DarrenHoo-10/token_dance/releases/download/v0.1.10/TokenDance-windows-x64.zip) | 包含程序、使用说明和构建信息；解压后运行 |
-| [版本说明与 SHA-256 校验文件](https://github.com/DarrenHoo-10/token_dance/releases/tag/v0.1.10) | 查看版本详情与下载校验值 |
+| [TokenDance.exe](https://github.com/DarrenHoo-10/token_dance/releases/download/v0.1.11/TokenDance.exe) | Windows x64 便携版，下载后双击运行 |
+| [Windows ZIP 压缩包](https://github.com/DarrenHoo-10/token_dance/releases/download/v0.1.11/TokenDance-windows-x64.zip) | 包含程序、使用说明和构建信息；解压后运行 |
+| [版本说明与 SHA-256 校验文件](https://github.com/DarrenHoo-10/token_dance/releases/tag/v0.1.11) | 查看版本详情与下载校验值 |
 
 1. 将程序放在固定目录，双击 `TokenDance.exe`。
 2. 在 Windows 右下角托盘点击 TokenDance 图标。看不到时展开隐藏图标区域。
