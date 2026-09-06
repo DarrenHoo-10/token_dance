@@ -106,10 +106,13 @@ func canonicalAggregateStatements(datePlaceholders string) []struct {
 			), cost_ranked AS (
 				SELECT occurred_date, user_id, agent_id, cost_amount, cost_currency,
 					ROW_NUMBER() OVER (
-						PARTITION BY occurred_date, user_id, agent_id, COALESCE(turn_hash, event_id)
+						PARTITION BY occurred_date, user_id, agent_id, CASE WHEN JSON_EXTRACT(safe_extension_json, '$.openrouter') IS NOT NULL THEN event_id ELSE COALESCE(turn_hash, event_id) END
 						ORDER BY (cost_source = 'provider_reported') DESC, event_pk DESC
 					) authority_rank
-				FROM filtered WHERE cost_amount IS NOT NULL
+				FROM filtered f WHERE cost_amount IS NOT NULL
+ AND (JSON_EXTRACT(f.safe_extension_json, '$.openrouter') IS NULL OR f.turn_hash IS NULL OR NOT EXISTS (
+ SELECT 1 FROM filtered reported WHERE reported.user_id=f.user_id AND reported.agent_id=f.agent_id
+ AND reported.turn_hash=f.turn_hash AND reported.cost_source='provider_reported' AND reported.cost_amount IS NOT NULL))
 			), costs AS (
 				SELECT occurred_date, user_id, agent_id, SUM(cost_amount) cost_amount, MAX(cost_currency) cost_currency
 				FROM cost_ranked WHERE authority_rank = 1 GROUP BY occurred_date, user_id, agent_id
@@ -183,10 +186,13 @@ func canonicalAggregateStatements(datePlaceholders string) []struct {
 			), cost_ranked AS (
 				SELECT occurred_date, user_id, agent_id, provider_id, model_id, cost_amount, cost_currency,
 					ROW_NUMBER() OVER (
-						PARTITION BY occurred_date, user_id, agent_id, provider_id, model_id, COALESCE(turn_hash, event_id)
+						PARTITION BY occurred_date, user_id, agent_id, provider_id, model_id, CASE WHEN JSON_EXTRACT(safe_extension_json, '$.openrouter') IS NOT NULL THEN event_id ELSE COALESCE(turn_hash, event_id) END
 						ORDER BY (cost_source = 'provider_reported') DESC, event_pk DESC
 					) authority_rank
-				FROM filtered WHERE cost_amount IS NOT NULL
+				FROM filtered f WHERE cost_amount IS NOT NULL
+ AND (JSON_EXTRACT(f.safe_extension_json, '$.openrouter') IS NULL OR f.turn_hash IS NULL OR NOT EXISTS (
+ SELECT 1 FROM filtered reported WHERE reported.user_id=f.user_id AND reported.agent_id=f.agent_id
+ AND reported.turn_hash=f.turn_hash AND reported.cost_source='provider_reported' AND reported.cost_amount IS NOT NULL))
 			), costs AS (
 				SELECT occurred_date, user_id, agent_id, provider_id, model_id, SUM(cost_amount) cost_amount, MAX(cost_currency) cost_currency
 				FROM cost_ranked WHERE authority_rank = 1

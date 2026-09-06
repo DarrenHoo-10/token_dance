@@ -487,9 +487,12 @@ type TimeRange struct {
 }
 
 type MetricCost struct {
-	Amount    *string `json:"amount"`
-	Currency  *string `json:"currency"`
-	Supported bool    `json:"supported"`
+	PricingSource  string  `json:"pricingSource,omitempty"`
+	PricedRequests int     `json:"pricedRequests"`
+	TotalRequests  int     `json:"totalRequests"`
+	Amount         *string `json:"amount"`
+	Currency       *string `json:"currency"`
+	Supported      bool    `json:"supported"`
 }
 
 type MetricBigInt struct {

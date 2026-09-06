@@ -181,6 +181,9 @@ export interface MetricValue {
 }
 
 export interface CostMetricValue {
+  pricingSource?: string;
+  pricedRequests?: number;
+  totalRequests?: number;
   amount: string | null;
   currency: string | null;
   supported: boolean;

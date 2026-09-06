@@ -14,6 +14,7 @@ import (
 	"tokendance/internal/crypto"
 	"tokendance/internal/email"
 	"tokendance/internal/migrate"
+	"tokendance/internal/pricing"
 	"tokendance/internal/provider"
 	"tokendance/internal/store/mysql"
 	"tokendance/internal/worker"
@@ -72,6 +73,7 @@ func main() {
 		log.Println("Database schema compatibility verified for worker.")
 
 		wrk = worker.NewWorkerWithFull(db, clk, cipher, emailProvider, storage)
+		wrk.SetPricing(pricing.NewClient())
 		log.Printf("Worker registered with durable lease ID: %s", wrk.WorkerID())
 	} else {
 		if cfg.Environment == "production" {
