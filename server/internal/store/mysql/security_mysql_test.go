@@ -612,6 +612,16 @@ func TestUSR018_DeviceRevocationRejectsIngestMySQL(t *testing.T) {
 	if _, err := dev.RegisterInstallationTx(ctx, inst, now); err != nil {
 		t.Fatalf("failed to register installation: %v", err)
 	}
+	retry := inst
+	retry.InstallationID = "ins_never_persisted"
+	retry.CollectorVersion = "2.0.0"
+	registered, err := dev.RegisterInstallationTx(ctx, retry, now.Add(time.Minute))
+	if err != nil || registered.InstallationID != instID || registered.CollectorVersion != inst.CollectorVersion {
+		t.Fatalf("re-registration must return stored installation: %+v, %v", registered, err)
+	}
+	if _, err := st.Ingest().GetIngestInstallation(ctx, registered.InstallationID); err != nil {
+		t.Fatalf("re-registered identity must authenticate: %v", err)
+	}
 
 	// Verify AuthorizeIngest works when active
 	authorizedInst, u, err := dev.AuthorizeIngest(ctx, instID)

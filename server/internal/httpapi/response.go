@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
+	"strings"
 
 	"tokendance/internal/domain"
 )
@@ -67,6 +69,9 @@ func WriteError(w http.ResponseWriter, r *http.Request, err error) {
 
 	var appErr *domain.AppError
 	if errors.As(err, &appErr) {
+		if strings.HasPrefix(r.URL.Path, "/v1/telemetry/") {
+			log.Printf("[Ingest %s] rejected code=%s", reqID, appErr.Code)
+		}
 		status := appErr.HTTPStatus
 		if status == 0 {
 			status = http.StatusInternalServerError

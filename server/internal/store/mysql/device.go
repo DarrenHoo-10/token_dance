@@ -362,13 +362,17 @@ func (s *deviceStore) RegisterInstallationTx(ctx context.Context, inst domain.In
 		return nil, domain.ErrForbidden
 	}
 
-	var existingUserID string
-	var existingStatus string
-	err = tx.QueryRowContext(ctx, "SELECT user_id, installation_status FROM installations WHERE device_public_key = ? FOR UPDATE", bytes32Slice(inst.DevicePublicKey)).Scan(&existingUserID, &existingStatus)
+	existing, err := s.scanInstallationRow(tx.QueryRowContext(ctx, `
+		SELECT installation_id, user_id, device_public_key, device_name,
+		       os_type, os_version, architecture, collector_version,
+		       installation_status, disabled_at, disabled_reason,
+		       status_version, registered_at, last_seen_at, revoked_at, updated_at
+		FROM installations WHERE device_public_key = ? FOR UPDATE`, bytes32Slice(inst.DevicePublicKey)))
 	if err == nil {
-		if existingUserID == inst.UserID && existingStatus == string(domain.InstallationStatusActive) {
-			instCopy := inst
-			return &instCopy, nil
+		if existing.UserID == inst.UserID && existing.InstallationStatus == domain.InstallationStatusActive {
+			// Re-registration must return the persisted identity, not the fresh
+			// candidate ID, which was never inserted and cannot authenticate.
+			return existing, nil
 		}
 		return nil, domain.ErrPublicKeyConflict
 	} else if !errors.Is(err, sql.ErrNoRows) {
