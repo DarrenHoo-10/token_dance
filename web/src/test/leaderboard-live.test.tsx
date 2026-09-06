@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { LocaleProvider } from '@/context/LocaleContext';
 import { LeaderboardPage } from '@/pages/public/LeaderboardPage';
@@ -23,9 +23,9 @@ beforeEach(() => {
   vi.spyOn(api,'getLeaderboard').mockResolvedValue(board);
 });
 describe('Live leaderboard', () => {
-  it('explains private status and navigates to personal data without changing visibility', async () => {
+  it('explains that a private profile still stays on the board', async () => {
     const update=vi.spyOn(api,'updatePrivacy'); showPage();
-    expect(await screen.findByRole('status')).toHaveTextContent('你的数据目前仅自己可见');
+    expect(await screen.findByRole('status')).toHaveTextContent('公开开关只控制详细资料页');
     fireEvent.click(screen.getByRole('button',{name:'管理公开设置'}));
     expect(screen.getByRole('heading',{name:'我的数据'})).toBeInTheDocument();
     expect(update).not.toHaveBeenCalled();
@@ -50,5 +50,21 @@ describe('Live leaderboard', () => {
   it('connect tools opens device settings instead of claiming an unperformed connection', () => {
     showPage(); fireEvent.click(screen.getByRole('button',{name:'连接工具'}));
     expect(screen.getByRole('heading',{name:'设备设置'})).toBeInTheDocument();
+  });
+  it('keeps existing rows and shows a short connection error after a failed refresh', async () => {
+    const ranked = {
+      ...board,
+      entries: [{ rankNo: 1, handle: 'ada', displayName: 'Ada', avatarUrl: null, metricValue: '100', rankDelta: 0 }],
+      totalEntries: 1,
+      totalTokens: '100',
+    };
+    vi.mocked(api.getLeaderboard).mockResolvedValueOnce(ranked).mockRejectedValueOnce(new Error('offline'));
+    showPage();
+    expect(await screen.findByText('ada')).toBeInTheDocument();
+    expect(screen.queryByText('持平')).not.toBeInTheDocument();
+    expect(screen.queryByText('−')).not.toBeInTheDocument();
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+    expect(await screen.findByRole('alert')).toHaveTextContent('连接异常');
+    expect(screen.getByText('ada')).toBeInTheDocument();
   });
 });
