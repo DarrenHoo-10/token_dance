@@ -6,6 +6,7 @@ import { resolveWebsiteOrigin } from "./website";
 import type { AgentConfig, AutostartInfo, DaemonStatus } from "./tauri-bridge";
 import "./styles/settings.css";
 import { useWindowReady } from './window-ready';
+import { SoftwareUpdateCard, UpdateNotice } from './components/SoftwareUpdate';
 
 function Toggle({ checked, disabled, label, onChange }: { checked: boolean; disabled: boolean; label: string; onChange: (value: boolean) => void }) {
   return <button type="button" className="settings-toggle" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} onClick={() => onChange(!checked)}><span /></button>;
@@ -77,7 +78,7 @@ export function SettingsPage() {
 
   return <div className="settings-page">
     <header className="settings-header" data-tauri-drag-region>
-      <div className="settings-brand" data-tauri-drag-region><img src={brandLogo} alt="" draggable={false} data-tauri-drag-region /><strong data-tauri-drag-region>TokenDance</strong><span data-tauri-drag-region>{t("桌面端", "Desktop")}</span></div>
+      <div className="settings-brand" data-tauri-drag-region><img src={brandLogo} alt="" draggable={false} data-tauri-drag-region /><div className="desktop-update-wordmark"><strong data-tauri-drag-region>TokenDance</strong><UpdateNotice zh={zh} /></div><span data-tauri-drag-region>{t("桌面端", "Desktop")}</span></div>
       <div className="usage-controls"><div className="usage-window-controls" role="group" aria-label={t("语言与窗口控制", "Language and window controls")}>
         <button className="usage-language" onClick={() => changeLanguage(zh ? "en" : "zh")} aria-label={t("切换到英文", "Switch to Chinese")}>{zh ? "EN" : "中"}</button>
         <button className="usage-minimize" onClick={() => void perform(hideWindow)} aria-label={t("最小化到托盘", "Minimize to tray")} title={t("最小化到托盘", "Minimize to tray")}><span aria-hidden="true">−</span></button>
@@ -102,6 +103,7 @@ export function SettingsPage() {
           {data?.agents.length === 0 && <p className="settings-no-sources">{t("尚未发现可用的采集来源。", "No collection sources found yet.")}</p>}
         </div>
       </section>
+      <SoftwareUpdateCard zh={zh} />
     </main>
     <footer className="settings-footer"><a className="settings-website-link" href={website} target="_blank" rel="noopener noreferrer" title={t("在浏览器打开 TokenDance 网站", "Open the TokenDance website in your browser")} onClick={event => { event.preventDefault(); void perform(() => openWebsite()); }}><span>{website}</span><span aria-hidden="true">↗</span></a><span>{!isTauriEnvironment() ? t("界面预览 · 示例状态", "Preview · Sample state") : `TokenDance ${data?.status.collectorVersion ?? ""}`}</span></footer>
     {notice && <div role="status" className="settings-notice">{notice}</div>}
