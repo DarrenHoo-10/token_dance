@@ -368,6 +368,7 @@ pub async fn install_update(
         let candidate = state.candidate.read().await.clone().ok_or("no_update")?;
         replace_verified(&candidate)?;
         let _ = app.state::<crate::state::AppState>().shutdown().await;
+        app.state::<crate::single_instance::InstanceGuard>().release();
         app.restart();
         #[allow(unreachable_code)]
         Ok::<(), String>(())
@@ -418,7 +419,7 @@ fn replace_with_rollback(
 
 /// Called before creating any window or collector. Offline failures leave the
 /// current app usable. No visible window is restarted by background checks.
-pub fn apply_pending_before_start() -> bool {
+pub fn apply_pending_before_start(release_instance: impl FnOnce()) -> bool {
     if !SUPPORTED || !auto_enabled() || !cached_binary().is_file() {
         return false;
     }
@@ -442,7 +443,16 @@ pub fn apply_pending_before_start() -> bool {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000);
     }
-    command.spawn().is_ok()
+    // The replacement must be able to claim the identity before this process exits.
+    release_instance();
+    match command.spawn() {
+        Ok(_) => true,
+        Err(error) => {
+            eprintln!("failed to launch updated TokenDance: {error}");
+            // Never initialize a collector after giving up the instance claim.
+            true
+        }
+    }
 }
 pub fn start(app: &AppHandle) {
     let state = app.state::<Arc<UpdateState>>().inner().clone();

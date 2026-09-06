@@ -6,6 +6,7 @@ pub mod local_store;
 pub mod orb;
 pub mod pricing;
 pub mod rebuild;
+mod single_instance;
 pub mod state;
 pub mod tray_state;
 pub mod updates;
@@ -150,10 +151,17 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
 
 pub fn run() {
     install_panic_hook();
-    if commands::window::activate_existing_instance() {
-        return;
-    }
-    if updates::apply_pending_before_start() {
+    let instance = match single_instance::InstanceGuard::acquire(
+        !std::env::args().any(|arg| arg == "--minimized"),
+    ) {
+        Ok(Some(instance)) => instance,
+        Ok(None) => return,
+        Err(error) => {
+            write_crash_log(&format!("failed to claim desktop instance: {error}"));
+            return;
+        }
+    };
+    if updates::apply_pending_before_start(|| instance.release()) {
         return;
     }
 
@@ -168,6 +176,7 @@ pub fn run() {
     };
 
     let builder = tauri::Builder::default()
+        .manage(instance)
         .manage(app_state)
         .manage(commands::account::AccountState::default())
         .manage(commands::window::WindowPresentation::default())
@@ -287,6 +296,7 @@ pub fn run() {
             if let Err(error) = install_tray(app) {
                 write_crash_log(&format!("tray setup failed: {error}"));
             }
+            single_instance::listen(app.handle());
             Ok(())
         });
 
