@@ -382,7 +382,7 @@ async fn rpc(client: &Client, url: &str, headers: HeaderMap) -> Result<Value, &'
     .await
 }
 async fn receive(request: reqwest::RequestBuilder) -> Result<Value, &'static str> {
-    let mut response = request.send().await.map_err(|_| "unavailable")?;
+    let mut response = request.send().await.map_err(|_| "network_error")?;
     if response
         .headers()
         .get("content-type")
@@ -399,7 +399,7 @@ async fn receive(request: reqwest::RequestBuilder) -> Result<Value, &'static str
         return Err("unavailable");
     }
     let mut bytes = vec![];
-    while let Some(chunk) = response.chunk().await.map_err(|_| "unavailable")? {
+    while let Some(chunk) = response.chunk().await.map_err(|_| "network_error")? {
         if bytes.len() + chunk.len() > LIMIT {
             return Err("unavailable");
         }
@@ -640,6 +640,15 @@ mod tests {
         std::fs::write(&cli, r#"{"accessToken":"invalid"}"#).unwrap();
         assert!(cursor_from_paths(&cli, &db_path).is_err()); // no cross-account fallback
     }
+    #[tokio::test]
+    async fn quota_timeout_is_a_network_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = Client::builder().no_proxy().timeout(Duration::from_millis(100)).build().unwrap();
+        let url = format!("http://{}/quota", listener.local_addr().unwrap());
+        assert_eq!(get(&client, &url, HeaderMap::new()).await.unwrap_err(), "network_error");
+        drop(listener);
+    }
+
     #[tokio::test]
     async fn quota_http_rejects_redirect_and_oversized_body() {
         use tokio::{
