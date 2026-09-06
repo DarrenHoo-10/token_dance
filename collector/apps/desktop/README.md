@@ -62,3 +62,12 @@ Cursor 优先复用 CLI 登录：Windows 的 `%APPDATA%/Cursor/auth.json`、macO
 这些是客户端所用接口，可能随上游版本变化。产品口径参考 [Grok 官方 FAQ](https://docs.x.ai/grok/faq) 和 [Cursor 用量说明](https://prod.cursor.com/help/models-and-usage/usage-limits)；协议核对参考 [CodexBar Grok 实现](https://github.com/steipete/CodexBar/tree/main/Sources/CodexBarCore/Providers/Grok) 与 [Cursor 实现](https://github.com/steipete/CodexBar/tree/main/Sources/CodexBarCore/Providers/Cursor)，并以本机账号只读查询验证。
 
 开发验证：设置 `TOKENDANCE_VERIFY_CONNECTED_QUOTAS=1` 后运行 `cargo test --manifest-path src-tauri/Cargo.toml --lib live_connected_quotas -- --ignored --nocapture`，仅输出规范化额度字段。常规测试覆盖分池百分比、未知/无限额度、账号变化、访问令牌校验、只读 SQLite、重定向和响应大小限制。
+
+
+## 本机隔离部署
+
+设置 `TOKENDANCE_DATA_DIR` 可将 SQLite、同步身份、配置和更新缓存放在独立目录；未设置时仍使用原来的用户数据目录。这个变量不改变 Agent 原始日志目录。隔离版本应使用独立 Tauri identifier，防止与正式版共用 WebView 登录状态。
+
+构建前设置 `VITE_TOKENDANCE_WEBSITE_ORIGIN=http://127.0.0.1:3011`，即可将桌面默认登录地址指向本地网站；未设置时仍使用生产地址。本地与生产账号、数据不会自动互通。
+
+2026-09-06 本机优化版本部署目录为 `%LOCALAPPDATA%/TokenDance/local-optimization`，使用目录中的 `start-desktop.ps1` 启动桌面。Web 位于 `127.0.0.1:3011`，API 位于 `127.0.0.1:8082`；独立 MySQL/Redis 使用 13306/16379，仅监听回环地址。程序和开发配置留在该运行目录，凭据不提交到仓库。数据库容器持久化到专用 Docker volume；Web/API/Worker 当前为本机进程，不承诺系统重启后自动启动。

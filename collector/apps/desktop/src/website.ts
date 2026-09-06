@@ -1,4 +1,6 @@
-export const DEFAULT_WEBSITE_ORIGIN = "https://www.nexorai.com.cn/token-dance";
+export const DEFAULT_WEBSITE_ORIGIN =
+  (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_TOKENDANCE_WEBSITE_ORIGIN
+  || "https://www.nexorai.com.cn/token-dance";
 export const WEBSITE_URL_STORAGE_KEY = "tokendance.websiteUrl";
 
 export function parseWebsiteOrigin(value: string): string {

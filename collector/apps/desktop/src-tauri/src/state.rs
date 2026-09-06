@@ -1012,6 +1012,9 @@ impl AppState {
 }
 
 pub(crate) fn app_data_root() -> PathBuf {
+    if let Some(path) = std::env::var_os("TOKENDANCE_DATA_DIR").filter(|p| !p.is_empty()) {
+        return PathBuf::from(path);
+    }
     let base = std::env::var_os("LOCALAPPDATA")
         .or_else(|| std::env::var_os("XDG_DATA_HOME"))
         .or_else(|| std::env::var_os("HOME"))
