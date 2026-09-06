@@ -64,7 +64,7 @@ fn parse_response(value: &Value, provider: &str) -> Result<AgentQuota, &'static 
             .map(|v| if v >= 1_000_000_000_000 { v / 1000 } else { v });
         if windows.iter().any(|w: &QuotaWindow| w.window_minutes == minutes) { continue; }
         windows.push(QuotaWindow { used_percent: used, window_minutes: minutes,
-            resets_at: reset, provider: Some(provider.into()) });
+            resets_at: reset, provider: Some(provider.into()), label: None });
     }
     if windows.is_empty() { return Err("no_quota"); }
     windows.sort_by_key(|window| window.window_minutes);

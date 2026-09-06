@@ -108,7 +108,10 @@ export function UsagePanel() {
             <QuotaRings quota={quota} zh={zh} />
           </article>;
         })}
-        {others.length > 0 && <details className="usage-other-sources"><summary>{text('其他来源', 'Other sources')} · {others.length}</summary>{others.map(agent => <div className="usage-source-row" key={agent.id}><span>{agent.name}</span><small>{agentState(agent)}</small><strong>{usageTokens(agent, range) === null ? '—' : format(usageTokens(agent, range)!)}</strong></div>)}</details>}
+        {others.length > 0 && <details className="usage-other-sources"><summary>{text('其他来源', 'Other sources')} · {others.length}</summary>{others.map(agent => {
+          const quota = quotas.find(item => item.agentId === agent.id);
+          return <div className="usage-other-source" key={agent.id}><div className="usage-source-row"><span>{agent.name}{quota?.plan && <small> · {quota.plan}</small>}</span><small>{agentState(agent)}</small><strong>{usageTokens(agent, range) === null ? '—' : format(usageTokens(agent, range)!)}</strong></div>{quota && <QuotaRings quota={quota} zh={zh} />}</div>;
+        })}</details>}
         {data && agents.length === 0 && <p className="usage-empty">{text('尚未检测到 Agent，在设置中连接。', 'No agents found. Connect one in Settings.')}</p>}
       </section>
       <AnnualActivity agents={agents} zh={zh} />

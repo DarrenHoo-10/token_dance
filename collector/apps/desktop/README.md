@@ -50,3 +50,15 @@ ZCode 每 5 分钟查询 5 小时及 7 日已用比例和重置时间，界面�
 验证：`cargo test --manifest-path src-tauri/Cargo.toml --lib commands::quotas` 覆盖官方主机绑定、响应校验、毫秒重置时间、失败缓存及拒绝重定向。开发者可显式设置 `TOKENDANCE_VERIFY_ZCODE_QUOTA=1` 后运行忽略的 `live_zcode_quota` 测试验证本机已登录账号的只读查询；输出仅包含展示字段，不包含凭据。
 
 窗口首次打开会等待前端首屏数据（或错误页面）、布局及图片准备就绪，再由原生层显示。隐藏状态仍允许一次初始数据读取，避免等待显示与等待数据互相阻塞；之后隐藏时停止轮询。开机自启动继续仅驻留托盘。重复点击托盘不会重复设置相同位置和大小，失焦后短暂延后检查实际焦点，避免处理过时失焦通知导致窗口闪现后消失。
+
+## Grok Build 与 Cursor 额度
+
+Grok Build 复用本机 `.grok/auth.json`（支持 `GROK_HOME`）中官方登录的有效访问令牌，查询 `https://cli-chat-proxy.grok.com/v1/billing?format=credits`，显示 **Grok 各产品共享的周额度**及重置时间。它不是 Build 独占的 Token 额度，也不把按量付费余额当成套餐额度。
+
+Cursor 优先复用 CLI 登录：Windows 的 `%APPDATA%/Cursor/auth.json`、macOS 的 `~/Library/Application Support/Cursor/auth.json`、Linux 的 `$XDG_CONFIG_HOME/Cursor/auth.json`（默认 `~/.config`）。没有 CLI 登录文件时，只读对应 Cursor 目录下 `User/globalStorage/state.vscdb` 的 `cursorAuth/accessToken`。已有 CLI 会话失效时提示重新登录，不悄悄切换到另一个编辑器账号。通过 Cursor 客户端的 `https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage` 与 `GetPlanInfo` 只读 RPC 查询 Auto、API 两个额度池与账单周期；缺少分池数据时展示返回的套餐额度或个人上限，不将未知额度显示为零。
+
+两个来源每 5 分钟刷新，使用 Windows/macOS 系统代理设置；请求仅发送至固定官方 HTTPS 地址，禁止重定向，超时 12 秒，响应上限 256 KiB。只使用访问令牌，不刷新或改写客户端登录，不上传凭据到 TokenDance 网站。切换账号或失效时清除旧额度；网络失败保留原观测时间并标记待更新。排名仍按 Token 用量取前三，其他来源的额度可在展开列表后查看。
+
+这些是客户端所用接口，可能随上游版本变化。产品口径参考 [Grok 官方 FAQ](https://docs.x.ai/grok/faq) 和 [Cursor 用量说明](https://prod.cursor.com/help/models-and-usage/usage-limits)；协议核对参考 [CodexBar Grok 实现](https://github.com/steipete/CodexBar/tree/main/Sources/CodexBarCore/Providers/Grok) 与 [Cursor 实现](https://github.com/steipete/CodexBar/tree/main/Sources/CodexBarCore/Providers/Cursor)，并以本机账号只读查询验证。
+
+开发验证：设置 `TOKENDANCE_VERIFY_CONNECTED_QUOTAS=1` 后运行 `cargo test --manifest-path src-tauri/Cargo.toml --lib live_connected_quotas -- --ignored --nocapture`，仅输出规范化额度字段。常规测试覆盖分池百分比、未知/无限额度、账号变化、访问令牌校验、只读 SQLite、重定向和响应大小限制。
