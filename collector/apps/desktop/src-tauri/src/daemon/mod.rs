@@ -32,6 +32,7 @@ impl CollectorDaemon {
             state.backfill_local_prices().await;
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             let mut historical = true;
+            let mut last_compaction = None;
             while is_running.load(Ordering::Acquire) {
                 interval.tick().await;
                 if state.get_daemon_status().await.global_paused {
@@ -39,8 +40,17 @@ impl CollectorDaemon {
                 }
                 let snapshot = Arc::clone(&state.detection);
                 let mut service = state.service.lock().await;
+                if service.wal.backpressure() != wal_spool::Backpressure::Normal
+                    && last_compaction.is_none_or(|at: std::time::Instant| at.elapsed() >= Duration::from_secs(60))
+                {
+                    if service.wal.compact().is_err() {
+                        runtime::append_log(&state.control_dir_path(), "storage maintenance failed; retrying later");
+                    }
+                    last_compaction = Some(std::time::Instant::now());
+                }
+                let can_scan_history = service.wal.backpressure().allow_historical_scan();
                 let report = collect_tick(&mut service, &snapshot, historical).await;
-                historical = false;
+                if can_scan_history { historical = false; }
                 let pending = service.wal.unacked_count();
                 let observations = service.wal.take_observations();
                 let envelopes = service.wal.unacked_events();

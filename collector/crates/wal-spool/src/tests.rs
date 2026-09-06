@@ -332,6 +332,27 @@ fn plaintext_frame_is_rejected_and_events_are_encrypted_on_disk() {
 }
 
 #[test]
+fn compaction_reclaims_checkpoint_only_history_and_restores_all_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wal = open_store(dir.path());
+    wal.append_txn(txn(vec![event("acked")], checkpoint(1, 1)), AppendClass::Realtime).unwrap();
+    wal.append_ack(AckPayload { batch_id: "batch".into(), acked_event_ids: vec![event("acked").event_id], server_acked_at: "2026-09-06T00:00:00Z".into() }).unwrap();
+    for offset in 2..100 {
+        wal.append_txn(txn(vec![], checkpoint(offset, 1)), AppendClass::Realtime).unwrap();
+    }
+    wal.append_txn(txn(vec![event("pending")], checkpoint(100, 1)), AppendClass::Realtime).unwrap();
+    let before = wal.spool_bytes();
+    wal.compact().unwrap();
+    assert!(wal.spool_bytes() < before / 2);
+    drop(wal);
+    let reopened = open_store(dir.path());
+    assert_eq!(reopened.latest_checkpoint("mock-sessions").unwrap().offset, 100);
+    assert_eq!(reopened.unacked_count(), 1);
+    assert_eq!(reopened.unacked_events()[0].event_id, event("pending").event_id);
+    assert_eq!(reopened.event_status(&event("acked").event_id), Some(protocol::EventDeliveryStatus::Acked));
+}
+
+#[test]
 fn production_limits_match_architecture_baseline() {
     let limits = SpoolLimits::default();
     assert_eq!(limits.soft_bytes, 128 * 1024 * 1024);

@@ -87,6 +87,8 @@ pub async fn collect_tick(
         }
         let files = if source_id == adapter_grok_build::HISTORY_SOURCE_ID {
             list_grok_history_files(path, grok_history_limit())
+        } else if historical && adapter == adapter_codex::ADAPTER_ID {
+            list_jsonl_files(path, 128)
         } else {
             list_jsonl_files(path, default_jsonl_limit())
         };

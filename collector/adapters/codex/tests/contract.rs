@@ -69,9 +69,9 @@ async fn correlated_skill_reads_survive_chunking_and_replay_without_path_leaks()
     );
 }
 
-#[test]
+#[tokio::test]
 #[ignore = "explicit local Skill backfill verification; outputs counts only"]
-fn local_skill_backfill_sample() {
+async fn local_skill_backfill_sample() {
     assert_eq!(
         std::env::var("TOKENDANCE_VERIFY_LOCAL_SKILLS").as_deref(),
         Ok("1")
@@ -97,19 +97,16 @@ fn local_skill_backfill_sample() {
     files.sort_by_key(|p| std::cmp::Reverse(std::fs::metadata(p).unwrap().modified().unwrap()));
     let mut total = 0;
     for (n, path) in files.into_iter().take(12).enumerate() {
-        let events = adapter_codex::decode_frame(
-            &load_manifest(),
-            "0.130.0",
-            KEY,
-            RawFrame {
-                installation_id: INSTALL.into(),
-                source_kind: SourceKind::JsonlTail,
-                source_id: SOURCE_JSONL.into(),
-                cursor: format!("local-{n}:0"),
-                payload: std::fs::read(path).unwrap(),
-            },
-        )
-        .unwrap();
+        let adapter = CodexAdapter::new("0.142.5", "interactive", KEY);
+        let mut events = Vec::new();
+        for (line, body) in std::fs::read_to_string(path).unwrap().lines().enumerate() {
+            events.extend(adapter.decode(RawFrame {
+                installation_id: INSTALL.into(), source_kind: SourceKind::JsonlTail,
+                source_id: SOURCE_JSONL.into(), cursor: format!("local-{n}:0:{line}"),
+                payload: body.as_bytes().to_vec(),
+            }).await.unwrap());
+        }
+        let before = total;
         for event in events
             .into_iter()
             .filter(|e| matches!(e.payload, EventPayload::SkillInvoked(_)))
@@ -117,6 +114,7 @@ fn local_skill_backfill_sample() {
             PrivacyFilter::default().filter(event).unwrap();
             total += 1;
         }
+        println!("Recent session {}: {} Skill uses", n + 1, total - before);
     }
     println!("Recognized Skill uses in recent local sessions: {total}");
     assert!(total > 0);
