@@ -1,5 +1,57 @@
 use crate::state::AppState;
 use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, State, WebviewWindow};
+use std::{collections::HashMap, sync::Mutex};
+
+#[derive(Clone, Copy)]
+enum OpenRequest { Panel(PhysicalPosition<f64>), Settings }
+
+#[derive(Default)]
+struct Presentation { ready: bool, pending: Option<OpenRequest> }
+
+#[derive(Default)]
+pub struct WindowPresentation(Mutex<HashMap<String, Presentation>>);
+
+impl WindowPresentation {
+    fn request(&self, label: &str, request: OpenRequest) -> bool {
+        let mut entries = self.0.lock().expect("window presentation lock");
+        let entry = entries.entry(label.into()).or_default();
+        if entry.ready { true } else { entry.pending = Some(request); false }
+    }
+    fn ready(&self, label: &str) -> Option<OpenRequest> {
+        let mut entries = self.0.lock().expect("window presentation lock");
+        let entry = entries.entry(label.into()).or_default();
+        entry.ready = true;
+        entry.pending.take()
+    }
+    pub fn cancel(&self, label: &str) {
+        if let Some(entry) = self.0.lock().expect("window presentation lock").get_mut(label) { entry.pending = None; }
+    }
+}
+
+fn present(window: &WebviewWindow) -> tauri::Result<()> {
+    if window.is_minimized()? { window.unminimize()?; }
+    if !window.is_visible()? { window.show()?; }
+    if !window.is_focused()? { window.set_focus()?; }
+    Ok(())
+}
+
+pub fn request_initial_panel(app: &AppHandle) -> tauri::Result<()> {
+    let point = app.get_webview_window("main")
+        .and_then(|window| window.current_monitor().ok().flatten())
+        .map(|monitor| PhysicalPosition::new((monitor.position().x + 1) as f64, (monitor.position().y + 1) as f64))
+        .unwrap_or(PhysicalPosition::new(0.0, 0.0));
+    show_usage_panel(app, point)
+}
+
+#[tauri::command]
+pub fn window_ready(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    let pending = app.state::<WindowPresentation>().ready(window.label());
+    match pending {
+        Some(OpenRequest::Panel(point)) => show_usage_panel(&app, point).map_err(|e| e.to_string()),
+        Some(OpenRequest::Settings) => open_settings(app),
+        None => Ok(()),
+    }
+}
 
 fn panel_position(
     origin: PhysicalPosition<i32>,
@@ -14,6 +66,7 @@ fn panel_position(
 }
 
 pub fn show_usage_panel(app: &AppHandle, point: PhysicalPosition<f64>) -> tauri::Result<()> {
+    if !app.state::<WindowPresentation>().request("main", OpenRequest::Panel(point)) { return Ok(()); }
     if let Some(window) = app.get_webview_window("main") {
         if let Some(monitor) = app.monitor_from_point(point.x, point.y)? {
             let area = monitor.work_area();
@@ -24,11 +77,11 @@ pub fn show_usage_panel(app: &AppHandle, point: PhysicalPosition<f64>) -> tauri:
                 ((480.0 * scale).round() as u32).min(area.size.width),
                 ((780.0 * scale).round() as u32).min(area.size.height),
             );
-            window.set_position(panel_position(area.position, area.size, size, gap))?;
-            window.set_size(size)?;
+            let position = panel_position(area.position, area.size, size, gap);
+            if window.outer_position()? != position { window.set_position(position)?; }
+            if window.inner_size()? != size { window.set_size(size)?; }
         }
-        window.show()?;
-        window.set_focus()?;
+        present(&window)?;
     }
     Ok(())
 }
@@ -38,11 +91,12 @@ pub fn open_settings(app: AppHandle) -> Result<(), String> {
     let settings = app
         .get_webview_window("settings")
         .ok_or("Settings window unavailable")?;
-    settings.unminimize().map_err(|error| error.to_string())?;
-    settings.show().map_err(|error| error.to_string())?;
-    settings.set_focus().map_err(|error| error.to_string())?;
+    app.state::<WindowPresentation>().cancel("main");
     if let Some(panel) = app.get_webview_window("main") {
         panel.hide().map_err(|error| error.to_string())?;
+    }
+    if app.state::<WindowPresentation>().request("settings", OpenRequest::Settings) {
+        present(&settings).map_err(|error| error.to_string())?;
     }
     Ok(())
 }
@@ -82,13 +136,14 @@ pub fn open_website(url: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn hide_window(window: WebviewWindow) -> Result<(), String> {
+    window.state::<WindowPresentation>().cancel(window.label());
     window.hide().map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub async fn show_window(window: WebviewWindow) -> Result<(), String> {
-    window.show().map_err(|error| error.to_string())?;
-    window.set_focus().map_err(|error| error.to_string())
+    if window.label() == "settings" { open_settings(window.app_handle().clone()) }
+    else { request_initial_panel(window.app_handle()).map_err(|e| e.to_string()) }
 }
 
 #[tauri::command]
@@ -101,6 +156,25 @@ pub async fn quit_app(app: AppHandle, state: State<'_, AppState>) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_and_early_clicks_wait_for_frontend_once() {
+        let state = WindowPresentation::default();
+        assert!(!state.request("main", OpenRequest::Panel(PhysicalPosition::new(0.0, 0.0))));
+        assert!(!state.request("main", OpenRequest::Panel(PhysicalPosition::new(1800.0, 900.0))));
+        assert!(matches!(state.ready("main"), Some(OpenRequest::Panel(point)) if point.x == 1800.0));
+        assert!(state.ready("main").is_none());
+        assert!(state.request("main", OpenRequest::Panel(PhysicalPosition::new(0.0, 0.0))));
+    }
+
+    #[test]
+    fn minimized_start_and_cancelled_requests_do_not_pop_open_on_ready() {
+        let state = WindowPresentation::default();
+        assert!(state.ready("main").is_none());
+        assert!(!state.request("settings", OpenRequest::Settings));
+        state.cancel("settings");
+        assert!(state.ready("settings").is_none());
+    }
 
     #[test]
     fn popup_stays_in_work_area_on_negative_origin_and_small_monitors() {
