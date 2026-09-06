@@ -102,7 +102,6 @@ export function UsagePanel() {
           const tokens = usageTokens(agent, range);
           return <article className="usage-agent-card" key={agent.id}><div className="usage-agent-top"><div className="usage-agent-name"><span className="usage-agent-symbol">{agent.name.slice(0, 2)}</span><strong>{agent.name}</strong>{quota?.plan && <small>{quota.plan}</small>}</div><div className="usage-agent-value"><strong>{tokens === null ? '—' : format(tokens)}</strong><small>{costLabel([agent], range)}</small></div></div>
             {(paused || !agent.enabled || ['ERROR', 'DEGRADED', 'NEEDS_PERMISSION'].includes(agent.status)) && <div className="usage-agent-warning">{agentState(agent)}</div>}
-            {agent.id === 'grok-build' && (usageTokens(agent, 'all') ?? 0) > 0 && <p className="usage-data-note">{text('用量来自本地日志，在轮次完成后更新。', 'Usage comes from local logs and updates after a turn completes.')}</p>}
             {tokens === 0 && (usageTokens(agent, 'all') ?? 0) > 0 && <p className="usage-data-note">{text('所选期间暂无用量，历史已记录', 'No usage this period. Recorded history:')} {format(usageTokens(agent, 'all')!)} tokens</p>}
             <QuotaRings quota={quota} zh={zh} />
           </article>;
