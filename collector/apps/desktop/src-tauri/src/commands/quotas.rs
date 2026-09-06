@@ -7,24 +7,24 @@ use std::{fs, io::{Read, Seek, SeekFrom}, path::{Path, PathBuf}, sync::Mutex, ti
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuotaWindow {
-    used_percent: f64,
-    window_minutes: u64,
-    resets_at: Option<i64>,
+    pub(crate) used_percent: f64,
+    pub(crate) window_minutes: u64,
+    pub(crate) resets_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    provider: Option<String>,
+    pub(crate) provider: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    label: Option<String>,
+    pub(crate) label: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentQuota {
-    agent_id: String,
-    observed_at: String,
-    plan: Option<String>,
-    windows: Vec<QuotaWindow>,
+    pub(crate) agent_id: String,
+    pub(crate) observed_at: String,
+    pub(crate) plan: Option<String>,
+    pub(crate) windows: Vec<QuotaWindow>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    status: Option<String>,
+    pub(crate) status: Option<String>,
 }
 
 fn parse_quota(line: &str) -> Option<AgentQuota> {

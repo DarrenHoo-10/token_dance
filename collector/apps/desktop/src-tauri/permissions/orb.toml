@@ -1,0 +1,89 @@
+[[permission]]
+identifier = "allow-get-orb-snapshot"
+description = "Read the orb usage/quota snapshot"
+commands.allow = ["get_orb_snapshot"]
+
+[[permission]]
+identifier = "allow-get-orb-render-snapshot"
+description = "Read the effects-only render snapshot"
+commands.allow = ["get_orb_render_snapshot"]
+
+[[permission]]
+identifier = "allow-get-orb-details"
+description = "Read orb details (selected quota window and today sources)"
+commands.allow = ["get_orb_details"]
+
+[[permission]]
+identifier = "allow-get-orb-preferences"
+description = "Read orb preferences and revision"
+commands.allow = ["get_orb_preferences"]
+
+[[permission]]
+identifier = "allow-patch-orb-preferences"
+description = "Apply a whitelist orb preference patch"
+commands.allow = ["patch_orb_preferences"]
+
+[[permission]]
+identifier = "allow-orb-ready"
+description = "Report first-frame ready for the current orb window instance"
+commands.allow = ["orb_ready"]
+
+[[permission]]
+identifier = "allow-orb-action"
+description = "Perform a restricted orb UI action"
+commands.allow = ["orb_action"]
+
+[[permission]]
+identifier = "allow-orb-begin-drag"
+description = "Start native dragging of the orb window after role checks"
+commands.allow = ["orb_begin_drag"]
+
+[[permission]]
+identifier = "allow-orb-end-drag"
+description = "Finish orb dragging, restore effects, and persist placement"
+commands.allow = ["orb_end_drag"]
+
+[[permission]]
+identifier = "allow-orb-motion"
+description = "Move or launch only the orb interaction surface"
+commands.allow = ["orb_move", "orb_fling"]
+
+[[permission]]
+identifier = "allow-primary-desktop"
+description = "Preserve existing desktop commands for main and settings windows"
+commands.allow = [
+  "set_tray_language",
+  "get_update_status",
+  "check_for_updates",
+  "set_auto_update",
+  "install_update",
+  "get_daemon_status",
+  "toggle_global_pause",
+  "set_global_pause",
+  "get_collector_metrics",
+  "get_agent_configs",
+  "get_agent_quotas",
+  "toggle_agent",
+  "set_agent_status",
+  "preview_upload_batch",
+  "trigger_sync_now",
+  "get_pending_envelopes",
+  "create_config_backup",
+  "restore_config_backup",
+  "list_config_backups",
+  "list_devices",
+  "revoke_device",
+  "request_data_deletion",
+  "purge_local_cache",
+  "get_autostart_status",
+  "set_autostart",
+  "hide_window",
+  "window_ready",
+  "show_window",
+  "quit_app",
+  "open_settings",
+  "open_website",
+  "get_account_session",
+  "login_account",
+  "logout_account",
+]
