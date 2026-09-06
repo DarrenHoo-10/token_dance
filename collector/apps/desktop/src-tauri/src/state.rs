@@ -18,7 +18,8 @@ use wal_spool::InjectedKeyProvider;
 use wal_spool::{AckPayload, KeyProvider, OsKeyProvider, WalStore};
 
 use crate::autostart::{AutostartProvider, SystemAutostartManager};
-use crate::usage_ledger::{DayUsage, UsageLedger};
+use crate::local_store::LocalStore;
+use crate::usage_ledger::DayUsage;
 
 const COLLECTOR_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -308,7 +309,7 @@ pub struct AppState {
     start_time: Instant,
     autostart: Arc<dyn AutostartProvider>,
     shutting_down: Arc<StdMutex<bool>>,
-    usage_ledger: Arc<StdMutex<UsageLedger>>,
+    local_store: Arc<StdMutex<LocalStore>>,
 }
 
 impl AppState {
@@ -375,7 +376,7 @@ impl AppState {
             start_time: Instant::now(),
             autostart,
             shutting_down: Arc::new(StdMutex::new(false)),
-            usage_ledger: Arc::new(StdMutex::new(UsageLedger::load(&root))),
+            local_store: Arc::new(StdMutex::new(LocalStore::open(&root)?)),
         };
         state.apply_saved_agent_controls().await?;
         state.persist_control().await?;
@@ -386,46 +387,62 @@ impl AppState {
         (*self.control_dir).clone()
     }
 
-    /// Fold newly collected envelopes into the device-local daily usage ledger
-    /// and persist it when something changed.
     pub async fn backfill_local_prices(&self) {
-        let mut service=self.service.lock().await;
-        service.wal.capture_observations();
-        let mut ledger=self.usage_ledger.lock().expect("usage ledger poisoned");
-        if ledger.backfilled(){return;}
-        match service.wal.visit_retained_events(|events|{ledger.record_pricing(events);}) {
-            Ok(())=>{ledger.finish_backfill();},
-            Err(_)=>collector_service::runtime::append_log(&self.control_dir_path(),"pricing history read incomplete; retry on restart"),
+        let mut store = self.local_store.lock().expect("local store poisoned");
+        if let Err(error) = store.reprice() {
+            collector_service::runtime::append_log(
+                &self.control_dir_path(),
+                &format!("pricing reprice failed: {error}"),
+            );
         }
-        if ledger.save().is_err(){collector_service::runtime::append_log(&self.control_dir_path(),"pricing history save failed");}
     }
     pub async fn refresh_local_prices(&self) {
-        if self.usage_ledger.lock().expect("usage ledger poisoned").catalog.fresh(){return;}
+        if self
+            .local_store
+            .lock()
+            .expect("local store poisoned")
+            .catalog()
+            .fresh()
+        {
+            return;
+        }
         match crate::pricing::Catalog::fetch().await {
-            Ok(catalog)=>{
-                let mut ledger=self.usage_ledger.lock().expect("usage ledger poisoned");
-                let status=if ledger.apply_prices(catalog).is_ok(){"OpenRouter pricing updated"}else{"OpenRouter pricing save failed"};
-                collector_service::runtime::append_log(&self.control_dir_path(),status);
-            },
-            Err(code)=>collector_service::runtime::append_log(&self.control_dir_path(),&format!("OpenRouter prices unavailable; keeping cache: {code}")),
+            Ok(catalog) => {
+                let mut store = self.local_store.lock().expect("local store poisoned");
+                let status = if store.apply_prices(catalog).is_ok() {
+                    "OpenRouter pricing updated"
+                } else {
+                    "OpenRouter pricing save failed"
+                };
+                collector_service::runtime::append_log(&self.control_dir_path(), status);
+            }
+            Err(code) => collector_service::runtime::append_log(
+                &self.control_dir_path(),
+                &format!("OpenRouter prices unavailable; keeping cache: {code}"),
+            ),
         }
     }
-    pub fn record_pricing_observations(&self, events: &[EventEnvelope]) {
-        let mut ledger=self.usage_ledger.lock().expect("usage ledger poisoned");
-        if ledger.record_pricing(events) && ledger.save().is_err(){collector_service::runtime::append_log(&self.control_dir_path(),"pricing observations save failed");}
+    pub fn commit_local(
+        &self,
+        events: &[EventEnvelope],
+        checkpoints: &[wal_spool::SourceCheckpoint],
+    ) -> Result<bool, String> {
+        self.local_store
+            .lock()
+            .expect("local store poisoned")
+            .commit_batch(events, checkpoints)
     }
     pub fn record_usage(&self, events: &[EventEnvelope]) -> bool {
-        let mut ledger = self.usage_ledger.lock().expect("usage ledger poisoned");
-        let changed = ledger.record(events);
-        if changed {
-            if let Err(error) = ledger.save() {
+        match self.commit_local(events, &[]) {
+            Ok(changed) => changed,
+            Err(error) => {
                 collector_service::runtime::append_log(
                     &self.control_dir_path(),
-                    &format!("usage ledger save failed: {error}"),
+                    &format!("存储异常: {error}"),
                 );
+                false
             }
         }
-        changed
     }
 
     async fn apply_saved_agent_controls(&self) -> Result<(), String> {
@@ -495,7 +512,7 @@ impl AppState {
     pub async fn get_agents(&self) -> Vec<AgentConfig> {
         let control = self.control.read().await;
         let service = self.service.lock().await;
-        let ledger = self.usage_ledger.lock().expect("usage ledger poisoned");
+        let store = self.local_store.lock().expect("local store poisoned");
         let today = Local::now().date_naive();
         agent_metadata()
             .into_iter()
@@ -506,7 +523,7 @@ impl AppState {
                     .get(id)
                     .copied()
                     .unwrap_or(runtime.enabled);
-                let usage = ledger.agent_usage(id, today);
+                let usage = store.agent_usage(id, today);
                 let (accuracy, today_tokens, total_tokens, daily_usage) = match &usage {
                     Some(usage) => (
                         usage.accuracy.clone(),
@@ -537,8 +554,14 @@ impl AppState {
                     today_tokens,
                     total_tokens,
                     daily_usage,
-                    total_costs: usage.as_ref().map(|item| item.total_costs.clone()).unwrap_or_default(),
-                    pricing: usage.as_ref().map(|u|u.pricing.clone()).unwrap_or_default(),
+                    total_costs: usage
+                        .as_ref()
+                        .map(|item| item.total_costs.clone())
+                        .unwrap_or_default(),
+                    pricing: usage
+                        .as_ref()
+                        .map(|u| u.pricing.clone())
+                        .unwrap_or_default(),
                     history_start: usage.as_ref().map(|item| item.history_start.clone()),
                     last_active: if runtime.detected {
                         "DETECTED"
@@ -659,7 +682,10 @@ impl AppState {
         let server_time = ack.server_acked_at.clone();
         {
             let mut service = self.service.lock().await;
-            service.wal.append_ack(ack).map_err(|_| "LOCAL_STORAGE_ERROR")?;
+            service
+                .wal
+                .append_ack(ack)
+                .map_err(|_| "LOCAL_STORAGE_ERROR")?;
             let _ = service.wal.compact();
         }
         {
