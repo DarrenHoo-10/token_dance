@@ -59,7 +59,7 @@ func ValidVersion(value string) bool {
 
 func ValidSkillInvokeType(value string) bool {
 	switch value {
-	case "explicit", "implicit", "automatic", "unknown":
+	case "explicit", "implicit", "automatic", "unknown", "native", "hook", "tool_correlated", "runtime_correlated":
 		return true
 	default:
 		return false
