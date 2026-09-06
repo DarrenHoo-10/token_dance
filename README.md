@@ -19,7 +19,9 @@
 3. 在设置页面登录账号，登录后自动同步用量；注册会跳转到网站。
 4. 点击“网站主页 · 看排名”进入官网。
 
-更新时先退出托盘中的旧版本，再启动新版。前端页面已经打包进 exe，运行时无需启动本地开发服务器。程序使用 Microsoft Edge WebView2 Runtime；系统提示缺失时可从 [Microsoft 官方页面](https://developer.microsoft.com/microsoft-edge/webview2/) 安装。
+v0.1.11 及更早版本更新时，先退出托盘中的旧版本，再启动新版。从 v0.1.12 起，Windows x64 桌面端提供应用内更新：发现新版本后，TokenDance 文字右上角显示红色 **NEW**，点击查看更新说明并选择“立即更新”。自动更新默认开启，后台下载，下次启动时安装；也可以在设置中关闭，或选择“重启并更新”立即安装。程序原目录、账号和采集数据均保留。
+
+前端页面已经打包进 exe，运行时无需启动本地开发服务器。程序使用 Microsoft Edge WebView2 Runtime；系统提示缺失时可从 [Microsoft 官方页面](https://developer.microsoft.com/microsoft-edge/webview2/) 安装。
 
 当前 Windows 预览版尚未进行 Authenticode 代码签名，系统可能显示发布者未验证提示。macOS 的预编译下载会在可用后提供。
 
@@ -28,7 +30,7 @@
 - 托盘用量面板：今日、近 7 日、All Time，以及近 7 日趋势。
 - 展示 Agent 用量构成、已有费用记录、可获取的订阅额度和年度活跃度。
 - ZCode 可读取本机已登录的智谱 / Z.ai 个人 Coding Plan 授权，查询 5 小时及 7 日额度；每 5 分钟刷新，凭据不上传网站。
-- 桌面设置提供登录、开机启动、采集开关和采集来源选择。
+- 桌面设置提供登录、开机启动、采集开关、采集来源、检查更新和自动更新。
 - 登录后自动同步，界面显示采集与同步状态。
 - 网站提供个人统计、公开排行榜、账号和设备管理。
 
@@ -82,6 +84,7 @@ npm run dev
 ```powershell
 # 桌面前端用量、网站链接和同步状态测试
 npm --prefix collector/apps/desktop run test:usage
+npm --prefix collector/apps/desktop run test:updates
 
 # 桌面原生测试
 cargo test --locked --manifest-path collector/apps/desktop/src-tauri/Cargo.toml

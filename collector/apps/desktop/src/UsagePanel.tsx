@@ -9,6 +9,7 @@ import { AnnualActivity, QuotaRings } from './components/UsageDetails';
 import { brandLogo } from './brand';
 import './styles/usage-panel.css';
 import { useWindowReady } from './window-ready';
+import { UpdateNotice } from './components/SoftwareUpdate';
 
 const format = (value: number) => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 2 }).format(value);
 
@@ -82,7 +83,7 @@ export function UsagePanel() {
   };
   const agentState = (agent: AgentConfig) => agent.status === 'UNDETECTED' ? text('未检测到', 'Not detected') : !agent.enabled ? text('已关闭', 'Disabled') : paused || agent.status === 'PAUSED' ? text('已暂停', 'Paused') : agent.status === 'DEGRADED' && (usageTokens(agent, 'all') ?? 0) > 0 ? text('部分功能不可用', 'Some features unavailable') : ['ERROR', 'DEGRADED', 'NEEDS_PERMISSION', 'CONFIGURING'].includes(agent.status) ? text('需要配置', 'Needs setup') : range === 'today' ? text('今日暂无用量', 'No usage today') : range === 'week' ? text('近 7 日暂无用量', 'No usage in 7 days') : text('暂无历史用量', 'No recorded usage');
   return <div className="usage-panel">
-    <header className="usage-header"><div className="usage-brand"><img src={brandLogo} alt="" /><strong>TokenDance</strong></div><div className="usage-window-controls" role="group" aria-label={text('语言与窗口控制', 'Language and window controls')}>
+    <header className="usage-header"><div className="usage-brand"><img src={brandLogo} alt="" /><div className="desktop-update-wordmark"><strong>TokenDance</strong><UpdateNotice zh={zh} /></div></div><div className="usage-window-controls" role="group" aria-label={text('语言与窗口控制', 'Language and window controls')}>
       <button className="usage-language" onClick={() => { const next = zh ? 'en' : 'zh'; setLang(next); localStorage.setItem('tokendance.language', next); }} aria-label={text('切换到英文', 'Switch to Chinese')}>{zh ? 'EN' : '中'}</button>
       <button disabled={busy} onClick={() => void act(hideWindow)} aria-label={text('最小化到托盘', 'Minimize to tray')} title={text('收起到托盘 · Esc', 'Hide to tray · Esc')}>−</button>
     </div></header>
