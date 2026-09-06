@@ -1,30 +1,32 @@
 import { useEffect, useRef, useState } from "react";
 import { accountWebsite, getAccountSession, loginAccount, logoutAccount, openAccountWebsite } from "./account-bridge";
+import { websiteAvatarUrl } from "./website";
 import type { AccountUser } from "./account-bridge";
 
 export function DesktopAccountCard({ zh }: { zh: boolean }) {
   const [user, setUser] = useState<AccountUser | null>(null);
   const [busy, setBusy] = useState(false);
-  const [checking, setChecking] = useState(true);
   const [error, setError] = useState("");
+  const [failedAvatar, setFailedAvatar] = useState<string | null>(null);
   const generation = useRef(0);
   const requestVersion = useRef(0);
   const working = useRef(false);
   const t = (cn: string, en: string) => zh ? cn : en;
   const errorText = (code: string) => {
-    if (code.includes("LOGIN_TIMEOUT")) return t("网页登录已超时，请重新点击登录。", "Browser sign-in timed out. Please try again.");
+    if (code.includes("BROWSER_OPEN_FAILED")) return t("无法打开浏览器，请检查默认浏览器后重试。", "Could not open your default browser. Check it and retry.");
+    if (code.includes("LOGIN_TIMEOUT")) return t("等待已超过 10 分钟，请重试。", "Sign-in timed out after 10 minutes. Please retry.");
     if (code.includes("LOGIN_IN_PROGRESS")) return t("请先完成已打开的网页登录。", "Complete the sign-in already open in your browser.");
     if (code.includes("INVALID_CREDENTIALS")) return t("邮箱或密码不正确，请重试。", "Incorrect email or password. Try again.");
     if (code.includes("TOO_MANY_ATTEMPTS")) return t("尝试次数较多，请稍后再试。", "Too many attempts. Please try again later.");
     if (code.includes("HTTPS_REQUIRED") || code.includes("INVALID_WEBSITE")) return t("当前网站地址不支持安全登录，请联系支持。", "This website address does not support secure sign-in. Contact support.");
     if (code.includes("PREVIEW_ONLY")) return t("这是界面预览，请在 TokenDance 桌面应用内登录。", "This is a preview. Sign in inside the TokenDance desktop app.");
     if (code.includes("ACCOUNT_FORBIDDEN")) return t("当前账号无法登录，请到网站检查账号状态。", "Unable to sign in. Check your account on the website.");
-    return t("暂时无法连接账号服务，请检查网络后重试。", "Unable to reach the account service. Check your network and retry.");
+    return t("连接异常", "Connection error");
   };
 
   useEffect(() => {
     const current = ++generation.current;
-    setUser(null); setError(""); setChecking(true);
+    setUser(null); setError("");
     const refresh = async () => {
       if (document.hidden || working.current) return;
       const version = ++requestVersion.current;
@@ -32,7 +34,6 @@ export function DesktopAccountCard({ zh }: { zh: boolean }) {
         const session = await getAccountSession(accountWebsite());
         if (generation.current === current && requestVersion.current === version) { setUser(session.user); setError(""); }
       } catch (err) { if (generation.current === current && requestVersion.current === version) setError(String(err)); }
-      finally { if (generation.current === current) setChecking(false); }
     };
     void refresh();
     window.addEventListener("focus", refresh);
@@ -40,25 +41,26 @@ export function DesktopAccountCard({ zh }: { zh: boolean }) {
     return () => { generation.current++; window.removeEventListener("focus", refresh); document.removeEventListener("visibilitychange", refresh); };
   }, []);
 
-  const submit = async (logout = false) => {
+  const submit = async (mode: "login" | "register" | "logout" = "login") => {
     if (working.current) return;
     working.current = true; setBusy(true); setError("");
     requestVersion.current++;
     const current = generation.current;
     try {
       const website = accountWebsite();
-      const session = logout ? (await logoutAccount(website), { user: null }) : await loginAccount(website);
+      const session = mode === "logout" ? (await logoutAccount(website), { user: null }) : await loginAccount(website, mode);
       if (generation.current === current) { setUser(session.user); }
     } catch (err) { if (generation.current === current) setError(String(err)); }
-    finally { working.current = false; setBusy(false); setChecking(false); }
+    finally { working.current = false; setBusy(false); }
   };
   const go = (path: "/register" | "/forgot-password" | "/onboarding") => { void openAccountWebsite(path).catch(err => setError(String(err))); };
 
+  const avatar = websiteAvatarUrl(accountWebsite(), user?.avatarUrl);
   return <section className="settings-account" aria-label={t("账号", "Account")}>
     <div className="settings-account-summary">
-      <span className={`settings-account-avatar ${user ? "signed-in" : ""}`} aria-hidden="true">{user ? Array.from(user.displayName || user.handle || "T")[0].toUpperCase() : "T"}</span>
+      <span className={`settings-account-avatar ${user ? "signed-in" : ""}`} aria-hidden="true">{avatar && avatar !== failedAvatar ? <img src={avatar} alt="" onError={() => setFailedAvatar(avatar)} /> : user ? Array.from(user.displayName || user.handle || "T")[0].toUpperCase() : "T"}</span>
       <div className="settings-account-identity"><h2>{user ? user.displayName || user.handle : t("登录 TokenDance", "Sign in to TokenDance")}</h2><p>{user ? user.handle ? `@${user.handle}` : t("已登录", "Signed in") : t("使用浏览器登录，已登录账号可直接继续", "Sign in with your browser and reuse your existing session")}</p></div>
-      <div className="settings-account-actions">{user ? <button disabled={busy} onClick={() => void submit(true)}>{busy ? t("退出中…", "Signing out…") : t("退出登录", "Sign out")}</button> : <><button disabled={busy} onClick={() => go("/register")}>{t("注册", "Register")} <span aria-hidden="true">↗</span></button><button className="settings-account-primary" disabled={busy || checking} onClick={() => void submit()}>{checking ? t("连接中…", "Connecting…") : busy ? t("等待网页登录…", "Waiting for browser…") : t("登录", "Sign in")}</button></>}</div>
+      <div className="settings-account-actions">{user ? <button disabled={busy} onClick={() => void submit("logout")}>{busy ? t("退出中…", "Signing out…") : t("退出登录", "Sign out")}</button> : <><button disabled={busy} onClick={() => void submit("register")}>{t("注册", "Register")} <span aria-hidden="true">↗</span></button><button className="settings-account-primary" disabled={busy} onClick={() => void submit()}>{busy ? t("等待网页登录…", "Waiting for browser…") : t("登录", "Sign in")}</button></>}</div>
     </div>
     {user?.onboardingRequired && <div className="settings-account-note">{t("到网站完善资料，开始使用排行榜。", "Complete your profile on the website to use rankings.")}<button onClick={() => go("/onboarding")}>{t("完善资料 ↗", "Complete profile ↗")}</button></div>}
     {error && <p className="settings-account-error" role="alert">{errorText(error)}</p>}

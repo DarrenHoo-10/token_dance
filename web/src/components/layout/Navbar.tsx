@@ -9,7 +9,7 @@ import { Button } from '@/components/common/Button';
 
 export const Navbar: React.FC = () => {
   const { user, authenticated, logout } = useAuth();
-  const { locale, t } = useLocale();
+  const { t } = useLocale();
   const navigate = useNavigate();
   const location = useLocation();
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -72,22 +72,6 @@ export const Navbar: React.FC = () => {
           }
         >
           TokenBoard
-        </NavLink>
-        <NavLink
-          to="/community"
-          className={({ isActive }) =>
-            `nav-link ${isActive || location.pathname.startsWith('/community') ? 'active' : ''}`
-          }
-        >
-          {locale === 'zh-CN' ? '社区' : 'Community'}
-        </NavLink>
-        <NavLink
-          to="/teams"
-          className={({ isActive }) =>
-            `nav-link ${isActive || location.pathname.startsWith('/teams') ? 'active' : ''}`
-          }
-        >
-          {locale === 'zh-CN' ? '团队' : 'Teams'}
         </NavLink>
       </nav>
 
