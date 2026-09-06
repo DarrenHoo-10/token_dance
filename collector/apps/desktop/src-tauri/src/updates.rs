@@ -1,5 +1,5 @@
 //! Portable Windows updates. Release metadata and SHA-256 come only from the
-//! project's HTTPS GitHub API; cached executables are revalidated before use.
+//! project's fixed HTTPS release manifest; cached executables are revalidated before use.
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -10,8 +10,7 @@ use std::{
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::{Mutex, RwLock};
 
-const RELEASES: &str =
-    "https://api.github.com/repos/DarrenHoo-10/token_dance/releases?per_page=100";
+const RELEASES: &str = "https://www.nexorai.com.cn/token-dance/releases/stable.json";
 const MAX_DOWNLOAD: u64 = 150 * 1024 * 1024;
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 const SUPPORTED: bool = cfg!(all(target_os = "windows", target_arch = "x86_64"));
@@ -55,19 +54,25 @@ fn auto_enabled() -> bool {
 
 #[derive(Default, Clone, Deserialize)]
 struct Asset {
-    name: String,
-    browser_download_url: String,
-    digest: Option<String>,
+    url: String,
+    sha256: String,
     size: u64,
 }
 #[derive(Default, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct Release {
-    tag_name: String,
-    #[serde(default)]
-    draft: bool,
-    body: Option<String>,
-    published_at: Option<String>,
-    assets: Vec<Asset>,
+    version: String,
+    platform: String,
+    notes: String,
+    published_at: String,
+    exe: Asset,
+    zip: Option<Asset>,
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Manifest {
+    schema_version: u32,
+    releases: Vec<Release>,
 }
 #[derive(Clone)]
 struct Candidate {
@@ -78,97 +83,113 @@ struct Candidate {
 }
 
 fn parse_version(value: &str) -> Option<semver::Version> {
-    semver::Version::parse(value.strip_prefix('v').unwrap_or(value)).ok()
+    let version = semver::Version::parse(value).ok()?;
+    (version.pre.is_empty() && version.build.is_empty()).then_some(version)
 }
 fn valid_digest(value: &str) -> bool {
-    value
-        .strip_prefix("sha256:")
-        .is_some_and(|hash| hash.len() == 64 && hash.bytes().all(|c| c.is_ascii_hexdigit()))
+    value.len() == 64 && value.bytes().all(|hash| hash.is_ascii_hexdigit())
 }
-fn select_release(releases: Vec<Release>, current: &str) -> Result<Option<Candidate>, String> {
+// URLs are supplied by the fixed, trusted first-party HTTPS manifest. No tokens
+// or expiring signed links belong in this public feed. Downloads cannot redirect.
+fn valid_asset_url(value: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(value) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    url.scheme() == "https"
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.query().is_none()
+        && url.fragment().is_none()
+        && url.port_or_known_default() == Some(443)
+        && host.contains('.')
+        && !host.ends_with('.')
+        && !host.ends_with(".localhost")
+        && !host.ends_with(".local")
+        && !host.ends_with(".internal")
+        && host.parse::<std::net::IpAddr>().is_err()
+        && !host.contains(':')
+        && !value.bytes().any(|b| b.is_ascii_whitespace() || b == b'\\')
+}
+fn valid_asset(asset: &Asset) -> bool {
+    valid_asset_url(&asset.url)
+        && asset.size > 0
+        && asset.size <= MAX_DOWNLOAD
+        && valid_digest(&asset.sha256)
+}
+fn select_release(manifest: Manifest, current: &str) -> Result<Option<Candidate>, String> {
     let current = parse_version(current).ok_or("invalid_current_version")?;
-    // Our public desktop channel is currently published as GitHub prereleases.
-    // Only plain numeric tags qualify; alpha/beta semver tags and drafts do not.
-    let best = releases
-        .into_iter()
-        .filter(|r| !r.draft)
-        .filter_map(|r| {
-            parse_version(&r.tag_name)
-                .filter(|v| v.pre.is_empty() && v > &current)
-                .map(|v| (v, r))
-        })
-        .max_by(|a, b| a.0.cmp(&b.0));
+    if manifest.schema_version != 1 || manifest.releases.len() > 100 {
+        return Err("invalid_release".into());
+    }
+    let mut best: Option<(semver::Version, Release)> = None;
+    let mut seen = std::collections::HashSet::new();
+    for release in manifest.releases {
+        if release.platform != "windows-x64" {
+            continue;
+        }
+        let version = parse_version(&release.version).ok_or("invalid_release")?;
+        if !seen.insert(version.clone()) {
+            return Err("invalid_release".into());
+        }
+        if best
+            .as_ref()
+            .is_none_or(|(previous, _)| version > *previous)
+        {
+            best = Some((version, release));
+        }
+    }
     let Some((version, release)) = best else {
         return Ok(None);
     };
-    let asset = release
-        .assets
-        .into_iter()
-        .find(|a| a.name == "TokenDance.exe")
-        .ok_or("asset_missing")?;
-    let expected = format!(
-        "https://github.com/DarrenHoo-10/token_dance/releases/download/{}/TokenDance.exe",
-        release.tag_name
-    );
-    if asset.browser_download_url != expected
-        || asset.size == 0
-        || asset.size > MAX_DOWNLOAD
-        || !asset.digest.as_deref().is_some_and(valid_digest)
+    // Validate newest metadata even when installed version is current. Never
+    // silently fall back to an older release when the newest package is broken.
+    if !valid_asset(&release.exe)
+        || release
+            .zip
+            .as_ref()
+            .is_some_and(|asset| !valid_asset(asset))
+        || chrono::DateTime::parse_from_rfc3339(&release.published_at).is_err()
     {
         return Err("unverified_release".into());
     }
+    if version <= current {
+        return Ok(None);
+    }
     Ok(Some(Candidate {
         version: version.to_string(),
-        notes: release.body.unwrap_or_default(),
-        published_at: release.published_at,
-        asset,
+        notes: release.notes,
+        published_at: Some(release.published_at),
+        asset: release.exe,
     }))
 }
 
 fn client(timeout: u64) -> Result<reqwest::Client, String> {
-    // reqwest's system-proxy feature follows this machine's network settings.
     reqwest::Client::builder()
         .user_agent(concat!("TokenDance/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(timeout))
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            let url = attempt.url();
-            if attempt.previous().len() < 5
-                && url.scheme() == "https"
-                && matches!(
-                    url.host_str(),
-                    Some(
-                        "github.com"
-                            | "release-assets.githubusercontent.com"
-                            | "objects.githubusercontent.com"
-                    )
-                )
-            {
-                attempt.follow()
-            } else {
-                attempt.stop()
-            }
-        }))
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .map_err(|_| "network".into())
 }
 async fn latest() -> Result<Option<Candidate>, String> {
     let mut response = client(20)?
         .get(RELEASES)
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28")
+        .header("Accept", "application/json")
+        .header("Cache-Control", "no-cache")
         .send()
         .await
         .map_err(|_| "network")?;
     if !response.status().is_success() {
-        return Err(
-            if response.status().as_u16() == 403 || response.status().as_u16() == 429 {
-                "rate_limited"
-            } else {
-                "network"
-            }
-            .into(),
-        );
+        return Err(if response.status().as_u16() == 429 {
+            "rate_limited"
+        } else {
+            "network"
+        }
+        .into());
     }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| "network")? {
@@ -177,15 +198,13 @@ async fn latest() -> Result<Option<Candidate>, String> {
         }
         bytes.extend_from_slice(&chunk);
     }
-    let releases = serde_json::from_slice(&bytes).map_err(|_| "invalid_release")?;
-    select_release(releases, CURRENT)
+    let manifest = serde_json::from_slice(&bytes).map_err(|_| "invalid_release")?;
+    select_release(manifest, CURRENT)
 }
 fn verify(bytes: &[u8], candidate: &Candidate) -> bool {
     bytes.len() as u64 == candidate.asset.size
         && bytes.starts_with(b"MZ")
-        && candidate.asset.digest.as_deref().is_some_and(|expected| {
-            format!("sha256:{:x}", Sha256::digest(bytes)).eq_ignore_ascii_case(expected)
-        })
+        && format!("{:x}", Sha256::digest(bytes)).eq_ignore_ascii_case(&candidate.asset.sha256)
 }
 fn verified_cache(candidate: &Candidate) -> bool {
     let path = cached_binary();
@@ -273,7 +292,7 @@ impl UpdateState {
             view.error = None;
         }
         let mut response = client(300)?
-            .get(&candidate.asset.browser_download_url)
+            .get(&candidate.asset.url)
             .send()
             .await
             .map_err(|_| "network")?;
@@ -368,7 +387,8 @@ pub async fn install_update(
         let candidate = state.candidate.read().await.clone().ok_or("no_update")?;
         replace_verified(&candidate)?;
         let _ = app.state::<crate::state::AppState>().shutdown().await;
-        app.state::<crate::single_instance::InstanceGuard>().release();
+        app.state::<crate::single_instance::InstanceGuard>()
+            .release();
         app.restart();
         #[allow(unreachable_code)]
         Ok::<(), String>(())
@@ -468,52 +488,105 @@ pub fn start(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn release(tag: &str) -> Release {
-        Release { tag_name: tag.into(), assets: vec![Asset { name: "TokenDance.exe".into(), size: 2, digest: Some(format!("sha256:{:x}", Sha256::digest(b"MZ"))), browser_download_url: format!("https://github.com/DarrenHoo-10/token_dance/releases/download/{tag}/TokenDance.exe") }], ..Default::default() }
+    fn release(version: &str) -> Release {
+        Release {
+            version: version.into(),
+            platform: "windows-x64".into(),
+            published_at: "2026-09-07T00:00:00Z".into(),
+            exe: Asset {
+                url: format!("https://downloads.example.com/{version}/TokenDance.exe"),
+                size: 2,
+                sha256: format!("{:x}", Sha256::digest(b"MZ")),
+            },
+            ..Default::default()
+        }
+    }
+    fn manifest(releases: Vec<Release>) -> Manifest {
+        Manifest {
+            schema_version: 1,
+            releases,
+        }
     }
     #[test]
     fn semantic_order_and_no_downgrade() {
         let selected = select_release(
-            vec![release("v0.1.9"), release("v0.1.12"), release("v0.1.11")],
+            manifest(vec![release("0.1.9"), release("0.1.12"), release("0.1.11")]),
             "0.1.10",
         )
         .unwrap()
         .unwrap();
         assert_eq!(selected.version, "0.1.12");
-        assert!(
-            select_release(vec![release("v0.1.9"), release("v0.1.10")], "0.1.10")
-                .unwrap()
-                .is_none()
-        );
+        assert!(select_release(
+            manifest(vec![release("0.1.9"), release("0.1.10")]),
+            "0.1.10"
+        )
+        .unwrap()
+        .is_none());
     }
     #[test]
-    fn drafts_and_experimental_tags_are_excluded() {
-        let mut draft = release("v9.0.0");
-        draft.draft = true;
-        assert!(
-            select_release(vec![draft, release("v1.0.0-beta.1")], "0.1.11")
-                .unwrap()
-                .is_none()
-        );
-    }
-    #[test]
-    fn missing_checksums_or_foreign_assets_fail_closed() {
-        let mut r = release("v0.1.12");
-        r.assets[0].digest = None;
-        assert!(select_release(vec![r], "0.1.11").is_err());
-        let mut r = release("v0.1.12");
-        r.assets[0].browser_download_url = "https://evil.test/TokenDance.exe".into();
-        assert!(select_release(vec![r], "0.1.11").is_err());
-    }
-    #[test]
-    fn tampered_or_truncated_downloads_are_rejected() {
-        let candidate = select_release(vec![release("v0.1.12")], "0.1.11")
+    fn schema_platform_and_versions_are_checked() {
+        let mut other = release("9.0.0");
+        other.platform = "macos-arm64".into();
+        assert!(select_release(manifest(vec![other]), "0.1.11")
             .unwrap()
-            .unwrap();
+            .is_none());
+        for version in ["1.0.0-beta.1", "01.0.0", "v1.0.0", "1.0.0+test"] {
+            assert!(select_release(manifest(vec![release(version)]), "0.1.11").is_err());
+        }
+        assert!(select_release(
+            Manifest {
+                schema_version: 2,
+                releases: vec![]
+            },
+            "0.1.11"
+        )
+        .is_err());
+        assert!(
+            select_release(manifest(vec![release("1.0.0"), release("1.0.0")]), "0.1.11").is_err()
+        );
+    }
+    #[test]
+    fn missing_checksums_and_insecure_urls_fail_closed() {
+        let mut r = release("0.1.12");
+        r.exe.sha256.clear();
+        assert!(select_release(manifest(vec![r]), "0.1.11").is_err());
+        for url in [
+            "http://downloads.example.com/a.exe",
+            "file:///tmp/a.exe",
+            "https://u:p@downloads.example.com/a.exe",
+            "https://127.0.0.1/a.exe",
+            "https://[::1]/a.exe",
+            "https://localhost/a.exe",
+            "https://host.local/a.exe",
+            "https://cdn.example.com/a.exe?token=secret",
+            "https://cdn.example.com:8443/a.exe",
+            "https://cdn.example.com/a.exe#hash",
+        ] {
+            assert!(!valid_asset_url(url), "{url}");
+        }
+        assert!(valid_asset_url(
+            "https://bucket.oss-region.aliyuncs.com/token-dance/1.0.0/TokenDance.exe"
+        ));
+    }
+    #[test]
+    fn broken_newest_does_not_fall_back() {
+        let mut newest = release("0.1.12");
+        newest.exe.size = MAX_DOWNLOAD + 1;
+        assert!(select_release(manifest(vec![release("0.1.11"), newest]), "0.1.10").is_err());
+        let mut r = release("0.1.12");
+        r.published_at = "invalid".into();
+        assert!(select_release(manifest(vec![r]), "0.1.10").is_err());
+    }
+    #[test]
+    fn shared_manifest_contract_and_tampered_downloads() {
+        let input = include_str!("../../../../../schemas/fixtures/desktop-release-manifest.json");
+        let manifest = serde_json::from_str(input).unwrap();
+        let candidate = select_release(manifest, "0.1.0").unwrap().unwrap();
+        assert_eq!(candidate.version, "0.2.0");
         assert!(verify(b"MZ", &candidate));
-        assert!(!verify(b"MZextra", &candidate));
-        assert!(!verify(b"ZZ", &candidate));
-        assert!(!verify(b"M", &candidate));
+        for bytes in [b"MZextra".as_slice(), b"ZZ", b"M"] {
+            assert!(!verify(bytes, &candidate));
+        }
     }
     #[tokio::test]
     async fn concurrent_operations_do_not_queue_a_second_install() {

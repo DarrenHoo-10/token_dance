@@ -15,13 +15,13 @@
 
 ## 最新版本规则
 
-`web/src/pages/resources/windowsRelease.ts` 每次进入下载页从项目公开 GitHub Releases API 读取发行记录，不固定版本号，不使用会排除预览版的 `/releases/latest`。
+`web/src/pages/resources/windowsRelease.ts` 每次进入下载页读取站点的 `releases/stable.json`，版本不写在页面中。桌面更新器读取同一份第一方 HTTPS 清单，不再依赖 GitHub Releases。
 
-与桌面更新器的公开频道保持一致：在 API 返回的最近 100 条发行记录中，排除 draft 和 alpha/beta 等带后缀标签，按 `major.minor.patch` 语义版本取最高版本，包括 GitHub 标记为 prerelease 的纯数字版本。最新版缺少 Windows 发行包时显示获取失败，不静默降级到旧版本。
+按 Windows x64 的 `major.minor.patch` 数字版本选择最高版本，预览版标记仅用于展示；最新记录缺包或校验信息时显示获取失败，不静默回退旧版本。
 
-下载地址、版本号、发布日期、预览版标记、文件大小、可选 ZIP 和校验文件均来自同一发行记录；EXE 必须来自当前仓库对应标签的精确地址，具有有效大小和 SHA-256。无需凭据，不携带网站会话。
+版本号、发布日期、预览标记、文件大小、可选 ZIP、更新说明与 SHA-256 均来自同一记录。包地址由内部发布流程维护，为永久的 OSS/CDN HTTPS 地址。无需凭据，不携带网站会话。
 
-获取超时为 10 秒，页面退出时取消请求。加载中、尚无发行版和获取失败分别显示状态。失败时可重试或跳到 GitHub 发布页，避免伪造“最新版本”。校验值用于文件一致性，不宣称已完成 Windows 签名。用户可以在客户端设置中检查更新。
+获取超时为 10 秒，退出页面时取消请求。加载中、尚无发行版和获取失败分别显示状态。失败时可重试；校验值和更新说明直接在下载页展示，不再跳转私有 GitHub 页面。具体发布流程见 [桌面版本发布](desktop-release-publishing.md)。
 
 ## 文档口径
 

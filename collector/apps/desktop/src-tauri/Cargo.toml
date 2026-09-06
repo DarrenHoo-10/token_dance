@@ -2,7 +2,7 @@
 
 [package]
 name = "tokendance-desktop"
-version = "0.1.16"
+version = "0.1.17"
 edition = "2021"
 authors = ["TokenDance Team"]
 description = "TokenDance Desktop Collector Settings Shell"

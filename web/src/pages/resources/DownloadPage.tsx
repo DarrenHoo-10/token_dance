@@ -1,7 +1,7 @@
 import { ArrowDownToLine, ArrowRight, ArrowUpRight, Monitor, Minus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useLocale } from '@/context/LocaleContext';
-import { releasesUrl, useWindowsRelease } from './windowsRelease';
+import { useWindowsRelease } from './windowsRelease';
 import { useResourceNavigation } from './useResourceNavigation';
 import './resources.css';
 
@@ -43,9 +43,9 @@ export function DownloadPage() {
         <div className="windows-heading"><span className="windows-icon"><Monitor size={27} aria-hidden="true" /></span><div><h3>Windows <span className="resource-pill">{zh ? '便携版' : 'Portable'}</span></h3><p>x64 · .exe{release && ` · ${(release.bytes / 1024 / 1024).toFixed(1)} MiB`}</p></div></div>
         <p className="release-description">{zh ? '下载后运行，常驻系统托盘。更新前请先从托盘菜单退出旧版本。' : 'Run the downloaded app to open it in your system tray. Quit the previous version from the tray menu before updating.'}</p>
         {release ? <><div className="resource-actions"><a className="resource-button resource-button-dark" href={release.exeUrl}>{zh ? '下载 Windows 版' : 'Download for Windows'}<ArrowDownToLine size={16} aria-hidden="true" /></a>{release.zipUrl && <a className="resource-link" href={release.zipUrl}>{zh ? '下载 ZIP 压缩包' : 'Download ZIP'}</a>}<Link className="resource-link" to="/docs/install">{zh ? '安装说明' : 'Installation guide'}<ArrowUpRight size={15} aria-hidden="true" /></Link></div>
-        <div className="release-details"><span>v{release.version} · {release.publishedAt} · {release.prerelease ? (zh ? '预览版' : 'Preview') : (zh ? '正式版' : 'Stable')}</span><a href={release.releaseUrl} target="_blank" rel="noreferrer">{zh ? 'GitHub 发布说明' : 'GitHub release notes'} ↗</a>{release.checksumsUrl && <a href={release.checksumsUrl}>{zh ? 'SHA-256 校验文件' : 'SHA-256 checksums'}</a>}</div></> : <div className="release-status" role={status === 'error' ? 'alert' : 'status'}>
-          <p>{status === 'loading' ? (zh ? '正在获取最新 Windows 版本…' : 'Checking the latest Windows release…') : status === 'empty' ? (zh ? '暂未发布 Windows 客户端。' : 'No Windows release is available yet.') : (zh ? '暂时无法获取最新版本，请重试或前往发布页下载。' : 'Unable to check the latest release. Retry or download from the releases page.')}</p>
-          <div className="resource-actions">{status !== 'loading' && <button className="resource-button" onClick={retry}>{zh ? '重新获取' : 'Retry'}</button>}<a className="resource-link" href={releasesUrl} target="_blank" rel="noreferrer">{zh ? '前往 GitHub 发布页' : 'Open GitHub releases'}<ArrowUpRight size={15} aria-hidden="true" /></a></div>
+        <div className="release-details"><span>v{release.version} · {release.publishedAt} · {release.prerelease ? (zh ? '预览版' : 'Preview') : (zh ? '正式版' : 'Stable')}</span><span className="release-checksum">SHA-256: <code>{release.sha256}</code></span></div><details className="release-notes"><summary>{zh ? '更新说明' : 'Release notes'}</summary><p>{release.notes}</p></details></> : <div className="release-status" role={status === 'error' ? 'alert' : 'status'}>
+          <p>{status === 'loading' ? (zh ? '正在获取最新 Windows 版本…' : 'Checking the latest Windows release…') : status === 'empty' ? (zh ? '暂未发布 Windows 客户端。' : 'No Windows release is available yet.') : (zh ? '暂时无法获取最新版本，请稍后重试。' : 'Unable to check the latest release. Please retry.')}</p>
+          <div className="resource-actions">{status !== 'loading' && <button className="resource-button" onClick={retry}>{zh ? '重新获取' : 'Retry'}</button>}</div>
         </div>}
       </div>
     </section>
