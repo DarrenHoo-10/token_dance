@@ -478,6 +478,8 @@ impl AppState {
         }
     }
 
+    pub async fn is_global_paused(&self) -> bool { self.control.read().await.global_paused }
+
     pub async fn set_global_pause(
         &self,
         paused: bool,
@@ -553,6 +555,26 @@ impl AppState {
                 })
             })
             .collect()
+    }
+
+    pub fn get_usage_summary(&self, local_date: chrono::NaiveDate) -> crate::orb::UsageSummary {
+        let ledger = self.usage_ledger.lock().expect("usage ledger poisoned");
+        let ids = agent_metadata().map(|(id, _, _)| id);
+        crate::orb::from_ledger(
+            &ledger,
+            local_date,
+            &ids,
+            chrono::Utc::now().timestamp_millis(),
+        )
+    }
+
+    pub fn orb_today_sources(&self) -> Vec<crate::orb::TodaySourceTotal> {
+        let ledger = self.usage_ledger.lock().expect("usage ledger poisoned");
+        crate::orb::today_source_totals(
+            &ledger,
+            chrono::Local::now().date_naive(),
+            crate::orb::CATALOG_AGENTS,
+        )
     }
 
     pub async fn set_agent_status(
