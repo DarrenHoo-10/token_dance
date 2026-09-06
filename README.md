@@ -8,18 +8,20 @@
 
 普通用户不需要编译，也不需要安装 Node.js、Rust 或 Go。
 
-| 下载 | 说明 |
+在 [GitHub Releases](https://github.com/DarrenHoo-10/token_dance/releases) 下载最新发布版本，展开 **Assets** 选择文件：
+
+| 文件 | 说明 |
 | --- | --- |
-| [TokenDance.exe](https://github.com/DarrenHoo-10/token_dance/releases/download/v0.1.13/TokenDance.exe) | Windows x64 便携版，下载后双击运行 |
-| [Windows ZIP 压缩包](https://github.com/DarrenHoo-10/token_dance/releases/download/v0.1.13/TokenDance-windows-x64.zip) | 包含程序、使用说明和构建信息；解压后运行 |
-| [版本说明与 SHA-256 校验文件](https://github.com/DarrenHoo-10/token_dance/releases/tag/v0.1.13) | 查看版本详情与下载校验值 |
+| `TokenDance.exe` | Windows x64 便携版，下载后双击运行 |
+| `TokenDance-windows-x64.zip` | 包含程序和构建信息，解压后运行 |
+| `SHA256SUMS.txt` | 下载文件的 SHA-256 校验值；更新说明见对应版本页面 |
 
 1. 将程序放在固定目录，双击 `TokenDance.exe`。
 2. 在 Windows 右下角托盘点击 TokenDance 图标。看不到时展开隐藏图标区域。
 3. 在设置页面登录账号，登录后自动同步用量；注册会跳转到网站。
 4. 点击“网站主页 · 看排名”进入官网。
 
-v0.1.11 及更早版本更新时，先退出托盘中的旧版本，再启动新版。从 v0.1.12 起，Windows x64 桌面端提供应用内更新：发现新版本后，TokenDance 文字右上角显示红色 **NEW**，点击查看更新说明并选择“立即更新”。自动更新默认开启，后台下载，下次启动时安装；也可以在设置中关闭，或选择“重启并更新”立即安装。程序原目录、账号和采集数据均保留。
+Windows x64 桌面端支持应用内更新：发现新版本后，TokenDance 文字右上角显示红色 **NEW**，点击查看更新说明并选择“立即更新”。自动更新默认开启，后台下载，下次启动时安装；也可以在设置中关闭，或选择“重启并更新”立即安装。程序原目录、账号和采集数据均保留。没有应用内更新入口的旧版，可下载最新安装包，先退出托盘中的旧程序，再启动新版。
 
 前端页面已经打包进 exe，运行时无需启动本地开发服务器。程序使用 Microsoft Edge WebView2 Runtime；系统提示缺失时可从 [Microsoft 官方页面](https://developer.microsoft.com/microsoft-edge/webview2/) 安装。
 
@@ -36,7 +38,7 @@ v0.1.11 及更早版本更新时，先退出托盘中的旧版本，再启动新
 
 各工具能够提供的数据不同，缺失的额度、费用或历史数据不会当作真实统计值展示。
 
-同步状态与本机采集相互独立。“同步未完成，稍后自动重试”表示后台会自动补传；“部分记录校验未通过，已保留在本机”表示服务器拒收了部分记录，原始待同步记录仍保存在本机，无需删除数据或重新安装。v0.1.1 修复了部分上传结果的解析；服务端同时兼容 GLM 等模型名称的大写字母和提供商命名空间。
+同步状态与本机采集相互独立。“同步未完成，稍后自动重试”表示后台会自动补传；“部分记录校验未通过，已保留在本机”表示服务器拒收了部分记录，原始待同步记录仍保存在本机，无需删除数据或重新安装。服务端兼容 GLM 等模型名称的大写字母和提供商命名空间。
 
 ## 项目结构
 
