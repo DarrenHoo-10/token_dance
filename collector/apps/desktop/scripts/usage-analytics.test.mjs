@@ -57,7 +57,9 @@ test('quota cannot remain current after reset or stale observation', () => {
 test('ZCode query failures mark a previous reading stale without claiming zero quota', () => {
   const quota = { agentId: 'zcode', observedAt: now.toISOString(), status: 'unavailable', windows: [{ usedPercent: 52, resetsAt: null, windowMinutes: 10080 }] };
   assert.equal(quotaStale(quota, null, now.getTime()), true);
-  assert.match(quotaStatusText(quota, true), /上次记录/);
+  assert.equal(quotaStatusText(quota, true), '查询异常');
+  assert.equal(quotaStatusText({ ...quota, status: 'network_error' }, true), '连接异常');
+  assert.equal(quotaStale({ ...quota, status: 'network_error' }, null, now.getTime()), true);
   assert.match(quotaStatusText({ ...quota, status: 'auth_required' }, true), /重新登录/);
   assert.equal(quotaStatusText({ ...quota, status: 'ready' }, true), null);
   assert.equal(quotaStale({ ...quota, status: 'ready' }, null, now.getTime()), false);
