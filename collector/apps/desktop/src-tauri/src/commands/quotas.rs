@@ -1,5 +1,6 @@
 use serde::Serialize;
 use serde_json::Value;
+mod zcode;
 use std::{fs, io::{Read, Seek, SeekFrom}, path::{Path, PathBuf}, sync::Mutex, time::{Duration, Instant}};
 
 #[derive(Clone, Debug, Serialize)]
@@ -8,6 +9,8 @@ pub struct QuotaWindow {
     used_percent: f64,
     window_minutes: u64,
     resets_at: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -17,6 +20,8 @@ pub struct AgentQuota {
     observed_at: String,
     plan: Option<String>,
     windows: Vec<QuotaWindow>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    status: Option<String>,
 }
 
 fn parse_quota(line: &str) -> Option<AgentQuota> {
@@ -33,12 +38,12 @@ fn parse_quota(line: &str) -> Option<AgentQuota> {
         let used_percent = window["used_percent"].as_f64()?;
         let window_minutes = window["window_minutes"].as_u64()?;
         if !used_percent.is_finite() || !(0.0..=100.0).contains(&used_percent) || window_minutes == 0 { return None; }
-        Some(QuotaWindow { used_percent, window_minutes, resets_at: window["resets_at"].as_i64() })
+        Some(QuotaWindow { used_percent, window_minutes, resets_at: window["resets_at"].as_i64(), provider: None })
     }).collect::<Vec<_>>();
     if windows.is_empty() { return None; }
     Some(AgentQuota {
         agent_id: "codex".into(), observed_at: observed_at.into(),
-        plan: limits["plan_type"].as_str().map(str::to_owned), windows,
+        plan: limits["plan_type"].as_str().map(str::to_owned), windows, status: None,
     })
 }
 
@@ -84,7 +89,7 @@ fn read_codex_quota() -> Vec<AgentQuota> {
 #[tauri::command]
 pub async fn get_agent_quotas() -> Result<Vec<AgentQuota>, String> {
     static CACHE: Mutex<Option<(Instant, Vec<AgentQuota>)>> = Mutex::new(None);
-    tauri::async_runtime::spawn_blocking(|| {
+    let mut result = tauri::async_runtime::spawn_blocking(|| -> Result<Vec<AgentQuota>, String> {
         let mut cache = CACHE.lock().map_err(|_| "Quota cache unavailable")?;
         if let Some((time, result)) = cache.as_ref() {
             if time.elapsed() < Duration::from_secs(60) { return Ok(result.clone()); }
@@ -92,7 +97,9 @@ pub async fn get_agent_quotas() -> Result<Vec<AgentQuota>, String> {
         let result = read_codex_quota();
         *cache = Some((Instant::now(), result.clone()));
         Ok(result)
-    }).await.map_err(|error| error.to_string())?
+    }).await.map_err(|error| error.to_string())??;
+    if let Some(quota) = zcode::read_quota().await { result.push(quota); }
+    Ok(result)
 }
 
 #[cfg(test)]

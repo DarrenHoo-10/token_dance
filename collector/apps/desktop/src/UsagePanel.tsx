@@ -25,24 +25,36 @@ export function UsagePanel() {
   useEffect(() => {
     let disposed = false;
     let loading = false;
+    let loadingQuotas = false;
+    const loadQuotas = async () => {
+      if (loadingQuotas || document.hidden) return;
+      loadingQuotas = true;
+      try { const result = await getAgentQuotas(); if (!disposed) setQuotas(result); }
+      catch { /* Keep the last observation; its timestamp still expires normally. */ }
+      finally { loadingQuotas = false; }
+    };
     const load = async () => {
       if (loading || document.hidden) return;
       loading = true;
       setLang(localStorage.getItem('tokendance.language') === 'en' ? 'en' : 'zh');
       try {
-        const [agents, status, quotaResult] = await Promise.all([getAgentConfigs(), getDaemonStatus(), getAgentQuotas().catch(() => null)]);
-        if (!disposed) { setData({ agents, status }); if (quotaResult) setQuotas(quotaResult); setError(false); }
+        const [agents, status] = await Promise.all([getAgentConfigs(), getDaemonStatus()]);
+        if (!disposed) { setData({ agents, status }); setError(false); }
       } catch { if (!disposed) setError(true); }
       finally { loading = false; }
     };
     refresh.current = load;
     void load();
+    void loadQuotas();
     const timer = window.setInterval(load, 3000);
+    const quotaTimer = window.setInterval(loadQuotas, 60000);
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') void hideWindow(); };
     window.addEventListener('keydown', onKey);
     window.addEventListener('focus', load);
+    window.addEventListener('focus', loadQuotas);
     document.addEventListener('visibilitychange', load);
-    return () => { disposed = true; window.clearInterval(timer); window.removeEventListener('keydown', onKey); window.removeEventListener('focus', load); document.removeEventListener('visibilitychange', load); };
+    document.addEventListener('visibilitychange', loadQuotas);
+    return () => { disposed = true; window.clearInterval(timer); window.clearInterval(quotaTimer); window.removeEventListener('keydown', onKey); window.removeEventListener('focus', load); window.removeEventListener('focus', loadQuotas); document.removeEventListener('visibilitychange', load); document.removeEventListener('visibilitychange', loadQuotas); };
   }, []);
   useEffect(() => { if (!message) return; const timer = window.setTimeout(() => setMessage(''), 4500); return () => window.clearTimeout(timer); }, [message]);
   const act = async (action: () => Promise<unknown>) => {

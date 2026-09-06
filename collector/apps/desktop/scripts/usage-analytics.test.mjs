@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { usageTokens, usageCosts, annualUsage, quotaStale } from '../src/usage-analytics.ts';
+import { usageTokens, usageCosts, annualUsage, quotaStale, quotaStatusText } from '../src/usage-analytics.ts';
 import { lastSevenDays } from '../src/weekly-usage.ts';
 const now = new Date(2026, 8, 5, 12);
 const dates = lastSevenDays(now);
@@ -41,4 +41,13 @@ test('quota cannot remain current after reset or stale observation', () => {
   assert.equal(quotaStale(quota, time / 1000 - 1, time), true);
   assert.equal(quotaStale(quota, null, time + 31 * 60000), true);
   assert.equal(quotaStale({ observedAt: 'invalid' }, null, time), true);
+});
+
+test('ZCode query failures mark a previous reading stale without claiming zero quota', () => {
+  const quota = { agentId: 'zcode', observedAt: now.toISOString(), status: 'unavailable', windows: [{ usedPercent: 52, resetsAt: null, windowMinutes: 10080 }] };
+  assert.equal(quotaStale(quota, null, now.getTime()), true);
+  assert.match(quotaStatusText(quota, true), /上次记录/);
+  assert.match(quotaStatusText({ ...quota, status: 'auth_required' }, true), /重新登录/);
+  assert.equal(quotaStatusText({ ...quota, status: 'ready' }, true), null);
+  assert.equal(quotaStale({ ...quota, status: 'ready' }, null, now.getTime()), false);
 });
