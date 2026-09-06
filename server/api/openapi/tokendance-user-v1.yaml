@@ -2657,6 +2657,10 @@ components:
         rankDelta:
           type: integer
           nullable: true
+          description: Previous UTC day's same-window rank minus current rank, recomputed for the current public cohort. Positive means rising; zero means unchanged.
+        isNew:
+          type: boolean
+          description: No ranked usage in the comparison window ending yesterday. Missing on responses without a comparison.
     LeaderboardResponse:
       type: object
       required:

@@ -1,4 +1,5 @@
 import { LeaderboardTable } from '@/components/analytics/LeaderboardTable';
+import { RankChange } from '@/components/analytics/RankChange';
 import { avatarUrl } from '@/utils/avatar';
 import React, { useCallback, useRef, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -44,7 +45,7 @@ function PodiumCard({ entry }: { entry: LeaderboardEntry }) {
     <div className={`rank-medal rank-${entry.rankNo}`}>{entry.rankNo}</div>
     <div className="podium-avatar-wrap"><PersonAvatar entry={entry} className="podium-avatar" />{winner && <span className="crown">♛</span>}</div>
     <strong>{entry.handle}</strong>
-    <div className="podium-score-row"><span>{formatTokens(entry.metricValue)}</span><small><TrendBadge value={entry.rankDelta ?? null} /></small></div>
+    <div className="podium-score-row"><span>{formatTokens(entry.metricValue)}</span><small><RankChange value={entry.rankDelta} isNew={entry.isNew} /></small></div>
     <p>{entry.topAgent || '—'}</p>
   </article>;
 }

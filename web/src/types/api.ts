@@ -506,6 +506,7 @@ export interface LeaderboardEntry {
   avatarUrl: string | null;
   metricValue: string;
   rankDelta?: number | null;
+  isNew?: boolean;
   formattedMetric?: string;
   topAgent?: string;
   activeDays?: number;

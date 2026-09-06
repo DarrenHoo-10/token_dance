@@ -29,7 +29,7 @@ func leaderboardDates(window string, now time.Time) (string, string, error) {
 	return start.Format("2006-01-02"), end.Format("2006-01-02"), nil
 }
 
-const liveTokenRanking = `WITH totals AS (
+const tokenTotals = `
 	SELECT u.user_id, p.handle, p.display_name, p.avatar_url,
 	       SUM(m.exact_token_total + m.derived_token_total) AS tokens,
 	       MAX(m.computed_at) AS watermark
@@ -43,7 +43,9 @@ const liveTokenRanking = `WITH totals AS (
 	  AND priv.show_token_total = TRUE
 	GROUP BY u.user_id, p.handle, p.display_name, p.avatar_url
 	HAVING tokens > 0
-), ranked AS (
+`
+
+const liveTokenRanking = `WITH totals AS (` + tokenTotals + `), ranked AS (
 	SELECT totals.*, ROW_NUMBER() OVER (ORDER BY tokens DESC, user_id ASC) AS rank_no
 	FROM totals
 ), stats AS (
@@ -54,6 +56,12 @@ const liveTokenRanking = `WITH totals AS (
 
 func (s *leaderboardStore) getLiveTokenLeaderboard(ctx context.Context, window string, cursor *string, limit int, now time.Time) (*domain.LeaderboardResponse, error) {
 	from, to, err := leaderboardDates(window, now)
+	if err != nil {
+		return nil, err
+	}
+	// Compare the same UTC calendar window ending yesterday, using the same
+	// current public cohort and tie-breaker as today's ranking.
+	previousFrom, previousTo, err := leaderboardDates(window, now.UTC().AddDate(0, 0, -1))
 	if err != nil {
 		return nil, err
 	}
@@ -68,11 +76,15 @@ func (s *leaderboardStore) getLiveTokenLeaderboard(ctx context.Context, window s
 	if endRank > 1000 {
 		endRank = 1000
 	}
-	rows, err := s.db.QueryContext(ctx, liveTokenRanking+`
+	rows, err := s.db.QueryContext(ctx, liveTokenRanking+`, previous_totals AS (`+tokenTotals+`), previous_ranked AS (
+	    SELECT user_id, ROW_NUMBER() OVER (ORDER BY tokens DESC, user_id ASC) AS rank_no
+	    FROM previous_totals
+	)
 	SELECT stats.participants, stats.tokens, stats.watermark,
-	       ranked.rank_no, ranked.handle, ranked.display_name, ranked.avatar_url, ranked.tokens
+	       ranked.rank_no, ranked.handle, ranked.display_name, ranked.avatar_url, ranked.tokens, previous_ranked.rank_no
 	FROM stats LEFT JOIN ranked ON ranked.rank_no > ? AND ranked.rank_no <= ?
-	ORDER BY ranked.rank_no`, from, to, after, endRank)
+	LEFT JOIN previous_ranked ON previous_ranked.user_id = ranked.user_id
+	ORDER BY ranked.rank_no`, from, to, previousFrom, previousTo, after, endRank)
 	if err != nil {
 		return nil, fmt.Errorf("query live token leaderboard: %w", err)
 	}
@@ -81,9 +93,9 @@ func (s *leaderboardStore) getLiveTokenLeaderboard(ctx context.Context, window s
 	response := &domain.LeaderboardResponse{BoardKey: "global", Window: window, Metric: "tokens", Timezone: "UTC", Entries: []domain.LeaderboardEntry{}, TotalEntries: &count, TotalTokens: &total}
 	for rows.Next() {
 		var watermark sql.NullTime
-		var rank sql.NullInt64
+		var rank, previousRank sql.NullInt64
 		var handle, name, avatar, tokens sql.NullString
-		if err := rows.Scan(&count, &total, &watermark, &rank, &handle, &name, &avatar, &tokens); err != nil {
+		if err := rows.Scan(&count, &total, &watermark, &rank, &handle, &name, &avatar, &tokens, &previousRank); err != nil {
 			return nil, err
 		}
 		if watermark.Valid {
@@ -91,7 +103,12 @@ func (s *leaderboardStore) getLiveTokenLeaderboard(ctx context.Context, window s
 			response.DataWatermarkAt = &value
 		}
 		if rank.Valid {
-			response.Entries = append(response.Entries, domain.LeaderboardEntry{RankNo: int(rank.Int64), Handle: handle.String, DisplayName: name.String, AvatarURL: ptrFromNullString(avatar), MetricValue: tokens.String})
+			entry := domain.LeaderboardEntry{RankNo: int(rank.Int64), Handle: handle.String, DisplayName: name.String, AvatarURL: ptrFromNullString(avatar), MetricValue: tokens.String, IsNew: !previousRank.Valid}
+			if previousRank.Valid {
+				delta := int(previousRank.Int64 - rank.Int64)
+				entry.RankDelta = &delta
+			}
+			response.Entries = append(response.Entries, entry)
 		}
 	}
 	if err := rows.Err(); err != nil {
