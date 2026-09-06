@@ -2913,6 +2913,10 @@ components:
         skillInvokeType:
           type: string
           enum:
+          - native
+          - hook
+          - tool_correlated
+          - runtime_correlated
           - explicit
           - implicit
           - automatic
