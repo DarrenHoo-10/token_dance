@@ -131,9 +131,9 @@ export const zhCN = {
     pauseMotion: '暂停动画',
     resumeMotion: '继续动画',
     loginHeroLine1: '让 Token',
-    loginHeroLine2: '起舞。',
+    loginHeroLine2: '起舞',
     registerHeroLine1: '创建你的',
-    registerHeroLine2: '账户。',
+    registerHeroLine2: '账户',
   },
   onboarding: {
     stepIndicator: '首次建档 · 2 / 3',

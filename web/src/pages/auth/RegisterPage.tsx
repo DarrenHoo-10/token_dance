@@ -107,8 +107,10 @@ export const RegisterPage: React.FC = () => {
     }
   };
 
-  const mood: CompanionMood = focusedField === 'password' || showPassword ? 'password'
-    : submitting || sendingCode ? 'loading' : focusedField === 'email' ? 'email' : errorMessage ? 'error' : 'idle';
+  const mood: CompanionMood = submitting || sendingCode ? 'loading'
+    : errorMessage ? 'error'
+      : focusedField === 'password' || showPassword ? 'password'
+        : focusedField === 'email' ? 'email' : 'idle';
 
   return (
     <AuthLayout mode="register" returnTo={rawReturnTo} mood={mood} errorMessage={errorMessage}>
@@ -117,7 +119,7 @@ export const RegisterPage: React.FC = () => {
           <Input
             label={t('auth.email')} type="email" autoComplete="email" name="email"
             placeholder={t('auth.emailPlaceholder')} value={email}
-            onChange={(e) => setEmail(e.target.value)} onFocus={() => setFocusedField('email')}
+            onChange={(e) => { setEmail(e.target.value); setErrorMessage(null); }} onFocus={() => setFocusedField('email')}
             onBlur={() => setFocusedField(null)} required
           />
           <Button
@@ -130,12 +132,12 @@ export const RegisterPage: React.FC = () => {
         <Input
           label={t('auth.code')} type="text" autoComplete="one-time-code" name="code" inputMode="numeric"
           placeholder={t('auth.codePlaceholder')} value={code}
-          onChange={(e) => setCode(e.target.value.trim())} required
+          onChange={(e) => { setCode(e.target.value.trim()); setErrorMessage(null); }} required
         />
         <AuthPasswordInput
           label={t('auth.password')} autoComplete="new-password" name="password"
           placeholder={t('auth.newPasswordPlaceholder')} value={password}
-          onChange={(e) => setPassword(e.target.value)} onFocus={() => setFocusedField('password')}
+          onChange={(e) => { setPassword(e.target.value); setErrorMessage(null); }} onFocus={() => setFocusedField('password')}
           onBlur={() => setFocusedField(null)} required
           visible={showPassword} onToggleVisibility={() => setShowPassword(!showPassword)}
         />
