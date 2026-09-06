@@ -357,6 +357,9 @@ func TestCompleteRegistration_DefaultProfile(t *testing.T) {
 	// 1. Registration completes onboarding with an email-derived handle and
 	//    the client-provided locale/timezone; visibility defaults to private.
 	u := registerUser("darthcoder@tokendance.dev", "zh-CN", "Asia/Shanghai")
+	if u.DisplayName == "Token Dancer" || u.DisplayName == "" || u.AvatarURL == nil {
+		t.Fatal("older clients should receive a random nickname and preset avatar")
+	}
 	if u.OnboardingCompletedAt == nil {
 		t.Errorf("expected onboarding completed at registration")
 	}

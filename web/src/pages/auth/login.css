@@ -70,6 +70,22 @@
 .login-page .auth-send-code { height: 52px; border-radius: 12px; border-color: #c5cebc; background: #fffffc; color: #4e5d42; font-size: 13px; white-space: nowrap; }
 .login-page .auth-send-code:not(:disabled):hover { background: #eef3e3; border-color: #668718; }
 .login-page .auth-register-submit { margin-top: 8px; }
+.registration-profile { margin: 0 0 20px; padding: 0; border: 0; min-width: 0; }
+.registration-profile legend { padding: 0; margin-bottom: 12px; font-size: 14px; font-weight: 600; color: #30382b; }
+.registration-avatar-list { display: flex; gap: 16px; margin-bottom: 14px; }
+.registration-avatar { position: relative; display: block; width: 60px; height: 60px; cursor: pointer; }
+.registration-avatar input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.registration-avatar img { display: block; width: 60px; height: 60px; border-radius: 50%; border: 2px solid transparent; padding: 3px; object-fit: cover; transition: border-color .15s, background .15s; }
+.registration-avatar:hover img { border-color: #b2c295; }
+.registration-avatar input:checked + img { border-color: #64851e; background: #e7f3cb; }
+.registration-avatar input:focus-visible + img { outline: 3px solid #64851e; outline-offset: 3px; }
+.registration-avatar-check { position: absolute; bottom: 0; right: 0; width: 17px; height: 17px; border-radius: 50%; display: grid; place-items: center; background: #46641c; color: white; border: 2px solid #fff; }
+.login-page .registration-profile .form-group { margin-bottom: 0; }
+.registration-shuffle { display: grid; place-items: center; width: 36px; height: 44px; margin-right: -8px; border: 0; border-radius: 8px; background: transparent; color: #4e6041; cursor: pointer; }
+.registration-shuffle:hover { background: #edf3e5; }
+.registration-shuffle:focus-visible { outline: 2px solid #64851e; }
+.login-page[data-auth-mode="register"] .login-companions { display: none; }
+.login-page[data-auth-mode="register"] .login-heading { margin-top: 0; }
 .login-password-toggle { display: grid; place-items: center; width: 44px; height: 44px; margin-right: -8px; border: 0; background: transparent; color: var(--auth-muted); cursor: pointer; border-radius: 8px; transition: color .18s, background .18s; }
 .login-password-toggle:hover { color: #42640b; background: #edf3e5; }
 .login-options { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 4px 12px; margin: -3px 0 16px; font-size: 13px; }
@@ -152,6 +168,7 @@
 }
 /* On tablets and phones the brand becomes a compact header, keeping sign-in in view. */
 @media (max-width: 959px) {
+  .login-page[data-auth-mode="register"] .login-motion-toggle { display: none; }
   .login-page { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
   .login-brand { min-height: 0; padding: 22px 28px; background: var(--auth-surface); color: var(--auth-ink); overflow: visible; }
   .login-brand__logo { font-size: 21px; }

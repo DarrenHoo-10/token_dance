@@ -69,6 +69,8 @@ export interface RegisterCodeRequest {
 }
 
 export interface RegisterRequest {
+  displayName?: string;
+  avatarId?: string;
   email: string;
   code: string;
   password?: string;
