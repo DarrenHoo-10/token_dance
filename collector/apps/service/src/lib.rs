@@ -442,7 +442,8 @@ impl ProductionService {
             JsonlTailer::new(self.collector.installation_id(), source_id, source_id, path);
         tailer.restore_matching(&self.wal);
         // Stable IDs dedupe old tokens while the startup replay fills new metrics.
-        let replay_codex = historical && adapter_id == adapter_codex::ADAPTER_ID;
+        let replay_codex = historical && (adapter_id == adapter_codex::ADAPTER_ID
+            || (adapter_id == adapter_grok_build::ADAPTER_ID && self.wal.observations_enabled()));
         if replay_codex {
             if !self.wal.backpressure().allow_historical_scan() {
                 return Ok(0);

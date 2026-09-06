@@ -51,3 +51,19 @@ test('ZCode query failures mark a previous reading stale without claiming zero q
   assert.equal(quotaStatusText({ ...quota, status: 'ready' }, true), null);
   assert.equal(quotaStale({ ...quota, status: 'ready' }, null, now.getTime()), false);
 });
+
+test('estimates combine with recorded currencies, preserve free models and reveal gaps', () => {
+  const p = { estimatedUsd: 150000000, estimatedRequests: 2, unpricedRequests: 1, detailedTokens: 900 };
+  const a = { ...agent, pricing: p };
+  const all = usageCosts([a], 'all', now);
+  assert.equal(all.currencies.USD, 3.5);
+  assert.equal(all.estimatedRequests, 2);
+  assert.equal(all.unpricedRequests, 1);
+  assert.equal(all.historyIncomplete, true);
+  const free = usageCosts([{ ...agent, totalCosts: {}, pricing: { ...p, estimatedUsd: 0, unpricedRequests: 0, detailedTokens: 1000 } }], 'all', now);
+  assert.deepEqual(free.currencies, { USD: 0 });
+  assert.equal(free.historyIncomplete, false);
+  const recent = { ...a, dailyUsage: dates.map((date, i) => ({ date, tokens: 100, pricing: { ...p, estimatedUsd: (i+1)*100000000, detailedTokens: 100 } })) };
+  assert.equal(usageCosts([recent], 'today', now).currencies.USD, 7);
+  assert.equal(usageCosts([recent], 'week', now).currencies.USD, 28);
+});

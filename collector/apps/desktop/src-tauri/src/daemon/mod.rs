@@ -20,7 +20,16 @@ impl CollectorDaemon {
     pub fn start(&self) {
         let is_running = Arc::clone(&self.is_running);
         let state = self.state.clone();
+        let price_state=state.clone();
+        let price_running=Arc::clone(&is_running);
         tauri::async_runtime::spawn(async move {
+            while price_running.load(Ordering::Acquire) {
+                price_state.refresh_local_prices().await;
+                tokio::time::sleep(Duration::from_secs(300)).await;
+            }
+        });
+        tauri::async_runtime::spawn(async move {
+            state.backfill_local_prices().await;
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             let mut historical = true;
             while is_running.load(Ordering::Acquire) {
@@ -33,9 +42,11 @@ impl CollectorDaemon {
                 let report = collect_tick(&mut service, &snapshot, historical).await;
                 historical = false;
                 let pending = service.wal.unacked_count();
+                let observations = service.wal.take_observations();
                 let envelopes = service.wal.unacked_events();
                 drop(service);
                 state.record_usage(&envelopes);
+                state.record_pricing_observations(&observations);
                 runtime::append_log(
                     &state.control_dir_path(),
                     &format!(
