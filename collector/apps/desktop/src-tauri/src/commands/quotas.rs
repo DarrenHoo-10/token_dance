@@ -1,6 +1,7 @@
 use serde::Serialize;
 use serde_json::Value;
 mod zcode;
+mod connected;
 use std::{fs, io::{Read, Seek, SeekFrom}, path::{Path, PathBuf}, sync::Mutex, time::{Duration, Instant}};
 
 #[derive(Clone, Debug, Serialize)]
@@ -11,6 +12,8 @@ pub struct QuotaWindow {
     resets_at: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -38,7 +41,7 @@ fn parse_quota(line: &str) -> Option<AgentQuota> {
         let used_percent = window["used_percent"].as_f64()?;
         let window_minutes = window["window_minutes"].as_u64()?;
         if !used_percent.is_finite() || !(0.0..=100.0).contains(&used_percent) || window_minutes == 0 { return None; }
-        Some(QuotaWindow { used_percent, window_minutes, resets_at: window["resets_at"].as_i64(), provider: None })
+        Some(QuotaWindow { used_percent, window_minutes, resets_at: window["resets_at"].as_i64(), provider: None, label: None })
     }).collect::<Vec<_>>();
     if windows.is_empty() { return None; }
     Some(AgentQuota {
@@ -98,7 +101,8 @@ pub async fn get_agent_quotas() -> Result<Vec<AgentQuota>, String> {
         *cache = Some((Instant::now(), result.clone()));
         Ok(result)
     }).await.map_err(|error| error.to_string())??;
-    if let Some(quota) = zcode::read_quota().await { result.push(quota); }
+    let (zcode, grok, cursor) = tokio::join!(zcode::read_quota(), connected::grok(), connected::cursor());
+    result.extend([zcode, grok, cursor].into_iter().flatten());
     Ok(result)
 }
 
