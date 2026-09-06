@@ -2,6 +2,29 @@ use super::model::{TodaySourceTotal, UsageState, UsageSummary};
 use crate::usage_ledger::UsageLedger;
 use chrono::NaiveDate;
 
+pub trait TodayUsage {
+    fn known_today_tokens(&self, agent_id: &str, today: NaiveDate) -> Option<u64>;
+    fn last_recorded_change_at_ms(&self) -> Option<i64>;
+}
+
+impl TodayUsage for UsageLedger {
+    fn known_today_tokens(&self, id: &str, today: NaiveDate) -> Option<u64> {
+        self.known_today_tokens(id, today)
+    }
+    fn last_recorded_change_at_ms(&self) -> Option<i64> {
+        self.last_recorded_change_at_ms()
+    }
+}
+
+impl TodayUsage for crate::local_store::LocalStore {
+    fn known_today_tokens(&self, id: &str, today: NaiveDate) -> Option<u64> {
+        self.known_today_tokens(id, today)
+    }
+    fn last_recorded_change_at_ms(&self) -> Option<i64> {
+        self.last_recorded_change_at_ms()
+    }
+}
+
 pub const CATALOG_AGENTS: &[(&str, &str)] = &[
     ("codex", "Codex"),
     ("claude-code", "Claude Code"),
@@ -13,19 +36,30 @@ pub const CATALOG_AGENTS: &[(&str, &str)] = &[
 ];
 
 pub fn from_ledger(
-    ledger: &UsageLedger,
+    ledger: &impl TodayUsage,
     local_date: NaiveDate,
     catalog_ids: &[&str],
     captured_at_ms: i64,
 ) -> UsageSummary {
-    let summary = ledger.today_summary(local_date, catalog_ids);
-    let known = summary.known_source_count as u32;
-    let has_unmeasured_sources = catalog_ids
+    let totals: Vec<u64> = catalog_ids
         .iter()
-        .any(|id| !summary.known_agent_ids.iter().any(|known| known == id));
-    let (state, today_tokens) = match summary.today_tokens {
-        None => (UsageState::Unknown, None),
-        Some(total) => (UsageState::Known, Some(total.to_string())),
+        .filter_map(|id| ledger.known_today_tokens(id, local_date))
+        .collect();
+    let known = totals.len() as u32;
+    let has_unmeasured_sources = totals.len() < catalog_ids.len();
+    let (state, today_tokens) = if totals.is_empty() {
+        (UsageState::Unknown, None)
+    } else {
+        (
+            UsageState::Known,
+            Some(
+                totals
+                    .iter()
+                    .map(|value| u128::from(*value))
+                    .sum::<u128>()
+                    .to_string(),
+            ),
+        )
     };
     UsageSummary {
         local_date: local_date.format("%Y-%m-%d").to_string(),
@@ -34,12 +68,12 @@ pub fn from_ledger(
         known_source_count: known,
         has_unmeasured_sources,
         captured_at_ms,
-        last_recorded_change_at_ms: summary.last_recorded_change_at_ms,
+        last_recorded_change_at_ms: ledger.last_recorded_change_at_ms(),
     }
 }
 
 pub fn today_source_totals(
-    ledger: &UsageLedger,
+    ledger: &impl TodayUsage,
     local_date: NaiveDate,
     agents: &[(&str, &str)],
 ) -> Vec<TodaySourceTotal> {
@@ -65,7 +99,12 @@ mod tests {
     };
     use std::path::Path;
 
-    fn envelope(agent_id: &str, occurred_at: &str, total: u64, accuracy: Accuracy) -> EventEnvelope {
+    fn envelope(
+        agent_id: &str,
+        occurred_at: &str,
+        total: u64,
+        accuracy: Accuracy,
+    ) -> EventEnvelope {
         EventEnvelope {
             schema_version: "1.0".into(),
             event_id: format!("evt-{agent_id}-{occurred_at}-{total}"),
@@ -119,6 +158,50 @@ mod tests {
         assert_eq!(summary.known_source_count, 1);
         assert!(summary.has_unmeasured_sources);
         assert_eq!(summary.local_date, "2026-09-06");
+    }
+
+    #[test]
+    fn sqlite_rollups_preserve_zero_unknown_large_totals_and_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let today = Local::now().date_naive();
+        let mut store = crate::local_store::LocalStore::open(root.path()).unwrap();
+        let mut cost = envelope("zcode", &noon(today), 0, Accuracy::Exact);
+        cost.payload = EventPayload::CostRecorded(CostRecordedPayload {
+            amount: "1.00".into(),
+            currency: "USD".into(),
+            source: CostSource::ProviderReported,
+            discount_amount: None,
+        });
+        let events = [
+            envelope("codex", &noon(today), 0, Accuracy::Exact),
+            envelope(
+                "cursor",
+                &noon(today),
+                9_007_199_254_740_993,
+                Accuracy::Exact,
+            ),
+            cost,
+        ];
+        assert!(store.commit_batch(&events, &[]).unwrap());
+        let recorded_at = store.last_recorded_change_at_ms();
+        assert!(recorded_at.is_some());
+        assert!(!store.commit_batch(&events, &[]).unwrap());
+        assert_eq!(store.last_recorded_change_at_ms(), recorded_at);
+        drop(store);
+        let store = crate::local_store::LocalStore::open(root.path()).unwrap();
+        assert_eq!(store.known_today_tokens("codex", today), Some(0));
+        assert_eq!(store.known_today_tokens("zcode", today), None);
+        assert_eq!(store.known_today_tokens("grok-build", today), None);
+        assert_eq!(
+            store.known_today_tokens("cursor", today + chrono::Duration::days(1)),
+            Some(0)
+        );
+        let summary = from_ledger(&store, today, &["codex", "cursor", "zcode"], 1);
+        assert_eq!(summary.today_tokens.as_deref(), Some("9007199254740993"));
+        assert_eq!(summary.known_source_count, 2);
+        assert!(summary.has_unmeasured_sources);
+        assert_eq!(summary.last_recorded_change_at_ms, None);
+        assert!(!root.path().join("usage-ledger.json").exists());
     }
 
     #[test]
@@ -180,7 +263,8 @@ mod tests {
         let summary = from_ledger(&ledger, today, &["codex", "cursor"], 1);
         assert_eq!(summary.today_tokens.as_deref(), Some("18014398509481986"));
         assert_ne!(summary.today_tokens.as_deref(), Some("18014398509481984"));
-        let totals = today_source_totals(&ledger, today, &[("codex", "Codex"), ("cursor", "Cursor")]);
+        let totals =
+            today_source_totals(&ledger, today, &[("codex", "Codex"), ("cursor", "Cursor")]);
         assert_eq!(totals[0].today_tokens.as_deref(), Some("9007199254740993"));
         assert_eq!(totals[1].today_tokens.as_deref(), Some("9007199254740993"));
     }

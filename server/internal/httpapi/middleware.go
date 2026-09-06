@@ -37,8 +37,16 @@ func NewMiddlewareWithConfig(authService *auth.Service, cfg *config.Config) *Mid
 			m.trustedProxies = append(m.trustedProxies, cidr)
 		}
 	}
-	if cfg.RedisAddr != "" {
-		m.redisClient = redis.NewClient(&redis.Options{Addr: cfg.RedisAddr, DialTimeout: 100 * time.Millisecond, ReadTimeout: 100 * time.Millisecond, WriteTimeout: 100 * time.Millisecond, MaxRetries: 0})
+	if cfg.RedisConfigured() {
+		m.redisClient = redis.NewClient(&redis.Options{
+			Addr:         cfg.RedisAddr,
+			Password:     cfg.RedisPassword,
+			DB:           cfg.RedisDB,
+			DialTimeout:  100 * time.Millisecond,
+			ReadTimeout:  100 * time.Millisecond,
+			WriteTimeout: 100 * time.Millisecond,
+			MaxRetries:   0,
+		})
 	}
 	return m
 }

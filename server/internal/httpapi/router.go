@@ -87,6 +87,7 @@ func NewRouterWithReadiness(
 		cr.Post("/installations/register", handlers.RegisterInstallation)
 		cr.Post("/telemetry/batches", handlers.IngestTelemetry)
 		cr.Post("/telemetry/ingest", handlers.IngestTelemetry)
+		cr.Post("/telemetry/aggregates", handlers.IngestAggregate)
 	})
 
 	// User Web API /api/v1
@@ -148,6 +149,7 @@ func NewRouterWithReadiness(
 
 			// Analytics
 			mr.Get("/summary", handlers.GetSummary)
+			mr.Get("/leaderboards", handlers.GetMyLeaderboards)
 			mr.Get("/trends/tokens", handlers.GetTokenTrends)
 			mr.Get("/breakdowns/agents", handlers.GetAgentBreakdowns)
 			mr.Get("/breakdowns/models", handlers.GetModelBreakdowns)

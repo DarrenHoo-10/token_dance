@@ -1,13 +1,15 @@
-pub mod autostart;
 pub mod auto_sync;
+pub mod autostart;
 pub mod commands;
 pub mod daemon;
+pub mod local_store;
 pub mod orb;
-pub mod state;
-pub mod usage_ledger;
 pub mod pricing;
-pub mod updates;
+pub mod rebuild;
+pub mod state;
 pub mod tray_state;
+pub mod updates;
+pub mod usage_ledger;
 
 use std::fs;
 use std::panic;
@@ -40,42 +42,18 @@ fn install_panic_hook() {
 
 fn install_tray(app: &tauri::App) -> tauri::Result<()> {
     let english = tray_state::saved_english();
-    let labels = tray_state::menu_labels(english,app.state::<orb::controller::OrbHandle>().preferences().enabled,false);
-    let open_item = MenuItem::with_id(
-        app,
-        "open_settings",
-        labels[0],
-        true,
-        None::<&str>,
-    )?;
-    let toggle_orb_item = MenuItem::with_id(
-        app,
-        "toggle_orb",
-        labels[1],
-        true,
-        None::<&str>,
-    )?;
-    let orb_details_item = MenuItem::with_id(
-        app,
-        "orb_details",
-        labels[2],
-        true,
-        None::<&str>,
-    )?;
-    let toggle_pause_item = MenuItem::with_id(
-        app,
-        "toggle_pause",
-        labels[3],
-        true,
-        None::<&str>,
-    )?;
-    let quit_item = MenuItem::with_id(
-        app,
-        "quit",
-        labels[4],
-        true,
-        None::<&str>,
-    )?;
+    let labels = tray_state::menu_labels(
+        english,
+        app.state::<orb::controller::OrbHandle>()
+            .preferences()
+            .enabled,
+        false,
+    );
+    let open_item = MenuItem::with_id(app, "open_settings", labels[0], true, None::<&str>)?;
+    let toggle_orb_item = MenuItem::with_id(app, "toggle_orb", labels[1], true, None::<&str>)?;
+    let orb_details_item = MenuItem::with_id(app, "orb_details", labels[2], true, None::<&str>)?;
+    let toggle_pause_item = MenuItem::with_id(app, "toggle_pause", labels[3], true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", labels[4], true, None::<&str>)?;
     let tray_menu = Menu::with_items(
         app,
         &[
@@ -103,22 +81,39 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
     tray.set_tooltip(Some("TokenDance"))?;
     tray.set_menu(Some(tray_menu))?;
     tray.set_show_menu_on_left_click(false)?;
-    app.manage(tray_state::TrayMenuState::new(english,[open_item,toggle_orb_item,orb_details_item,toggle_pause_item,quit_item]));
+    app.manage(tray_state::TrayMenuState::new(
+        english,
+        [
+            open_item,
+            toggle_orb_item,
+            orb_details_item,
+            toggle_pause_item,
+            quit_item,
+        ],
+    ));
     tray_state::start(app.handle().clone());
     tray.on_menu_event(|app, event| match event.id.as_ref() {
         "open_settings" => {
             let _ = commands::window::open_settings(app.clone());
         }
         "toggle_orb" => {
-            let orb = app.state::<crate::orb::controller::OrbHandle>().inner().clone();
+            let orb = app
+                .state::<crate::orb::controller::OrbHandle>()
+                .inner()
+                .clone();
             tauri::async_runtime::spawn(async move {
                 let _ = tokio::task::spawn_blocking(move || orb.toggle_enabled()).await;
             });
         }
         "orb_details" => {
-            let orb = app.state::<crate::orb::controller::OrbHandle>().inner().clone();
+            let orb = app
+                .state::<crate::orb::controller::OrbHandle>()
+                .inner()
+                .clone();
             tauri::async_runtime::spawn(async move {
-                let _ = tokio::task::spawn_blocking(move || orb.action("orb", "open_details", None)).await;
+                let _ =
+                    tokio::task::spawn_blocking(move || orb.action("orb", "open_details", None))
+                        .await;
             });
         }
         "toggle_pause" => {
@@ -143,7 +138,8 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
             button_state: MouseButtonState::Up,
             position,
             ..
-        } = event {
+        } = event
+        {
             if let Err(error) = commands::window::show_usage_panel(tray.app_handle(), position) {
                 eprintln!("failed to show usage panel: {error}");
             }
@@ -157,7 +153,9 @@ pub fn run() {
     if commands::window::activate_existing_instance() {
         return;
     }
-    if updates::apply_pending_before_start() { return; }
+    if updates::apply_pending_before_start() {
+        return;
+    }
 
     let app_state = match tauri::async_runtime::block_on(AppState::production()) {
         Ok(state) => state,
@@ -226,21 +224,14 @@ pub fn run() {
                 commands::window::page_loaded(webview.app_handle(), webview.label());
             }
         })
-        .on_menu_event(|app, event| {
-            match event.id().as_ref() {
-                "orb_ctx_details"
-                | "orb_ctx_pause"
-                | "orb_ctx_settings"
-                | "orb_ctx_hide"
-                | "orb_ctx_fx_orbit"
-                | "orb_ctx_fx_soft"
-                | "orb_ctx_fx_off" => {
-                    let _ = app
-                        .state::<crate::orb::controller::OrbHandle>()
-                        .handle_context_menu(event.id().as_ref());
-                }
-                _ => {}
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "orb_ctx_details" | "orb_ctx_pause" | "orb_ctx_settings" | "orb_ctx_hide"
+            | "orb_ctx_fx_orbit" | "orb_ctx_fx_soft" | "orb_ctx_fx_off" => {
+                let _ = app
+                    .state::<crate::orb::controller::OrbHandle>()
+                    .handle_context_menu(event.id().as_ref());
             }
+            _ => {}
         })
         .on_window_event(|window, event| {
             if commands::orb::is_orb_window(window.label()) {
@@ -275,7 +266,9 @@ pub fn run() {
             }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                window.state::<commands::window::WindowPresentation>().mark_hidden(window.label());
+                window
+                    .state::<commands::window::WindowPresentation>()
+                    .mark_hidden(window.label());
                 let _ = window.hide();
             }
         })
@@ -359,7 +352,10 @@ mod tests {
         let (_root, state) = state().await;
         let status = state.get_daemon_status().await;
         assert_eq!(status.status, "RUNNING");
-        assert_eq!(status.total_adapters_count as usize, state.get_agents().await.len());
+        assert_eq!(
+            status.total_adapters_count as usize,
+            state.get_agents().await.len()
+        );
         let paused = state.toggle_global_pause().await.unwrap();
         assert_eq!(paused.status, "ACKNOWLEDGED");
         assert!(paused.state.global_paused);
@@ -402,5 +398,48 @@ mod tests {
         assert!(state.set_autostart(true).unwrap().enabled);
         assert!(state.get_autostart_status().unwrap().enabled);
         state.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn sqlite_usage_survives_restart_without_json_or_upload_wal() {
+        let root = tempfile::tempdir().unwrap();
+        let mut event = crate::auto_sync::tests::event('B');
+        event.agent_id = "codex".into();
+        event.occurred_at = chrono::Local::now().to_rfc3339();
+        {
+            let state = AppState::test(root.path().to_path_buf(), Arc::new(MockAutostart::new()))
+                .await
+                .unwrap();
+            assert!(state.record_usage(&[event.clone()]));
+            let agents = state.get_agents().await;
+            let codex = agents.iter().find(|agent| agent.id == "codex").unwrap();
+            assert_eq!(codex.today_tokens, 15);
+            assert_eq!(codex.total_tokens, 15);
+            assert!(!root.path().join("usage-ledger.json").exists());
+            assert!(root.path().join("tokendance.sqlite3").exists());
+            assert!(state.get_outbox().await.is_empty());
+        }
+        let state = AppState::test(root.path().to_path_buf(), Arc::new(MockAutostart::new()))
+            .await
+            .unwrap();
+        let agents = state.get_agents().await;
+        let codex = agents.iter().find(|agent| agent.id == "codex").unwrap();
+        assert_eq!(codex.total_tokens, 15);
+        assert_eq!(codex.today_tokens, 15);
+        let orb = state.get_usage_summary(chrono::Local::now().date_naive());
+        assert_eq!(orb.today_tokens.as_deref(), Some("15"));
+        assert_eq!(orb.known_source_count, 1);
+        let sources = state.orb_today_sources();
+        assert_eq!(
+            sources
+                .iter()
+                .find(|source| source.agent_id == "codex")
+                .unwrap()
+                .today_tokens
+                .as_deref(),
+            Some("15")
+        );
+        assert!(state.get_outbox().await.is_empty());
+        assert!(!state.record_usage(&[event]));
     }
 }

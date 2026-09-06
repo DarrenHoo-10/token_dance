@@ -10,7 +10,7 @@ use crate::detect::{
     list_grok_history_files, list_jsonl_files,
 };
 use crate::upload::UploadPipeline;
-use crate::{adapter_id, DetectionSnapshot, ProductionService};
+use crate::{adapter_id, DecodedSourceBatch, DetectionSnapshot, ProductionService};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct CollectReport {
@@ -87,6 +87,8 @@ pub async fn collect_tick(
         }
         let files = if source_id == adapter_grok_build::HISTORY_SOURCE_ID {
             list_grok_history_files(path, grok_history_limit())
+        } else if historical && adapter == adapter_codex::ADAPTER_ID {
+            list_jsonl_files(path, 128)
         } else {
             list_jsonl_files(path, default_jsonl_limit())
         };
@@ -104,6 +106,71 @@ pub async fn collect_tick(
         }
     }
     report
+}
+
+#[derive(Debug, Default)]
+pub struct LocalCollectOutcome {
+    pub report: CollectReport,
+    pub batches: Vec<DecodedSourceBatch>,
+}
+
+/// Decode a bounded collect tick without writing the upload spool.
+/// Desktop persists SQLite first, then enqueues upload separately.
+pub async fn collect_decoded(
+    service: &mut ProductionService,
+    snapshot: &DetectionSnapshot,
+    historical: bool,
+) -> LocalCollectOutcome {
+    let mut outcome = LocalCollectOutcome::default();
+    for (agent, source_id, config) in snapshot.iter_sources() {
+        let Some(path) = config.path.as_ref() else {
+            continue;
+        };
+        let adapter = adapter_id(agent);
+        if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| {
+                ext.eq_ignore_ascii_case("sqlite") || ext.eq_ignore_ascii_case("vscdb")
+            })
+        {
+            match service.decode_sqlite(adapter, source_id).await {
+                Ok(batch) => {
+                    outcome.report.accepted_events += batch.accepted_events;
+                    outcome.batches.push(batch);
+                }
+                Err(error) => outcome
+                    .report
+                    .errors
+                    .push(format!("{adapter}/{source_id}: {error}")),
+            }
+            continue;
+        }
+        let files = if source_id == adapter_grok_build::HISTORY_SOURCE_ID {
+            list_grok_history_files(path, grok_history_limit())
+        } else if historical && adapter == adapter_codex::ADAPTER_ID {
+            list_jsonl_files(path, 128)
+        } else {
+            list_jsonl_files(path, default_jsonl_limit())
+        };
+        for file in files {
+            outcome.report.files_scanned += 1;
+            match service
+                .decode_jsonl_path(adapter, source_id, &file, historical)
+                .await
+            {
+                Ok(batch) => {
+                    outcome.report.accepted_events += batch.accepted_events;
+                    outcome.batches.push(batch);
+                }
+                Err(error) => outcome
+                    .report
+                    .errors
+                    .push(format!("{adapter}/{source_id} {}: {error}", file.display())),
+            }
+        }
+    }
+    outcome
 }
 
 pub async fn assemble_local_service(

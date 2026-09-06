@@ -1662,7 +1662,9 @@ type AnalyticsRepository interface {
 | --- | --- | --- |
 | `TOKENDANCE_HTTP_ADDR` | `:8080` | API 监听地址 |
 | `TOKENDANCE_MYSQL_DSN_FILE` | 无 | 从文件/secret mount 读取，不把 DSN 放日志 |
-| `TOKENDANCE_REDIS_ADDR` | 空 | 空表示禁用 Redis |
+| `TOKENDANCE_REDIS_URL_FILE` | 无 | 生产 Redis URL，实例 `tokendance-redis`，格式 `redis://:<password>@127.0.0.1:6379/0` |
+| `TOKENDANCE_REDIS_URL` | 空 | 测试/开发经域名直连实例 `redis_dev`，格式 `redis://:<password>@www.nexorai.com.cn:6380/0` |
+| `TOKENDANCE_REDIS_ADDR` | 空 | 兼容旧限流配置；空且无 Redis URL 表示禁用 Redis |
 | `TOKENDANCE_AUTH_SESSION_IDLE_TTL` | `336h` | 14 天 |
 | `TOKENDANCE_AUTH_SESSION_ABSOLUTE_TTL` | `720h` | 30 天 |
 | `TOKENDANCE_AUTH_CODE_TTL` | `10m` | 邮箱验证码 |

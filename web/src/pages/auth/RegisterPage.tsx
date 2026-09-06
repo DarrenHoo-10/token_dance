@@ -7,7 +7,9 @@ import { Input } from '@/components/common/Input';
 import { Button } from '@/components/common/Button';
 import { api, ApiError } from '@/api/client';
 import { getApiErrorMessage } from '@/i18n';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Shuffle, Check } from 'lucide-react';
+import { randomNickname, randomAvatarId, registrationAvatars } from './registrationProfile';
+import { avatarUrl } from '@/utils/avatar';
 import type { CompanionMood } from './LoginArt';
 import { AuthLayout } from './AuthLayout';
 import { AuthPasswordInput } from './AuthPasswordInput';
@@ -26,6 +28,8 @@ export const RegisterPage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
+  const [displayName, setDisplayName] = useState(() => randomNickname(locale));
+  const [avatarId, setAvatarId] = useState<string>(randomAvatarId);
   const [sendingCode, setSendingCode] = useState(false);
   const [cooldown, setCooldown] = useState(0);
   const [submitting, setSubmitting] = useState(false);
@@ -69,7 +73,7 @@ export const RegisterPage: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !code || !password) {
+    if (!email || !code || !password || !displayName.trim()) {
       setErrorMessage(t('errors.http_400'));
       return;
     }
@@ -86,13 +90,13 @@ export const RegisterPage: React.FC = () => {
         email,
         code,
         password,
+        displayName: displayName.trim(),
+        avatarId,
         returnTo: rawReturnTo || undefined,
         locale,
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       });
       showToast(t('auth.registerSuccess'), 'success');
-      // Registration completes onboarding server-side with default profile
-      // settings, so new users go straight to the app.
       navigate(res?.returnTo || '/me');
     } catch (err) {
       if (err instanceof ApiError) {
@@ -107,17 +111,36 @@ export const RegisterPage: React.FC = () => {
     }
   };
 
-  const mood: CompanionMood = focusedField === 'password' || showPassword ? 'password'
-    : submitting || sendingCode ? 'loading' : focusedField === 'email' ? 'email' : errorMessage ? 'error' : 'idle';
+  const mood: CompanionMood = submitting || sendingCode ? 'loading'
+    : errorMessage ? 'error'
+      : focusedField === 'password' || showPassword ? 'password'
+        : focusedField === 'email' ? 'email' : 'idle';
 
   return (
     <AuthLayout mode="register" returnTo={rawReturnTo} mood={mood} errorMessage={errorMessage}>
       <form onSubmit={handleSubmit} aria-busy={submitting}>
+        <fieldset className="registration-profile" disabled={submitting}>
+          <legend>{t('auth.yourProfile')}</legend>
+          <div className="registration-avatar-list" role="radiogroup" aria-label={t('auth.chooseAvatar')}>
+            {registrationAvatars.map(avatar => (
+              <label className="registration-avatar" key={avatar.id}>
+                <input type="radio" name="avatar" value={avatar.id} checked={avatarId === avatar.id}
+                  onChange={() => setAvatarId(avatar.id)} aria-label={locale === 'zh-CN' ? avatar.zh : avatar.en} />
+                <img src={avatarUrl(`/images/avatars/${avatar.id}.png`)} alt="" width="56" height="56" />
+                {avatarId === avatar.id && <span className="registration-avatar-check"><Check size={11} aria-hidden="true" /></span>}
+              </label>
+            ))}
+          </div>
+          <Input label={t('auth.nickname')} name="displayName" autoComplete="nickname" value={displayName} maxLength={80} required
+            onChange={event => { setDisplayName(event.target.value); setErrorMessage(null); }}
+            suffix={<button type="button" className="registration-shuffle" aria-label={t('auth.shuffleNickname')} title={t('auth.shuffleNickname')}
+              onClick={() => { setDisplayName(randomNickname(locale)); setErrorMessage(null); }}><Shuffle size={17} aria-hidden="true" /></button>} />
+        </fieldset>
         <div className="auth-email-code-row">
           <Input
             label={t('auth.email')} type="email" autoComplete="email" name="email"
             placeholder={t('auth.emailPlaceholder')} value={email}
-            onChange={(e) => setEmail(e.target.value)} onFocus={() => setFocusedField('email')}
+            onChange={(e) => { setEmail(e.target.value); setErrorMessage(null); }} onFocus={() => setFocusedField('email')}
             onBlur={() => setFocusedField(null)} required
           />
           <Button
@@ -130,12 +153,12 @@ export const RegisterPage: React.FC = () => {
         <Input
           label={t('auth.code')} type="text" autoComplete="one-time-code" name="code" inputMode="numeric"
           placeholder={t('auth.codePlaceholder')} value={code}
-          onChange={(e) => setCode(e.target.value.trim())} required
+          onChange={(e) => { setCode(e.target.value.trim()); setErrorMessage(null); }} required
         />
         <AuthPasswordInput
           label={t('auth.password')} autoComplete="new-password" name="password"
           placeholder={t('auth.newPasswordPlaceholder')} value={password}
-          onChange={(e) => setPassword(e.target.value)} onFocus={() => setFocusedField('password')}
+          onChange={(e) => { setPassword(e.target.value); setErrorMessage(null); }} onFocus={() => setFocusedField('password')}
           onBlur={() => setFocusedField(null)} required
           visible={showPassword} onToggleVisibility={() => setShowPassword(!showPassword)}
         />

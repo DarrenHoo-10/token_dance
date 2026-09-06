@@ -110,9 +110,20 @@ type SearchStore interface {
 	Search(ctx context.Context, query string, limit int, now time.Time) (*domain.SearchResponse, error)
 }
 
+type LeaderboardQuery struct {
+	BoardKey     string
+	Window       string
+	Metric       string
+	SnapshotID   string
+	ViewerUserID string
+	Cursor       *string
+	Limit        int
+}
+
 type LeaderboardStore interface {
 	PublishSnapshot(ctx context.Context, snapshotID string, boardKey, window, metric string, entries []domain.LeaderboardEntry, now time.Time) error
 	GetLeaderboard(ctx context.Context, boardKey, window, metric string, cursor *string, limit int) (*domain.LeaderboardResponse, error)
+	GetLeaderboardView(ctx context.Context, q LeaderboardQuery) (*domain.LeaderboardResponse, error)
 }
 
 type AvatarReadyMeta struct {

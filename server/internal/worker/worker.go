@@ -17,18 +17,21 @@ import (
 	"tokendance/internal/email"
 	"tokendance/internal/pricing"
 	"tokendance/internal/provider"
+	"tokendance/internal/ranking"
 )
 
 type Worker struct {
-	pricing       *pricing.Client
-	priceCursor   uint64
-	priceRetry    time.Time
-	db            *sql.DB
-	workerID      string
-	clk           clock.Clock
-	cipher        *crypto.AEADCipher
-	emailProvider email.Provider
-	storage       provider.ObjectStorage
+	pricing        *pricing.Client
+	priceCursor    uint64
+	priceRetry     time.Time
+	db             *sql.DB
+	workerID       string
+	clk            clock.Clock
+	cipher         *crypto.AEADCipher
+	emailProvider  email.Provider
+	storage        provider.ObjectStorage
+	ranking        *ranking.Index
+	lastHotPublish time.Time
 }
 
 func NewWorker(db *sql.DB, clk clock.Clock) *Worker {
@@ -73,6 +76,10 @@ func (w *Worker) SetEmailProvider(p email.Provider) {
 
 func (w *Worker) SetCipher(c *crypto.AEADCipher) {
 	w.cipher = c
+}
+
+func (w *Worker) SetRanking(idx *ranking.Index) {
+	w.ranking = idx
 }
 
 func (w *Worker) WorkerID() string {
@@ -562,6 +569,35 @@ func (w *Worker) ProcessExpirations(ctx context.Context) error {
 	return nil
 }
 
+const rankingHotInterval = 10 * time.Second
+
+// ProcessRankingOutbox claims ranking publish tasks and applies absolute scores
+// to Redis. Without Redis the tasks stay pending so they are not dropped.
+func (w *Worker) ProcessRankingOutbox(ctx context.Context) (int, error) {
+	if w.db == nil {
+		return 0, nil
+	}
+	if w.ranking == nil {
+		return 0, nil
+	}
+	return w.processRankingOutbox(ctx)
+}
+
+func (w *Worker) ProcessRankingSnapshots(ctx context.Context) error {
+	if w.ranking == nil {
+		return nil
+	}
+	now := w.clk.Now()
+	if !w.lastHotPublish.IsZero() && now.Sub(w.lastHotPublish) < rankingHotInterval {
+		return nil
+	}
+	if err := w.ranking.PublishDirtyWindows(ctx, now); err != nil {
+		return err
+	}
+	w.lastHotPublish = now
+	return nil
+}
+
 // RunPass runs one full pass of all worker tasks
 func (w *Worker) RunPass(ctx context.Context) {
 	if _, err := w.ProcessPrices(ctx); err != nil {
@@ -569,6 +605,12 @@ func (w *Worker) RunPass(ctx context.Context) {
 	}
 	if _, err := w.ProcessAggregates(ctx); err != nil {
 		log.Printf("[Worker %s] Aggregate processing error: %v", w.workerID, err)
+	}
+	if _, err := w.ProcessRankingOutbox(ctx); err != nil {
+		log.Printf("[Worker %s] Ranking outbox processing error: %v", w.workerID, err)
+	}
+	if err := w.ProcessRankingSnapshots(ctx); err != nil {
+		log.Printf("[Worker %s] Ranking snapshot processing error: %v", w.workerID, err)
 	}
 	if _, err := w.ProcessOutbox(ctx); err != nil {
 		log.Printf("[Worker %s] Outbox processing error: %v", w.workerID, err)

@@ -2210,6 +2210,8 @@ components:
         ranking:
           type: object
           properties:
+            entry:
+              $ref: '#/components/schemas/LeaderboardEntry'
             visibility:
               type: string
             rank:
@@ -2657,6 +2659,10 @@ components:
         rankDelta:
           type: integer
           nullable: true
+          description: Previous UTC day's same-window rank minus current rank for the current eligible cohort. Positive means rising; missing when unchanged or no comparison baseline.
+        isNew:
+          type: boolean
+          description: No rank in the comparison window ending yesterday. Missing on responses without a comparison.
     LeaderboardResponse:
       type: object
       required:
@@ -2668,16 +2674,41 @@ components:
       properties:
         snapshotId:
           type: string
+        revision:
+          type: string
+        viewKind:
+          type: string
+          description: hot snapshot, live Redis index, or mysql fallback
         boardKey:
           type: string
         window:
           type: string
         metric:
           type: string
+        generation:
+          type: string
+          description: UTC calendar generation for the current window scores
+        timezone:
+          type: string
+        totalEntries:
+          type: integer
+          description: All eligible participating accounts, including zero-token users. Not capped at 1000.
+        totalParticipants:
+          type: integer
+          description: Alias of totalEntries. Full eligible count, not the page size or 1000 cap.
+        totalTokens:
+          type: string
         entries:
           type: array
           items:
             $ref: '#/components/schemas/LeaderboardEntry'
+        ownEntry:
+          allOf:
+          - $ref: '#/components/schemas/LeaderboardEntry'
+          nullable: true
+          description: Authenticated viewer's rank when outside the public top 1000. Never accepted from a client-supplied user id.
+        stale:
+          type: boolean
         nextCursor:
           type: string
           nullable: true
@@ -2907,6 +2938,10 @@ components:
         skillInvokeType:
           type: string
           enum:
+          - native
+          - hook
+          - tool_correlated
+          - runtime_correlated
           - explicit
           - implicit
           - automatic

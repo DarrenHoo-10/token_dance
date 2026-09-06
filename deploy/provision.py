@@ -32,7 +32,19 @@ def secret_file(name, value):
     os.chown(path, 0, gid)
     return str(path)
 
+def ensure_redis(name, publish, password, volume):
+    inspect = subprocess.run(['docker', 'inspect', name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    if inspect.returncode != 0:
+        subprocess.run([
+            'docker', 'run', '-d', '--name', name, '--restart', 'unless-stopped',
+            '-p', publish, '-v', volume + ':/data', 'redis:7-alpine',
+            'redis-server', '--requirepass', password, '--appendonly', 'yes',
+            '--maxmemory-policy', 'noeviction',
+        ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
 password = secrets.token_hex(32)
+redis_password = secrets.token_hex(32)
+redis_dev_password = secrets.token_hex(32)
 sql = f"""CREATE DATABASE IF NOT EXISTS tokendance_prod CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 CREATE USER IF NOT EXISTS 'tokendance_app'@'%' IDENTIFIED BY '{password}';
 ALTER USER 'tokendance_app'@'%' IDENTIFIED BY '{password}';
@@ -41,17 +53,22 @@ GRANT ALL PRIVILEGES ON tokendance_prod.* TO 'tokendance_app'@'%';
 subprocess.run(['docker', 'exec', '-i', 'usercenter-mysql', 'sh', '-c',
     'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -uroot'], input=sql, text=True, check=True,
     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+ensure_redis('tokendance-redis', '127.0.0.1:6379:6379', redis_password, 'tokendance-redis-data')
+ensure_redis('redis_dev', '6380:6379', redis_dev_password, 'redis-dev-data')
 env = {
     'TOKENDANCE_ENVIRONMENT': 'production',
     'TOKENDANCE_HTTP_ADDR': '127.0.0.1:8130',
     'TOKENDANCE_TRUSTED_PROXY_CIDRS': '127.0.0.1/32,::1/128',
     'TOKENDANCE_MYSQL_DSN_FILE': secret_file('mysql_dsn',
         f'tokendance_app:{password}@tcp(127.0.0.1:3307)/tokendance_prod?parseTime=true&loc=UTC'),
+    'TOKENDANCE_REDIS_URL_FILE': secret_file('redis_url',
+        f'redis://:{redis_password}@127.0.0.1:6379/0'),
     'TOKENDANCE_OBJECT_PROVIDER': 's3',
     'TOKENDANCE_OBJECT_PREFIX': 'token-dance',
     'TOKENDANCE_OBJECT_USE_PATH_STYLE': 'false',
     'GOMEMLIMIT': '192MiB',
 }
+secret_file('redis_dev_url', f'redis://:{redis_dev_password}@www.nexorai.com.cn:6380/0')
 for purpose in ['EMAIL_LOOKUP', 'AUTH_SUBJECT', 'SESSION', 'CSRF', 'VERIFICATION_CODE', 'BINDING_CODE', 'GRANT', 'IDEMPOTENCY', 'AEAD']:
     name = purpose + ('_HMAC' if purpose != 'AEAD' else '')
     env[f'TOKENDANCE_{name}_KEYRING_FILE'] = secret_file(purpose.lower()+'.json',

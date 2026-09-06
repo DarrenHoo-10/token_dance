@@ -26,10 +26,12 @@ import (
 	"tokendance/internal/privacy"
 	"tokendance/internal/profile"
 	"tokendance/internal/provider"
+	"tokendance/internal/ranking"
 	"tokendance/internal/search"
 	"tokendance/internal/store"
 	"tokendance/internal/store/memory"
 	"tokendance/internal/store/mysql"
+	"tokendance/internal/store/redisx"
 )
 
 func main() {
@@ -74,6 +76,19 @@ func main() {
 		}
 		log.Printf("WARNING: Running with in-memory store in explicit %s mode", cfg.Environment)
 		st = memory.NewMemoryStore()
+	}
+
+	if cfg.RedisConfigured() {
+		log.Printf("Connecting to Redis %s db=%d...", cfg.RedisAddr, cfg.RedisDB)
+		rdb, err := redisx.OpenClient(cfg, redisx.DefaultClientConfig())
+		if err != nil {
+			log.Fatalf("Fatal Redis connection error: %v", err)
+		}
+		defer rdb.Close()
+		if mysqlStore, ok := st.(*mysql.Store); ok {
+			mysqlStore.SetRanking(ranking.NewIndex(rdb))
+		}
+		log.Printf("Redis ready (db=%d).", cfg.RedisDB)
 	}
 
 	storage, err := provider.NewObjectStorage(cfg)
