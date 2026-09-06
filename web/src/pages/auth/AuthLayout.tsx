@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { CircleAlert, LockKeyhole, Pause, Play, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { ChartNoAxesColumnIncreasing, CircleAlert, Pause, Play, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
 import { useLocale } from '@/context/LocaleContext';
-import { LoginCompanions, TokenOrbit, type CompanionMood } from './LoginArt';
+import { LoginCompanions, TokenScene, type CompanionMood } from './LoginArt';
 import './login.css';
 
 interface AuthLayoutProps {
@@ -15,15 +15,22 @@ interface AuthLayoutProps {
 }
 
 export function AuthLayout({ mode, returnTo, mood, errorMessage, children }: AuthLayoutProps) {
-  const { t } = useLocale();
+  const { locale, t } = useLocale();
   const [motionPaused, setMotionPaused] = useState(false);
+  const [pageHidden, setPageHidden] = useState(() => document.hidden);
+  useEffect(() => {
+    const updateVisibility = () => setPageHidden(document.hidden);
+    document.addEventListener('visibilitychange', updateVisibility);
+    return () => document.removeEventListener('visibilitychange', updateVisibility);
+  }, []);
   const isLogin = mode === 'login';
   const caption = t(`auth.companion${mood[0].toUpperCase()}${mood.slice(1)}`);
   const route = (path: string) => returnTo ? `${path}?return_to=${encodeURIComponent(returnTo)}` : path;
 
   return (
-    <div className="login-page" data-auth-mode={mode} data-motion={motionPaused ? 'paused' : 'playing'}>
+    <div className="login-page" lang={locale} data-auth-mode={mode} data-motion={motionPaused || pageHidden ? 'paused' : 'playing'}>
       <aside className="login-brand">
+        <TokenScene paused={motionPaused || pageHidden} />
         <NavLink to="/" className="login-brand__logo" aria-label="TokenDance">
           <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" />
           <span>TokenDance</span>
@@ -39,14 +46,11 @@ export function AuthLayout({ mode, returnTo, mood, errorMessage, children }: Aut
         </button>
         <div className="login-brand__body">
           <div className="login-brand__copy">
-            <p className="eyebrow">{t('common.brandTagline')}</p>
             <h1>
               {t(`auth.${mode}HeroLine1`)} <br />
               <span>{t(`auth.${mode}HeroLine2`)}</span>
             </h1>
-            <p>{t('common.heroSub')}</p>
           </div>
-          <TokenOrbit />
         </div>
         <div className="login-brand__footer">
           <div>
@@ -60,7 +64,7 @@ export function AuthLayout({ mode, returnTo, mood, errorMessage, children }: Aut
             <small>{t('auth.editorialControlCopy')}</small>
           </div>
           <div>
-            <LockKeyhole size={17} aria-hidden="true" />
+            <ChartNoAxesColumnIncreasing size={17} aria-hidden="true" />
             <strong>{t('auth.editorialInsightTitle')}</strong>
             <small>{t('auth.editorialInsightCopy')}</small>
           </div>

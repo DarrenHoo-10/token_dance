@@ -131,9 +131,9 @@ export const enUS = {
     pauseMotion: 'Pause animations',
     resumeMotion: 'Resume animations',
     loginHeroLine1: 'Let Token',
-    loginHeroLine2: 'Dance.',
+    loginHeroLine2: 'Dance',
     registerHeroLine1: 'Create your',
-    registerHeroLine2: 'Account.',
+    registerHeroLine2: 'Account',
   },
   onboarding: {
     stepIndicator: 'Profile setup · 2 / 3',

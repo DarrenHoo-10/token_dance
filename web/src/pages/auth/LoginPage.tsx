@@ -83,8 +83,10 @@ export const LoginPage: React.FC = () => {
     return null;
   }
 
-  const mood: CompanionMood = focusedField === 'password' || showPassword ? 'password'
-    : loading ? 'loading' : focusedField === 'email' ? 'email' : errorMessage ? 'error' : 'idle';
+  const mood: CompanionMood = loading ? 'loading'
+    : errorMessage ? 'error'
+      : focusedField === 'password' || showPassword ? 'password'
+        : focusedField === 'email' ? 'email' : 'idle';
 
   return (
     <AuthLayout mode="login" returnTo={rawReturnTo} mood={mood} errorMessage={errorMessage}>
@@ -92,19 +94,19 @@ export const LoginPage: React.FC = () => {
         <Input
           label={t('auth.email')} type="email" autoComplete="username" name="email"
           placeholder={t('auth.emailPlaceholder')} value={email}
-          onChange={(e) => setEmail(e.target.value)} onFocus={() => setFocusedField('email')}
+          onChange={(e) => { setEmail(e.target.value); setErrorMessage(null); }} onFocus={() => setFocusedField('email')}
           onBlur={() => setFocusedField(null)} required
         />
         <AuthPasswordInput
           label={t('auth.password')} autoComplete="current-password" name="password"
           placeholder={t('auth.passwordPlaceholder')} value={password}
-          onChange={(e) => setPassword(e.target.value)} onFocus={() => setFocusedField('password')}
+          onChange={(e) => { setPassword(e.target.value); setErrorMessage(null); }} onFocus={() => setFocusedField('password')}
           onBlur={() => setFocusedField(null)} required
           visible={showPassword} onToggleVisibility={() => setShowPassword(!showPassword)}
         />
         <div className="login-options">
           <label>
-            <input type="checkbox" checked={keepSignedIn} onChange={(e) => setKeepSignedIn(e.target.checked)} />
+            <input type="checkbox" checked={keepSignedIn} onChange={(e) => { setKeepSignedIn(e.target.checked); setErrorMessage(null); }} />
             <span>{t('auth.keepSignedIn')}</span>
           </label>
           <NavLink to={rawReturnTo ? `/forgot-password?return_to=${encodeURIComponent(rawReturnTo)}` : '/forgot-password'}>
