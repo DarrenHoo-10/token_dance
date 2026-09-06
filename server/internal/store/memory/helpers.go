@@ -83,6 +83,7 @@ func (m *MemoryStore) SeedUserForTest(userID, handle, email string, now time.Tim
 	m.userCredentials[userID] = &cred
 	m.privacySettings[userID] = &priv
 	m.sessions[sess.SessionID] = &sess
+	m.insertZeroWindowScoresLocked(userID, now, now)
 
 	if handle != "" {
 		pub := domain.PublicUserProfile{

@@ -84,6 +84,34 @@ func TestAuthFlows(t *testing.T) {
 	if regResult.SessionToken == "" || regResult.CSRFToken == "" {
 		t.Errorf("expected session and csrf tokens")
 	}
+	scores := st.WindowScores(regResult.User.UserID)
+	if len(scores) != 4 {
+		t.Fatalf("expected 4 window scores after registration, got %d", len(scores))
+	}
+	seenWindows := map[string]bool{}
+	for _, score := range scores {
+		if score.Tokens != 0 || !score.Eligible {
+			t.Fatalf("new registration must join boards at 0 tokens: %+v", score)
+		}
+		seenWindows[score.Window] = true
+	}
+	for _, window := range []string{"today", "7d", "30d", "all"} {
+		if !seenWindows[window] {
+			t.Fatalf("missing window score %s", window)
+		}
+	}
+	board, err := st.Leaderboard().GetLeaderboard(ctx, "global", "today", "tokens", nil, 50)
+	if err != nil {
+		t.Fatalf("leaderboard after registration: %v", err)
+	}
+	if board.TotalParticipants == nil || *board.TotalParticipants != 1 || len(board.Entries) != 1 {
+		t.Fatalf("registered user missing from leaderboard: %+v", board)
+	}
+	_, _ = st.UpdatePrivacyTx(ctx, regResult.User.UserID, domain.UserPrivacySettings{PublicProfileEnabled: true}, 0, domain.UserSecurityEvent{}, clk.Now())
+	after, err := st.Leaderboard().GetLeaderboard(ctx, "global", "today", "tokens", nil, 50)
+	if err != nil || after.TotalParticipants == nil || *after.TotalParticipants != *board.TotalParticipants {
+		t.Fatalf("privacy toggle changed membership: before=%+v after=%+v err=%v", board, after, err)
+	}
 
 	// 4. Resolve Session
 	sess, u, err := svc.ResolveSession(ctx, regResult.SessionToken)

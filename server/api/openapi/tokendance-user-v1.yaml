@@ -2659,10 +2659,10 @@ components:
         rankDelta:
           type: integer
           nullable: true
-          description: Previous UTC day's same-window rank minus current rank, recomputed for the current public cohort. Positive means rising; zero means unchanged.
+          description: Previous UTC day's same-window rank minus current rank for the current eligible cohort. Positive means rising; missing when unchanged or no comparison baseline.
         isNew:
           type: boolean
-          description: No ranked usage in the comparison window ending yesterday. Missing on responses without a comparison.
+          description: No rank in the comparison window ending yesterday. Missing on responses without a comparison.
     LeaderboardResponse:
       type: object
       required:
@@ -2679,6 +2679,19 @@ components:
         window:
           type: string
         metric:
+          type: string
+        generation:
+          type: string
+          description: UTC calendar generation for the current window scores
+        timezone:
+          type: string
+        totalEntries:
+          type: integer
+          description: All eligible participating accounts, including zero-token users. Not capped at 1000.
+        totalParticipants:
+          type: integer
+          description: Alias of totalEntries. Full eligible count, not the page size or 1000 cap.
+        totalTokens:
           type: string
         entries:
           type: array

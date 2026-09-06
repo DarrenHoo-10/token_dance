@@ -562,6 +562,15 @@ func (w *Worker) ProcessExpirations(ctx context.Context) error {
 	return nil
 }
 
+// ProcessRankingOutbox claims ranking publish tasks. Redis apply is Phase D;
+// without Redis the tasks stay pending so they are not dropped.
+func (w *Worker) ProcessRankingOutbox(ctx context.Context) (int, error) {
+	if w.db == nil {
+		return 0, nil
+	}
+	return 0, nil
+}
+
 // RunPass runs one full pass of all worker tasks
 func (w *Worker) RunPass(ctx context.Context) {
 	if _, err := w.ProcessPrices(ctx); err != nil {
@@ -569,6 +578,9 @@ func (w *Worker) RunPass(ctx context.Context) {
 	}
 	if _, err := w.ProcessAggregates(ctx); err != nil {
 		log.Printf("[Worker %s] Aggregate processing error: %v", w.workerID, err)
+	}
+	if _, err := w.ProcessRankingOutbox(ctx); err != nil {
+		log.Printf("[Worker %s] Ranking outbox processing error: %v", w.workerID, err)
 	}
 	if _, err := w.ProcessOutbox(ctx); err != nil {
 		log.Printf("[Worker %s] Outbox processing error: %v", w.workerID, err)

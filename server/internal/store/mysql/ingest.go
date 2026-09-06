@@ -137,6 +137,7 @@ func (s *ingestStore) CommitIngest(ctx context.Context, batch domain.IngestBatch
 		return nil, fmt.Errorf("reserve ingest batch: %w", err)
 	}
 
+	dirtyDates := make(map[string]struct{})
 	for i := range batch.Events {
 		inserted, err := insertUsageEvent(ctx, tx, batch, userID, &batch.Events[i])
 		if err != nil {
@@ -144,8 +145,14 @@ func (s *ingestStore) CommitIngest(ctx context.Context, batch domain.IngestBatch
 		}
 		if inserted {
 			result.AcceptedCount++
+			dirtyDates[batch.Events[i].OccurredAt.UTC().Format("2006-01-02")] = struct{}{}
 		} else {
 			result.DuplicateCount++
+		}
+	}
+	for date := range dirtyDates {
+		if err := MarkAggregateDirtyDayTx(ctx, tx, userID, date, batch.ReceivedAt); err != nil {
+			return nil, err
 		}
 	}
 	result.BatchID = batch.BatchID

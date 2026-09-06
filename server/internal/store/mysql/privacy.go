@@ -264,6 +264,9 @@ func (s *privacyStore) SetAccountStatusTx(ctx context.Context, userID string, st
 	if _, err := tx.ExecContext(ctx, "UPDATE users SET account_status = ?, updated_at = ? WHERE user_id = ?", status, now, userID); err != nil {
 		return fmt.Errorf("update account status: %w", err)
 	}
+	if err := SyncWindowScoreEligibilityTx(ctx, tx, userID, status == domain.AccountStatusActive, now); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE public_user_profiles p
 		JOIN users u ON u.user_id = p.user_id
@@ -388,6 +391,9 @@ func (s *privacyStore) RequestDeletionTx(ctx context.Context, req domain.DataDel
 		}); err != nil {
 			return nil, fmt.Errorf("failed to hide public user profile: %w", err)
 		}
+		if err := SyncWindowScoreEligibilityTx(ctx, tx, *req.UserID, false, now); err != nil {
+			return nil, err
+		}
 	}
 
 	if event.EventID != "" {
@@ -446,6 +452,9 @@ func (s *privacyStore) CancelDeletionTx(ctx context.Context, requestID string, u
 			WHERE user_id = ?`
 		if _, err := tx.ExecContext(ctx, updateUserSQL, now, userID); err != nil {
 			return fmt.Errorf("failed to restore user status: %w", err)
+		}
+		if err := SyncWindowScoreEligibilityTx(ctx, tx, userID, true, now); err != nil {
+			return err
 		}
 	}
 

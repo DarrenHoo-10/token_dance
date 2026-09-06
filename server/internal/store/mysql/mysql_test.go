@@ -68,7 +68,7 @@ func getTestStore(t *testing.T) (*Store, *sql.DB, func()) {
 }
 
 func TestMySQL_AuthStoreLifecycle(t *testing.T) {
-	st, _, cleanup := getTestStore(t)
+	st, db, cleanup := getTestStore(t)
 	defer cleanup()
 
 	ctx := context.Background()
@@ -201,6 +201,10 @@ func TestMySQL_AuthStoreLifecycle(t *testing.T) {
 	}
 	if sess.SessionID != "ses_01testauthsess" {
 		t.Fatalf("unexpected session ID: %s", sess.SessionID)
+	}
+	var windowCount int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_window_scores WHERE user_id = ? AND token_total = 0`, userID).Scan(&windowCount); err != nil || windowCount != 4 {
+		t.Fatalf("expected 4 zero window scores after registration, got %d err=%v", windowCount, err)
 	}
 
 	// 5. Resolve session
@@ -1065,13 +1069,12 @@ func TestUSR015_ImmediatePrivacyClosureMySQL(t *testing.T) {
 		t.Fatalf("failed to update Bob's privacy: %v", err)
 	}
 
-	// Query old snapshot again: Bob must be immediately closed out by privacy join!
 	lb2, err := st.Leaderboard().GetLeaderboard(ctx, "global", "30d", "tokens", nil, 50)
 	if err != nil {
 		t.Fatalf("failed to get leaderboard after privacy update: %v", err)
 	}
-	if len(lb2.Entries) != 1 || lb2.Entries[0].Handle != "alice_snap" {
-		t.Fatalf("expected only Alice in leaderboard after Bob disabled public profile, got: %+v", lb2.Entries)
+	if len(lb2.Entries) != 2 || lb1.TotalParticipants == nil || lb2.TotalParticipants == nil || *lb1.TotalParticipants != *lb2.TotalParticipants {
+		t.Fatalf("privacy toggle must not change membership: before=%+v after=%+v", lb1.Entries, lb2.Entries)
 	}
 
 	// Alice updates her display name and avatar in public profile
@@ -1090,11 +1093,17 @@ func TestUSR015_ImmediatePrivacyClosureMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get leaderboard: %v", err)
 	}
-	if len(lb3.Entries) != 1 {
-		t.Fatalf("expected 1 entry, got %d", len(lb3.Entries))
+	if len(lb3.Entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(lb3.Entries))
 	}
-	if lb3.Entries[0].DisplayName != "Alice Superstar" || lb3.Entries[0].AvatarURL == nil || *lb3.Entries[0].AvatarURL != newAvatar {
-		t.Errorf("expected current projection display name and avatar, got: %+v", lb3.Entries[0])
+	var aliceEntry *domain.LeaderboardEntry
+	for i := range lb3.Entries {
+		if lb3.Entries[i].Handle == "alice_snap" {
+			aliceEntry = &lb3.Entries[i]
+		}
+	}
+	if aliceEntry == nil || aliceEntry.DisplayName != "Alice Superstar" || aliceEntry.AvatarURL == nil || *aliceEntry.AvatarURL != newAvatar {
+		t.Errorf("expected current projection display name and avatar, got: %+v", lb3.Entries)
 	}
 
 	// Alice suspends account
@@ -1107,8 +1116,8 @@ func TestUSR015_ImmediatePrivacyClosureMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get leaderboard: %v", err)
 	}
-	if len(lb4.Entries) != 0 {
-		t.Fatalf("expected 0 entries after Alice suspended account, got %d", len(lb4.Entries))
+	if len(lb4.Entries) != 1 || lb4.Entries[0].Handle != "bob_snap" {
+		t.Fatalf("expected only Bob after Alice suspended account, got %+v", lb4.Entries)
 	}
 }
 
