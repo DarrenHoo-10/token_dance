@@ -34,7 +34,7 @@ func canonicalAggregateStatements(datePlaceholders string) []struct {
 	query   string
 	repeats int
 } {
-	filter := "user_id = ? AND occurred_date IN (" + datePlaceholders + ")"
+	filter := "user_id = ? AND occurred_date IN (" + datePlaceholders + ") AND NOT EXISTS (SELECT 1 FROM device_daily_aggregates da WHERE da.installation_id=usage_events.installation_id AND da.metric_date=usage_events.occurred_date)"
 	return []struct {
 		query   string
 		repeats int
@@ -273,7 +273,7 @@ func rebuildUserAggregates(ctx context.Context, tx *sql.Tx, userID string, affec
 			return fmt.Errorf("rebuild user aggregates: %w", err)
 		}
 	}
-	return nil
+	return applyDeviceAggregates(ctx, tx, userID, affectedDates)
 }
 
 func (w *Worker) ProcessAggregates(ctx context.Context) (int, error) {
@@ -307,6 +307,7 @@ func (w *Worker) ProcessAggregates(ctx context.Context) (int, error) {
 			FROM daily_user_agent_metrics GROUP BY metric_date, user_id
 		) a ON a.metric_date = e.occurred_date AND a.user_id = e.user_id
 		WHERE e.event_pk > COALESCE(a.source_max_event_pk, 0)
+		  AND NOT EXISTS (SELECT 1 FROM device_daily_aggregates da WHERE da.installation_id=e.installation_id AND da.metric_date=e.occurred_date)
 		ORDER BY e.user_id, metric_date
 		LIMIT 500`)
 	if err != nil {

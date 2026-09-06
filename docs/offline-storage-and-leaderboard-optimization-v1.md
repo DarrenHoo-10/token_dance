@@ -491,7 +491,7 @@ Redis 不可用时，限流读取 MySQL 最近完整排名快照及用户名次�
 
 ## 14. 交付范围与参考
 
-本次以方案文档为主，并确定 Redis 连接方式：与 MySQL 一样直连现有云主机，生产用本机 `tokendance-redis`，测试用独立实例 `redis_dev`（`www.nexorai.com.cn:6380`），配置走 URL/secret 文件。SQLite 替换、排行榜读模型、参榜权限变化、API/页面修改、生产重建和客户端发版仍属后续实施，不因提交本方案自动生效。
+方案最初以文档提交，后续已开始代码实施；当前实现范围、验证结果及未完成项见 [实施记录](offline-storage-implementation-status.md)。以下为原定部署边界：与 MySQL 一样直连现有云主机，生产用本机 `tokendance-redis`，测试用独立实例 `redis_dev`（`www.nexorai.com.cn:6380`），配置走 URL/secret 文件。代码提交不等于生产重建、服务端部署或客户端发版，线上行为须以实际部署版本为准。
 
 相关项目文档：
 

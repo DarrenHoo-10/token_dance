@@ -214,11 +214,13 @@ impl CostCoverage {
         self.detailed_tokens = self.detailed_tokens.saturating_add(other.detailed_tokens);
     }
 }
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct CostLedger {
     pub backfilled: bool,
     requests: BTreeMap<String, Request>,
     reported_groups: BTreeMap<String, (String, String)>,
+    #[serde(default)]
+    archived: BTreeMap<String, BTreeMap<String, CostCoverage>>,
 }
 fn group(e: &EventEnvelope) -> String {
     format!(
@@ -229,6 +231,40 @@ fn group(e: &EventEnvelope) -> String {
     )
 }
 impl CostLedger {
+    pub fn merge(&mut self, other: Self) {
+        self.requests.extend(other.requests);
+        self.reported_groups.extend(other.reported_groups);
+        for (agent, days) in other.archived {
+            for (day, coverage) in days {
+                self.archived
+                    .entry(agent.clone())
+                    .or_default()
+                    .entry(day)
+                    .or_default()
+                    .add(&coverage);
+            }
+        }
+    }
+    /// Fold old per-request pricing metadata into final daily coverage. No
+    /// request identity or session/turn hash survives in this archive.
+    pub fn compact_before(&mut self, cutoff: &str) {
+        let agents: std::collections::HashSet<String> =
+            self.requests.values().map(|r| r.agent.clone()).collect();
+        for agent in agents {
+            let days = self.days(&agent, &std::collections::HashSet::new());
+            for (day, coverage) in days {
+                if day.as_str() < cutoff {
+                    self.archived
+                        .entry(agent.clone())
+                        .or_default()
+                        .insert(day, coverage);
+                }
+            }
+        }
+        self.requests.retain(|_, r| r.date.as_str() >= cutoff);
+        self.reported_groups
+            .retain(|_, (_, date)| date.as_str() >= cutoff);
+    }
     pub fn record(
         &mut self,
         e: &EventEnvelope,
@@ -305,7 +341,7 @@ impl CostLedger {
             .filter(|(a, _)| a == agent)
             .map(|(_, d)| d.as_str())
             .collect();
-        let mut days = BTreeMap::<String, CostCoverage>::new();
+        let mut days = self.archived.get(agent).cloned().unwrap_or_default();
         for r in self.requests.values().filter(|r| r.agent == agent) {
             let day = days.entry(r.date.clone()).or_default();
             day.detailed_tokens = day.detailed_tokens.saturating_add(r.tokens);

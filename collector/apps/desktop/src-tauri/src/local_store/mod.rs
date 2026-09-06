@@ -12,8 +12,13 @@ use protocol::{EventEnvelope, EventPayload};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use wal_spool::SourceCheckpoint;
 
+mod aggregate_activity;
 mod rebuild;
+mod retention;
+#[cfg(test)]
+mod retention_tests;
 mod sync;
+pub use retention::{AggregateSnapshot, PendingAggregate};
 
 pub use rebuild::{DiscoveredSource, RebuildFileProgress, ScanWorkItem};
 pub use sync::{DeliveryRecord, LeasedBatch};
@@ -25,7 +30,7 @@ use crate::usage_ledger::{
 };
 
 const DB_FILE: &str = "tokendance.sqlite3";
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 const AGGREGATION_VERSION: i64 = 1;
 const PARSE_VERSION: &str = "1";
 const BUSY_TIMEOUT_MS: u64 = 5_000;
@@ -170,6 +175,7 @@ pub struct LocalStore {
     catalog: Catalog,
     pricing: CostLedger,
     dir: PathBuf,
+    retention_clock: (chrono::DateTime<chrono::Utc>, std::time::Instant),
 }
 
 impl LocalStore {
@@ -190,12 +196,15 @@ impl LocalStore {
         let catalog = Catalog::load(dir);
         let mut pricing = load_pricing(&conn)?;
         pricing.reprice(&catalog);
-        Ok(Self {
+        let mut store = Self {
             conn,
             catalog,
             pricing,
             dir: dir.to_path_buf(),
-        })
+            retention_clock: (chrono::Utc::now(), std::time::Instant::now()),
+        };
+        store.reprice()?;
+        Ok(store)
     }
 
     pub fn catalog(&self) -> &Catalog {
@@ -227,13 +236,20 @@ impl LocalStore {
         abort: bool,
     ) -> Result<bool, String> {
         let tx = self.conn.transaction().map_err(|error| error.to_string())?;
+        let mut pricing = self.pricing.clone();
         let mut changed = false;
         let mut dirty_agents = HashSet::new();
         let target_id = active_target_id(&tx)?;
         for event in events {
-            let outcome = apply_event(&tx, event, &mut self.pricing, &self.catalog)?;
+            let outcome = apply_event(&tx, event, &mut pricing, &self.catalog)?;
             changed |= outcome.changed;
             if outcome.inserted {
+                retention::record(
+                    &tx,
+                    event,
+                    target_id.as_deref().unwrap_or(""),
+                    &self.catalog,
+                )?;
                 if let Some(target_id) = target_id.as_deref() {
                     enqueue_delivery(&tx, target_id, event)?;
                 }
@@ -247,13 +263,14 @@ impl LocalStore {
             rebuild::apply_file_progress(&tx, item)?;
         }
         for agent in dirty_agents {
-            refresh_agent_coverage(&tx, &agent, &self.pricing)?;
+            refresh_agent_coverage(&tx, &agent, &pricing)?;
         }
-        save_pricing(&tx, &self.pricing)?;
+        save_pricing(&tx, &pricing)?;
         if abort {
             return Err("injected_abort".into());
         }
         tx.commit().map_err(|error| error.to_string())?;
+        self.pricing = pricing;
         Ok(changed)
     }
 
@@ -372,7 +389,8 @@ impl LocalStore {
     }
 
     pub fn apply_prices(&mut self, catalog: Catalog) -> Result<(), String> {
-        self.pricing.reprice(&catalog);
+        let mut pricing = self.pricing.clone();
+        pricing.reprice(&catalog);
         let tx = self.conn.transaction().map_err(|error| error.to_string())?;
         let agents = {
             let mut stmt = tx
@@ -386,11 +404,13 @@ impl LocalStore {
             rows.filter_map(Result::ok).collect::<Vec<_>>()
         };
         for agent in agents {
-            refresh_agent_coverage(&tx, &agent, &self.pricing)?;
+            refresh_agent_coverage(&tx, &agent, &pricing)?;
         }
-        save_pricing(&tx, &self.pricing)?;
+        save_pricing(&tx, &pricing)?;
         tx.commit().map_err(|error| error.to_string())?;
+        self.pricing = pricing;
         self.catalog = catalog;
+        self.refresh_aggregate_prices()?;
         std::fs::write(
             self.dir.join("openrouter-prices.json"),
             serde_json::to_vec(&self.catalog).map_err(|error| error.to_string())?,
@@ -399,7 +419,8 @@ impl LocalStore {
     }
 
     pub fn reprice(&mut self) -> Result<(), String> {
-        self.pricing.reprice(&self.catalog);
+        let mut pricing = self.pricing.clone();
+        pricing.reprice(&self.catalog);
         let tx = self.conn.transaction().map_err(|error| error.to_string())?;
         let agents = {
             let mut stmt = tx
@@ -413,10 +434,12 @@ impl LocalStore {
             rows.filter_map(Result::ok).collect::<Vec<_>>()
         };
         for agent in agents {
-            refresh_agent_coverage(&tx, &agent, &self.pricing)?;
+            refresh_agent_coverage(&tx, &agent, &pricing)?;
         }
-        save_pricing(&tx, &self.pricing)?;
-        tx.commit().map_err(|error| error.to_string())
+        save_pricing(&tx, &pricing)?;
+        tx.commit().map_err(|error| error.to_string())?;
+        self.pricing = pricing;
+        self.refresh_aggregate_prices()
     }
 }
 
@@ -460,6 +483,11 @@ fn migrate(conn: &mut Connection) -> Result<(), String> {
         tx.execute_batch(SCHEMA_V2)
             .map_err(|error| error.to_string())?;
     }
+    if current < 3 {
+        tx.execute_batch(retention::SCHEMA)
+            .map_err(|error| error.to_string())?;
+        retention::migrate_data(&tx)?;
+    }
     if current != 0 && current < SCHEMA_VERSION {
         tx.execute(
             "UPDATE schema_meta SET schema_version = ?1 WHERE id = 1",
@@ -502,6 +530,21 @@ fn apply_event(
     pricing: &mut CostLedger,
     catalog: &Catalog,
 ) -> Result<ApplyOutcome, String> {
+    let fresh = retention::fingerprint(tx, event)?;
+    if !fresh
+        && !tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM events WHERE event_id=?1)",
+                params![event.event_id],
+                |r| r.get::<_, bool>(0),
+            )
+            .map_err(|e| e.to_string())?
+    {
+        return Ok(ApplyOutcome {
+            changed: false,
+            inserted: false,
+        });
+    }
     let envelope_json = serde_json::to_string(event).map_err(|error| error.to_string())?;
     let inserted = tx
         .execute(

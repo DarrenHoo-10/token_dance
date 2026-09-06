@@ -281,6 +281,9 @@ func (w *Worker) deletionDeleteEvents(ctx context.Context, claim *deletionClaim)
 		}
 		switch claim.scope {
 		case "account", "all_usage":
+			if _, err := tx.ExecContext(ctx, "DELETE FROM device_daily_aggregates WHERE user_id=?", claim.userID.String); err != nil {
+				return err
+			}
 			if _, err := tx.ExecContext(ctx, "DELETE FROM usage_events WHERE user_id = ?", claim.userID.String); err != nil {
 				return fmt.Errorf("delete user usage events: %w", err)
 			}
@@ -289,7 +292,7 @@ func (w *Worker) deletionDeleteEvents(ctx context.Context, claim *deletionClaim)
 			if err != nil {
 				return err
 			}
-			rows, err := tx.QueryContext(ctx, "SELECT DISTINCT occurred_date FROM usage_events WHERE user_id = ? AND installation_id = ? ORDER BY occurred_date", claim.userID.String, installationID)
+			rows, err := tx.QueryContext(ctx, "SELECT DATE_FORMAT(occurred_date, '%Y-%m-%d') AS day FROM usage_events WHERE user_id=? AND installation_id=? UNION SELECT DATE_FORMAT(metric_date, '%Y-%m-%d') FROM device_daily_aggregates WHERE user_id=? AND installation_id=? ORDER BY day", claim.userID.String, installationID, claim.userID.String, installationID)
 			if err != nil {
 				return fmt.Errorf("query installation aggregate dates: %w", err)
 			}
@@ -307,6 +310,9 @@ func (w *Worker) deletionDeleteEvents(ctx context.Context, claim *deletionClaim)
 			}
 			if _, err := tx.ExecContext(ctx, "DELETE FROM usage_events WHERE user_id = ? AND installation_id = ?", claim.userID.String, installationID); err != nil {
 				return fmt.Errorf("delete installation usage events: %w", err)
+			}
+			if _, err := tx.ExecContext(ctx, "DELETE FROM device_daily_aggregates WHERE user_id=? AND installation_id=?", claim.userID.String, installationID); err != nil {
+				return err
 			}
 			if err := rebuildUserAggregates(ctx, tx, claim.userID.String, affectedDates); err != nil {
 				return err
@@ -348,13 +354,13 @@ func (w *Worker) deletionDeleteAggregates(ctx context.Context, claim *deletionCl
 			}
 			fromDate := from.Format("2006-01-02")
 			toDate := to.Add(-time.Millisecond).Format("2006-01-02")
-			for _, table := range []string{"daily_user_agent_metrics", "daily_user_agent_model_metrics", "daily_skill_metrics"} {
+			for _, table := range []string{"device_daily_aggregates", "daily_user_agent_metrics", "daily_user_agent_model_metrics", "daily_skill_metrics"} {
 				if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE user_id = ? AND metric_date >= ? AND metric_date <= ?", userID, fromDate, toDate); err != nil {
 					return fmt.Errorf("delete %s time range: %w", table, err)
 				}
 			}
 		default:
-			for _, table := range []string{"daily_user_agent_metrics", "daily_user_agent_model_metrics", "daily_skill_metrics"} {
+			for _, table := range []string{"device_daily_aggregates", "daily_user_agent_metrics", "daily_user_agent_model_metrics", "daily_skill_metrics"} {
 				if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE user_id = ?", userID); err != nil {
 					return fmt.Errorf("delete %s: %w", table, err)
 				}
@@ -648,7 +654,7 @@ func reconcileDeletionResiduals(ctx context.Context, tx *sql.Tx, claim *deletion
 		}{"usage events", "SELECT COUNT(*) FROM usage_events WHERE user_id = ? AND occurred_at >= ? AND occurred_at < ?", []interface{}{userID, from, to}})
 		fromDate := from.Format("2006-01-02")
 		toDate := to.Add(-time.Millisecond).Format("2006-01-02")
-		for _, table := range []string{"daily_user_agent_metrics", "daily_user_agent_model_metrics", "daily_skill_metrics"} {
+		for _, table := range []string{"device_daily_aggregates", "daily_user_agent_metrics", "daily_user_agent_model_metrics", "daily_skill_metrics"} {
 			checks = append(checks, struct {
 				name  string
 				query string

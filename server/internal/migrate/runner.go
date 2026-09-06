@@ -675,6 +675,7 @@ func (r *Runner) ResetCleanSchema(ctx context.Context) error {
 		"daily_user_agent_model_metrics",
 		"daily_user_agent_metrics",
 		"usage_events",
+		"device_daily_aggregates",
 		"ingest_batches",
 		"ingest_nonces",
 		"installation_adapter_status",
