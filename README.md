@@ -10,9 +10,9 @@
 
 | 下载 | 说明 |
 | --- | --- |
-| [TokenDance.exe](https://github.com/DarrenHoo-10/token_dance/releases/download/v0.1.3/TokenDance.exe) | Windows x64 便携版，下载后双击运行 |
-| [Windows ZIP 压缩包](https://github.com/DarrenHoo-10/token_dance/releases/download/v0.1.3/TokenDance-windows-x64.zip) | 包含程序、使用说明和构建信息；解压后运行 |
-| [版本说明与 SHA-256 校验文件](https://github.com/DarrenHoo-10/token_dance/releases/tag/v0.1.3) | 查看版本详情与下载校验值 |
+| [TokenDance.exe](https://github.com/DarrenHoo-10/token_dance/releases/download/v0.1.4/TokenDance.exe) | Windows x64 便携版，下载后双击运行 |
+| [Windows ZIP 压缩包](https://github.com/DarrenHoo-10/token_dance/releases/download/v0.1.4/TokenDance-windows-x64.zip) | 包含程序、使用说明和构建信息；解压后运行 |
+| [版本说明与 SHA-256 校验文件](https://github.com/DarrenHoo-10/token_dance/releases/tag/v0.1.4) | 查看版本详情与下载校验值 |
 
 1. 将程序放在固定目录，双击 `TokenDance.exe`。
 2. 在 Windows 右下角托盘点击 TokenDance 图标。看不到时展开隐藏图标区域。
@@ -27,6 +27,7 @@
 
 - 托盘用量面板：今日、近 7 日、All Time，以及近 7 日趋势。
 - 展示 Agent 用量构成、已有费用记录、可获取的订阅额度和年度活跃度。
+- ZCode 可读取本机已登录的智谱 / Z.ai 个人 Coding Plan 授权，查询 5 小时及 7 日额度；每 5 分钟刷新，凭据不上传网站。
 - 桌面设置提供登录、开机启动、采集开关和采集来源选择。
 - 登录后自动同步，界面显示采集与同步状态。
 - 网站提供个人统计、公开排行榜、账号和设备管理。
