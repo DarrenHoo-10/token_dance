@@ -82,6 +82,7 @@ impl PrivacyFilter {
             }
             EventPayload::SkillInvoked(payload) => {
                 validate_hmac(&payload.skill_key, "skillKey")?;
+                validate_optional_identifier(payload.skill_public_name.as_deref(), "skillPublicName")?;
                 validate_optional_hmac(payload.plugin_key.as_deref(), "pluginKey")?;
             }
             EventPayload::CodeChanged(payload) => {

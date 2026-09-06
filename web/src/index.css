@@ -1223,3 +1223,14 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .leaderboard-pagination { display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; padding:20px 24px; color:#606c62; font-size:13px; }.leaderboard-pagination>div { display:flex; gap:8px; }
 .leaderboard-list-panel { padding:0; overflow:hidden; }.leaderboard-list-page { max-width:1200px; margin:0 auto; }
 @media(max-width:600px) { .avatar-settings { align-items:flex-start; gap:16px; }.profile-avatar-preview { width:72px; height:72px; }.leaderboard-table-scroll { padding:0 12px 12px; }.leaderboard-list-heading { padding:16px 20px; } }
+
+.leaderboard-total { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; color: var(--text-muted, #647067); }
+.leaderboard-total strong { font-size: 36px; line-height: 1.1; color: var(--text-primary, #101510); font-variant-numeric: tabular-nums; }
+.leaderboard-total a { margin-top: 6px; font-size: 13px; }
+.leaderboard-own-row { background: #f1f9df; color: #1a2412; }
+.leaderboard-own-row td { border-top: 2px solid #b3e83a; color: #1a2412; }
+.leaderboard-own-row td:first-child { box-shadow: inset 4px 0 #afe000; }
+.leaderboard-own-row .leaderboard-person, .leaderboard-own-row .leaderboard-person small { color: #1a2412; }
+.leaderboard-me-badge { display: inline-block; margin-left: 8px; padding: 2px 7px; border-radius: 5px; background: #c4f25d; color: #1b2a10; font-size: 12px; font-weight: 700; }
+.leaderboard-refresh-status { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 8px 24px 0; color: #8a2f1f; font-size: 13px; }
+.leaderboard-refresh-status p { margin: 0; }

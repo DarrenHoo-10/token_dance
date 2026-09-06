@@ -30,6 +30,7 @@ import (
 	"tokendance/internal/privacy"
 	"tokendance/internal/profile"
 	"tokendance/internal/search"
+	"tokendance/internal/store"
 	"tokendance/internal/telemetry"
 )
 
@@ -167,12 +168,14 @@ func (h *Handlers) RequestRegisterCode(w http.ResponseWriter, r *http.Request) {
 }
 
 type RegisterRequest struct {
-	Email    string `json:"email"`
-	Code     string `json:"code"`
-	Password string `json:"password"`
-	ReturnTo string `json:"returnTo"`
-	Locale   string `json:"locale"`
-	Timezone string `json:"timezone"`
+	DisplayName string `json:"displayName"`
+	AvatarID    string `json:"avatarId"`
+	Email       string `json:"email"`
+	Code        string `json:"code"`
+	Password    string `json:"password"`
+	ReturnTo    string `json:"returnTo"`
+	Locale      string `json:"locale"`
+	Timezone    string `json:"timezone"`
 }
 
 func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
@@ -182,7 +185,7 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.auth.CompleteRegistration(r.Context(), req.Email, req.Code, req.Password, req.ReturnTo, req.Locale, req.Timezone)
+	result, err := h.auth.CompleteRegistration(r.Context(), req.Email, req.Code, req.Password, req.ReturnTo, req.Locale, req.Timezone, auth.RegistrationProfile{DisplayName: req.DisplayName, AvatarID: req.AvatarID})
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -195,6 +198,7 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 			"userId":             result.User.UserID,
 			"handle":             result.User.Handle,
 			"displayName":        result.User.DisplayName,
+			"avatarUrl":          result.User.AvatarURL,
 			"locale":             result.User.Locale,
 			"onboardingRequired": result.User.OnboardingCompletedAt == nil,
 			"productState":       result.User.ProductState(),
@@ -1162,7 +1166,7 @@ func readTelemetryBody(w http.ResponseWriter, r *http.Request) ([]byte, []byte, 
 	return raw, decoded, nil
 }
 
-func decodeTelemetryJSON(body []byte, dst *TelemetryBatchInput) error {
+func decodeTelemetryJSON(body []byte, dst interface{}) error {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
@@ -1589,9 +1593,28 @@ func (h *Handlers) Search(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) GetLeaderboards(w http.ResponseWriter, r *http.Request) {
-	boardKey := r.URL.Query().Get("board")
-	window := r.URL.Query().Get("window")
-	metric := r.URL.Query().Get("metric")
+	q := leaderboardQueryFromRequest(r)
+	res, err := h.leaderboard.Query(r.Context(), q)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *Handlers) GetMyLeaderboards(w http.ResponseWriter, r *http.Request) {
+	user := GetUserFromContext(r.Context())
+	q := leaderboardQueryFromRequest(r)
+	q.ViewerUserID = user.UserID
+	res, err := h.leaderboard.Query(r.Context(), q)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, res)
+}
+
+func leaderboardQueryFromRequest(r *http.Request) store.LeaderboardQuery {
 	cursor := r.URL.Query().Get("cursor")
 	var curPtr *string
 	if cursor != "" {
@@ -1603,13 +1626,18 @@ func (h *Handlers) GetLeaderboards(w http.ResponseWriter, r *http.Request) {
 			limit = val
 		}
 	}
-
-	res, err := h.leaderboard.GetLeaderboards(r.Context(), boardKey, window, metric, curPtr, limit)
-	if err != nil {
-		WriteError(w, r, err)
-		return
+	snapshotID := r.URL.Query().Get("snapshotId")
+	if snapshotID == "" {
+		snapshotID = r.URL.Query().Get("snapshot")
 	}
-	WriteJSON(w, http.StatusOK, res)
+	return store.LeaderboardQuery{
+		BoardKey:   r.URL.Query().Get("board"),
+		Window:     r.URL.Query().Get("window"),
+		Metric:     r.URL.Query().Get("metric"),
+		SnapshotID: snapshotID,
+		Cursor:     curPtr,
+		Limit:      limit,
+	}
 }
 
 func (h *Handlers) CompareUsers(w http.ResponseWriter, r *http.Request) {

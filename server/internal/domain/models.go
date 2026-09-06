@@ -519,6 +519,7 @@ type PersonalSummaryMetrics struct {
 }
 
 type PersonalSummaryRanking struct {
+	Entry      *LeaderboardEntry     `json:"entry,omitempty"`
 	Visibility LeaderboardVisibility `json:"visibility"`
 	Rank       *int                  `json:"rank"`
 	Delta      *int                  `json:"delta"`
@@ -647,19 +648,26 @@ type LeaderboardEntry struct {
 	AvatarURL   *string `json:"avatarUrl"`
 	MetricValue string  `json:"metricValue"`
 	RankDelta   *int    `json:"rankDelta,omitempty"`
+	IsNew       bool    `json:"isNew,omitempty"`
 }
 
 type LeaderboardResponse struct {
-	TotalEntries    *int               `json:"totalEntries,omitempty"`
-	TotalTokens     *string            `json:"totalTokens,omitempty"`
-	Timezone        string             `json:"timezone,omitempty"`
-	SnapshotID      string             `json:"snapshotId"`
-	BoardKey        string             `json:"boardKey"`
-	Window          string             `json:"window"`
-	Metric          string             `json:"metric"`
-	Entries         []LeaderboardEntry `json:"entries"`
-	NextCursor      *string            `json:"nextCursor,omitempty"`
-	DataWatermarkAt *time.Time         `json:"dataWatermarkAt"`
+	TotalEntries      *int               `json:"totalEntries,omitempty"`
+	TotalParticipants *int               `json:"totalParticipants,omitempty"`
+	TotalTokens       *string            `json:"totalTokens,omitempty"`
+	Timezone          string             `json:"timezone,omitempty"`
+	Generation        string             `json:"generation,omitempty"`
+	SnapshotID        string             `json:"snapshotId"`
+	Revision          string             `json:"revision,omitempty"`
+	ViewKind          string             `json:"viewKind,omitempty"`
+	BoardKey          string             `json:"boardKey"`
+	Window            string             `json:"window"`
+	Metric            string             `json:"metric"`
+	Entries           []LeaderboardEntry `json:"entries"`
+	OwnEntry          *LeaderboardEntry  `json:"ownEntry,omitempty"`
+	NextCursor        *string            `json:"nextCursor,omitempty"`
+	DataWatermarkAt   *time.Time         `json:"dataWatermarkAt"`
+	Stale             *bool              `json:"stale,omitempty"`
 }
 
 // Public Search Models
