@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { useLocale } from '@/context/LocaleContext';
-import { avatarUrl } from '@/utils/avatar';
+import { UserAvatar } from '@/components/common/UserAvatar';
 import type { LeaderboardEntry } from '@/types/api';
 import { RankChange } from './RankChange';
 
@@ -12,7 +12,7 @@ export function LeaderboardTable({ entries, ownEntry }: { entries: LeaderboardEn
     <tbody>{rows.map(entry => <tr key={entry.handle} className={entry === ownEntry ? 'leaderboard-own-row' : undefined} aria-label={entry === ownEntry ? (zh ? '我的排名' : 'My rank') : undefined}>
       <td><span className={`list-rank rank-${entry.rankNo}`}>{entry.rankNo}</span></td>
       <td><Link className="leaderboard-person" to={`/u/${encodeURIComponent(entry.handle)}`}>
-        {entry.avatarUrl ? <img src={avatarUrl(entry.avatarUrl)} alt="" /> : <span className="list-avatar">{entry.displayName.slice(0,1).toUpperCase()}</span>}
+        <UserAvatar url={entry.avatarUrl} name={entry.displayName} fallbackClassName="list-avatar" />
         <span><strong>{entry.displayName}{entry === ownEntry && <span className="leaderboard-me-badge">{zh ? '我' : 'You'}</span>}</strong><small>@{entry.handle}</small></span>
       </Link></td>
       <td className="mono-num" title={Number(entry.metricValue).toLocaleString()}>{new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(Number(entry.metricValue))}</td>

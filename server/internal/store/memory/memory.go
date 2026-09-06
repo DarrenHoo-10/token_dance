@@ -2201,7 +2201,7 @@ func (m *MemoryStore) GetUploadObject(ctx context.Context, objectID, userID stri
 	return &objCopy, nil
 }
 
-func (m *MemoryStore) GetVisibleAvatar(ctx context.Context, objectID, viewerID string) (*domain.UserUploadObject, error) {
+func (m *MemoryStore) GetVisibleAvatar(ctx context.Context, objectID, _ string) (*domain.UserUploadObject, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	obj := m.uploadObjects[objectID]
@@ -2211,12 +2211,6 @@ func (m *MemoryStore) GetVisibleAvatar(ctx context.Context, objectID, viewerID s
 	u := m.users[obj.UserID]
 	if u == nil || u.AccountStatus != domain.AccountStatusActive || u.AvatarObjectID == nil || *u.AvatarObjectID != objectID {
 		return nil, domain.ErrNotFound
-	}
-	if viewerID != u.UserID {
-		priv, pub := m.privacySettings[u.UserID], m.publicProfiles[u.UserID]
-		if u.LeaderboardVisibility != domain.LeaderboardVisibilityPublic || priv == nil || !priv.PublicProfileEnabled || pub == nil || pub.ProfileStatus != "published" {
-			return nil, domain.ErrNotFound
-		}
 	}
 	copy := *obj
 	return &copy, nil
