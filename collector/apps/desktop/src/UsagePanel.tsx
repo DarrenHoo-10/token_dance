@@ -51,7 +51,7 @@ export function UsagePanel() {
     try { await action(); await refresh.current(); } catch (err) { setMessage(String(err)); } finally { setBusy(false); }
   };
   const agents = [...(data?.agents ?? [])].sort((a, b) => (usageTokens(b, range) ?? -1) - (usageTokens(a, range) ?? -1));
-  const active = agents.filter(agent => (usageTokens(agent, 'all') ?? 0) > 0 || (usageTokens(agent, range) ?? 0) > 0 || quotas.some(quota => quota.agentId === agent.id) || agent.status === 'ACTIVE');
+  const active = agents.filter(agent => usageTokens(agent, range) !== null).slice(0, 3);
   const others = agents.filter(agent => !active.includes(agent));
   const week = weeklyUsage(agents);
   const status = data?.status;
@@ -81,7 +81,7 @@ export function UsagePanel() {
       <p className="usage-data-note">{!data ? text('正在读取采集数据…', 'Loading collector data…') : text('费用仅汇总已有记录，未接入的来源不计入。', 'Cost totals include recorded amounts only.')}</p>
       <WeeklyTrend points={week.points} lang={lang} />
       <section className="usage-agents" aria-label={text('Agent 用量与额度', 'Agent usage and quotas')}>
-        <div className="usage-section-title"><h2>{text('Agent 用量与额度', 'Agent usage & quotas')}</h2><span>{periods.find(period => period.key === range)?.label} · {text('额度独立周期', 'Separate quota windows')}</span></div>
+        <div className="usage-section-title"><h2>{text('Agent 用量与额度', 'Agent usage & quotas')}</h2><span>{text('用量前 3 · ', 'Top 3 · ')}{periods.find(period => period.key === range)?.label} · {text('额度独立周期', 'Separate quota windows')}</span></div>
         {active.map(agent => {
           const quota = quotas.find(item => item.agentId === agent.id);
           const tokens = usageTokens(agent, range);
