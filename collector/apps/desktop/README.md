@@ -70,4 +70,4 @@ Cursor 优先复用 CLI 登录：Windows 的 `%APPDATA%/Cursor/auth.json`、macO
 
 构建前设置 `VITE_TOKENDANCE_WEBSITE_ORIGIN=http://127.0.0.1:3011`，即可将桌面默认登录地址指向本地网站；未设置时仍使用生产地址。本地与生产账号、数据不会自动互通。
 
-2026-09-06 本机优化版本部署目录为 `%LOCALAPPDATA%/TokenDance/local-optimization`，使用目录中的 `start-desktop.ps1` 启动桌面。Web 位于 `127.0.0.1:3011`，API 位于 `127.0.0.1:8082`；独立 MySQL/Redis 使用 13306/16379，仅监听回环地址。程序和开发配置留在该运行目录，凭据不提交到仓库。数据库容器持久化到专用 Docker volume；Web/API/Worker 当前为本机进程，不承诺系统重启后自动启动。
+2026-09-06 本机优化版本部署目录为 `%LOCALAPPDATA%/TokenDance/local-optimization`，使用目录中的 `start-desktop.ps1` 启动桌面。Web 位于 `127.0.0.1:3011`，API 位于 `127.0.0.1:8082`；数据库使用云端 `tokendance_dev` 和 `redis_dev`，不使用本机数据库。当前云端公网端口直连不通，MySQL 复用本机 3307 转发，Redis 使用本机 16480 转发到云端 6380。程序和开发配置留在该运行目录，凭据不提交到仓库；错误创建的本机数据库容器已停止并保留数据卷。Web/API/Worker 和转发当前为本机进程，不承诺系统重启后自动启动。
