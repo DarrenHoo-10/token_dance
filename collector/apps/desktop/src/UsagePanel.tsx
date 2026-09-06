@@ -51,7 +51,7 @@ export function UsagePanel() {
     try { await action(); await refresh.current(); } catch (err) { setMessage(String(err)); } finally { setBusy(false); }
   };
   const agents = [...(data?.agents ?? [])].sort((a, b) => (usageTokens(b, range) ?? -1) - (usageTokens(a, range) ?? -1));
-  const active = agents.filter(agent => (usageTokens(agent, range) ?? 0) > 0 || quotas.some(quota => quota.agentId === agent.id) || agent.status === 'ACTIVE');
+  const active = agents.filter(agent => (usageTokens(agent, 'all') ?? 0) > 0 || (usageTokens(agent, range) ?? 0) > 0 || quotas.some(quota => quota.agentId === agent.id) || agent.status === 'ACTIVE');
   const others = agents.filter(agent => !active.includes(agent));
   const week = weeklyUsage(agents);
   const status = data?.status;
@@ -64,7 +64,7 @@ export function UsagePanel() {
     if (!entries.length) return '—';
     return entries.map(([currency, value]) => new Intl.NumberFormat(zh ? 'zh-CN' : 'en-US', { style: 'currency', currency, maximumFractionDigits: 2 }).format(value)).join(' + ');
   };
-  const agentState = (agent: AgentConfig) => agent.status === 'UNDETECTED' ? text('未检测到', 'Not detected') : !agent.enabled ? text('已关闭', 'Disabled') : ['ERROR', 'DEGRADED', 'NEEDS_PERMISSION', 'CONFIGURING'].includes(agent.status) ? text('需要配置', 'Needs setup') : paused || agent.status === 'PAUSED' ? text('已暂停', 'Paused') : range === 'today' ? text('今日暂无用量', 'No usage today') : range === 'week' ? text('近 7 日暂无用量', 'No usage in 7 days') : text('暂无历史用量', 'No recorded usage');
+  const agentState = (agent: AgentConfig) => agent.status === 'UNDETECTED' ? text('未检测到', 'Not detected') : !agent.enabled ? text('已关闭', 'Disabled') : paused || agent.status === 'PAUSED' ? text('已暂停', 'Paused') : agent.status === 'DEGRADED' && (usageTokens(agent, 'all') ?? 0) > 0 ? text('用量已记录，部分能力未接入', 'Usage recorded · Some capabilities unavailable') : ['ERROR', 'DEGRADED', 'NEEDS_PERMISSION', 'CONFIGURING'].includes(agent.status) ? text('需要配置', 'Needs setup') : range === 'today' ? text('今日暂无用量', 'No usage today') : range === 'week' ? text('近 7 日暂无用量', 'No usage in 7 days') : text('暂无历史用量', 'No recorded usage');
   return <div className="usage-panel">
     <header className="usage-header"><div className="usage-brand"><img src={brandLogo} alt="" /><strong>TokenDance</strong></div><div className="usage-window-controls" role="group" aria-label={text('语言与窗口控制', 'Language and window controls')}>
       <button className="usage-language" onClick={() => { const next = zh ? 'en' : 'zh'; setLang(next); localStorage.setItem('tokendance.language', next); }} aria-label={text('切换到英文', 'Switch to Chinese')}>{zh ? 'EN' : '中'}</button>
@@ -87,6 +87,7 @@ export function UsagePanel() {
           const tokens = usageTokens(agent, range);
           return <article className="usage-agent-card" key={agent.id}><div className="usage-agent-top"><div className="usage-agent-name"><span className="usage-agent-symbol">{agent.name.slice(0, 2)}</span><strong>{agent.name}</strong>{quota?.plan && <small>{quota.plan}</small>}</div><div className="usage-agent-value"><strong>{tokens === null ? '—' : format(tokens)}</strong><small>{costLabel([agent], range)}</small></div></div>
             {(paused || !agent.enabled || ['ERROR', 'DEGRADED', 'NEEDS_PERMISSION'].includes(agent.status)) && <div className="usage-agent-warning">{agentState(agent)}</div>}
+            {agent.id === 'grok-build' && (usageTokens(agent, 'all') ?? 0) > 0 && <p className="usage-data-note">{text('用量来自本地日志，在轮次完成后更新。', 'Usage comes from local logs and updates after a turn completes.')}</p>}
             {tokens === 0 && (usageTokens(agent, 'all') ?? 0) > 0 && <p className="usage-data-note">{text('所选期间暂无用量，历史已记录', 'No usage this period. Recorded history:')} {format(usageTokens(agent, 'all')!)} tokens</p>}
             <QuotaRings quota={quota} zh={zh} />
           </article>;
