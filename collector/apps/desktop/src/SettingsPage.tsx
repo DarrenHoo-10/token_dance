@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { brandLogo } from "./brand";
 import { DesktopAccountCard } from "./DesktopAccountCard";
-import { getAgentConfigs, getAutostartStatus, getDaemonStatus, getWebsiteUrl, hideWindow, isTauriEnvironment, openWebsite, quitApp, setAgentStatus, setAutostart, setGlobalPause } from "./tauri-bridge";
+import { getAgentConfigs, getAutostartStatus, getDaemonStatus, getWebsiteUrl, hideWindow, isTauriEnvironment, openWebsite, setAgentStatus, setAutostart, setGlobalPause } from "./tauri-bridge";
 import { resolveWebsiteOrigin } from "./website";
 import type { AgentConfig, AutostartInfo, DaemonStatus } from "./tauri-bridge";
 import "./styles/settings.css";
@@ -85,7 +85,7 @@ export function SettingsPage() {
       <div className="usage-controls"><div className="usage-window-controls" role="group" aria-label={t("语言与窗口控制", "Language and window controls")}>
         <button className="usage-language" onClick={() => changeLanguage(zh ? "en" : "zh")} aria-label={t("切换到英文", "Switch to Chinese")}>{zh ? "EN" : "中"}</button>
         <button className="usage-minimize" onClick={() => void perform(hideWindow)} aria-label={t("最小化到托盘", "Minimize to tray")} title={t("最小化到托盘", "Minimize to tray")}><span aria-hidden="true">−</span></button>
-        <button className="usage-close" onClick={() => void perform(quitApp)} aria-label={t("退出 TokenDance", "Quit TokenDance")} title={t("退出 TokenDance", "Quit TokenDance")}><span aria-hidden="true">×</span></button>
+        <button className="usage-close" onClick={() => void hideWindow().catch(err => setNotice(String(err)))} aria-label={t("关闭窗口", "Close window")} title={t("关闭窗口", "Close window")}><span aria-hidden="true">×</span></button>
       </div></div>
     </header>
     <main className="settings-main">
