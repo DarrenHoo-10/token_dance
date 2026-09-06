@@ -64,7 +64,8 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
     it('shows an empty state instead of mock data when the API returns no entries', async () => {
       vi.spyOn(api, 'getLeaderboard').mockResolvedValue({ ...leaderboardPayload, entries: [] });
       renderWithProviders(<LeaderboardPage />, '/leaderboard');
-      await waitFor(() => expect(screen.getByText('本周期暂无公开排行数据。只有已公开 Token 用量的用户会参与排名。')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getByText('暂无账号')).toBeInTheDocument());
+      expect(screen.queryByText(/公开排行/)).not.toBeInTheDocument();
       expect(screen.queryByRole('search')).not.toBeInTheDocument();
     });
   });
@@ -332,7 +333,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
 
       renderWithProviders(<PrivacySettingsPage />, '/settings/privacy');
 
-      const visibilitySwitch = await screen.findByRole('checkbox', { name: '参加公开排行榜' });
+      const visibilitySwitch = await screen.findByRole('checkbox', { name: '公开详细资料页' });
       const saveBtn = screen.getByText('保存');
 
       fireEvent.click(visibilitySwitch);
