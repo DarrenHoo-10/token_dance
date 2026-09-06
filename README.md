@@ -1,107 +1,63 @@
-# TokenDance
+<p align="center">
+  <img src="logo-tokendance-v2.png" alt="TokenDance" width="80" />
+</p>
 
-记录 AI 编程工具的 Token 用量，在 Windows 托盘查看统计，在网站查看个人数据和排行榜。
+<h1 align="center">TokenDance</h1>
 
-**官网：<https://www.nexorai.com.cn/token-dance/>**
+<p align="center">Let Token Dance · 看见你与 AI 一起创造的每一天</p>
 
-## 下载使用
+<p align="center">
+  <a href="https://www.nexorai.com.cn/token-dance/">访问官网</a> ·
+  <a href="https://github.com/DarrenHoo-10/token_dance/releases">下载最新版本</a>
+</p>
 
-普通用户不需要编译，也不需要安装 Node.js、Rust 或 Go。
+TokenDance 是一款 AI 编程用量统计工具。它把不同 Agent 的 Token 消耗、费用和额度汇总到桌面，让你随时查看用量，也能在网站回顾个人数据和排行榜。
 
-在 [GitHub Releases](https://github.com/DarrenHoo-10/token_dance/releases) 下载最新发布版本，展开 **Assets** 选择文件：
+## 用量，一眼看清
 
-| 文件 | 说明 |
-| --- | --- |
-| `TokenDance.exe` | Windows x64 便携版，下载后双击运行 |
-| `TokenDance-windows-x64.zip` | 包含程序和构建信息，解压后运行 |
-| `SHA256SUMS.txt` | 下载文件的 SHA-256 校验值；更新说明见对应版本页面 |
+- **按周期查看**：今日、近 7 日和全部时间的 Token 用量与费用。
+- **看见使用趋势**：每日折线图和年度活动热力图，记录持续创作的轨迹。
+- **了解 Agent 构成**：分别查看不同编程工具的用量，知道 Token 花在了哪里。
+- **关注订阅额度**：查看已接入工具的额度使用情况与重置时间。
 
-1. 将程序放在固定目录，双击 `TokenDance.exe`。
-2. 在 Windows 右下角托盘点击 TokenDance 图标。看不到时展开隐藏图标区域。
-3. 在设置页面登录账号，登录后自动同步用量；注册会跳转到网站。
-4. 点击“网站主页 · 看排名”进入官网。
+<p align="center">
+  <img src="docs/images/desktop-usage.jpg" alt="TokenDance 桌面用量面板：周期统计、用量趋势和 Agent 额度" width="420" />
+</p>
 
-Windows x64 桌面端支持应用内更新：发现新版本后，TokenDance 文字右上角显示红色 **NEW**，点击查看更新说明并选择“立即更新”。自动更新默认开启，后台下载，下次启动时安装；也可以在设置中关闭，或选择“重启并更新”立即安装。程序原目录、账号和采集数据均保留。没有应用内更新入口的旧版，可下载最新安装包，先退出托盘中的旧程序，再启动新版。
+## 留在桌面，随手可看
 
-前端页面已经打包进 exe，运行时无需启动本地开发服务器。程序使用 Microsoft Edge WebView2 Runtime；系统提示缺失时可从 [Microsoft 官方页面](https://developer.microsoft.com/microsoft-edge/webview2/) 安装。
+TokenDance 常驻 Windows 托盘，点击图标即可展开用量面板。也可以开启悬浮球，在工作时查看今日 Token 和所选来源的额度。
 
-当前 Windows 预览版尚未进行 Authenticode 代码签名，系统可能显示发布者未验证提示。macOS 的预编译下载会在可用后提供。
+开机启动、采集暂停、Agent 来源和自动更新都能在设置中管理。
 
-## 功能
+<p align="center">
+  <img src="docs/images/desktop-settings.jpg" alt="TokenDance 桌面设置：账号、开机启动、采集开关和悬浮球" width="680" />
+</p>
 
-- 托盘用量面板：今日、近 7 日、All Time，以及近 7 日趋势。
-- 展示 Agent 用量构成、已有费用记录、可获取的订阅额度和年度活跃度。
-- ZCode 可读取本机已登录的智谱 / Z.ai 个人 Coding Plan 授权，查询 5 小时及 7 日额度；每 5 分钟刷新，凭据不上传网站。
-- 桌面设置提供登录、开机启动、采集开关、采集来源、检查更新和自动更新。
-- 登录后自动同步，界面显示采集与同步状态。
-- 网站提供个人统计、公开排行榜、账号和设备管理。
+<p align="center"><sub>以上为产品界面预览，数据与状态为示例。</sub></p>
 
-各工具能够提供的数据不同，缺失的额度、费用或历史数据不会当作真实统计值展示。
+## 本地使用，也能同步到网站
 
-同步状态与本机采集相互独立。“同步未完成，稍后自动重试”表示后台会自动补传；“部分记录校验未通过，已保留在本机”表示服务器拒收了部分记录，原始待同步记录仍保存在本机，无需删除数据或重新安装。服务端兼容 GLM 等模型名称的大写字母和提供商命名空间。
+**不登录也可以使用。** 在本机查看已采集的用量与历史统计，离线时继续记录。
 
-## 项目结构
+登录后自动同步到网站，查看个人用量、趋势、活跃日历、Agent 构成和已记录的 Skill 使用情况。你可以设置昵称与头像，通过开关选择是否公开个人数据页。
 
-| 目录 | 内容 |
-| --- | --- |
-| `collector/apps/desktop` | Tauri 2、Rust、React、TypeScript 桌面客户端 |
-| `collector/apps/service` | 本地采集服务 |
-| `collector/adapters` | 各 AI 编程工具的用量采集适配器 |
-| `collector/crates` | 本地数据处理、队列、上传及平台支持 |
-| `web` | React、TypeScript、Vite 网站 |
-| `server` | Go API、后台任务和数据库迁移 |
-| `deploy` | Nginx、systemd 和云端部署说明 |
-| `collector/packaging` | Windows/macOS 构建、签名与发布流程 |
+**TokenBoard 排行榜**支持按不同时间周期查看排名、总参与人数和相较昨日的变化。注册账号即可参与；个人数据页是否公开，不影响参与排行榜。
 
-## 开发者：本地构建
+## 支持的编程工具
 
-以下步骤仅面向开发者。Windows 桌面构建需要 Node.js 22.18+、Rust stable、MSVC C++ 构建工具及 Windows SDK；后端开发需要 Go 1.25+。
+**Codex · Claude Code · Grok Build · ZCode · Cursor · Pi · DeepSeek Harness**
 
-### Windows exe
+不同工具支持的用量、费用和额度信息有所不同，具体以应用内显示为准。
 
-在 PowerShell 中执行：
+## 开始使用
 
-```powershell
-cd collector/apps/desktop
-npm ci
-npm run build:windows
-```
+1. 前往 [下载页面](https://github.com/DarrenHoo-10/token_dance/releases)，在最新发布版本的 **Assets** 中下载 `TokenDance.exe` 或 Windows ZIP 压缩包。
+2. 运行程序，在 Windows 右下角托盘打开用量面板。
+3. 在设置中选择需要采集的工具；如需网站同步，点击登录或注册。
 
-输出为 `collector/apps/desktop/release/TokenDance.exe`，同目录的 `build-info.json` 记录构建时间和校验值。覆盖文件前先退出正在运行的旧版。
+已有用户可在设置中点击 **检查更新**，或开启自动更新。
 
-构建会使用 `--locked --features custom-protocol`，确保依赖固定、前端嵌入。桌面端是独立的 Cargo workspace：修改相关依赖后，应同时更新它的 `src-tauri/Cargo.lock`，不要删除 `--locked` 来绕过检查。
+## 开源协议
 
-### 网站开发
-
-```powershell
-cd web
-npm ci
-npm run dev
-```
-
-开发网站默认将 API 请求代理到 `http://127.0.0.1:8081`，后端地址可通过 `VITE_API_PROXY_TARGET` 配置。正式网站部署在 `/token-dance/`，构建前设置 `VITE_BASE_PATH=/token-dance/`；详见 [云端部署说明](deploy/README.md)。
-
-### 验证
-
-```powershell
-# 桌面前端用量、网站链接和同步状态测试
-npm --prefix collector/apps/desktop run test:usage
-npm --prefix collector/apps/desktop run test:updates
-
-# 桌面原生测试
-cargo test --locked --manifest-path collector/apps/desktop/src-tauri/Cargo.toml
-
-# 跨平台发布配置检查
-python collector/packaging/tests/test_release_wiring.py
-
-# 网站测试
-npm --prefix web test
-```
-
-## CI 与发布
-
-GitHub Actions 在采集端代码变更和 PR 上执行 Windows/macOS 构建检查，普通 CI 产物明确标记为 `unsigned`。面向用户的预编译版本放在 [GitHub Releases](https://github.com/DarrenHoo-10/token_dance/releases)。
-
-需要正式签名时，手动运行 `cross-platform-packaging` 并选择 `sign_release: true`。Windows 签名证书、Apple Developer ID 和 notarization 凭证需提前配置。缺少证书或验证失败会阻止签名产物发布。详见 [打包与签名说明](collector/packaging/README.md)。
-
-配置和密钥保存在本机环境或服务器私有配置目录中，不应提交到仓库或随安装包分发。
+[MIT License](LICENSE)
