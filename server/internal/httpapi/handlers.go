@@ -1163,7 +1163,7 @@ func readTelemetryBody(w http.ResponseWriter, r *http.Request) ([]byte, []byte, 
 	return raw, decoded, nil
 }
 
-func decodeTelemetryJSON(body []byte, dst *TelemetryBatchInput) error {
+func decodeTelemetryJSON(body []byte, dst interface{}) error {
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {

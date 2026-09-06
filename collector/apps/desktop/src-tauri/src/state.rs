@@ -408,7 +408,7 @@ impl AppState {
     }
 
     pub fn pending_sync_count(&self) -> usize {
-        self.lock_store().pending_sync_count()
+        self.lock_store().aggregate_pending_count()
     }
 
     pub async fn activate_sync_account(&self, account_id: &str) -> Result<String, String> {
@@ -556,7 +556,7 @@ impl AppState {
         let total_adapters_count = runtimes.len();
         drop(service);
         let store = self.lock_store();
-        let pending = store.pending_sync_count();
+        let pending = store.aggregate_pending_count();
         let collected = store.event_count();
         let rebuilding =
             *self.rebuilding.lock().expect("rebuild flag poisoned") || store.rebuild_in_progress();

@@ -87,6 +87,7 @@ func NewRouterWithReadiness(
 		cr.Post("/installations/register", handlers.RegisterInstallation)
 		cr.Post("/telemetry/batches", handlers.IngestTelemetry)
 		cr.Post("/telemetry/ingest", handlers.IngestTelemetry)
+		cr.Post("/telemetry/aggregates", handlers.IngestAggregate)
 	})
 
 	// User Web API /api/v1

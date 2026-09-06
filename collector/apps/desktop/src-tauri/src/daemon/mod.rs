@@ -34,6 +34,13 @@ impl CollectorDaemon {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             while is_running.load(Ordering::Acquire) {
                 interval.tick().await;
+                let maintenance = state
+                    .lock_store()
+                    .prune_details(chrono::Utc::now().date_naive());
+                if let Err(error) = maintenance {
+                    state.set_storage_error(&error);
+                    continue;
+                }
                 if state.get_daemon_status().await.global_paused {
                     continue;
                 }

@@ -237,6 +237,7 @@ impl LocalStore {
         )
         .map_err(|error| error.to_string())?;
         assign_unassigned(&tx, &target_id)?;
+        super::retention::assign(&tx, &target_id)?;
         tx.commit().map_err(|error| error.to_string())?;
         Ok(target_id)
     }

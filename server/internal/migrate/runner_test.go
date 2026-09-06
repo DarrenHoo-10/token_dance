@@ -23,11 +23,11 @@ func TestMigrationEmbedLoading(t *testing.T) {
 	}
 
 	migs := runner.GetMigrations()
-	if len(migs) != 5 {
-		t.Fatalf("expected 5 migrations, got %d", len(migs))
+	if len(migs) != 6 {
+		t.Fatalf("expected 6 migrations, got %d", len(migs))
 	}
 
-	expected := []string{"0001", "0002", "0003", "0004", "0006"}
+	expected := []string{"0001", "0002", "0003", "0004", "0006", "0007"}
 	for i, m := range migs {
 		if m.Version != expected[i] {
 			t.Errorf("migration %d: expected version %s, got %s", i, expected[i], m.Version)
@@ -124,8 +124,8 @@ func TestMigrationRunnerIntegration_CleanInstall(t *testing.T) {
 	// Verify all migrations recorded in schema_migrations
 	var count int
 	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count)
-	if err != nil || count != 5 {
-		t.Fatalf("expected 5 applied migrations, got %d (err: %v)", count, err)
+	if err != nil || count != 6 {
+		t.Fatalf("expected 6 applied migrations, got %d (err: %v)", count, err)
 	}
 
 	// Verify idempotency

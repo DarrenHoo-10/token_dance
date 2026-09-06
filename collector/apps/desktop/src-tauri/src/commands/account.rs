@@ -1,9 +1,9 @@
-use crate::{auto_sync, state::AppState};
+use crate::state::AppState;
 use std::collections::BTreeMap;
 use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use uploader::{DeviceSigner, HttpTransport, InMemoryDeviceSigner, IngestTransport};
+use uploader::{DeviceSigner, HttpTransport, InMemoryDeviceSigner};
 use wal_spool::{KeyProvider, OsKeyProvider};
 
 use reqwest::{Client, Method, StatusCode};
@@ -65,11 +65,13 @@ fn account_origin(website: &str) -> Result<Url, String> {
 
 impl Connection {
     fn new(origin: Url) -> Result<Self, String> {
-        let client = Client::builder()
+        let mut builder = Client::builder()
             .timeout(Duration::from_secs(15))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|_| "NETWORK_ERROR")?;
+            .redirect(reqwest::redirect::Policy::none());
+        if matches!(origin.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")) {
+            builder = builder.no_proxy();
+        }
+        let client = builder.build().map_err(|_| "NETWORK_ERROR")?;
         Ok(Self {
             origin,
             client,
@@ -307,67 +309,70 @@ impl Connection {
                 .await?;
         }
         let transport = self.transport.as_ref().ok_or("DEVICE_UNAVAILABLE")?;
-        let lease_id = wal_spool::new_prefixed_id("lse");
-        let leased = app.lease_sync_batch(&lease_id, 100)?;
-        if !leased.target_id.is_empty()
-            && (leased.target_id != target_id || leased.account_id != user.user_id)
-        {
-            let _ = app.release_sync_lease(&leased.target_id, &lease_id);
+        let pending = app.lock_store().pending_aggregate()?;
+        let Some(pending) = pending else {
+            return Ok(if app.pending_sync_count() == 0 {
+                "SYNCED"
+            } else {
+                "WAITING"
+            });
+        };
+        if pending.owner != target_id {
             return Ok("LOGIN_REQUIRED");
         }
-        if leased.events.is_empty() {
-            return Ok("SYNCED");
-        }
-        let mut events = leased.events;
-        let batch = loop {
-            match auto_sync::batch(transport.installation_id(), events.clone()) {
-                Ok(batch) => break batch,
-                Err(error) if error == "EVENT_TOO_LARGE" => {
-                    let poison = events.remove(0);
-                    app.isolate_sync_events(&target_id, &[poison.event_id], "EVENT_TOO_LARGE")?;
-                    if events.is_empty() {
-                        return Ok("SYNCED");
-                    }
-                }
-                Err(error) => {
-                    let _ = app.release_sync_lease(&target_id, &lease_id);
-                    return Err(error);
-                }
-            }
-        };
-        let ack = match transport.upload(&batch).await {
+        let body =
+            serde_json::to_vec(&pending.snapshot).map_err(|_| "AGGREGATE_ENCODING_FAILED")?;
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(&body)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        let ack = match transport.upload_aggregate(body).await {
             Ok(ack) => ack,
             Err(error) => {
-                let _ = app.release_sync_lease(&target_id, &lease_id);
-                return Err(match error {
-                    uploader::TransportError::Auth => "DEVICE_UNAVAILABLE".into(),
-                    _ => "UPLOAD_FAILED".into(),
-                });
+                let (code, delay) = match error {
+                    uploader::TransportError::Auth => ("DEVICE_UNAVAILABLE", 10),
+                    uploader::TransportError::Decode(ref message)
+                        if message == "AGGREGATE_UNSUPPORTED_OR_TOO_LARGE" =>
+                    {
+                        ("AGGREGATE_REJECTED", 3600)
+                    }
+                    uploader::TransportError::Http { status: 404, .. } => {
+                        ("AGGREGATES_UNAVAILABLE", 60)
+                    }
+                    uploader::TransportError::Http {
+                        status: 400 | 409 | 413 | 422,
+                        ..
+                    } => ("AGGREGATE_REJECTED", 3600),
+                    _ => ("UPLOAD_FAILED", 0),
+                };
+                app.lock_store().defer_aggregate(&pending, code, delay)?;
+                return Err(code.into());
             }
         };
-        let checked = auto_sync::checked_ack(&batch, &ack)?;
-        if !checked.acked_event_ids.is_empty() {
-            app.ack_sync_batch(&target_id, &lease_id, &checked.acked_event_ids)?;
-            app.acknowledge_auto_sync(checked).await?;
+        if ack.get("day").and_then(|v| v.as_str()) != Some(pending.snapshot.day.as_str())
+            || ack.get("revision").and_then(|v| v.as_i64()) != Some(pending.snapshot.revision)
+            || ack.get("sha256").and_then(|v| v.as_str()) != Some(digest.as_str())
+        {
+            app.lock_store()
+                .defer_aggregate(&pending, "INVALID_AGGREGATE_ACK", 10)?;
+            return Err("INVALID_AGGREGATE_ACK".into());
         }
-        let mut isolated = Vec::new();
-        let mut retry = Vec::new();
-        for rejected in &ack.rejected {
-            if rejected.retryable {
-                retry.push(rejected.event_id.clone());
-            } else {
-                isolated.push(rejected.event_id.clone());
-            }
-        }
-        if !isolated.is_empty() {
-            app.isolate_sync_events(&target_id, &isolated, "rejected")?;
-        }
-        if !retry.is_empty() {
-            app.retry_sync_events(&target_id, &lease_id, &retry, "rejected_retryable", 10)?;
-        }
-        let _ = app.release_sync_lease(&target_id, &lease_id);
-        let pending = app.pending_sync_count();
-        Ok(if pending == 0 { "SYNCED" } else { "WAITING" })
+        app.lock_store().ack_aggregate(&pending)?;
+        app.acknowledge_auto_sync(wal_spool::AckPayload {
+            batch_id: format!(
+                "aggregate-{}-{}",
+                pending.snapshot.day, pending.snapshot.revision
+            ),
+            acked_event_ids: Vec::new(),
+            server_acked_at: chrono::Utc::now().to_rfc3339(),
+        })
+        .await?;
+        Ok(if app.lock_store().aggregate_pending_count() == 0 {
+            "SYNCED"
+        } else {
+            "WAITING"
+        })
     }
 }
 
@@ -829,7 +834,13 @@ mod tests {
                         }
                     }
                     let request = String::from_utf8_lossy(&bytes).into_owned();
-                    let response = if response.contains("$BATCH") {
+                    let response = if response.contains("$AGGREGATE") {
+                        let (_,raw)=request.split_once("\r\n\r\n").unwrap();
+                        let value:Value=serde_json::from_str(raw).unwrap();
+                        let digest=Sha256::digest(raw.as_bytes()).iter().map(|b|format!("{b:02x}")).collect::<String>();
+                        let body=serde_json::json!({"day":value["day"],"revision":value["revision"],"sha256":digest}).to_string();
+                        format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",body.len(),body)
+                    } else if response.contains("$BATCH") {
                         let batch_id = request
                             .lines()
                             .find_map(|line| line.strip_prefix("idempotency-key: "))
@@ -882,11 +893,7 @@ mod tests {
                 r#"{"installationId":"ins_fixture","status":"active"}"#,
             ),
             session_response(),
-            response(
-                "200 OK",
-                "",
-                r#"{"batchId":"$BATCH","installationId":"ins_fixture","accepted":2,"duplicates":0,"rejected":[],"serverTime":"2026-09-05T00:00:00Z"}"#,
-            ),
+            response("200 OK", "", r#"$AGGREGATE"#),
         ]);
         let origin = origin.join("token-dance/").unwrap();
         let mut client = Connection::new(origin).unwrap();
@@ -903,13 +910,13 @@ mod tests {
         assert_eq!(app.sync_status.read().await.as_str(), "SYNCED");
         let status = app.get_daemon_status().await;
         assert_eq!(status.events_pending, 0);
-        assert_eq!(status.events_uploaded, 2);
+        assert_eq!(status.events_uploaded, 0);
         assert!(status.last_sync_at.is_some());
         let requests = server.join().unwrap();
         assert!(requests[0].starts_with("POST /token-dance/api/v1/me/device-grants "));
         assert!(requests[1].starts_with("POST /token-dance/v1/installations/register "));
         assert!(requests[2].starts_with("GET /token-dance/api/v1/auth/session "));
-        assert!(requests[3].starts_with("POST /token-dance/v1/telemetry/batches "));
+        assert!(requests[3].starts_with("POST /token-dance/v1/telemetry/aggregates "));
         assert!(requests[0].contains("x-csrf-token: fixture-csrf"));
         assert!(requests[1].contains("authorization: Bearer dgt_fixture"));
         assert!(requests[3].contains("authorization: Device ins_fixture:"));
@@ -926,11 +933,7 @@ mod tests {
             session_response(),
             response("503 Service Unavailable", "", "{}"),
             session_response(),
-            response(
-                "200 OK",
-                "",
-                r#"{"batchId":"$BATCH","accepted":2,"duplicates":0,"rejected":[],"serverTime":"2026-09-05T00:00:00Z"}"#,
-            ),
+            response("200 OK", "", r#"$AGGREGATE"#),
         ]);
         let mut client = Connection::new(origin.clone()).unwrap();
         client
@@ -946,7 +949,7 @@ mod tests {
         account.auto_sync_tick(&app).await;
         assert_eq!(app.sync_status.read().await.as_str(), "RETRYING");
         assert_eq!(app.get_daemon_status().await.status, "RUNNING");
-        assert_eq!(app.get_daemon_status().await.events_pending, 2);
+        assert_eq!(app.get_daemon_status().await.events_pending, 1);
         assert_eq!(app.get_daemon_status().await.events_uploaded, 0);
         account.auto_sync_tick(&app).await; // Backoff performs no network request.
         account.0.lock().await.as_mut().unwrap().retry_at = None;

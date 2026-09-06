@@ -21,9 +21,19 @@ export function LeaderboardListPage() {
   const [retry, setRetry] = useState(0);
   const hasSnapshotRef = useRef(false);
   const snapshotRef = useRef<string | undefined>();
+  const snapshotScopeRef = useRef<string>();
+  const totalParticipants = data?.totalParticipants ?? data?.totalEntries;
 
   useEffect(() => {
     let active = true;
+    const scope = `${window}:${authenticated}:${accountKey}`;
+    if (snapshotScopeRef.current !== scope) {
+      snapshotScopeRef.current = scope;
+      snapshotRef.current = undefined;
+      hasSnapshotRef.current = false;
+      setData(null);
+      setFailed(false);
+    }
     if (!hasSnapshotRef.current) setLoading(true);
     const snapshotId = cursor ? snapshotRef.current : undefined;
     api.getLeaderboardView(authenticated, snapshotId
@@ -53,7 +63,7 @@ export function LeaderboardListPage() {
   );
 
   return <section className="leaderboard-list-page">
-    <div className="panel-header"><div><h1>{zh ? '排行榜' : 'Leaderboard'}</h1><p className="text-muted">UTC</p></div><div className="leaderboard-total"><span>{zh ? '总人数' : 'Total'}</span><strong>{(data?.totalParticipants ?? data?.totalEntries) == null ? '—' : (data.totalParticipants ?? data.totalEntries)!.toLocaleString()}</strong><Link to="/leaderboard">{zh ? '返回概览' : 'Back to overview'} →</Link></div></div>
+    <div className="panel-header"><div><h1>{zh ? '排行榜' : 'Leaderboard'}</h1><p className="text-muted">UTC</p></div><div className="leaderboard-total"><span>{zh ? '总人数' : 'Total'}</span><strong>{totalParticipants == null ? '—' : totalParticipants.toLocaleString()}</strong><Link to="/leaderboard">{zh ? '返回概览' : 'Back to overview'} →</Link></div></div>
     <div className="panel leaderboard-list-panel">
       <div className="range-tabs" role="tablist" aria-label={zh ? '排行榜周期' : 'Leaderboard period'}>
         {(['today', '7d', '30d', 'all'] as const).map((key, index) => <button key={key} role="tab" aria-selected={window === key} className={window === key ? 'active' : ''} onClick={() => setParams({ window: key })}>{(zh ? ['今天', '近 7 天', '近 30 天', '全部时间'] : ['Today', '7 days', '30 days', 'All time'])[index]}</button>)}
