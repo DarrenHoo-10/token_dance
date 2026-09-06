@@ -3,7 +3,8 @@ use protocol::{EventEnvelope, EventPayload};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path, time::Duration};
 const URL: &str = "https://openrouter.ai/api/v1/models";
-const SCALE: u128 = 1_000_000_000_000_000;
+const SCALE: u128 = 1_000_000_000_000_000_000_000_000;
+const COST_UNIT: u128 = SCALE / 100_000_000;
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Rates {
     #[serde(default)]
@@ -100,7 +101,7 @@ impl Catalog {
         }
     }
 }
-// Decimal arithmetic to 10^-15 USD/token, rounded once to 10^-8 USD/call.
+// Decimal arithmetic to 10^-24 USD/token, rounded once to 10^-8 USD/call.
 fn rate(s: &str) -> Option<u128> {
     let (whole, frac) = s.split_once('.').unwrap_or((s, ""));
     if whole.is_empty()
@@ -108,7 +109,7 @@ fn rate(s: &str) -> Option<u128> {
             .bytes()
             .chain(frac.bytes())
             .all(|b| b.is_ascii_digit())
-        || frac.len() > 15
+        || frac.len() > 24
     {
         return None;
     }
@@ -116,7 +117,7 @@ fn rate(s: &str) -> Option<u128> {
         .parse::<u128>()
         .ok()?
         .checked_mul(SCALE)?
-        .checked_add(format!("{frac:0<15}").parse().ok()?)
+        .checked_add(format!("{frac:0<24}").parse().ok()?)
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Request {
@@ -195,7 +196,7 @@ pub fn estimate(m: &Model, u: &Request) -> Option<u64> {
         .checked_add((u.read as u128).checked_mul(read)?)?
         .checked_add((u.write as u128).checked_mul(write)?)?
         .checked_add(request)?;
-    u64::try_from(total.checked_add(5_000_000)? / 10_000_000).ok()
+    u64::try_from(total.checked_add(COST_UNIT / 2)? / COST_UNIT).ok()
 }
 #[derive(Debug, Default, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -366,7 +367,8 @@ mod tests {
         assert_eq!(estimate(&m, l.requests.values().next().unwrap()), None);
         m.pricing = serde_json::from_str(r#"{"prompt":"0","completion":"0"}"#).unwrap();
         assert_eq!(estimate(&m, l.requests.values().next().unwrap()), Some(0));
-        assert_eq!(rate("0.000000005"), Some(5_000_000));
+        assert!(rate("0.0000000416666666666667").is_some());
+        assert_eq!(rate("0.000000005"), Some(5_000_000_000_000_000));
     }
     #[test]
     fn retained_history_dedupes_and_reported_turn_replaces_estimates_after_reload() {

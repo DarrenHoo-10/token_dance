@@ -117,11 +117,13 @@ pub struct UsageLedger {
 impl UsageLedger {
     pub fn load(dir: &Path) -> Self {
         let path = dir.join(LEDGER_FILE);
-        let file = fs::read(&path)
+        let mut file: LedgerFile = fs::read(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
-        Self { path, file, catalog: Catalog::load(dir) }
+        let catalog=Catalog::load(dir);
+        file.pricing.reprice(&catalog);
+        Self { path, file, catalog }
     }
 
     /// Record token usage from collected envelopes. Idempotent per event id,
