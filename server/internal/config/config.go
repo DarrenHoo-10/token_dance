@@ -59,7 +59,11 @@ type Config struct {
 	Environment          string        `json:"environment"`
 	MySQLDSN             string        `json:"-"`
 	MySQLDSNFile         string        `json:"mysqlDsnFile,omitempty"`
+	RedisURL             string        `json:"-"`
+	RedisURLFile         string        `json:"redisUrlFile,omitempty"`
 	RedisAddr            string        `json:"redisAddr,omitempty"`
+	RedisPassword        string        `json:"-"`
+	RedisDB              int           `json:"redisDB,omitempty"`
 	TrustedProxyCIDRs    []string      `json:"trustedProxyCidrs,omitempty"`
 	RateLimitMaxEntries  int           `json:"rateLimitMaxEntries"`
 	SessionIdleTTL       time.Duration `json:"sessionIdleTTL"`
@@ -292,6 +296,16 @@ func LoadFromEnv() (*Config, error) {
 	if cfg.MySQLDSN, cfg.MySQLDSNFile, err = readSecretEnv("TOKENDANCE_MYSQL_DSN", "TOKENDANCE_MYSQL_DSN_FILE"); err != nil {
 		return nil, err
 	}
+	if cfg.RedisURL, cfg.RedisURLFile, err = readSecretEnv("TOKENDANCE_REDIS_URL", "TOKENDANCE_REDIS_URL_FILE"); err != nil {
+		return nil, err
+	}
+	if cfg.RedisURL != "" {
+		if err := applyRedisURL(cfg, cfg.RedisURL); err != nil {
+			return nil, err
+		}
+	} else if cfg.RedisPassword, _, err = readSecretEnv("TOKENDANCE_REDIS_PASSWORD", "TOKENDANCE_REDIS_PASSWORD_FILE"); err != nil {
+		return nil, err
+	}
 	if cfg.HMACSecret, cfg.HMACSecretFile, err = readSecretEnv("TOKENDANCE_HMAC_SECRET", "TOKENDANCE_HMAC_SECRET_FILE"); err != nil {
 		return nil, err
 	}
@@ -433,6 +447,11 @@ func LoadFromEnv() (*Config, error) {
 	if err := parseInt("TOKENDANCE_RATE_LIMIT_MAX_ENTRIES", 32, func(v int64) { cfg.RateLimitMaxEntries = int(v) }); err != nil {
 		return nil, err
 	}
+	if cfg.RedisURL == "" {
+		if err := parseInt("TOKENDANCE_REDIS_DB", 32, func(v int64) { cfg.RedisDB = int(v) }); err != nil {
+			return nil, err
+		}
+	}
 	if v := os.Getenv("TOKENDANCE_OBJECT_USE_PATH_STYLE"); v != "" {
 		b, e := strconv.ParseBool(v)
 		if e != nil {
@@ -445,6 +464,48 @@ func LoadFromEnv() (*Config, error) {
 		return nil, fmt.Errorf("config validation failed: %w", err)
 	}
 	return cfg, nil
+}
+
+func applyRedisURL(cfg *Config, raw string) error {
+	raw = strings.TrimSpace(raw)
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid TOKENDANCE_REDIS_URL: %w", err)
+	}
+	if u.Scheme != "redis" && u.Scheme != "rediss" {
+		return fmt.Errorf("TOKENDANCE_REDIS_URL must use redis:// or rediss://")
+	}
+	if u.Host == "" {
+		return fmt.Errorf("TOKENDANCE_REDIS_URL must include host:port")
+	}
+	if u.User != nil {
+		if password, ok := u.User.Password(); ok {
+			cfg.RedisPassword = password
+		}
+	}
+	cfg.RedisAddr = u.Host
+	if _, _, err := net.SplitHostPort(u.Host); err != nil {
+		if strings.Contains(u.Host, ":") {
+			return fmt.Errorf("TOKENDANCE_REDIS_URL host is invalid: %w", err)
+		}
+		cfg.RedisAddr = net.JoinHostPort(u.Host, "6379")
+	}
+	path := strings.TrimPrefix(u.Path, "/")
+	if path != "" {
+		db, err := strconv.Atoi(path)
+		if err != nil || db < 0 {
+			return fmt.Errorf("TOKENDANCE_REDIS_URL database must be a non-negative integer")
+		}
+		cfg.RedisDB = db
+	}
+	return nil
+}
+
+func (c *Config) RedisConfigured() bool {
+	if c == nil {
+		return false
+	}
+	return strings.TrimSpace(c.RedisAddr) != "" || strings.TrimSpace(c.RedisURL) != ""
 }
 
 func isExplicitLocalEnvironment(environment string) bool {
@@ -505,6 +566,12 @@ func (c *Config) Validate() error {
 	}
 	if c.RateLimitMaxEntries < 100 {
 		return fmt.Errorf("RateLimitMaxEntries must be at least 100")
+	}
+	if c.RedisDB < 0 {
+		return fmt.Errorf("RedisDB must be a non-negative integer")
+	}
+	if c.RedisURL != "" && c.RedisAddr == "" {
+		return fmt.Errorf("TOKENDANCE_REDIS_URL must include host:port")
 	}
 	if c.HMACSecret != "" && len(c.HMACSecret) < 16 {
 		return fmt.Errorf("HMACSecret must be at least 16 bytes")
@@ -598,6 +665,14 @@ func (c *Config) Validate() error {
 		}
 		if c.MySQLDSNFile == "" {
 			return fmt.Errorf("production MySQL DSN must be loaded from TOKENDANCE_MYSQL_DSN_FILE")
+		}
+		if c.RedisConfigured() {
+			if c.RedisURL == "" {
+				return fmt.Errorf("production Redis must be configured as TOKENDANCE_REDIS_URL_FILE")
+			}
+			if c.RedisURLFile == "" {
+				return fmt.Errorf("production Redis URL must be loaded from TOKENDANCE_REDIS_URL_FILE")
+			}
 		}
 		for name, ring := range map[string]VersionedKeyring{
 			"email lookup HMAC": c.EmailLookupKeys, "auth subject HMAC": c.AuthSubjectKeys,
