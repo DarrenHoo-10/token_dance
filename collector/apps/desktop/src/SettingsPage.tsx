@@ -7,6 +7,8 @@ import type { AgentConfig, AutostartInfo, DaemonStatus } from "./tauri-bridge";
 import "./styles/settings.css";
 import { useWindowReady } from './window-ready';
 import { SoftwareUpdateCard, UpdateNotice } from './components/SoftwareUpdate';
+import { OrbSettings } from "./orb/OrbSettings";
+import { useTrayLanguage } from './use-tray-language';
 
 function Toggle({ checked, disabled, label, onChange }: { checked: boolean; disabled: boolean; label: string; onChange: (value: boolean) => void }) {
   return <button type="button" className="settings-toggle" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} onClick={() => onChange(!checked)}><span /></button>;
@@ -14,9 +16,10 @@ function Toggle({ checked, disabled, label, onChange }: { checked: boolean; disa
 
 export function SettingsPage() {
   const [lang, setLang] = useState<"zh" | "en">(() => localStorage.getItem("tokendance.language") === "en" ? "en" : "zh");
+  useTrayLanguage(lang);
   const [data, setData] = useState<{ agents: AgentConfig[]; status: DaemonStatus; autostart: AutostartInfo } | null>(null);
   const [error, setError] = useState(false);
-  useWindowReady(data !== null || error);
+  useWindowReady(true);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -96,6 +99,7 @@ export function SettingsPage() {
           <div className="settings-row"><div><h3>{t("采集用量", "Collect usage")}</h3><p>{t("记录本机 Agent 用量，可随时暂停", "Record agent usage on this device. Pause anytime.")}</p></div><Toggle label={t("采集用量", "Collect usage")} checked={data ? !data.status.globalPaused : false} disabled={disabled} onChange={enabled => void perform(() => setGlobalPause(!enabled), true)} /></div>
         </div>
       </section>
+      <OrbSettings zh={zh} />
       <section className="settings-sources">
         <button className="settings-disclosure" aria-expanded={sourcesOpen} aria-controls="settings-source-list" onClick={() => setSourcesOpen(!sourcesOpen)}><div><h2>{t("采集来源", "Collection sources")}</h2><p>{t("选择这台设备上的 Agent", "Choose which agents to collect from")}</p></div><span>{data ? t(`${data.agents.filter(agent => agent.enabled && agent.status !== "UNDETECTED").length} 个已启用来源`, `${data.agents.filter(agent => agent.enabled && agent.status !== "UNDETECTED").length} sources enabled`) : "—"}<b aria-hidden="true">{sourcesOpen ? "−" : "+"}</b></span></button>
         <div id="settings-source-list" hidden={!sourcesOpen} className="settings-source-list">

@@ -6,7 +6,14 @@ use std::{collections::HashMap, sync::Mutex};
 enum OpenRequest { Panel(PhysicalPosition<f64>), Settings }
 
 #[derive(Default)]
-struct Presentation { ready: bool, pending: Option<OpenRequest> }
+struct Presentation {
+    ready: bool,
+    pending: Option<OpenRequest>,
+    /// Hide-on-blur only after the window has actually held focus. Startup
+    /// `show()` often fails `SetForegroundWindow`, and WebView2 then emits a
+    /// stale `Focused(false)` that would otherwise hide the panel immediately.
+    held_focus: bool,
+}
 
 #[derive(Default)]
 pub struct WindowPresentation(Mutex<HashMap<String, Presentation>>);
@@ -23,12 +30,54 @@ impl WindowPresentation {
         entry.ready = true;
         entry.pending.take()
     }
+    pub(crate) fn has_pending(&self, label: &str) -> bool {
+        self.0.lock().expect("window presentation lock")
+            .get(label).is_some_and(|entry| entry.pending.is_some())
+    }
     pub fn cancel(&self, label: &str) {
         if let Some(entry) = self.0.lock().expect("window presentation lock").get_mut(label) { entry.pending = None; }
+    }
+    pub fn mark_hidden(&self, label: &str) {
+        if let Some(entry) = self.0.lock().expect("window presentation lock").get_mut(label) {
+            entry.pending = None;
+            entry.held_focus = false;
+        }
+    }
+    /// Returns true when a delayed hide-on-blur should be scheduled.
+    pub fn on_focus_change(&self, label: &str, focused: bool) -> bool {
+        let mut entries = self.0.lock().expect("window presentation lock");
+        let entry = entries.entry(label.into()).or_default();
+        if focused {
+            entry.held_focus = true;
+            false
+        } else {
+            entry.held_focus
+        }
+    }
+}
+
+fn window_blocks_orb(pending: bool, visible: bool, minimized: bool) -> bool {
+    pending || (visible && !minimized)
+}
+
+/// UI-thread only. Pending startup presentation also suppresses the orb,
+/// avoiding a flash while the primary WebView is loading.
+pub(crate) fn primary_ui_visible(app: &AppHandle) -> bool {
+    ["main", "settings"].iter().any(|label| {
+        let pending = app.state::<WindowPresentation>().has_pending(label);
+        let Some(window) = app.get_webview_window(label) else { return pending };
+        window_blocks_orb(pending, window.is_visible().unwrap_or(true), window.is_minimized().unwrap_or(false))
+    })
+}
+
+fn suppress_orb(app: &AppHandle) {
+    if let Some(orb) = app.try_state::<crate::orb::controller::OrbHandle>() {
+        orb.main_opened();
     }
 }
 
 fn present(window: &WebviewWindow) -> tauri::Result<()> {
+    suppress_orb(window.app_handle());
     if window.is_minimized()? { window.unminimize()?; }
     if !window.is_visible()? { window.show()?; }
     if !window.is_focused()? { window.set_focus()?; }
@@ -43,14 +92,36 @@ pub fn request_initial_panel(app: &AppHandle) -> tauri::Result<()> {
     show_usage_panel(app, point)
 }
 
-#[tauri::command]
-pub fn window_ready(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
-    let pending = app.state::<WindowPresentation>().ready(window.label());
+fn complete_pending_presentation(app: &AppHandle, label: &str) -> Result<(), String> {
+    let pending = app.state::<WindowPresentation>().ready(label);
     match pending {
-        Some(OpenRequest::Panel(point)) => show_usage_panel(&app, point).map_err(|e| e.to_string()),
-        Some(OpenRequest::Settings) => open_settings(app),
+        Some(OpenRequest::Panel(point)) => show_usage_panel(app, point).map_err(|e| e.to_string()),
+        Some(OpenRequest::Settings) => open_settings(app.clone()),
         None => Ok(()),
     }
+}
+
+#[tauri::command]
+pub fn window_ready(app: AppHandle, window: WebviewWindow) -> Result<(), String> {
+    complete_pending_presentation(&app, window.label())
+}
+
+/// Hidden WebViews can delay JavaScript/paint callbacks. Native navigation
+/// completion must also release an explicit show request. A cancelled request
+/// (minimize/close, or --minimized startup) is never recreated by this fallback.
+pub(crate) fn page_loaded(app: &AppHandle, label: &str) {
+    if !matches!(label, "main" | "settings") { return; }
+    let label = label.to_owned();
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        let callback_app = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Err(error) = complete_pending_presentation(&callback_app, &label) {
+                eprintln!("primary window presentation failed: {error}");
+            }
+        });
+    });
 }
 
 fn panel_position(
@@ -66,6 +137,7 @@ fn panel_position(
 }
 
 pub fn show_usage_panel(app: &AppHandle, point: PhysicalPosition<f64>) -> tauri::Result<()> {
+    suppress_orb(app);
     if !app.state::<WindowPresentation>().request("main", OpenRequest::Panel(point)) { return Ok(()); }
     if let Some(window) = app.get_webview_window("main") {
         if let Some(monitor) = app.monitor_from_point(point.x, point.y)? {
@@ -88,10 +160,11 @@ pub fn show_usage_panel(app: &AppHandle, point: PhysicalPosition<f64>) -> tauri:
 
 #[tauri::command]
 pub fn open_settings(app: AppHandle) -> Result<(), String> {
+    suppress_orb(&app);
     let settings = app
         .get_webview_window("settings")
         .ok_or("Settings window unavailable")?;
-    app.state::<WindowPresentation>().cancel("main");
+    app.state::<WindowPresentation>().mark_hidden("main");
     if let Some(panel) = app.get_webview_window("main") {
         panel.hide().map_err(|error| error.to_string())?;
     }
@@ -136,8 +209,106 @@ pub fn open_website(url: String) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn hide_window(window: WebviewWindow) -> Result<(), String> {
-    window.state::<WindowPresentation>().cancel(window.label());
-    window.hide().map_err(|error| error.to_string())
+    window.state::<WindowPresentation>().mark_hidden(window.label());
+    window.hide().map_err(|error| error.to_string())?;
+    if let Some(orb) = window.app_handle().try_state::<crate::orb::controller::OrbHandle>() {
+        orb.queue_visibility_sync();
+    }
+    Ok(())
+}
+
+/// If another TokenDance process is already running, show its panel and return true
+/// so this process can exit instead of fighting the collector lock / auto-update.
+pub fn activate_existing_instance() -> bool {
+    #[cfg(windows)]
+    {
+        activate_existing_instance_windows()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+#[cfg(windows)]
+fn activate_existing_instance_windows() -> bool {
+    use windows::core::BOOL;
+    use windows::Win32::Foundation::{HWND, LPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
+        SetForegroundWindow, SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE,
+        SWP_SHOWWINDOW, SW_RESTORE, SW_SHOW,
+    };
+
+    const KEEP_ENUMERATING: BOOL = BOOL(1);
+
+    struct Found {
+        me: u32,
+        main: Option<HWND>,
+        other: Option<HWND>,
+    }
+
+    unsafe extern "system" fn callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let found = unsafe { &mut *(lparam.0 as *mut Found) };
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+        if pid == found.me {
+            return KEEP_ENUMERATING;
+        }
+        let mut class = [0u16; 64];
+        let class_len = unsafe { GetClassNameW(hwnd, &mut class) };
+        if class_len <= 0 {
+            return KEEP_ENUMERATING;
+        }
+        let class_name = String::from_utf16_lossy(&class[..class_len as usize]);
+        if class_name != "Tauri Window" {
+            return KEEP_ENUMERATING;
+        }
+        let mut title = [0u16; 256];
+        let title_len = unsafe { GetWindowTextW(hwnd, &mut title) };
+        if title_len <= 0 {
+            return KEEP_ENUMERATING;
+        }
+        let title = String::from_utf16_lossy(&title[..title_len as usize]);
+        if !title.starts_with("TokenDance") {
+            return KEEP_ENUMERATING;
+        }
+        if title.contains("用量") || title.contains("Usage") {
+            found.main = Some(hwnd);
+        } else if found.other.is_none() {
+            found.other = Some(hwnd);
+        }
+        KEEP_ENUMERATING
+    }
+
+    let mut found = Found {
+        me: std::process::id(),
+        main: None,
+        other: None,
+    };
+    let _ = unsafe { EnumWindows(Some(callback), LPARAM(&mut found as *mut Found as isize)) };
+    let Some(hwnd) = found.main.or(found.other) else {
+        return false;
+    };
+    unsafe {
+        let show = if IsIconic(hwnd).as_bool() {
+            SW_RESTORE
+        } else {
+            SW_SHOW
+        };
+        let _ = ShowWindow(hwnd, show);
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+        );
+        let _ = SetForegroundWindow(hwnd);
+    }
+    true
 }
 
 #[tauri::command]
@@ -158,6 +329,15 @@ mod tests {
     use super::*;
 
     #[test]
+    fn primary_window_startup_minimize_restore_blocks_orb() {
+        assert!(window_blocks_orb(true, false, false), "pending startup must not flash the orb");
+        assert!(window_blocks_orb(false, true, false), "open main suppresses orb");
+        assert!(!window_blocks_orb(false, true, true), "OS minimize releases orb");
+        assert!(!window_blocks_orb(false, false, false), "minimize to tray releases orb");
+        assert!(window_blocks_orb(false, true, false), "restore suppresses orb again");
+    }
+
+    #[test]
     fn startup_and_early_clicks_wait_for_frontend_once() {
         let state = WindowPresentation::default();
         assert!(!state.request("main", OpenRequest::Panel(PhysicalPosition::new(0.0, 0.0))));
@@ -174,6 +354,23 @@ mod tests {
         assert!(!state.request("settings", OpenRequest::Settings));
         state.cancel("settings");
         assert!(state.ready("settings").is_none());
+    }
+
+    #[test]
+    fn blur_before_first_focus_does_not_hide() {
+        let state = WindowPresentation::default();
+        assert!(!state.on_focus_change("main", false));
+        state.mark_hidden("main");
+        assert!(!state.on_focus_change("main", false));
+    }
+
+    #[test]
+    fn blur_after_real_focus_schedules_hide() {
+        let state = WindowPresentation::default();
+        assert!(!state.on_focus_change("main", true));
+        assert!(state.on_focus_change("main", false));
+        state.mark_hidden("main");
+        assert!(!state.on_focus_change("main", false));
     }
 
     #[test]
