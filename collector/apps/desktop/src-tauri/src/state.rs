@@ -69,6 +69,7 @@ pub struct AgentConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub daily_usage: Vec<DayUsage>,
     pub total_costs: std::collections::BTreeMap<String, u64>,
+    pub pricing: crate::pricing::CostCoverage,
     pub history_start: Option<String>,
     pub last_active: String,
     pub version: String,
@@ -387,6 +388,32 @@ impl AppState {
 
     /// Fold newly collected envelopes into the device-local daily usage ledger
     /// and persist it when something changed.
+    pub async fn backfill_local_prices(&self) {
+        let mut service=self.service.lock().await;
+        service.wal.capture_observations();
+        let mut ledger=self.usage_ledger.lock().expect("usage ledger poisoned");
+        if ledger.backfilled(){return;}
+        match service.wal.visit_retained_events(|events|{ledger.record_pricing(events);}) {
+            Ok(())=>{ledger.finish_backfill();},
+            Err(_)=>collector_service::runtime::append_log(&self.control_dir_path(),"pricing history read incomplete; retry on restart"),
+        }
+        if ledger.save().is_err(){collector_service::runtime::append_log(&self.control_dir_path(),"pricing history save failed");}
+    }
+    pub async fn refresh_local_prices(&self) {
+        if self.usage_ledger.lock().expect("usage ledger poisoned").catalog.fresh(){return;}
+        match crate::pricing::Catalog::fetch().await {
+            Ok(catalog)=>{
+                let mut ledger=self.usage_ledger.lock().expect("usage ledger poisoned");
+                let status=if ledger.apply_prices(catalog).is_ok(){"OpenRouter pricing updated"}else{"OpenRouter pricing save failed"};
+                collector_service::runtime::append_log(&self.control_dir_path(),status);
+            },
+            Err(code)=>collector_service::runtime::append_log(&self.control_dir_path(),&format!("OpenRouter prices unavailable; keeping cache: {code}")),
+        }
+    }
+    pub fn record_pricing_observations(&self, events: &[EventEnvelope]) {
+        let mut ledger=self.usage_ledger.lock().expect("usage ledger poisoned");
+        if ledger.record_pricing(events) && ledger.save().is_err(){collector_service::runtime::append_log(&self.control_dir_path(),"pricing observations save failed");}
+    }
     pub fn record_usage(&self, events: &[EventEnvelope]) -> bool {
         let mut ledger = self.usage_ledger.lock().expect("usage ledger poisoned");
         let changed = ledger.record(events);
@@ -511,6 +538,7 @@ impl AppState {
                     total_tokens,
                     daily_usage,
                     total_costs: usage.as_ref().map(|item| item.total_costs.clone()).unwrap_or_default(),
+                    pricing: usage.as_ref().map(|u|u.pricing.clone()).unwrap_or_default(),
                     history_start: usage.as_ref().map(|item| item.history_start.clone()),
                     last_active: if runtime.detected {
                         "DETECTED"

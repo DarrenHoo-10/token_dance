@@ -49,19 +49,29 @@ export function usageTokens(agent: AgentConfig, range: UsageRange, now = new Dat
 export function usageCosts(agents: AgentConfig[], range: UsageRange, now = new Date()) {
   const dates = lastSevenDays(now);
   const currencies: Record<string, number> = {};
-  let covered = 0;
+  let covered = 0, estimatedRequests = 0, unpricedRequests = 0, historyIncomplete = false;
   for (const agent of agents) {
-    const values = range === 'all' ? [agent.totalCosts ?? {}] : (agent.dailyUsage ?? [])
-      .filter(day => range === 'today' ? day.date === dates[6] : dates.includes(day.date)).map(day => day.costs ?? {});
+    const days = (agent.dailyUsage ?? []).filter(day => range === 'today' ? day.date === dates[6] : dates.includes(day.date));
+    const rows = range === 'all' ? [{ costs: agent.totalCosts, pricing: agent.pricing, tokens: agent.totalTokens }] : days;
     let known = false;
-    for (const value of values) for (const [currency, units] of Object.entries(value)) {
-      if (!/^[A-Z]{3}$/.test(currency) || !Number.isFinite(units) || units < 0) continue;
-      currencies[currency] = (currencies[currency] ?? 0) + units / 1e8;
-      known = true;
+    for (const row of rows) {
+      for (const [currency, units] of Object.entries(row.costs ?? {})) {
+        if (!/^[A-Z]{3}$/.test(currency) || !Number.isFinite(units) || units < 0) continue;
+        currencies[currency] = (currencies[currency] ?? 0) + units / 1e8;
+        known = true;
+      }
+      const p = row.pricing;
+      if (p?.estimatedRequests && Number.isFinite(p.estimatedUsd) && p.estimatedUsd >= 0) {
+        currencies.USD = (currencies.USD ?? 0) + p.estimatedUsd / 1e8;
+        estimatedRequests += p.estimatedRequests;
+        known = true;
+      }
+      unpricedRequests += p?.unpricedRequests ?? 0;
+      if (row.tokens > (p?.detailedTokens ?? 0)) historyIncomplete = true;
     }
     if (known) covered++;
   }
-  return { currencies, covered };
+  return { currencies, covered, estimatedRequests, unpricedRequests, historyIncomplete };
 }
 
 export function annualUsage(agents: AgentConfig[], now = new Date()) {

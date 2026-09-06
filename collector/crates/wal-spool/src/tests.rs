@@ -402,12 +402,19 @@ fn duplicate_event_id_is_not_requeued() {
         server_acked_at: "2026-08-30T00:00:01.000Z".into(),
     })
     .unwrap();
+    wal.capture_observations();
     wal.append_txn(
         txn(vec![ev.clone()], checkpoint(2, 1)),
         AppendClass::Realtime,
     )
     .unwrap();
     assert_eq!(wal.unacked_count(), 0);
+    assert_eq!(wal.take_observations().len(), 1);
+    assert!(wal.take_observations().is_empty());
+    let mut history=Vec::new();
+    wal.visit_retained_events(|events|history.extend_from_slice(events)).unwrap();
+    assert!(history.iter().any(|e|e.event_id==ev.event_id));
+    assert_eq!(wal.unacked_count(),0);
     assert_eq!(
         wal.event_status(&ev.event_id),
         Some(protocol::EventDeliveryStatus::Acked)
