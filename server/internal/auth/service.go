@@ -467,7 +467,7 @@ func (s *Service) reserveDefaultHandle(ctx context.Context, email string, now ti
 	return "dancer_" + randomHandleSuffix(8)
 }
 
-func (s *Service) CompleteRegistration(ctx context.Context, email, code, password, returnTo, locale, timezone string) (*RegistrationResult, error) {
+func (s *Service) CompleteRegistration(ctx context.Context, email, code, password, returnTo, locale, timezone string, profiles ...RegistrationProfile) (*RegistrationResult, error) {
 	normalized, err := NormalizeEmail(email)
 	if err != nil {
 		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidEmail", "invalid email", nil, err)
@@ -489,6 +489,14 @@ func (s *Service) CompleteRegistration(ctx context.Context, email, code, passwor
 		timezone = "UTC"
 	}
 
+	var selectedProfile RegistrationProfile
+	if len(profiles) > 0 {
+		selectedProfile = profiles[0]
+	}
+	displayName, avatarURL, err := resolveRegistrationProfile(selectedProfile, locale)
+	if err != nil {
+		return nil, err
+	}
 	emailHash := s.ComputeEmailLookupHash(normalized)
 	now := s.clk.Now()
 
@@ -557,7 +565,8 @@ func (s *Service) CompleteRegistration(ctx context.Context, email, code, passwor
 		EmailLookupHash:       &emailHash,
 		EmailCiphertext:       userEmailCiphertext,
 		Handle:                &defaultHandle,
-		DisplayName:           "Token Dancer",
+		DisplayName:           displayName,
+		AvatarURL:             &avatarURL,
 		AccountStatus:         domain.AccountStatusActive,
 		LeaderboardVisibility: domain.LeaderboardVisibilityPrivate,
 		TimezoneName:          timezone,

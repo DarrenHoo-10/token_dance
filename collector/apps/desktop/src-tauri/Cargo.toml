@@ -2,7 +2,7 @@
 
 [package]
 name = "tokendance-desktop"
-version = "0.1.6"
+version = "0.1.13"
 edition = "2021"
 authors = ["TokenDance Team"]
 description = "TokenDance Desktop Collector Settings Shell"
@@ -19,6 +19,7 @@ config-executor = { path = "../../../crates/config-executor" }
 protocol = { path = "../../../crates/protocol" }
 wal-spool = { path = "../../../crates/wal-spool" }
 uploader = { path = "../../../crates/uploader" }
+privacy = { path = "../../../crates/privacy" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
@@ -26,14 +27,18 @@ tokio = { version = "1", features = ["full", "sync", "time"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 ulid = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "system-proxy"] }
 cookie = "0.18"
 sha2 = "0.10"
+base64 = "0.22"
+rusqlite = { version = "0.32", features = ["bundled"] }
 tauri = { version = "2", features = ["tray-icon"] }
-
-[dev-dependencies]
+self-replace = "1"
+semver = "1"
 tempfile = "3"
-privacy = { path = "../../../crates/privacy" }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
 tauri-build = "2"

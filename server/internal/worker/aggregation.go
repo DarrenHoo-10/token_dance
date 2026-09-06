@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"tokendance/internal/crypto"
+	mysqlstore "tokendance/internal/store/mysql"
 )
 
 const aggregationVersion = 2
@@ -33,7 +34,7 @@ func canonicalAggregateStatements(datePlaceholders string) []struct {
 	query   string
 	repeats int
 } {
-	filter := "user_id = ? AND occurred_date IN (" + datePlaceholders + ")"
+	filter := "user_id = ? AND occurred_date IN (" + datePlaceholders + ") AND NOT EXISTS (SELECT 1 FROM device_daily_aggregates da WHERE da.installation_id=usage_events.installation_id AND da.metric_date=usage_events.occurred_date)"
 	return []struct {
 		query   string
 		repeats int
@@ -272,7 +273,7 @@ func rebuildUserAggregates(ctx context.Context, tx *sql.Tx, userID string, affec
 			return fmt.Errorf("rebuild user aggregates: %w", err)
 		}
 	}
-	return nil
+	return applyDeviceAggregates(ctx, tx, userID, affectedDates)
 }
 
 func (w *Worker) ProcessAggregates(ctx context.Context) (int, error) {
@@ -306,6 +307,7 @@ func (w *Worker) ProcessAggregates(ctx context.Context) (int, error) {
 			FROM daily_user_agent_metrics GROUP BY metric_date, user_id
 		) a ON a.metric_date = e.occurred_date AND a.user_id = e.user_id
 		WHERE e.event_pk > COALESCE(a.source_max_event_pk, 0)
+		  AND NOT EXISTS (SELECT 1 FROM device_daily_aggregates da WHERE da.installation_id=e.installation_id AND da.metric_date=e.occurred_date)
 		ORDER BY e.user_id, metric_date
 		LIMIT 500`)
 	if err != nil {
@@ -326,19 +328,50 @@ func (w *Worker) ProcessAggregates(ctx context.Context) (int, error) {
 	if err := rows.Close(); err != nil {
 		return 0, fmt.Errorf("close aggregate rebuild targets: %w", err)
 	}
-	if len(targets) == 0 {
-		return 0, nil
-	}
-
 	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("begin aggregate rebuild: %w", err)
 	}
 	defer tx.Rollback()
+
+	now := w.clk.Now()
+	for userID, dates := range targets {
+		for _, date := range dates {
+			if err := mysqlstore.MarkAggregateDirtyDayTx(ctx, tx, userID, date, now); err != nil {
+				return 0, err
+			}
+		}
+	}
+	dirtyTargets, err := mysqlstore.ListPendingDirtyDaysTx(ctx, tx, now, 500)
+	if err != nil {
+		return 0, err
+	}
+	for userID, dates := range dirtyTargets {
+		targets[userID] = mergeDates(targets[userID], dates)
+	}
+	if len(targets) == 0 {
+		if err := mysqlstore.PruneOldWindowScoresTx(ctx, tx, now); err != nil {
+			return 0, err
+		}
+		if err := tx.Commit(); err != nil {
+			return 0, fmt.Errorf("commit empty aggregate rebuild: %w", err)
+		}
+		if _, err := mysqlstore.BackfillWindowScores(ctx, w.db, now, 100); err != nil {
+			return 0, err
+		}
+		return 0, nil
+	}
+
 	allDates := make(map[string]struct{})
 	processed := 0
 	for userID, dates := range targets {
 		if err := rebuildUserAggregates(ctx, tx, userID, dates); err != nil {
+			return 0, err
+		}
+		if err := mysqlstore.UpsertCurrentWindowScoresTx(ctx, tx, userID, now); err != nil {
+			return 0, err
+		}
+		if err := mysqlstore.ClearAggregateDirtyDaysTx(ctx, tx, userID, dates, now); err != nil {
 			return 0, err
 		}
 		processed += len(dates)
@@ -346,13 +379,47 @@ func (w *Worker) ProcessAggregates(ctx context.Context) (int, error) {
 			allDates[date] = struct{}{}
 		}
 	}
-	if err := rebuildPublishedLeaderboards(ctx, tx, mapKeys(allDates), w.clk.Now()); err != nil {
+	if err := rebuildPublishedLeaderboards(ctx, tx, mapKeys(allDates), now); err != nil {
+		return 0, err
+	}
+	if err := mysqlstore.PruneOldWindowScoresTx(ctx, tx, now); err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("commit aggregate rebuild: %w", err)
 	}
+	if _, err := mysqlstore.BackfillWindowScores(ctx, w.db, now, 100); err != nil {
+		return processed, err
+	}
 	return processed, nil
+}
+
+func (w *Worker) BackfillWindowScores(ctx context.Context) (int, error) {
+	if w.db == nil {
+		return 0, nil
+	}
+	return mysqlstore.BackfillWindowScores(ctx, w.db, w.clk.Now(), 200)
+}
+
+func mergeDates(existing, extra []string) []string {
+	seen := make(map[string]struct{}, len(existing)+len(extra))
+	out := make([]string, 0, len(existing)+len(extra))
+	for _, date := range existing {
+		if _, ok := seen[date]; ok {
+			continue
+		}
+		seen[date] = struct{}{}
+		out = append(out, date)
+	}
+	for _, date := range extra {
+		if _, ok := seen[date]; ok {
+			continue
+		}
+		seen[date] = struct{}{}
+		out = append(out, date)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func mapKeys(values map[string]struct{}) []string {

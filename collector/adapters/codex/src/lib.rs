@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 mod session_context;
+mod skill_reads;
 use session_context::SessionContext;
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -290,6 +291,18 @@ fn decode_jsonl_context(
         let Ok(value) = serde_json::from_str::<Value>(line) else {
             continue;
         };
+        if let Some(read) = context.skills.observe(&value) {
+            if let Some(event) = decode_record(
+                manifest,
+                version,
+                hmac_key,
+                frame,
+                &read,
+                format!("{}:skill-read", index + 1),
+            )? {
+                events.push(event);
+            }
+        }
         let patch = context.observe(&value);
         let Some(mut value) = patch.or_else(|| flatten_codex_record(value)) else {
             continue;
@@ -521,21 +534,29 @@ fn decode_record(
             success: o.get("success").and_then(Value::as_bool).unwrap_or(false),
             duration_ms: num(o, "duration_ms"),
         }),
-        "skill.execution.completed" | "skill.execution.failed"
+        "skill.execution.completed" | "skill.execution.failed" | "skill.read.completed"
             if version_in_range(version, (0, 120, 0), MAX_SUPPORTED_VERSION_EXCLUSIVE) =>
         {
             let Some(skill) = string_any(o, &["skill", "skill_name"]) else {
                 return Ok(None);
             };
-            let Some(success) = o.get("success").and_then(Value::as_bool) else {
+            let Some(success) = (kind == "skill.read.completed")
+                .then_some(true)
+                .or_else(|| o.get("success").and_then(Value::as_bool))
+            else {
                 return Ok(None);
             };
             let Some(_) = string_any(o, &["invocationId", "invocation_id"]) else {
                 return Ok(None);
             };
             EventPayload::SkillInvoked(SkillInvokedPayload {
+                skill_public_name: string_any(o, &["skill_public_name"]),
                 skill_key: format!("hmac-sha256:{}", keyed_hmac(hmac_key, &[&skill])),
-                invoke_type: SkillInvokeType::Native,
+                invoke_type: if kind == "skill.read.completed" {
+                    SkillInvokeType::RuntimeCorrelated
+                } else {
+                    SkillInvokeType::Native
+                },
                 success,
                 plugin_key: string_any(o, &["plugin", "plugin_name"])
                     .as_deref()
@@ -557,7 +578,14 @@ fn decode_record(
     let cursor = format!("{}:{}", frame.cursor, sequence);
     let invocation_id = string_any(o, &["invocationId", "invocation_id"]);
     let (identity_source, identity_cursor, identity_semantic, identity_sequence) =
-        if matches!(kind, "skill.execution.completed" | "skill.execution.failed") {
+        if kind == "skill.read.completed" {
+            (
+                "codex-skill-read",
+                invocation_id.as_deref().unwrap_or_default(),
+                "skill.read",
+                "completed",
+            )
+        } else if matches!(kind, "skill.execution.completed" | "skill.execution.failed") {
             (
                 "codex-skill-invocation",
                 invocation_id.as_deref().unwrap_or_default(),
@@ -608,7 +636,9 @@ fn decode_record(
                 keyed_hmac(hmac_key, &[&raw_fingerprint(&raw)])
             ),
         },
-        accuracy: if kind == "patch.applied" {
+        accuracy: if kind == "skill.read.completed" {
+            Accuracy::Correlated
+        } else if kind == "patch.applied" {
             Accuracy::Derived
         } else {
             Accuracy::Exact

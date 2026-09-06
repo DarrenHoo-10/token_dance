@@ -124,6 +124,7 @@ export interface ToolInvokedPayload {
 export interface SkillInvokedPayload {
   type: "skill_invoked"
   skillKey: HmacSha256
+  skillPublicName?: string
   invokeType: SkillInvokeType
   success: boolean
   pluginKey?: HmacSha256

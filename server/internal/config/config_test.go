@@ -124,6 +124,77 @@ func TestProductionValidationSafety(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("valid production config should pass: %v", err)
 	}
+
+	cfg.RedisAddr = "127.0.0.1:6379"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("production must fail when Redis is configured without TOKENDANCE_REDIS_URL_FILE")
+	}
+	cfg.RedisURL = "redis://:secret@127.0.0.1:6379/0"
+	cfg.RedisURLFile = "redis.secret"
+	cfg.RedisPassword = "secret"
+	cfg.RedisDB = 0
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid production config with Redis URL file should pass: %v", err)
+	}
+}
+
+func TestRedisURLLoadsLikeMySQLDSN(t *testing.T) {
+	dir := t.TempDir()
+	urlFile := filepath.Join(dir, "redis_url")
+	if err := os.WriteFile(urlFile, []byte("redis://:file-secret@www.nexorai.com.cn:6380/0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TOKENDANCE_ENVIRONMENT", "test")
+	t.Setenv("TOKENDANCE_REDIS_ADDR", "127.0.0.1:1")
+	t.Setenv("TOKENDANCE_REDIS_DB", "7")
+	t.Setenv("TOKENDANCE_REDIS_URL", "redis://:ignored@127.0.0.1:6379/0")
+	t.Setenv("TOKENDANCE_REDIS_URL_FILE", urlFile)
+
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("load Redis URL file: %v", err)
+	}
+	if cfg.RedisURLFile != urlFile {
+		t.Fatalf("expected Redis URL file path, got %q", cfg.RedisURLFile)
+	}
+	if cfg.RedisAddr != "www.nexorai.com.cn:6380" {
+		t.Fatalf("expected redis_dev host from URL file, got %q", cfg.RedisAddr)
+	}
+	if cfg.RedisPassword != "file-secret" {
+		t.Fatal("Redis URL file password was not loaded")
+	}
+	if cfg.RedisDB != 0 {
+		t.Fatalf("expected Redis DB 0 on redis_dev, got %d", cfg.RedisDB)
+	}
+}
+
+func TestRedisURLEnvParsesDevAndProdInstances(t *testing.T) {
+	t.Setenv("TOKENDANCE_ENVIRONMENT", "development")
+	t.Setenv("TOKENDANCE_REDIS_URL", "redis://:devpass@www.nexorai.com.cn:6380/0")
+	cfg, err := LoadFromEnv()
+	if err != nil {
+		t.Fatalf("load Redis URL: %v", err)
+	}
+	if !cfg.RedisConfigured() || cfg.RedisAddr != "www.nexorai.com.cn:6380" || cfg.RedisPassword != "devpass" || cfg.RedisDB != 0 {
+		t.Fatalf("dev Redis URL not parsed: addr=%q db=%d", cfg.RedisAddr, cfg.RedisDB)
+	}
+
+	t.Setenv("TOKENDANCE_REDIS_URL", "redis://:prodpass@127.0.0.1:6379/0")
+	cfg, err = LoadFromEnv()
+	if err != nil {
+		t.Fatalf("load prod Redis URL: %v", err)
+	}
+	if cfg.RedisAddr != "127.0.0.1:6379" || cfg.RedisPassword != "prodpass" || cfg.RedisDB != 0 {
+		t.Fatalf("prod Redis URL not parsed: addr=%q db=%d", cfg.RedisAddr, cfg.RedisDB)
+	}
+}
+
+func TestInvalidRedisURLRejected(t *testing.T) {
+	t.Setenv("TOKENDANCE_ENVIRONMENT", "test")
+	t.Setenv("TOKENDANCE_REDIS_URL", "http://127.0.0.1:6379/0")
+	if _, err := LoadFromEnv(); err == nil {
+		t.Fatal("expected invalid Redis URL scheme to fail")
+	}
 }
 
 func TestVersionedKeyringsLoadFromSecretFiles(t *testing.T) {

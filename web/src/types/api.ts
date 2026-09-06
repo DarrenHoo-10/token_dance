@@ -69,6 +69,8 @@ export interface RegisterCodeRequest {
 }
 
 export interface RegisterRequest {
+  displayName?: string;
+  avatarId?: string;
   email: string;
   code: string;
   password?: string;
@@ -204,6 +206,7 @@ export interface PersonalSummaryMetrics {
 }
 
 export interface PersonalSummaryRanking {
+  entry?: LeaderboardEntry;
   visibility?: LeaderboardVisibility | string;
   rank: number | null;
   delta?: number | null;
@@ -506,6 +509,7 @@ export interface LeaderboardEntry {
   avatarUrl: string | null;
   metricValue: string;
   rankDelta?: number | null;
+  isNew?: boolean;
   formattedMetric?: string;
   topAgent?: string;
   activeDays?: number;
@@ -519,10 +523,15 @@ export interface LeaderboardResponse {
   entries: LeaderboardEntry[];
   nextCursor?: string | null;
   dataWatermarkAt?: string | null;
+  ownEntry?: LeaderboardEntry | null;
+  viewKind?: string;
+  generation?: string;
+  revision?: string;
   // Aliases
   agent?: string;
   generatedAt?: string;
   totalEntries?: number;
+  totalParticipants?: number;
   totalTokens?: string;
   timezone?: string;
 }

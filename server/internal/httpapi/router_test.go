@@ -56,6 +56,19 @@ func TestNormalizeTelemetryEventBoundsPersistedStringFields(t *testing.T) {
 		}
 	})
 
+	for _, invokeType := range []string{"native", "hook", "tool_correlated", "runtime_correlated"} {
+		t.Run("collector skill "+invokeType, func(t *testing.T) {
+			event := validEvent()
+			event.EventType = "skill_invoked"
+			event.Accuracy = "correlated"
+			name, key := "browser", strings.Repeat("b", 64)
+			event.SkillPublicName, event.SkillKey, event.SkillInvokeType = &name, &key, &invokeType
+			if _, code := normalizeTelemetryEvent(&event); code != "" {
+				t.Fatalf("collector skill rejected: %s", code)
+			}
+		})
+	}
+
 	for _, test := range []struct {
 		name   string
 		mutate func(*TelemetryEventInput)

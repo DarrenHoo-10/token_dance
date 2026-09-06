@@ -385,6 +385,8 @@ pub struct ToolInvokedPayload {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SkillInvokedPayload {
     pub skill_key: HmacSha256,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skill_public_name: Option<String>,
     pub invoke_type: SkillInvokeType,
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

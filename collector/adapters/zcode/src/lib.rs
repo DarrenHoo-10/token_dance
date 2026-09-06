@@ -298,6 +298,7 @@ fn decode_record(
             };
             (
                 EventPayload::SkillInvoked(SkillInvokedPayload {
+                skill_public_name: None,
                     skill_key: hash(hmac_key, &skill),
                     invoke_type: SkillInvokeType::RuntimeCorrelated,
                     success,

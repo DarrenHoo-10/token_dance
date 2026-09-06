@@ -8,6 +8,7 @@ pub mod device;
 pub mod upload;
 pub mod window;
 pub mod quotas;
+pub mod orb;
 
 pub use agents::*;
 pub use autostart::*;

@@ -2,6 +2,7 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 #[derive(Default)]
 pub(crate) struct SessionContext {
+    pub skills: crate::skill_reads::SkillReads,
     pub model: Option<String>,
     pending: BTreeMap<String, (u64, u64, u32)>,
 }

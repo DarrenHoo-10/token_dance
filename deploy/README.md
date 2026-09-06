@@ -4,6 +4,8 @@
 
 部署目标是现有 Tencent Seoul 01 服务器。凭证由本机用户环境变量读取；不得放进代码、构建包或日志。
 
+**仅允许部署 `main` 分支。** 改动先合入 `origin/main`，再从干净的 `main` 工作区构建；构建前拉取远端并确认 `HEAD` 与 `origin/main` 一致。禁止直接部署功能分支。发布记录必须注明分支 `main` 和完整提交 SHA。此规则同样适用于开发环境部署及桌面端发布。
+
 ## 运行结构
 
 | 项目 | 位置 / 配置 |
@@ -13,8 +15,11 @@
 | 静态文件 | `/var/www/token-dance` → `/opt/token-dance/current/web` |
 | API | `token-dance-api.service`，仅监听 `127.0.0.1:8130` |
 | 后台任务 | `token-dance-worker.service` |
-| MySQL | 现有 `usercenter-mysql` 容器，主机端口 `3307`，库 `tokendance_prod` |
+| MySQL | 现有 `usercenter-mysql` 容器，主机端口 `3307` 直连，库 `tokendance_prod` |
 | 数据库账号 | `tokendance_app`，仅授权 `tokendance_prod.*` |
+| Redis 生产 | `tokendance-redis` 容器，仅本机 `127.0.0.1:6379`，对应库 `tokendance_prod` |
+| Redis 测试 | `redis_dev` 容器，主机端口 `6380`，经 `www.nexorai.com.cn:6380` 直连，对应库 `tokendance_dev` |
+| Redis 连接 | 生产读 `/etc/token-dance/secrets/redis_url`；测试/开发读 `redis_dev_url` 或设置 `TOKENDANCE_REDIS_URL`，不走 SSH 隧道、不写公网 IP |
 | 环境配置 | `/etc/token-dance/app.env` |
 | 独立密钥 | `/etc/token-dance/secrets/`，root:tokendance，目录 0750、文件 0640 |
 | 对象存储 | S3 兼容 OSS，所有对象使用 `token-dance/` 前缀 |
@@ -49,7 +54,7 @@ Pop-Location
 
 上传到新的 `/opt/token-dance/releases/<timestamp>/`，赋予 `bin/*` 0755 权限。后续发布直接复用 `/etc/token-dance` 中的正式配置。
 
-首次配置可将 provider JSON 经 SSH 标准输入传给 `sudo python3 <release>/deploy/provision.py`。JSON 字段为 `TOKENDANCE_EMAIL_PROVIDER`、`TOKENDANCE_SMTP_HOST/PORT/TLS_MODE/USERNAME/PASSWORD/FROM` 和 `TOKENDANCE_OBJECT_ENDPOINT/REGION/BUCKET/ACCESS_KEY/SECRET_KEY`。已有 `app.env` 时不会重新生成密钥。
+首次配置可将 provider JSON 经 SSH 标准输入传给 `sudo python3 <release>/deploy/provision.py`。JSON 字段为 `TOKENDANCE_EMAIL_PROVIDER`、`TOKENDANCE_SMTP_HOST/PORT/TLS_MODE/USERNAME/PASSWORD/FROM` 和 `TOKENDANCE_OBJECT_ENDPOINT/REGION/BUCKET/ACCESS_KEY/SECRET_KEY`。已有 `app.env` 时不会重新生成密钥。已有环境补 Redis 时执行 `sudo python3 <release>/deploy/provision_redis.py`：创建本机 `tokendance-redis` 和测试实例 `redis_dev`。生产 URL 写入 `/etc/token-dance/secrets/redis_url`；测试 URL 写入 `redis_dev_url`，本机开发经 `www.nexorai.com.cn:6380` 直连。
 
 ## 验证和切换
 

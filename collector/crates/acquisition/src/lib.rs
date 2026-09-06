@@ -17,6 +17,7 @@ pub use drivers::{
     REMOTE_API_OVERLAP,
 };
 pub use error::AcquisitionError;
+pub use identity::file_identity;
 pub use jsonl::{JsonlTailer, PollResult, MAX_LINE_BYTES};
 pub use log::SafeLog;
 pub use otlp::{

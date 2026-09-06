@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { LocaleProvider } from '@/context/LocaleContext';
 import { NotificationProvider } from '@/context/NotificationContext';
@@ -162,9 +162,82 @@ describe('Auth & Onboarding Flow Tests', () => {
     expect(await screen.findByRole('heading', { name: '使用邮箱登录' })).toBeInTheDocument();
   });
 
-  it('shows registration failures in the shared error notice without losing form values', async () => {
+  describe.each(['login', 'register'] as const)('%s interaction feedback', (mode) => {
+    it.each(['focused', 'visible'] as const)('prioritizes pending and failed submission with the password %s, then recovers on editing', async (passwordState) => {
+      vi.spyOn(api, 'getSession').mockResolvedValue({ authenticated: false, user: null });
+      let rejectSubmission!: (reason: Error) => void;
+      const pendingSubmission = new Promise<never>((_resolve, reject) => {
+        rejectSubmission = reject;
+      });
+      const submitSpy = vi.spyOn(api, mode).mockReturnValue(pendingSubmission);
+      const Page = mode === 'login' ? LoginPage : RegisterPage;
+
+      render(
+        <LocaleProvider>
+          <NotificationProvider>
+            <AuthProvider>
+              <MemoryRouter initialEntries={[`/${mode}`]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+                <Page />
+              </MemoryRouter>
+            </AuthProvider>
+          </NotificationProvider>
+        </LocaleProvider>
+      );
+
+      const emailInput = await screen.findByPlaceholderText('name@example.com');
+      const passwordInput = screen.getByPlaceholderText(mode === 'login' ? '••••••••••••' : '至少 8 个字符');
+      const submitButton = screen.getByRole('button', { name: mode === 'login' ? '登录 TokenDance' : '验证并完成注册' });
+      const form = passwordInput.closest('form')!;
+      fireEvent.change(emailInput, { target: { value: 'member@example.com' } });
+      fireEvent.change(passwordInput, { target: { value: 'password123' } });
+      if (mode === 'register') {
+        fireEvent.change(screen.getByPlaceholderText('6 位数字验证码'), { target: { value: '123456' } });
+      }
+
+      const focusedInput = passwordState === 'focused' ? passwordInput : emailInput;
+      act(() => focusedInput.focus());
+      if (passwordState === 'visible') {
+        fireEvent.click(screen.getByRole('button', { name: '显示密码' }));
+        expect(passwordInput).toHaveAttribute('type', 'text');
+      }
+      expect(focusedInput).toHaveFocus();
+      expect(document.querySelector('.login-companions')).toHaveAttribute('data-mood', 'password');
+
+      // Submit directly to preserve the focused input, as an Enter-key submission does.
+      fireEvent.submit(form);
+      expect(submitSpy).toHaveBeenCalledWith(expect.objectContaining({ email: 'member@example.com', password: 'password123' }));
+      expect(focusedInput).toHaveFocus();
+      expect(form).toHaveAttribute('aria-busy', 'true');
+      expect(submitButton).toBeDisabled();
+      expect(document.querySelector('.login-companions')).toHaveAttribute('data-mood', 'loading');
+
+      await act(async () => rejectSubmission(new Error('Please check your credentials')));
+      expect(await screen.findByRole('alert')).toHaveTextContent('Please check your credentials');
+      expect(focusedInput).toHaveFocus();
+      expect(document.querySelector('.login-companions')).toHaveAttribute('data-mood', 'error');
+      expect(form).toHaveAttribute('aria-busy', 'false');
+      expect(submitButton).toBeEnabled();
+      expect(emailInput).toHaveValue('member@example.com');
+      expect(passwordInput).toHaveValue('password123');
+      if (mode === 'register') {
+        expect(screen.getByPlaceholderText('6 位数字验证码')).toHaveValue('123456');
+      }
+
+      const newValue = passwordState === 'focused' ? 'correctedPassword123' : 'corrected@example.com';
+      fireEvent.change(focusedInput, { target: { value: newValue } });
+      expect(focusedInput).toHaveValue(newValue);
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(document.querySelector('.login-companions')).toHaveAttribute('data-mood', 'password');
+      expect(submitSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('shows verification-code feedback while email stays focused and clears the failure when the code is edited', async () => {
     vi.spyOn(api, 'getSession').mockResolvedValue({ authenticated: false, user: null });
-    vi.spyOn(api, 'register').mockRejectedValue(new Error('Registration failed'));
+    let rejectRequest!: (reason: Error) => void;
+    vi.spyOn(api, 'requestRegisterCode').mockReturnValue(new Promise<never>((_resolve, reject) => {
+      rejectRequest = reject;
+    }));
     render(
       <LocaleProvider>
         <NotificationProvider>
@@ -176,13 +249,27 @@ describe('Auth & Onboarding Flow Tests', () => {
         </NotificationProvider>
       </LocaleProvider>
     );
-    fireEvent.change(screen.getByPlaceholderText('name@example.com'), { target: { value: 'newuser@example.com' } });
-    fireEvent.change(screen.getByPlaceholderText('6 位数字验证码'), { target: { value: '123456' } });
-    fireEvent.change(screen.getByPlaceholderText('至少 8 个字符'), { target: { value: 'password123' } });
-    fireEvent.click(screen.getByRole('button', { name: '验证并完成注册' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Registration failed');
-    expect(screen.getByPlaceholderText('name@example.com')).toHaveValue('newuser@example.com');
-    expect(screen.getByRole('button', { name: '验证并完成注册' })).toBeEnabled();
+
+    const emailInput = screen.getByPlaceholderText('name@example.com');
+    const codeInput = screen.getByPlaceholderText('6 位数字验证码');
+    fireEvent.change(emailInput, { target: { value: 'member@example.com' } });
+    act(() => emailInput.focus());
+    expect(document.querySelector('.login-companions')).toHaveAttribute('data-mood', 'email');
+    fireEvent.click(screen.getByRole('button', { name: '获取验证码' }));
+    expect(document.querySelector('.login-companions')).toHaveAttribute('data-mood', 'loading');
+
+    await act(async () => rejectRequest(new Error('Code delivery failed')));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Code delivery failed');
+    expect(emailInput).toHaveFocus();
+    expect(document.querySelector('.login-companions')).toHaveAttribute('data-mood', 'error');
+    expect(emailInput).toHaveValue('member@example.com');
+    expect(screen.getByRole('button', { name: '获取验证码' })).toBeEnabled();
+
+    act(() => codeInput.focus());
+    fireEvent.change(codeInput, { target: { value: '654321' } });
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(codeInput).toHaveValue('654321');
+    expect(document.querySelector('.login-companions')).toHaveAttribute('data-mood', 'idle');
   });
 
   it('renders OnboardingPage with default private visibility', async () => {
@@ -254,6 +341,16 @@ describe('Auth & Onboarding Flow Tests', () => {
       expect(screen.getByText('创建你的 TokenDance 账户')).toBeInTheDocument();
     });
 
+    const nickname = screen.getByLabelText('昵称') as HTMLInputElement;
+    expect(nickname.value).toMatch(/.+_[a-z0-9]{4}$/);
+    expect(screen.getAllByRole('radio')).toHaveLength(4);
+    expect(screen.getAllByRole('radio').filter(radio => (radio as HTMLInputElement).checked)).toHaveLength(1);
+    const oldNickname = nickname.value;
+    fireEvent.click(screen.getByRole('button', { name: '换个昵称' }));
+    expect(nickname.value).not.toBe(oldNickname);
+    fireEvent.change(nickname, { target: { value: '薄荷小猫' } });
+    fireEvent.click(screen.getByRole('radio', { name: '狐狸' }));
+    expect(screen.getByRole('radio', { name: '狐狸' })).toBeChecked();
     fireEvent.change(screen.getByPlaceholderText('name@example.com'), { target: { value: 'newuser@example.com' } });
     fireEvent.change(screen.getByPlaceholderText('6 位数字验证码'), { target: { value: '123456' } });
     fireEvent.change(screen.getByPlaceholderText('至少 8 个字符'), { target: { value: 'password123' } });
@@ -267,6 +364,8 @@ describe('Auth & Onboarding Flow Tests', () => {
       expect.objectContaining({
         locale: 'zh-CN',
         timezone: expect.any(String),
+        displayName: '薄荷小猫',
+        avatarId: 'fox',
       })
     );
   });

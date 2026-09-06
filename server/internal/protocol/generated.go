@@ -278,12 +278,13 @@ type ToolInvokedPayload struct {
 }
 
 type SkillInvokedPayload struct {
-	Type       EventType       `json:"type"`
-	SkillKey   HmacSha256      `json:"skillKey"`
-	InvokeType SkillInvokeType `json:"invokeType"`
-	Success    bool            `json:"success"`
-	PluginKey  *HmacSha256     `json:"pluginKey,omitempty"`
-	DurationMs *UInt64String   `json:"durationMs,omitempty"`
+	Type            EventType       `json:"type"`
+	SkillKey        HmacSha256      `json:"skillKey"`
+	SkillPublicName *string         `json:"skillPublicName,omitempty"`
+	InvokeType      SkillInvokeType `json:"invokeType"`
+	Success         bool            `json:"success"`
+	PluginKey       *HmacSha256     `json:"pluginKey,omitempty"`
+	DurationMs      *UInt64String   `json:"durationMs,omitempty"`
 }
 
 type CodeChangedPayload struct {

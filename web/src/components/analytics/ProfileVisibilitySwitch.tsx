@@ -66,8 +66,8 @@ export function ProfileVisibilitySwitch() {
         <Switch
           label={zh ? '公开我的数据' : 'Make my data public'}
           description={!privacy ? t('common.loading') : saving ? (zh ? '正在保存…' : 'Saving…') : zh
-            ? '开启公开主页并加入排行榜，沿用已有公开范围；关闭后仍可查看自己的全部数据。'
-            : 'Enable your public profile and leaderboard with your existing sharing preferences. Your own data is always accessible.'}
+            ? '开启后其他人可查看你的详细资料页；关闭后仍可查看自己的全部数据。排行榜仍显示头像、昵称、Token 和排名。'
+            : 'When on, others can open your detailed profile. Your own data stays available. Your avatar, nickname, tokens, and rank stay on the leaderboard.'}
           checked={privacy?.publicProfileEnabled ?? false}
           disabled={!privacy || saving}
           onChange={updateVisibility}

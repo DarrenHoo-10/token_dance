@@ -45,9 +45,13 @@ const libRsContent = fs.readFileSync(libRsPath, "utf-8");
 
 const tauriBridgePath = path.join(desktopRoot, "src", "tauri-bridge.ts");
 assert(fs.existsSync(tauriBridgePath), "src/tauri-bridge.ts exists");
-const bridgeContent = fs.readFileSync(tauriBridgePath, "utf-8") + fs.readFileSync(path.join(desktopRoot, "src", "account-bridge.ts"), "utf-8");
+const bridgeContent = fs.readFileSync(tauriBridgePath, "utf-8") + fs.readFileSync(path.join(desktopRoot, "src", "account-bridge.ts"), "utf-8") + fs.readFileSync(path.join(desktopRoot, "src", "update-state.ts"), "utf-8");
 
 const requiredCommands = [
+  "get_update_status",
+  "check_for_updates",
+  "set_auto_update",
+  "install_update",
   "get_daemon_status",
   "toggle_global_pause",
   "set_global_pause",
@@ -124,8 +128,11 @@ for (const comp of components) {
 console.log("\n[5/5] Executing Rust Unit Tests via Cargo...");
 try {
   const cargoBinPath = process.env.USERPROFILE ? `${process.env.USERPROFILE}\\.cargo\\bin` : "";
-  const env = { ...process.env, PATH: `${process.env.PATH};${cargoBinPath}` };
-  const cargoOutput = execSync("cargo test -- --nocapture", {
+  // Local HTTP fixtures must not pass through the machine's system proxy.
+  // This exception is limited to the test child; production follows the system.
+  const noProxy = [process.env.NO_PROXY, process.env.no_proxy, "localhost,127.0.0.1,::1"].filter(Boolean).join(",");
+  const env = { ...process.env, PATH: `${process.env.PATH};${cargoBinPath}`, NO_PROXY: noProxy, no_proxy: noProxy };
+  const cargoOutput = execSync("cargo test --locked -- --nocapture", {
     cwd: srcTauriRoot,
     env,
     encoding: "utf-8",

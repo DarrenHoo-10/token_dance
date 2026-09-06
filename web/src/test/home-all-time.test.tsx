@@ -43,6 +43,7 @@ describe('Home all-time usage', () => {
     vi.spyOn(api, 'getLeaderboard').mockResolvedValue({
       snapshotId: 'empty', boardKey: 'global', window: 'today', metric: 'tokens', entries: [],
     });
+    vi.spyOn(api, 'getMyLeaderboard').mockImplementation((params) => api.getLeaderboard(params));
     vi.spyOn(api, 'getActivityCalendar').mockResolvedValue({
       days: [], currentStreak: 0, longestStreak: 0, totalActiveDays: 0, aggregationVersion: 1,
     });

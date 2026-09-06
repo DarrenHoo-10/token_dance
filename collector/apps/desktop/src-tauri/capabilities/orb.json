@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.tauri.app/config/2/capability",
+  "identifier": "orb",
+  "description": "Minimum IPC for the circular orb interaction window",
+  "windows": ["orb"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging",
+    "allow-get-orb-snapshot",
+    "allow-orb-ready",
+    "allow-orb-action",
+    "allow-orb-begin-drag",
+    "allow-orb-end-drag",
+    "allow-orb-motion"
+  ]
+}

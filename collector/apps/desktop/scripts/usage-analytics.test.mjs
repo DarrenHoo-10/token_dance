@@ -1,9 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { usageTokens, usageCosts, annualUsage, quotaStale, quotaStatusText } from '../src/usage-analytics.ts';
+import { usageTokens, usageCosts, annualUsage, quotaStale, quotaStatusText, quotaWindowLabel } from '../src/usage-analytics.ts';
 import { lastSevenDays } from '../src/weekly-usage.ts';
 const now = new Date(2026, 8, 5, 12);
 const dates = lastSevenDays(now);
+test('quota labels separate shared weekly usage and Cursor billing pools', () => {
+  assert.equal(quotaWindowLabel({label:'shared_week', windowMinutes:10080}, true), '共享周额度');
+  assert.equal(quotaWindowLabel({label:'auto', windowMinutes:44640}, true), 'Auto 额度');
+  assert.equal(quotaWindowLabel({label:'api', windowMinutes:0}, false), 'API quota');
+  assert.equal(quotaWindowLabel({windowMinutes:0}, true), '当前周期额度');
+  assert.equal(quotaWindowLabel({windowMinutes:300}, true), '5 小时额度');
+  for (const [agentId, name] of [['grok-build','Grok Build'],['cursor','Cursor']]) {
+    const message = quotaStatusText({agentId,status:'auth_required',windows:[]}, true);
+    assert.ok(message.includes(name)); assert.ok(!message.includes('ZCode'));
+  }
+});
 const agent = { id: 'codex', accuracy: 'exact', todayTokens: 7, totalTokens: 1000,
   dailyUsage: dates.map((date, i) => ({ date, tokens: i + 1, costs: { USD: 10000000 } })), totalCosts: { USD: 200000000 }, historyStart: dates[0] };
 
@@ -46,8 +57,26 @@ test('quota cannot remain current after reset or stale observation', () => {
 test('ZCode query failures mark a previous reading stale without claiming zero quota', () => {
   const quota = { agentId: 'zcode', observedAt: now.toISOString(), status: 'unavailable', windows: [{ usedPercent: 52, resetsAt: null, windowMinutes: 10080 }] };
   assert.equal(quotaStale(quota, null, now.getTime()), true);
-  assert.match(quotaStatusText(quota, true), /上次记录/);
+  assert.equal(quotaStatusText(quota, true), '查询异常');
+  assert.equal(quotaStatusText({ ...quota, status: 'network_error' }, true), '连接异常');
+  assert.equal(quotaStale({ ...quota, status: 'network_error' }, null, now.getTime()), true);
   assert.match(quotaStatusText({ ...quota, status: 'auth_required' }, true), /重新登录/);
   assert.equal(quotaStatusText({ ...quota, status: 'ready' }, true), null);
   assert.equal(quotaStale({ ...quota, status: 'ready' }, null, now.getTime()), false);
+});
+
+test('estimates combine with recorded currencies, preserve free models and reveal gaps', () => {
+  const p = { estimatedUsd: 150000000, estimatedRequests: 2, unpricedRequests: 1, detailedTokens: 900 };
+  const a = { ...agent, pricing: p };
+  const all = usageCosts([a], 'all', now);
+  assert.equal(all.currencies.USD, 3.5);
+  assert.equal(all.estimatedRequests, 2);
+  assert.equal(all.unpricedRequests, 1);
+  assert.equal(all.historyIncomplete, true);
+  const free = usageCosts([{ ...agent, totalCosts: {}, pricing: { ...p, estimatedUsd: 0, unpricedRequests: 0, detailedTokens: 1000 } }], 'all', now);
+  assert.deepEqual(free.currencies, { USD: 0 });
+  assert.equal(free.historyIncomplete, false);
+  const recent = { ...a, dailyUsage: dates.map((date, i) => ({ date, tokens: 100, pricing: { ...p, estimatedUsd: (i+1)*100000000, detailedTokens: 100 } })) };
+  assert.equal(usageCosts([recent], 'today', now).currencies.USD, 7);
+  assert.equal(usageCosts([recent], 'week', now).currencies.USD, 28);
 });

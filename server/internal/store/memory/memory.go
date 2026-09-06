@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -87,63 +88,88 @@ type MemoryStore struct {
 	publishedSnapshots map[string]*domain.LeaderboardResponse
 	buildingSnapshots  map[string]*domain.LeaderboardResponse
 
-	teams              map[string]*domain.Team
-	teamMemberships    map[string]*domain.TeamMembership
-	userCurrentTeams   map[string]*domain.UserCurrentTeam
-	teamGrants         map[string]*domain.TeamSharingGrant
-	teamInvitations    map[string]*domain.TeamInvitation
-	teamInviteLinks    map[string]*domain.TeamInviteLink
+	teams               map[string]*domain.Team
+	teamMemberships     map[string]*domain.TeamMembership
+	userCurrentTeams    map[string]*domain.UserCurrentTeam
+	teamGrants          map[string]*domain.TeamSharingGrant
+	teamInvitations     map[string]*domain.TeamInvitation
+	teamInviteLinks     map[string]*domain.TeamInviteLink
 	teamInviteLinkJoins map[string]*domain.TeamInviteLinkJoin
-	teamReceipts       map[string]*domain.TeamCommandReceipt
-	teamRevisions      map[string]*domain.TeamSourceRevision
-	teamSnapshots      map[string]*domain.TeamAnalysisSnapshot
-	teamAnalysisRows   map[string][]domain.TeamAnalysisRow
-	teamExports        map[string]*domain.TeamExportJob
-	teamAudits         map[string]*domain.TeamAuditEvent
-	teamUploadObjects  map[string]*domain.TeamUploadObject
-	teamBarriers       map[string]*domain.TeamDeletionBarrier
+	teamReceipts        map[string]*domain.TeamCommandReceipt
+	teamRevisions       map[string]*domain.TeamSourceRevision
+	teamSnapshots       map[string]*domain.TeamAnalysisSnapshot
+	teamAnalysisRows    map[string][]domain.TeamAnalysisRow
+	teamExports         map[string]*domain.TeamExportJob
+	teamAudits          map[string]*domain.TeamAuditEvent
+	teamUploadObjects   map[string]*domain.TeamUploadObject
+	teamBarriers        map[string]*domain.TeamDeletionBarrier
+	windowScores        map[string][]WindowScore
+	rankingOutbox       []RankingOutboxTask
+}
+
+type WindowScore struct {
+	UserID       string
+	Window       string
+	Generation   string
+	Tokens       uint64
+	Revision     uint64
+	Eligible     bool
+	RegisteredAt time.Time
+}
+
+type RankingOutboxTask struct {
+	TaskID     string
+	UserID     string
+	Window     string
+	Generation string
+	Tokens     uint64
+	Revision   uint64
+	Op         string
+	Status     string
 }
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		users:              make(map[string]*domain.User),
-		userCredentials:    make(map[string]*domain.UserPasswordCredential),
-		sessions:           make(map[string]*domain.UserSession),
-		emailChallenges:    make(map[string]*domain.EmailChallenge),
-		emailOutbox:        make(map[string]*domain.EmailOutbox),
-		privacySettings:    make(map[string]*domain.UserPrivacySettings),
-		publicProfiles:     make(map[string]*domain.PublicUserProfile),
-		handleHistory:      make(map[string]*domain.UserHandleHistory),
-		uploadObjects:      make(map[string]*domain.UserUploadObject),
-		bindingChallenges:  make(map[string]*domain.DeviceBindingChallenge),
-		installations:      make(map[string]*domain.Installation),
-		ingestNonces:       make(map[string]time.Time),
-		ingestBatches:      make(map[string]*domain.IngestResult),
-		ingestBatchHashes:  make(map[string][32]byte),
-		usageEvents:        make(map[string]domain.UsageEvent),
-		securityEvents:     make([]domain.UserSecurityEvent, 0),
-		exportJobs:         make(map[string]*domain.DataExportJob),
-		deletionRequests:   make(map[string]*domain.DataDeletionRequest),
-		userMetricFixtures: make(map[string]UserMetricFixture),
-		userSkillFixtures:  make(map[string][]UserSkillFixture),
-		userTrendFixtures:  make(map[string][]UserTrendFixture),
-		publishedSnapshots: make(map[string]*domain.LeaderboardResponse),
-		buildingSnapshots:  make(map[string]*domain.LeaderboardResponse),
-		teams:              make(map[string]*domain.Team),
-		teamMemberships:    make(map[string]*domain.TeamMembership),
-		userCurrentTeams:   make(map[string]*domain.UserCurrentTeam),
-		teamGrants:         make(map[string]*domain.TeamSharingGrant),
-		teamInvitations:    make(map[string]*domain.TeamInvitation),
-		teamInviteLinks:    make(map[string]*domain.TeamInviteLink),
+		users:               make(map[string]*domain.User),
+		userCredentials:     make(map[string]*domain.UserPasswordCredential),
+		sessions:            make(map[string]*domain.UserSession),
+		emailChallenges:     make(map[string]*domain.EmailChallenge),
+		emailOutbox:         make(map[string]*domain.EmailOutbox),
+		privacySettings:     make(map[string]*domain.UserPrivacySettings),
+		publicProfiles:      make(map[string]*domain.PublicUserProfile),
+		handleHistory:       make(map[string]*domain.UserHandleHistory),
+		uploadObjects:       make(map[string]*domain.UserUploadObject),
+		bindingChallenges:   make(map[string]*domain.DeviceBindingChallenge),
+		installations:       make(map[string]*domain.Installation),
+		ingestNonces:        make(map[string]time.Time),
+		ingestBatches:       make(map[string]*domain.IngestResult),
+		ingestBatchHashes:   make(map[string][32]byte),
+		usageEvents:         make(map[string]domain.UsageEvent),
+		securityEvents:      make([]domain.UserSecurityEvent, 0),
+		exportJobs:          make(map[string]*domain.DataExportJob),
+		deletionRequests:    make(map[string]*domain.DataDeletionRequest),
+		userMetricFixtures:  make(map[string]UserMetricFixture),
+		userSkillFixtures:   make(map[string][]UserSkillFixture),
+		userTrendFixtures:   make(map[string][]UserTrendFixture),
+		publishedSnapshots:  make(map[string]*domain.LeaderboardResponse),
+		buildingSnapshots:   make(map[string]*domain.LeaderboardResponse),
+		teams:               make(map[string]*domain.Team),
+		teamMemberships:     make(map[string]*domain.TeamMembership),
+		userCurrentTeams:    make(map[string]*domain.UserCurrentTeam),
+		teamGrants:          make(map[string]*domain.TeamSharingGrant),
+		teamInvitations:     make(map[string]*domain.TeamInvitation),
+		teamInviteLinks:     make(map[string]*domain.TeamInviteLink),
 		teamInviteLinkJoins: make(map[string]*domain.TeamInviteLinkJoin),
-		teamReceipts:       make(map[string]*domain.TeamCommandReceipt),
-		teamRevisions:      make(map[string]*domain.TeamSourceRevision),
-		teamSnapshots:      make(map[string]*domain.TeamAnalysisSnapshot),
-		teamAnalysisRows:   make(map[string][]domain.TeamAnalysisRow),
-		teamExports:        make(map[string]*domain.TeamExportJob),
-		teamAudits:         make(map[string]*domain.TeamAuditEvent),
-		teamUploadObjects:  make(map[string]*domain.TeamUploadObject),
-		teamBarriers:       make(map[string]*domain.TeamDeletionBarrier),
+		teamReceipts:        make(map[string]*domain.TeamCommandReceipt),
+		teamRevisions:       make(map[string]*domain.TeamSourceRevision),
+		teamSnapshots:       make(map[string]*domain.TeamAnalysisSnapshot),
+		teamAnalysisRows:    make(map[string][]domain.TeamAnalysisRow),
+		teamExports:         make(map[string]*domain.TeamExportJob),
+		teamAudits:          make(map[string]*domain.TeamAuditEvent),
+		teamUploadObjects:   make(map[string]*domain.TeamUploadObject),
+		teamBarriers:        make(map[string]*domain.TeamDeletionBarrier),
+		windowScores:        make(map[string][]WindowScore),
+		rankingOutbox:       make([]RankingOutboxTask, 0),
 	}
 }
 
@@ -298,7 +324,59 @@ func (m *MemoryStore) CompleteRegistrationTx(ctx context.Context, in store.Regis
 
 	m.securityEvents = append(m.securityEvents, in.SecurityEvent)
 
+	m.insertZeroWindowScoresLocked(u.UserID, u.CreatedAt, now)
+
 	return &sess, nil
+}
+
+func (m *MemoryStore) insertZeroWindowScoresLocked(userID string, registeredAt, now time.Time) {
+	if registeredAt.IsZero() {
+		registeredAt = now
+	}
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	generation := now.UTC().Format("2006-01-02")
+	scores := make([]WindowScore, 0, 4)
+	for _, window := range []string{"today", "7d", "30d", "all"} {
+		scores = append(scores, WindowScore{
+			UserID:       userID,
+			Window:       window,
+			Generation:   generation,
+			Tokens:       0,
+			Revision:     0,
+			Eligible:     true,
+			RegisteredAt: registeredAt,
+		})
+		m.rankingOutbox = append(m.rankingOutbox, RankingOutboxTask{
+			TaskID:     "rob_" + userID + "_" + window,
+			UserID:     userID,
+			Window:     window,
+			Generation: generation,
+			Tokens:     0,
+			Revision:   0,
+			Op:         "upsert",
+			Status:     "pending",
+		})
+	}
+	m.windowScores[userID] = scores
+}
+
+func (m *MemoryStore) WindowScores(userID string) []WindowScore {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	src := m.windowScores[userID]
+	out := make([]WindowScore, len(src))
+	copy(out, src)
+	return out
+}
+
+func (m *MemoryStore) RankingOutbox() []RankingOutboxTask {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]RankingOutboxTask, len(m.rankingOutbox))
+	copy(out, m.rankingOutbox)
+	return out
 }
 
 func (m *MemoryStore) FindUserByEmailHash(ctx context.Context, emailLookupHash [32]byte) (*domain.User, *domain.UserPasswordCredential, error) {
@@ -1976,14 +2054,20 @@ func (m *MemoryStore) PublishSnapshot(ctx context.Context, snapshotID string, bo
 	return nil
 }
 
+func (m *MemoryStore) GetLeaderboardView(ctx context.Context, q store.LeaderboardQuery) (*domain.LeaderboardResponse, error) {
+	return m.GetLeaderboard(ctx, q.BoardKey, q.Window, q.Metric, q.Cursor, q.Limit)
+}
+
 func (m *MemoryStore) GetLeaderboard(ctx context.Context, boardKey, window, metric string, cursor *string, limit int) (*domain.LeaderboardResponse, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
 	key := boardKey + ":" + window + ":" + metric
 	if snap, ok := m.publishedSnapshots[key]; ok {
-		var filteredEntries []domain.LeaderboardEntry
-		rank := 1
+		filteredEntries := make([]domain.LeaderboardEntry, 0, len(snap.Entries))
 		for _, e := range snap.Entries {
 			var uID string
 			for _, pub := range m.publicProfiles {
@@ -1994,25 +2078,26 @@ func (m *MemoryStore) GetLeaderboard(ctx context.Context, boardKey, window, metr
 			}
 			if uID != "" {
 				u, uOk := m.users[uID]
-				priv, pOk := m.privacySettings[uID]
-				if !uOk || !pOk || u.AccountStatus != domain.AccountStatusActive || !priv.PublicProfileEnabled {
+				if !uOk || u.AccountStatus != domain.AccountStatusActive {
 					continue
 				}
 			}
-			eCopy := e
-			eCopy.RankNo = rank
-			filteredEntries = append(filteredEntries, eCopy)
-			rank++
+			filteredEntries = append(filteredEntries, e)
 		}
-
+		count := len(filteredEntries)
 		return &domain.LeaderboardResponse{
-			SnapshotID:      snap.SnapshotID,
-			BoardKey:        snap.BoardKey,
-			Window:          snap.Window,
-			Metric:          snap.Metric,
-			Entries:         filteredEntries,
-			DataWatermarkAt: snap.DataWatermarkAt,
+			SnapshotID:        snap.SnapshotID,
+			BoardKey:          snap.BoardKey,
+			Window:            snap.Window,
+			Metric:            snap.Metric,
+			Entries:           filteredEntries,
+			TotalEntries:      &count,
+			TotalParticipants: &count,
+			DataWatermarkAt:   snap.DataWatermarkAt,
 		}, nil
+	}
+	if boardKey == "global" && metric == "tokens" {
+		return m.liveMemoryLeaderboardLocked(window, cursor, limit), nil
 	}
 
 	return &domain.LeaderboardResponse{
@@ -2023,6 +2108,106 @@ func (m *MemoryStore) GetLeaderboard(ctx context.Context, boardKey, window, metr
 		Entries:         []domain.LeaderboardEntry{},
 		DataWatermarkAt: nil,
 	}, nil
+}
+
+func (m *MemoryStore) liveMemoryLeaderboardLocked(window string, cursor *string, limit int) *domain.LeaderboardResponse {
+	generation := time.Now().UTC().Format("2006-01-02")
+	type row struct {
+		userID, handle, name string
+		avatar               *string
+		tokens               uint64
+		registered           time.Time
+	}
+	var rows []row
+	for _, u := range m.users {
+		if u.AccountStatus != domain.AccountStatusActive {
+			continue
+		}
+		item := row{
+			userID:     u.UserID,
+			handle:     u.UserID,
+			name:       strings.TrimSpace(u.DisplayName),
+			avatar:     u.AvatarURL,
+			registered: u.CreatedAt,
+		}
+		if u.Handle != nil && *u.Handle != "" {
+			item.handle = *u.Handle
+		}
+		if item.name == "" {
+			if u.Locale == "zh-CN" {
+				item.name = "开发者"
+			} else {
+				item.name = "Developer"
+			}
+		}
+		for _, score := range m.windowScores[u.UserID] {
+			if score.Window == window && score.Eligible && (score.Generation == generation || score.Revision == 0) {
+				item.tokens = score.Tokens
+				item.registered = score.RegisteredAt
+				break
+			}
+		}
+		rows = append(rows, item)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].tokens != rows[j].tokens {
+			return rows[i].tokens > rows[j].tokens
+		}
+		if !rows[i].registered.Equal(rows[j].registered) {
+			return rows[i].registered.Before(rows[j].registered)
+		}
+		return rows[i].userID < rows[j].userID
+	})
+	after := 0
+	if cursor != nil {
+		if parsed, err := strconv.Atoi(*cursor); err == nil && parsed >= 0 {
+			after = parsed
+		}
+	}
+	end := after + limit
+	if end > 1000 {
+		end = 1000
+	}
+	if end > len(rows) {
+		end = len(rows)
+	}
+	if after > len(rows) {
+		after = len(rows)
+	}
+	entries := make([]domain.LeaderboardEntry, 0, end-after)
+	for i := after; i < end; i++ {
+		item := rows[i]
+		entries = append(entries, domain.LeaderboardEntry{
+			RankNo:      i + 1,
+			Handle:      item.handle,
+			DisplayName: item.name,
+			AvatarURL:   item.avatar,
+			MetricValue: fmt.Sprintf("%d", item.tokens),
+		})
+	}
+	count := len(rows)
+	total := "0"
+	var sum uint64
+	for _, item := range rows {
+		sum += item.tokens
+	}
+	total = fmt.Sprintf("%d", sum)
+	resp := &domain.LeaderboardResponse{
+		BoardKey:          "global",
+		Window:            window,
+		Metric:            "tokens",
+		Timezone:          "UTC",
+		Generation:        generation,
+		Entries:           entries,
+		TotalEntries:      &count,
+		TotalParticipants: &count,
+		TotalTokens:       &total,
+	}
+	if len(entries) > 0 && after+len(entries) < count && after+len(entries) < 1000 {
+		next := strconv.Itoa(after + len(entries))
+		resp.NextCursor = &next
+	}
+	return resp
 }
 
 // --- MediaStore Implementation ---

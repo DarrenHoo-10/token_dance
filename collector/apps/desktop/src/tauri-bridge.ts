@@ -24,6 +24,8 @@ export {
   websiteLoginUrl,
 } from "./website";
 
+export interface CostCoverage { estimatedUsd: number; estimatedRequests: number; unpricedRequests: number; detailedTokens: number; }
+
 export interface AgentConfig {
   id: string;
   name: string;
@@ -38,8 +40,9 @@ export interface AgentConfig {
   todayTokens: number;
   totalTokens: number;
   // Local calendar-day aggregates. Omitted when the native collector has no history yet.
-  dailyUsage?: { date: string; tokens: number; costs?: Record<string, number> }[];
+  dailyUsage?: { date: string; tokens: number; costs?: Record<string, number>; pricing?: CostCoverage }[];
   totalCosts?: Record<string, number>;
+  pricing?: CostCoverage;
   historyStart?: string | null;
   lastActive: string;
   version: string;

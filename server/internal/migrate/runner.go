@@ -653,6 +653,9 @@ func (r *Runner) ResetCleanSchema(ctx context.Context) error {
 	}()
 
 	tables := []string{
+		"ranking_outbox",
+		"aggregate_dirty_days",
+		"user_window_scores",
 		"deletion_object_keys",
 		"data_export_jobs",
 		"user_security_events",
@@ -672,6 +675,7 @@ func (r *Runner) ResetCleanSchema(ctx context.Context) error {
 		"daily_user_agent_model_metrics",
 		"daily_user_agent_metrics",
 		"usage_events",
+		"device_daily_aggregates",
 		"ingest_batches",
 		"ingest_nonces",
 		"installation_adapter_status",

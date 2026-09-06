@@ -91,6 +91,17 @@ impl JsonlTailer {
                 diagnostics: vec!["historical_scan_paused_hard_backpressure".into()],
             });
         }
+        let limit = backpressure.historical_batch_limit(if historical { 32 } else { usize::MAX });
+        self.poll_with_limit(limit, historical)
+    }
+
+    /// Bounded read that ignores upload-spool backpressure. Desktop collection
+    /// uses this so a full upload queue cannot skip local capture.
+    pub fn poll_with_limit(
+        &mut self,
+        max_frames: usize,
+        historical: bool,
+    ) -> Result<PollResult, AcquisitionError> {
         if !self.path.exists() {
             return Ok(PollResult {
                 frames: Vec::new(),
@@ -139,9 +150,8 @@ impl JsonlTailer {
         let mut diagnostics = Vec::new();
         let mut consumed = 0usize;
         let mut start = 0usize;
-        let limit = backpressure.historical_batch_limit(if historical { 32 } else { usize::MAX });
         while start < buf.len() {
-            if frames.len() >= limit {
+            if frames.len() >= max_frames {
                 break;
             }
             match buf[start..].iter().position(|byte| *byte == b'\n') {

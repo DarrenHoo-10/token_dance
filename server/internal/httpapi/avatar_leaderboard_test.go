@@ -3,8 +3,22 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+func TestPublicLeaderboardIgnoresClientUserID(t *testing.T) {
+	router, _, _ := setupTestRouter(t)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/public/leaderboards?window=today&userId=usr_other&user=usr_other", nil)
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"ownEntry"`) {
+		t.Fatalf("public leaderboard leaked ownEntry from client user id: %s", rec.Body.String())
+	}
+}
 
 func TestLeaderboardAndAvatarPublicErrors(t *testing.T) {
 	router, _, _ := setupTestRouter(t)

@@ -177,6 +177,72 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Read orb details (selected quota window and today sources)",
+          "type": "string",
+          "const": "allow-get-orb-details",
+          "markdownDescription": "Read orb details (selected quota window and today sources)"
+        },
+        {
+          "description": "Read orb preferences and revision",
+          "type": "string",
+          "const": "allow-get-orb-preferences",
+          "markdownDescription": "Read orb preferences and revision"
+        },
+        {
+          "description": "Read the effects-only render snapshot",
+          "type": "string",
+          "const": "allow-get-orb-render-snapshot",
+          "markdownDescription": "Read the effects-only render snapshot"
+        },
+        {
+          "description": "Read the orb usage/quota snapshot",
+          "type": "string",
+          "const": "allow-get-orb-snapshot",
+          "markdownDescription": "Read the orb usage/quota snapshot"
+        },
+        {
+          "description": "Perform a restricted orb UI action",
+          "type": "string",
+          "const": "allow-orb-action",
+          "markdownDescription": "Perform a restricted orb UI action"
+        },
+        {
+          "description": "Start native dragging of the orb window after role checks",
+          "type": "string",
+          "const": "allow-orb-begin-drag",
+          "markdownDescription": "Start native dragging of the orb window after role checks"
+        },
+        {
+          "description": "Finish orb dragging, restore effects, and persist placement",
+          "type": "string",
+          "const": "allow-orb-end-drag",
+          "markdownDescription": "Finish orb dragging, restore effects, and persist placement"
+        },
+        {
+          "description": "Move or launch only the orb interaction surface",
+          "type": "string",
+          "const": "allow-orb-motion",
+          "markdownDescription": "Move or launch only the orb interaction surface"
+        },
+        {
+          "description": "Report first-frame ready for the current orb window instance",
+          "type": "string",
+          "const": "allow-orb-ready",
+          "markdownDescription": "Report first-frame ready for the current orb window instance"
+        },
+        {
+          "description": "Apply a whitelist orb preference patch",
+          "type": "string",
+          "const": "allow-patch-orb-preferences",
+          "markdownDescription": "Apply a whitelist orb preference patch"
+        },
+        {
+          "description": "Preserve existing desktop commands for main and settings windows",
+          "type": "string",
+          "const": "allow-primary-desktop",
+          "markdownDescription": "Preserve existing desktop commands for main and settings windows"
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",

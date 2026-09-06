@@ -13,6 +13,113 @@ use privacy::PrivacyFilter;
 const INSTALL: &str = "ins_00000000000000000000000000";
 const KEY: &[u8] = b"codex-contract-device-hmac";
 
+#[tokio::test]
+async fn correlated_skill_reads_survive_chunking_and_replay_without_path_leaks() {
+    let adapter = CodexAdapter::new("0.130.0", "interactive", KEY);
+    let input = "text(await tools.exec_command({cmd:\"Get-Content C:/Users/Me/.codex/skills/browser/SKILL.md\"}));";
+    let prefix = [
+        serde_json::json!({"type":"session_meta","payload":{"id":"s"}}),
+        serde_json::json!({"type":"turn_context","payload":{"turn_id":"t"}}),
+        serde_json::json!({"type":"response_item","payload":{"type":"function_call","name":"exec","call_id":"read-1","arguments":input}}),
+    ].iter().map(ToString::to_string).collect::<Vec<_>>().join("\n");
+    let result = serde_json::json!({"type":"response_item","timestamp":"2026-09-06T12:00:00Z","payload":{"type":"function_call_output","call_id":"read-1","output":[{"type":"text","text":"Script completed"},{"type":"text","text":serde_json::json!({"exit_code":0,"output":"---\nname: browser\ndescription: browse\n---"}).to_string()}]}}).to_string();
+    let frame = |cursor: &str, payload: String| RawFrame {
+        installation_id: INSTALL.into(),
+        source_kind: SourceKind::JsonlTail,
+        source_id: SOURCE_JSONL.into(),
+        cursor: cursor.into(),
+        payload: payload.into_bytes(),
+    };
+    let before = adapter
+        .decode(frame("session.jsonl:0", prefix.clone()))
+        .await
+        .unwrap();
+    assert!(!before
+        .iter()
+        .any(|e| matches!(e.payload, EventPayload::SkillInvoked(_))));
+    let after = adapter
+        .decode(frame("session.jsonl:100", result.clone()))
+        .await
+        .unwrap();
+    assert_eq!(after.len(), 1);
+    assert_eq!(after[0].accuracy, protocol::Accuracy::Correlated);
+    match &after[0].payload {
+        EventPayload::SkillInvoked(p) => {
+            assert_eq!(p.skill_public_name.as_deref(), Some("browser"));
+            assert_eq!(p.invoke_type, protocol::SkillInvokeType::RuntimeCorrelated);
+        }
+        _ => panic!("missing skill"),
+    }
+    PrivacyFilter::default().filter(after[0].clone()).unwrap();
+    assert!(!serde_json::to_string(&after).unwrap().contains("C:/Users"));
+    let replay = adapter_codex::decode_frame(
+        &load_manifest(),
+        "0.130.0",
+        KEY,
+        frame("session.jsonl:0", prefix + "\n" + &result),
+    )
+    .unwrap();
+    assert_eq!(
+        replay
+            .iter()
+            .find(|e| matches!(e.payload, EventPayload::SkillInvoked(_)))
+            .unwrap()
+            .event_id,
+        after[0].event_id
+    );
+}
+
+#[tokio::test]
+#[ignore = "explicit local Skill backfill verification; outputs counts only"]
+async fn local_skill_backfill_sample() {
+    assert_eq!(
+        std::env::var("TOKENDANCE_VERIFY_LOCAL_SKILLS").as_deref(),
+        Ok("1")
+    );
+    fn collect(path: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+        if let Ok(entries) = std::fs::read_dir(path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    collect(&path, files);
+                } else if path.extension().is_some_and(|e| e == "jsonl") {
+                    files.push(path);
+                }
+            }
+        }
+    }
+    let home = std::env::var_os("USERPROFILE").unwrap();
+    let mut files = vec![];
+    collect(
+        &std::path::PathBuf::from(home).join(".codex/sessions"),
+        &mut files,
+    );
+    files.sort_by_key(|p| std::cmp::Reverse(std::fs::metadata(p).unwrap().modified().unwrap()));
+    let mut total = 0;
+    for (n, path) in files.into_iter().take(12).enumerate() {
+        let adapter = CodexAdapter::new("0.142.5", "interactive", KEY);
+        let mut events = Vec::new();
+        for (line, body) in std::fs::read_to_string(path).unwrap().lines().enumerate() {
+            events.extend(adapter.decode(RawFrame {
+                installation_id: INSTALL.into(), source_kind: SourceKind::JsonlTail,
+                source_id: SOURCE_JSONL.into(), cursor: format!("local-{n}:0:{line}"),
+                payload: body.as_bytes().to_vec(),
+            }).await.unwrap());
+        }
+        let before = total;
+        for event in events
+            .into_iter()
+            .filter(|e| matches!(e.payload, EventPayload::SkillInvoked(_)))
+        {
+            PrivacyFilter::default().filter(event).unwrap();
+            total += 1;
+        }
+        println!("Recent session {}: {} Skill uses", n + 1, total - before);
+    }
+    println!("Recognized Skill uses in recent local sessions: {total}");
+    assert!(total > 0);
+}
+
 fn otel_frame() -> RawFrame {
     RawFrame {
         installation_id: INSTALL.into(),

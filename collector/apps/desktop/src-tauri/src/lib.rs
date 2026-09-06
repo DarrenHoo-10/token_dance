@@ -1,8 +1,14 @@
-pub mod autostart;
 pub mod auto_sync;
+pub mod autostart;
 pub mod commands;
 pub mod daemon;
+pub mod local_store;
+pub mod orb;
+pub mod pricing;
+pub mod rebuild;
 pub mod state;
+pub mod tray_state;
+pub mod updates;
 pub mod usage_ledger;
 
 use std::fs;
@@ -35,30 +41,28 @@ fn install_panic_hook() {
 }
 
 fn install_tray(app: &tauri::App) -> tauri::Result<()> {
-    let open_item = MenuItem::with_id(
-        app,
-        "open_settings",
-        "打开 TokenDance 设置 / Open Settings",
-        true,
-        None::<&str>,
-    )?;
-    let toggle_pause_item = MenuItem::with_id(
-        app,
-        "toggle_pause",
-        "暂停/恢复数据采集 / Pause Collection",
-        true,
-        None::<&str>,
-    )?;
-    let quit_item = MenuItem::with_id(
-        app,
-        "quit",
-        "退出程序 / Quit TokenDance",
-        true,
-        None::<&str>,
-    )?;
+    let english = tray_state::saved_english();
+    let labels = tray_state::menu_labels(
+        english,
+        app.state::<orb::controller::OrbHandle>()
+            .preferences()
+            .enabled,
+        false,
+    );
+    let open_item = MenuItem::with_id(app, "open_settings", labels[0], true, None::<&str>)?;
+    let toggle_orb_item = MenuItem::with_id(app, "toggle_orb", labels[1], true, None::<&str>)?;
+    let orb_details_item = MenuItem::with_id(app, "orb_details", labels[2], true, None::<&str>)?;
+    let toggle_pause_item = MenuItem::with_id(app, "toggle_pause", labels[3], true, None::<&str>)?;
+    let quit_item = MenuItem::with_id(app, "quit", labels[4], true, None::<&str>)?;
     let tray_menu = Menu::with_items(
         app,
-        &[&open_item, &toggle_pause_item, &quit_item],
+        &[
+            &open_item,
+            &toggle_orb_item,
+            &orb_details_item,
+            &toggle_pause_item,
+            &quit_item,
+        ],
     )?;
 
     // tauri.conf.json already creates `main-tray`. Rebuilding the same id panics
@@ -67,19 +71,50 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
         existing
     } else {
         let mut builder = TrayIconBuilder::with_id("main-tray")
-            .tooltip("TokenDance Collector 运行中")
+            .tooltip("TokenDance")
             .menu(&tray_menu);
         if let Some(icon) = app.default_window_icon() {
             builder = builder.icon(icon.clone());
         }
         builder.build(app)?
     };
-    tray.set_tooltip(Some("TokenDance Collector 运行中"))?;
+    tray.set_tooltip(Some("TokenDance"))?;
     tray.set_menu(Some(tray_menu))?;
     tray.set_show_menu_on_left_click(false)?;
+    app.manage(tray_state::TrayMenuState::new(
+        english,
+        [
+            open_item,
+            toggle_orb_item,
+            orb_details_item,
+            toggle_pause_item,
+            quit_item,
+        ],
+    ));
+    tray_state::start(app.handle().clone());
     tray.on_menu_event(|app, event| match event.id.as_ref() {
         "open_settings" => {
             let _ = commands::window::open_settings(app.clone());
+        }
+        "toggle_orb" => {
+            let orb = app
+                .state::<crate::orb::controller::OrbHandle>()
+                .inner()
+                .clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = tokio::task::spawn_blocking(move || orb.toggle_enabled()).await;
+            });
+        }
+        "orb_details" => {
+            let orb = app
+                .state::<crate::orb::controller::OrbHandle>()
+                .inner()
+                .clone();
+            tauri::async_runtime::spawn(async move {
+                let _ =
+                    tokio::task::spawn_blocking(move || orb.action("orb", "open_details", None))
+                        .await;
+            });
         }
         "toggle_pause" => {
             let state = app.state::<AppState>().inner().clone();
@@ -103,7 +138,8 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
             button_state: MouseButtonState::Up,
             position,
             ..
-        } = event {
+        } = event
+        {
             if let Err(error) = commands::window::show_usage_panel(tray.app_handle(), position) {
                 eprintln!("failed to show usage panel: {error}");
             }
@@ -114,6 +150,12 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
 
 pub fn run() {
     install_panic_hook();
+    if commands::window::activate_existing_instance() {
+        return;
+    }
+    if updates::apply_pending_before_start() {
+        return;
+    }
 
     let app_state = match tauri::async_runtime::block_on(AppState::production()) {
         Ok(state) => state,
@@ -128,7 +170,14 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .manage(app_state)
         .manage(commands::account::AccountState::default())
+        .manage(commands::window::WindowPresentation::default())
+        .manage(std::sync::Arc::new(updates::UpdateState::default()))
         .invoke_handler(tauri::generate_handler![
+            tray_state::set_tray_language,
+            updates::get_update_status,
+            updates::check_for_updates,
+            updates::set_auto_update,
+            updates::install_update,
             commands::daemon::get_daemon_status,
             commands::daemon::toggle_global_pause,
             commands::daemon::set_global_pause,
@@ -150,45 +199,91 @@ pub fn run() {
             commands::autostart::get_autostart_status,
             commands::autostart::set_autostart,
             commands::window::hide_window,
+            commands::window::window_ready,
             commands::window::show_window,
             commands::window::quit_app,
             commands::window::open_settings,
             commands::window::open_website,
+            commands::orb::get_orb_snapshot,
+            commands::orb::get_orb_render_snapshot,
+            commands::orb::get_orb_details,
+            commands::orb::get_orb_preferences,
+            commands::orb::patch_orb_preferences,
+            commands::orb::orb_ready,
+            commands::orb::orb_action,
+            commands::orb::orb_begin_drag,
+            commands::orb::orb_end_drag,
+            commands::orb::orb_move,
+            commands::orb::orb_fling,
             commands::account::get_account_session,
             commands::account::login_account,
             commands::account::logout_account,
         ])
+        .on_page_load(|webview, payload| {
+            if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                commands::window::page_loaded(webview.app_handle(), webview.label());
+            }
+        })
+        .on_menu_event(|app, event| match event.id().as_ref() {
+            "orb_ctx_details" | "orb_ctx_pause" | "orb_ctx_settings" | "orb_ctx_hide"
+            | "orb_ctx_fx_orbit" | "orb_ctx_fx_soft" | "orb_ctx_fx_off" => {
+                let _ = app
+                    .state::<crate::orb::controller::OrbHandle>()
+                    .handle_context_menu(event.id().as_ref());
+            }
+            _ => {}
+        })
         .on_window_event(|window, event| {
-            if matches!(event, WindowEvent::Focused(false)) && window.label() == "main" {
-                let _ = window.hide();
+            if commands::orb::is_orb_window(window.label()) {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    window
+                        .state::<crate::orb::controller::OrbHandle>()
+                        .on_close(window.label());
+                }
+                return;
+            }
+            if window.label() == "main" {
+                if let WindowEvent::Focused(focused) = event {
+                    let presentation = window.state::<commands::window::WindowPresentation>();
+                    if *focused {
+                        presentation.on_focus_change(window.label(), true);
+                    } else if presentation.on_focus_change(window.label(), false) {
+                        let window = window.clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            if window.is_visible().unwrap_or(false)
+                                && !window.is_focused().unwrap_or(true)
+                            {
+                                window
+                                    .state::<commands::window::WindowPresentation>()
+                                    .mark_hidden(window.label());
+                                let _ = window.hide();
+                            }
+                        });
+                    }
+                }
             }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
+                window
+                    .state::<commands::window::WindowPresentation>()
+                    .mark_hidden(window.label());
                 let _ = window.hide();
             }
         })
         .setup(|app| {
-            if let Some(window) = app.get_webview_window("main") {
-                // Autostart passes --minimized to stay in the tray; a normal
-                // launch opens the usage panel directly.
-                if std::env::args().any(|arg| arg == "--minimized") {
-                    let _ = window.hide();
-                } else {
-                    if let Ok(Some(monitor)) = window.current_monitor() {
-                        let point = tauri::PhysicalPosition::new(
-                            (monitor.position().x + 1) as f64,
-                            (monitor.position().y + 1) as f64,
-                        );
-                        let _ = commands::window::show_usage_panel(app.handle(), point);
-                    } else {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
-                }
+            // Keep the native WebView hidden until React has committed its
+            // first layout, including loading state. Autostart never requests presentation.
+            if !std::env::args().any(|arg| arg == "--minimized") {
+                let _ = commands::window::request_initial_panel(app.handle());
             }
             let state = app.state::<AppState>().inner().clone();
+            let orb = crate::orb::controller::OrbHandle::install(app.handle(), state.clone());
+            app.manage(orb);
             CollectorDaemon::new(state.clone()).start();
             commands::account::start_auto_sync(app.handle().clone(), state);
+            updates::start(app.handle());
             if let Err(error) = install_tray(app) {
                 write_crash_log(&format!("tray setup failed: {error}"));
             }
@@ -257,7 +352,10 @@ mod tests {
         let (_root, state) = state().await;
         let status = state.get_daemon_status().await;
         assert_eq!(status.status, "RUNNING");
-        assert_eq!(status.total_adapters_count as usize, state.get_agents().await.len());
+        assert_eq!(
+            status.total_adapters_count as usize,
+            state.get_agents().await.len()
+        );
         let paused = state.toggle_global_pause().await.unwrap();
         assert_eq!(paused.status, "ACKNOWLEDGED");
         assert!(paused.state.global_paused);
@@ -300,5 +398,48 @@ mod tests {
         assert!(state.set_autostart(true).unwrap().enabled);
         assert!(state.get_autostart_status().unwrap().enabled);
         state.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn sqlite_usage_survives_restart_without_json_or_upload_wal() {
+        let root = tempfile::tempdir().unwrap();
+        let mut event = crate::auto_sync::tests::event('B');
+        event.agent_id = "codex".into();
+        event.occurred_at = chrono::Local::now().to_rfc3339();
+        {
+            let state = AppState::test(root.path().to_path_buf(), Arc::new(MockAutostart::new()))
+                .await
+                .unwrap();
+            assert!(state.record_usage(&[event.clone()]));
+            let agents = state.get_agents().await;
+            let codex = agents.iter().find(|agent| agent.id == "codex").unwrap();
+            assert_eq!(codex.today_tokens, 15);
+            assert_eq!(codex.total_tokens, 15);
+            assert!(!root.path().join("usage-ledger.json").exists());
+            assert!(root.path().join("tokendance.sqlite3").exists());
+            assert!(state.get_outbox().await.is_empty());
+        }
+        let state = AppState::test(root.path().to_path_buf(), Arc::new(MockAutostart::new()))
+            .await
+            .unwrap();
+        let agents = state.get_agents().await;
+        let codex = agents.iter().find(|agent| agent.id == "codex").unwrap();
+        assert_eq!(codex.total_tokens, 15);
+        assert_eq!(codex.today_tokens, 15);
+        let orb = state.get_usage_summary(chrono::Local::now().date_naive());
+        assert_eq!(orb.today_tokens.as_deref(), Some("15"));
+        assert_eq!(orb.known_source_count, 1);
+        let sources = state.orb_today_sources();
+        assert_eq!(
+            sources
+                .iter()
+                .find(|source| source.agent_id == "codex")
+                .unwrap()
+                .today_tokens
+                .as_deref(),
+            Some("15")
+        );
+        assert!(state.get_outbox().await.is_empty());
+        assert!(!state.record_usage(&[event]));
     }
 }

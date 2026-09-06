@@ -16,7 +16,9 @@ import (
 	"tokendance/internal/migrate"
 	"tokendance/internal/pricing"
 	"tokendance/internal/provider"
+	"tokendance/internal/ranking"
 	"tokendance/internal/store/mysql"
+	"tokendance/internal/store/redisx"
 	"tokendance/internal/worker"
 )
 
@@ -80,6 +82,19 @@ func main() {
 			log.Fatalf("Fatal configuration error: TOKENDANCE_MYSQL_DSN_FILE or TOKENDANCE_MYSQL_DSN is required in production environment")
 		}
 		log.Printf("WARNING: Running worker in memory test/dev mode (env: %s)", cfg.Environment)
+	}
+
+	if cfg.RedisConfigured() {
+		log.Printf("Connecting worker to Redis %s db=%d...", cfg.RedisAddr, cfg.RedisDB)
+		rdb, err := redisx.OpenClient(cfg, redisx.DefaultClientConfig())
+		if err != nil {
+			log.Fatalf("Fatal Redis worker connection error: %v", err)
+		}
+		defer rdb.Close()
+		if wrk != nil {
+			wrk.SetRanking(ranking.NewIndex(rdb))
+		}
+		log.Printf("Worker Redis ready (db=%d).", cfg.RedisDB)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

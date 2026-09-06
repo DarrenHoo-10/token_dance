@@ -466,6 +466,12 @@
           "minLength": 55,
           "maxLength": 55
         },
+        "skillPublicName": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
         "invokeType": {
           "$ref": "#/$defs/SkillInvokeType"
         },
