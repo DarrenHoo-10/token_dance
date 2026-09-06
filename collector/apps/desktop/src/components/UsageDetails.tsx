@@ -1,20 +1,19 @@
 import { useState, type CSSProperties } from 'react';
 import type { AgentConfig } from '../tauri-bridge';
-import { annualUsage, quotaStale, quotaStatusText, type AgentQuota } from '../usage-analytics';
+import { annualUsage, quotaStale, quotaStatusText, quotaWindowLabel, type AgentQuota } from '../usage-analytics';
 
 export function QuotaRings({ quota, zh }: { quota?: AgentQuota; zh: boolean }) {
   const status = quotaStatusText(quota, zh);
   if (!quota?.windows.length) return <div className="usage-quota-empty"><span className="usage-ring unavailable">—</span><span>{status ?? (zh ? '套餐额度暂不支持查询' : 'Plan quota unavailable')}<small>{zh ? 'Token 用量单独统计' : 'Token usage is tracked separately'}</small></span></div>;
   return <><div className="usage-quotas">{quota.windows.map((window, index) => {
     const stale = quotaStale(quota, window.resetsAt);
-    const mins = window.windowMinutes;
-    const label = mins % 1440 === 0 ? `${mins / 1440}${zh ? ' 日额度' : '-day quota'}` : mins % 60 === 0 ? `${mins / 60}${zh ? ' 小时额度' : '-hour quota'}` : `${mins}${zh ? ' 分钟额度' : '-minute quota'}`;
+    const label = quotaWindowLabel(window, zh);
     const remaining = window.resetsAt == null ? null : Math.max(0, window.resetsAt * 1000 - Date.now());
     const days = remaining == null ? 0 : Math.ceil(remaining / 86400000);
     const hours = remaining == null ? 0 : Math.ceil(remaining / 3600000);
     const reset = remaining === null ? (zh ? '重置时间未知' : 'Reset time unknown') : remaining === 0 ? (zh ? '等待更新' : 'Awaiting update') : days > 1 ? (zh ? `${days} 天后重置` : `Resets in ${days}d`) : (zh ? `${hours} 小时后重置` : `Resets in ${hours}h`);
     return <div className={`usage-quota ${stale ? 'stale' : ''}`} key={index} title={`${zh ? '记录时间' : 'Observed'}: ${new Date(quota.observedAt).toLocaleString()}`}>
-      <div className={`usage-ring ${!stale && window.usedPercent >= 80 ? 'warning' : ''}`} style={{ '--used': window.usedPercent } as CSSProperties} role="img" aria-label={`${label}: ${window.usedPercent}% ${zh ? '已用' : 'used'}${stale ? (zh ? '，待更新' : ', stale') : ''}`}><b>{Math.round(window.usedPercent)}%</b></div>
+      <div className={`usage-ring ${!stale && window.usedPercent >= 80 ? 'warning' : ''}`} style={{ '--used': Math.min(100, Math.max(0, window.usedPercent)) } as CSSProperties} role="img" aria-label={`${label}: ${window.usedPercent}% ${zh ? '已用' : 'used'}${stale ? (zh ? '，待更新' : ', stale') : ''}`}><b>{Math.round(window.usedPercent)}%</b></div>
       <span>{window.provider ? `${window.provider} · ` : ''}{label}<small>{stale ? (zh ? '待更新 · ' : 'Stale · ') : ''}{reset}</small></span>
     </div>;
   })}</div>{status && <p className="usage-data-note" role="status">{status}</p>}</>;

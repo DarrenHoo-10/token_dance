@@ -5,6 +5,7 @@ import { getAgentConfigs, getAutostartStatus, getDaemonStatus, getWebsiteUrl, hi
 import { resolveWebsiteOrigin } from "./website";
 import type { AgentConfig, AutostartInfo, DaemonStatus } from "./tauri-bridge";
 import "./styles/settings.css";
+import { useWindowReady } from './window-ready';
 
 function Toggle({ checked, disabled, label, onChange }: { checked: boolean; disabled: boolean; label: string; onChange: (value: boolean) => void }) {
   return <button type="button" className="settings-toggle" role="switch" aria-checked={checked} aria-label={label} disabled={disabled} onClick={() => onChange(!checked)}><span /></button>;
@@ -14,6 +15,7 @@ export function SettingsPage() {
   const [lang, setLang] = useState<"zh" | "en">(() => localStorage.getItem("tokendance.language") === "en" ? "en" : "zh");
   const [data, setData] = useState<{ agents: AgentConfig[]; status: DaemonStatus; autostart: AutostartInfo } | null>(null);
   const [error, setError] = useState(false);
+  useWindowReady(data !== null || error);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [sourcesOpen, setSourcesOpen] = useState(false);
@@ -26,7 +28,7 @@ export function SettingsPage() {
   const changeLanguage = (next: "zh" | "en") => { localStorage.setItem("tokendance.language", next); setLang(next); document.documentElement.lang = next === "zh" ? "zh-CN" : "en"; };
 
   const refresh = useCallback(async (force = false): Promise<boolean> => {
-    if (document.hidden || (mutating.current && !force)) return false;
+    if ((document.hidden && !force) || (mutating.current && !force)) return false;
     if (loading.current) return loading.current;
     loading.current = (async () => {
       try {
@@ -43,7 +45,7 @@ export function SettingsPage() {
     mounted.current = true;
     const onFocus = () => { setLang(localStorage.getItem("tokendance.language") === "en" ? "en" : "zh"); void refresh(); };
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") void hideWindow().catch(err => setNotice(String(err))); };
-    void refresh();
+    void refresh(true);
     const timer = window.setInterval(refresh, 5000);
     window.addEventListener("focus", onFocus);
     window.addEventListener("keydown", onKey);
