@@ -2,6 +2,8 @@
 
 日期：2026-09-06。状态：开发设计稿，尚未实现或执行数据库迁移。代码勘察基线：`e0103e3`。
 
+本次修订将可直接分享、多人使用的成员邀请链接纳入首版，与定向邮箱邀请并列；两种方式都经过本人确认和单团队事务。
+
 产品依据：[团队功能与交互方案](tokendance-teams-product-design-v1.md)。本文中的新增表、接口、配置和文件均为待实现项；引用的现有文件是本次实际检查过的接入位置。
 
 ## 1. 确定的边界与核心决策
@@ -12,7 +14,7 @@
 4. 公开隐私与团队授权完全独立；不使用 `users.leaderboard_visibility='team'` 作为团队鉴权依据。
 5. 授权按维度记录生效时间，统计只读取事件时间落在授权范围内的数据。新增授权不回填，撤回使对应历史数据不可再访问。
 6. 团队分析使用独立、可失效的统计快照。单次响应返回同一版本的指标、趋势与构成，避免页面分别读取到不同统计版本。
-7. 采用绑定验证邮箱的邀请记录；邀请链接携带随机邀请 ID，详情与接受均要求登录且邮箱匹配。链接本身不授予成员权限。
+7. 同时支持定向邮箱邀请与可分享邀请链接。邮箱邀请要求验证邮箱匹配；分享链接持有者登录后可确认加入为 member，不绑定指定邮箱。打开 / 预览不写成员关系；两种方式都需要本人选择共享范围。
 8. 团队导出通过 API 鉴权下载，不向浏览器返回对象存储直链。
 
 首期实现创建页、邀请与加入、总览、成员管理、Agent / 模型分析、共享设置、资料与头像、导出、审计、退出与解散。预算、公开团队榜、自定义角色、项目层级、SSO 不纳入本方案；多团队不是后续开关。
@@ -71,6 +73,7 @@ flowchart LR
 ### 4.1 通用约定
 
 - 业务 ID 沿用 30 字符 ASCII 二进制排序形式，示例前缀 `tem_`、`tmb_`、`tiv_`、`tgr_`、`tas_`、`tex_`；由服务端密码学随机数生成。
+- 分享链接使用独立的 `tln_` ID 与 32 字节随机 token。ID 只定位记录，token 是加入凭证，两者不可混用；token 不进入日志或业务审计。
 - 时间使用 UTC `DATETIME(3)`；有效时间均为左闭右开 `[from, to)`。授权时间在事务获得业务锁后读取数据库当前时间一次，不能使用客户端时间或排队前时间。
 - 版本使用 `BIGINT UNSIGNED`。JSON 中 ID、版本号和大整数计数为字符串；费用用十进制字符串，不使用 float64 累加金额。
 - 文本使用 utf8mb4；名称去首尾空白后按字素计数 2–40，简介 0–120；额外设置 UTF-8 字节上限 1024 / 4096，避免异常长组合字符。前后端必须共用字素测试样本。
@@ -84,7 +87,9 @@ flowchart LR
 | `team_memberships` | membership_id、team_id、user_id、base_role、sharing_version、joined_at、ended_at、end_reason | PK(membership_id)；UNIQUE(team_id,user_id,membership_id) 供组合 FK；索引(team_id,ended_at,user_id)；base_role=admin/member；重新加入创建新 ID |
 | `user_current_teams` | user_id、team_id、membership_id、joined_at | **PK(user_id)**；UNIQUE(membership_id)；组合 FK(team_id,user_id,membership_id) → memberships；索引(team_id,user_id) |
 | `team_sharing_grants` | grant_id、membership_id、dimension、starts_at、ends_at、revoked_at、active_dimension | dimension=base/named/classification/cost；UNIQUE(membership_id,active_dimension)；有效授权 active_dimension=dimension，撤销后为 NULL；索引(membership_id,dimension,starts_at) |
-| `team_invitations` | invitation_id、team_id、inviter_user_id、invited_role、recipient_lookup_hash、lookup_key_version、recipient_ciphertext、encryption_key_version、status、active_recipient_hash、expires_at、accepted_by_user_id、accepted_membership_id、version | PK；UNIQUE(team_id,active_recipient_hash)；索引(recipient_lookup_hash,status,expires_at)；status=pending/accepted/revoked/expired；接受角色只有 admin/member |
+| `team_invitations` | invitation_id、team_id、inviter_user_id、invited_role、recipient_lookup_hash、lookup_key_version、recipient_ciphertext、encryption_key_version、status、active_recipient_hash、created_at、expires_at、accepted_by_user_id、accepted_membership_id、version | PK；UNIQUE(team_id,active_recipient_hash)；索引(recipient_lookup_hash,status,expires_at)；status=pending/accepted/revoked/expired；接受角色只有 admin/member |
+| `team_invite_links` | link_id、team_id、creator_user_id、token_hash、token_ciphertext、encryption_key_version、status、version、max_uses、used_count、created_at、expires_at、revoked_at | PK(link_id)；UNIQUE(token_hash)；索引(team_id,created_at,link_id)；status=active/revoked；固定 role=member，不接受客户端指定角色 |
+| `team_invite_link_joins` | link_id、user_id、membership_id、joined_at | PK(link_id,user_id)；UNIQUE(membership_id)；FK 到 link / user / membership；每个账号同一链接最多产生一次新成员关系，退出不删除该消费记录 |
 | `team_command_receipts` | actor_user_id、operation_scope、idempotency_key_hash、request_hash、result_type、result_id、created_at、expires_at | PK(actor_user_id,operation_scope,idempotency_key_hash)；有效期 7 天；只存结果引用，不缓存邮箱或统计响应 |
 | `team_source_revisions` | team_id、source_revision、changed_at | PK(team_id)；团队内新事件、补价与数据删除同事务递增；不以 MAX(event_pk) 充当提交顺序 |
 | `team_analysis_snapshots` | snapshot_id、team_id、from_date、to_date_exclusive、auth_revision、source_revision、rule_version、status、active_request_key、as_of、lease_token、lease_generation、published_generation、lease_expires_at、attempt_count、next_attempt_at、error_code、expires_at | PK；UNIQUE(active_request_key)；查询索引(team_id,from_date,to_date_exclusive,auth_revision,status,as_of)；领取索引(status,next_attempt_at,lease_expires_at) |
@@ -99,6 +104,8 @@ flowchart LR
 快照状态为 `queued/building/ready/obsolete/failed/expired`；只有 queued/building 的 active_request_key 非空，成功、失败或撤销时置 NULL。key 由 team、日期范围、auth_revision 和统计规则版本组成，用于合并正在进行的同一构建任务。
 
 迁移中增加明确的 CHECK：active 团队 owner 非空；成员 ended_at/end_reason 成对存在；grant 的有效状态必须同时满足 revoked_at/ends_at 为空、active_dimension=dimension，撤销状态则两时间非空且 active_dimension 为空；ends_at 不早于 starts_at；pending 邀请 active_recipient_hash 非空且等于 lookup hash，终态必须为空；快照活动 key 与状态一致。涉及可空字段时显式使用 IS NULL / IS NOT NULL，不能依赖 SQL UNKNOWN 自动拒绝。
+
+链接额外 CHECK：`1<=max_uses<=100`、`0<=used_count<=max_uses`、`expires_at>created_at`、revoked 状态与 revoked_at 成对。effectiveState=revoked/expired/exhausted/active 按状态、数据库当前时间和计数计算，不依赖清理 Worker 及时把到期写回。version 只随撤销等配置变化增加，成功加入只增 used_count；不能让每次入队都导致其他正常预览版本冲突。有效期与人数限制创建后不改，修改走重新生成。
 
 聚合行最小指标：`token_exact_total`、`token_derived_total`、`usage_event_count`、`token_supported_event_count`、`reported_cost_amount`、`estimated_cost_amount`、`reported_cost_event_count`、`estimated_cost_event_count`、`reported_covered_usage_count`、`estimated_covered_usage_count`、`unattributed_cost_count`、`max_received_at`。Token 与计数用 `DECIMAL(30,0)`，金额用 `DECIMAL(30,8)`；可用性计数区分“没有数据”和“数值为零”。活动人数 / 天数对有效成员和 metric_date 去重计算，不能累加每日人数。
 
@@ -135,7 +142,7 @@ CREATE TABLE user_current_teams (
 
 团队写事务采用 READ COMMITTED、显式行锁与唯一约束。凡涉及用户名额，先锁 users，即使尚无 current 行也有可锁对象。
 
-业务锁顺序：已需要的 installation（现有 Ingest / 设备删除）→ 相关 users 按 ID 排序 → teams 按 ID 排序 → current / history / invitation → grants → source revision / jobs / audit / receipts。不得先拿 teams 再等待用户锁。
+业务锁顺序：已需要的 installation（现有 Ingest / 设备删除）→ 相关 users 按 ID 排序 → teams 按 ID 排序 → current / history / invitation / invite_link → grants / link_joins → source revision / jobs / audit / receipts。不得先拿 teams 再等待用户锁。
 
 纯快照任务的短领取事务只锁 job；在此事务提交后才开始源数据读取。发布事务按 teams → job 加锁。现有聚合 / 删除 advisory lock 只能在这些行锁之前获取，不得拿着团队行锁再等待该全局锁。
 
@@ -163,7 +170,7 @@ COMMIT
 
 唯一键冲突必须回滚整个事务，不留下团队孤儿。幂等命中应先于名额冲突判断，否则“已成功但响应丢失”的重试会被错误当作新建失败。
 
-### 5.3 接受邀请
+### 5.3 接受定向邮箱邀请
 
 无锁读取邀请的 teamId、inviterId 用于规划；随后锁接收者和邀请者 users（排序）、team、invitation，重新检查这些引用未变化。
 
@@ -173,6 +180,8 @@ COMMIT
 - 当前名额属于同团队且邀请仍有效：将邀请标记 accepted、关联现有 membership、释放 active_recipient_hash 并记录回执，返回 alreadyMember；不增加成员，不覆盖现有角色 / 共享范围。
 - 邀请已被同一用户接受：仅在其仍属于 accepted_membership_id 时返回已有结果；已退出则 410，禁止旧邀请复活。
 - 正常接受：写 history + current + 本人 grants，标记 accepted、记录 accepted_membership_id，释放 active_recipient_hash，增加 auth_revision、写审计 / 幂等回执，同一事务提交。
+
+若申请人在本团队最近一次关系以 removed 结束，定向邮箱邀请的 created_at 必须晚于该次 ended_at，才能表达管理者重新邀请；移除前留下的 pending 邮件不具备恢复资格。两者同一毫秒时保守拒绝并要求重发。移除事务同时撤销该用户当前验证邮箱匹配的本团队 pending 邀请，减少残留旧入口。
 
 ### 5.4 角色、移除、退出、转移与解散
 
@@ -186,6 +195,23 @@ COMMIT
 | 解散 | actor 是 owner；团队名确认与版本匹配 | team=dissolved；关闭所有 history、清除 current、撤销 grants / 邀请 / 导出；auth_revision++ |
 
 解散后的 owner 字段可保留内部历史 ID，但任何访问必须先判断 status；后续注销该用户时清空或去标识。HTTP 确认团队名只是防误触，权限仍以 Session 与数据库状态为准。
+
+### 5.5 通过分享链接加入
+
+无锁读取 link 对应 teamId / creatorId 规划锁；验证 token 的域隔离 SHA-256 hash，使用恒定时间比较。随后锁申请人和创建者 users（按 ID 排序）→ team → link，重读并检查引用。业务处理顺序：
+
+1. 校验申请人 active、已建档、邮箱已验证及团队 active。邮箱无需匹配指定收件人。重放幂等回执 / 已消费记录时，只返回仍有效的原 membership；已退出的原关系返回 410 TEAM_INVITE_LINK_ALREADY_USED，不重新加入、不重复扣次数。
+2. 新加入动作复查 token、link active、未过期、expectedLinkVersion、创建者仍为 active 的当前 owner/admin。只有可信 token 持有者可以获得具体过期 / 撤销状态；错误 token / 未知 ID 统一 404。
+3. 当前属于其他团队返回 409 TEAM_MEMBERSHIP_EXISTS。当前已在本团队则返回 alreadyMember，不改变角色 / grants、不插入消费记录、不扣次数。
+4. 当前无团队时，检查该账号在目标团队最近一段成员历史；end_reason=removed 时拒绝分享链接加入，返回 403 TEAM_REINVITATION_REQUIRED。由管理者发定向邮箱邀请后才能重新加入，避免被移除者凭另一条活动链接立即返回。
+5. 对本链接已有历史消费但原关系已结束者返回 410；否则校验 used_count<max_uses，并在同一事务创建 history + current、写本人 grants、登记 link_joins、used_count++、auth_revision++、审计与幂等回执。为该用户仍在运行 / 未核对完成的数据删除补登记屏障。
+6. 提交后返回 200 TeamContext。任意错误回滚成员、授权、消费计数和审计，禁止先扣次数再调用另一个独立入队事务。
+
+链接次数代表累计成功新增成员，不随退出 / 移除回补；预览、复制、失败、已在队和重试不计。最后一次可用额度由 team / link 行锁串行裁决。邮箱接受、链接接受、创建团队都复用同一个占用 current 的内部事务步骤，数据库 user_id 主键继续作为最终约束。
+
+创建 / 撤销 / 重新生成链接也遵守 users → team → link 的锁顺序；重新生成在同一事务撤销旧 link、清理其 token 密文、插入新的 ID / token / 有效期与上限，并写幂等回执。与接受并发时按事务提交顺序生效：先成功加入的人保留，撤销先提交则后续加入失败。
+
+创建者退出、被移除、注销、暂停，或从 owner/admin 降为 member，必须使其活动链接失效；仅从 owner 转为 admin 仍保留 member 邀请权限。解散撤销全队链接。撤销只影响未来加入，不移除既有成员或撤回他们自行开启的 grants。
 
 ## 6. 共享授权与时间语义
 
@@ -277,7 +303,7 @@ P0 页面优先显示已记录费用；无已记录且有估算时显示估算�
 
 - 下表均相对于 `/api/v1`，全部要求 Session。写操作还要求 X-CSRF-Token。客户端不得指定 actorUserId、ownerUserId、joinedAt 或授权时间。
 - JSON 请求上限 16 KiB，拒绝未知字段；头像内容另设上限。管理接口增加按用户 + 团队的限流，不能只依赖当前按 path + IP 的全局限流。
-- 创建、接受邀请、邀请发送 / 重发、转移、移除、退出、解散、导出使用 `Idempotency-Key`。前端以 UUID 创建，一次用户动作的网络重试复用同一个值；服务端保存 hash。
+- 创建、接受两种邀请、邮箱发送 / 重发、邀请链接生成 / 撤销 / 重新生成、转移、移除、退出、解散、导出使用 `Idempotency-Key`。前端以 UUID 创建，一次用户动作的网络重试复用同一个值；服务端保存 hash。
 - 同键同规范化请求重用结果引用；同键不同请求返回 409 IDEMPOTENCY_KEY_REUSED。幂等响应重新验证当前权限，不原样回放旧敏感数据；若已退出且不再有权读取原结果，返回 410 COMMAND_RESULT_UNAVAILABLE，不再次执行创建。
 - 成功的 leave / remove / revoke / dissolve 回执只需返回原 204：确认当前登录 actor 与回执一致后可重放，不要求已删除的成员关系仍存在；不得借重放读取旧团队详情。幂等范围包含 HTTP 操作与目标资源 ID，权限变化后不能借同键执行新的动作。
 - PATCH 和危险操作携带对应的 expectedVersion 字段，所有版本均为十进制字符串；版本缺失返回 400，冲突返回 409 并要求刷新。
@@ -303,6 +329,13 @@ P0 页面优先显示已记录费用；无已记录且有估算时显示估算�
 | POST `/teams/{teamId}/invitations/{invitationId}/resend` | 201 新 invitation，旧记录撤销 | 有权管理拟授予角色；expectedInvitationVersion、幂等 |
 | GET `/team-invitations/{invitationId}` | 邀请预览或本人可见的状态说明 | 登录且验证邮箱匹配；不是公共详情 API |
 | POST `/team-invitations/{invitationId}/accept` | 200 TeamContext 与 alreadyMember 标记 | 邮箱匹配；expectedInvitationVersion、sharing、幂等 |
+| GET `/teams/{teamId}/invite-links` | 链接元信息列表、使用次数和 effectiveState；不含 token | owner/admin，游标分页 |
+| POST `/teams/{teamId}/invite-links` | 201 link + shareUrl | owner/admin；expiresInDays、maxUses、幂等；固定 member |
+| POST `/teams/{teamId}/invite-links/{linkId}/share-url` | 200 shareUrl，供复制 | 当前 owner/admin；只返回仍可用链接，记录访问审计 |
+| POST `/teams/{teamId}/invite-links/{linkId}/revoke` | 204；阻止后续加入 | owner/admin；expectedLinkVersion、幂等 |
+| POST `/teams/{teamId}/invite-links/{linkId}/regenerate` | 201 新 link + shareUrl，旧链接撤销 | owner/admin；expectedLinkVersion、新有效期 / 次数、幂等 |
+| POST `/team-invite-links/{linkId}/preview` | 200 团队名、邀请人、member 角色、有效状态与本人能否加入 | 已登录；body.token 验证；无成员写入，不要求指定邮箱匹配 |
+| POST `/team-invite-links/{linkId}/accept` | 200 TeamContext 与 alreadyMember | active 已验证账号；body.token、expectedLinkVersion、sharing、幂等 |
 | GET `/teams/{teamId}/my-sharing` | 本人成员关系、sharingVersion、开关与生效时间 | 有效成员 |
 | PATCH `/teams/{teamId}/my-sharing` | 更新授权后返回版本 | 本人；expectedSharingVersion |
 | GET `/teams/{teamId}/analysis` | 200 一致分析结果；无有效快照时 202 | 有效成员；日期 / Agent / provider / model / snapshotId |
@@ -464,6 +497,8 @@ PATCH my-sharing 使用完整目标状态，避免部分开关含义不清：
 | 403 ACCOUNT_ACTION_NOT_ALLOWED | 账号待注销等 | 沿用账户状态页 |
 | 404 TEAM_NOT_FOUND | 团队不存在、已解散或当前人非成员 | 清空团队上下文，回入口 |
 | 404 TEAM_INVITATION_NOT_FOUND | ID 不存在或邮箱不匹配 | 通用提示，可切换账号；不展示目标邮箱 |
+| 404 TEAM_INVITE_LINK_NOT_FOUND | 分享链接 ID 不存在、token 缺失 / 错误或 team 不可用 | 通用邀请不可用；不暴露私有团队 |
+| 403 TEAM_REINVITATION_REQUIRED | 最近一次被该团队移除，尝试经分享链接返回 | 联系管理者发定向邮箱邀请 |
 | 409 TEAM_MEMBERSHIP_EXISTS | 已属于另一个团队 | 展示当前团队入口；不自动退出 |
 | 409 TEAM_VERSION_CONFLICT | 角色 / 资料 / 授权版本过期 | 保留草稿并刷新当前状态 |
 | 409 TEAM_OWNER_TRANSFER_REQUIRED | owner 退出或注销前未处理团队 | 转移 / 解散入口 |
@@ -471,6 +506,8 @@ PATCH my-sharing 使用完整目标状态，避免部分开关含义不清：
 | 409 TEAM_SNAPSHOT_OBSOLETE | 请求旧授权版本快照 | 清旧值，重新请求 analysis |
 | 409 IDEMPOTENCY_KEY_REUSED | 同键不同请求体 | 不自动换键重试危险操作 |
 | 410 TEAM_INVITATION_EXPIRED / REVOKED | 本人可见邀请已失效 | 联系邀请人重发 |
+| 410 TEAM_INVITE_LINK_EXPIRED / REVOKED / EXHAUSTED | 正确凭证下的链接到期、撤销或次数用尽 | 关闭加入操作，联系邀请人；不自动重新生成 |
+| 410 TEAM_INVITE_LINK_ALREADY_USED | 本账号曾经用此链接加入，但原成员关系已结束 | 说明需新的邀请，不重复占用名额 |
 | 410 TEAM_EXPORT_REVOKED / EXPIRED | 权限变化或到期 | 不提供下载，允许重新生成 |
 | 429 API_RATE_LIMIT_EXCEEDED | 限流 | 遵循 Retry-After |
 | 503 TEAM_TEMPORARILY_UNAVAILABLE | 构建失败、任务不可用、依赖失败 | 显示可重试状态；不展示越权旧快照 |
@@ -479,13 +516,13 @@ PATCH my-sharing 使用完整目标状态，避免部分开关含义不清：
 
 ## 9. 邀请、邮件与密钥
 
-### 9.1 邀请 ID 与登录回跳
+### 9.1 定向邮箱邀请 ID 与登录回跳
 
-邀请 URL 使用网站实际 base path，例如 `/token-dance/teams/invitations/{invitationId}`。随机 ID 是定位符；所有详情和接受都检查登录用户验证邮箱，没有任何“持链接即加入”的路径。
+定向邮箱邀请 URL 使用网站实际 base path，例如 `/token-dance/teams/invitations/{invitationId}`。随机 ID 是定位符；这类邀请的详情和接受都检查登录用户验证邮箱。可转发给其他人的通用成员邀请另走第 9.4 节的分享链接，不复用邮箱接口或取消邮箱校验。
 
 未登录先进入现有登录 / 注册，并保留相对 `return_to=/teams/invitations/{id}`；完成建档后回邀请页。现有 return_to 校验继续禁止外站 / 协议相对路径。首次打开不自动接受，不在 GET 请求产生成员关系。
 
-这样无需把 bearer token 塞进 URL、日志或浏览器存储，也不要求新建邀请 Session 系统。产品稿与实现路由统一使用 `:invitationId`。
+邮箱邀请不需要 bearer token；产品稿与实现路由统一使用 `:invitationId`。两类邀请都不在 GET、登录回跳或预览阶段自动添加成员。
 
 ### 9.2 邮箱绑定与重复邀请
 
@@ -505,6 +542,52 @@ PATCH my-sharing 使用完整目标状态，避免部分开关含义不清：
 发送前检查 invitation pending、未到期、team active、邀请者仍有授予权限、outbox 关联版本匹配。发送中恰逢撤销，外部 SMTP 可能已经接受邮件；允许用户收到失效链接，但接受接口必须拒绝，不能承诺能召回邮件。
 
 投递成功指 Provider 接受，不承诺送达收件箱。发送失败 / 重试不会增加成员数。活动密钥必须保留到所有待投递邮件与有效邀请过期，未知 key version 或解密失败 fail closed，禁止像通用兼容回退一样把 ciphertext 当作明文继续发送。
+
+### 9.4 分享链接凭证与回跳
+
+首版创建参数为 `expiresInDays=7`、`maxUses=50`，允许天数 1 / 7 / 30、使用人数 1–100。链接固定 member；不设置收件邮箱、不写 email_outbox、不主动发送任何外部消息。完整链接为站点配置的可信 origin + base path + `/teams/join/{linkId}#key={token}`，token 使用 32 字节密码学随机数的 base64url 编码。
+
+数据库保存域隔离 SHA-256 token_hash，查验不需解密；另沿用现有 AEAD 保存 token_ciphertext，AAD 包含团队链接专用域、teamId、linkId，以支持管理者稍后再次复制，以及创建响应丢失后的幂等结果恢复。只在创建 / 重新生成结果或专门的 share-url 接口解密返回，列表、审计、普通 TeamContext 都不带完整链接。密钥轮换保留所有仍有效密文需要的版本，不能在链路有效期内提前销毁旧密钥。
+
+链接凭证只位于 URL fragment；浏览器在页面入口读取后立即用 replaceState 清除地址栏 fragment，向 API 的 preview / accept POST JSON body 传 token。禁止放进 URL path / query、return_to、日志、错误采集或埋点；这两个 POST 也要求 CSRF，并沿用 Session / 账号校验。页面使用 Referrer-Policy: no-referrer，不加载第三方分析脚本。
+
+登录前页面仅显示“你收到一份团队邀请”和登录 / 注册入口；团队信息须在登录并验证 token 后展示。为跨登录 / 注册 / 建档及刷新保留邀请，允许此流程专用的 sessionStorage 暂存 linkId、token 与客户端过期时刻，最长 15 分钟，按 linkId 隔离；不存 localStorage，不与团队统计缓存混用。登录回跳仅包含 `/teams/join/{linkId}`。每次读写检查 TTL，成功、取消、退出登录、失效或到时清除；存储不可用或超时后提示从原始分享链接重新打开。这个临时载体只用于浏览器回跳，服务端仍每次验证实际链接有效期和权限。
+
+预览只返回 token 授权查看的团队名、邀请者展示名、固定角色、到期时间、linkVersion、effectiveState，以及当前账号是否已在队 / 被移除；不返回成员名单、成员邮箱、用量、私有头像或内部对象地址。次数上限及管理详情只向管理者返回。错误 token 无论 ID 是否存在均为相同 404；正确 token 的到期 / 撤销 / 用尽可以返回相应 410。
+
+创建 / regenerate 的幂等命中先查原 result_id，当前管理权限与链接仍可用时才重建 shareUrl。若原链接已撤销 / 到期 / 用尽则返回其终态，不生成第二条链接。share-url 本身不延长有效期、不扣次数；界面实际复制成功后才显示“已复制”。
+
+凭证密文在链接撤销、到期或用尽后进入清理，不再允许新复制；为识别终态保留 hash 与最小元信息。link_joins 的防重放记录至少保留到链接永久失效，之后按终态 30 天清理；不得仅因幂等回执 7 天到期或某成员离开就清掉仍有效链接的消费记录。注销时清除该账号身份关联，已被注销的 userId 不再作为可恢复账号使用；used_count 是累计事实，不因清理个人记录回补。
+
+### 9.5 分享链接 API 示例
+
+生成请求 `POST /teams/{teamId}/invite-links`，携带 Idempotency-Key：
+
+```json
+{
+  "expiresInDays": 7,
+  "maxUses": 50
+}
+```
+
+201 响应包含 `link.id/version/role/expiresAt/maxUses/usedCount/effectiveState` 与 shareUrl。role 恒为 member、初始 usedCount 为 "0"；次数在 JSON 中沿用精确整数字符串。shareUrl 仅由服务端可信站点配置构造，不接受客户端传入域名。
+
+接受请求 `POST /team-invite-links/{linkId}/accept`：
+
+```json
+{
+  "token": "example-only-not-a-valid-token",
+  "expectedLinkVersion": "1",
+  "sharing": {
+    "base": false,
+    "named": false,
+    "classification": false,
+    "cost": false
+  }
+}
+```
+
+示例 token 不是实际凭证。成功复用第 8.3 节 TeamContext，附 alreadyMember；客户端不能传 role、teamId、已使用次数或授权时刻。token 格式错误与校验错误使用相同不可用提示，不能由字段错误泄露合法 ID。
 
 ## 10. 导出、头像与操作记录
 
@@ -531,7 +614,7 @@ PATCH my-sharing 使用完整目标状态，避免部分开关含义不清：
 
 ### 10.3 审计
 
-覆盖 create、invite、resend、revoke、accept、role_change、sharing_change、remove、leave、transfer、dissolve、export_create / download / revoke、avatar_change。管理动作与审计同事务提交；审计写失败则管理事务失败。
+覆盖 create、invite、resend、revoke、accept、invite_link_create / copy / revoke / regenerate / accept、role_change、sharing_change、remove、leave、transfer、dissolve、export_create / download / revoke、avatar_change。管理动作与审计同事务提交；审计写失败则管理事务失败。invite_link_copy 记录服务端发放 shareUrl 的动作，不声称已获知客户端剪贴板实际写入结果。
 
 safe_details 只记录角色前后值、授权开关名、资源 ID、版本、结果码，不记录 Prompt、设备路径、原始邮箱、密钥、下载地址或完整请求体。默认团队管理审计保留 180 天；账号注销时对 actor / target 的身份引用与可能含个人内容的 details 去标识，保留无 PII 的动作类型和时间。
 
@@ -550,9 +633,9 @@ safe_details 只记录角色前后值、授权开关名、资源 ID、版本、�
 ### 11.2 账号注销
 
 - 活跃团队 owner 发起账号注销时返回 409 TEAM_OWNER_TRANSFER_REQUIRED；先转移并退出或解散，不暗中把所有权转给不相关成员。
-- 普通成员 / 管理员：在 RequestDeletionTx 设置 deletion_pending 的同一事务里关闭当前团队关系、撤销全部 grants、撤销其发出的有效邀请并增加团队 authRevision。
+- 普通成员 / 管理员：在 RequestDeletionTx 设置 deletion_pending 的同一事务里关闭当前团队关系、撤销全部 grants、撤销其发出的有效邮箱邀请和分享链接并增加团队 authRevision。
 - 取消注销只恢复账号，不自动恢复团队关系、共享或已撤销邀请；用户需重新受邀并授权。
-- Worker 在 deleting_objects 阶段处理该用户创建的团队导出对象及失效头像上传意图；在 deleting_identity / reconciling 阶段去标识邀请邮箱、审计引用及结束的个人关系信息，保持既有删除代次校验。
+- Worker 在 deleting_objects 阶段处理该用户创建的团队导出对象及失效头像上传意图；在 deleting_identity / reconciling 阶段去标识邀请邮箱、链接消费身份、审计引用及结束的个人关系信息，保持既有删除代次校验。
 - 解散后的团队 owner 引用在其账号匿名化时清空；active 团队不能出现无 owner 状态。关系历史可保留去标识记录用于故障审计，不能保留可还原的邮箱副本。
 
 ### 11.3 设备 / 时间范围数据删除与账号暂停
@@ -563,13 +646,14 @@ installation / time_range / all_usage 删除同样会影响团队快照。领取
 
 用户可能在删除过程中退出或加入另一团队。离开会让旧关系贡献全部失效；创建 / 接受邀请事务在用户锁下检查该用户尚未核对完成的删除请求，为新团队补登记屏障。删除完成事务同样先锁 user，再锁其全部屏障 team，防止漏掉并发加入。新团队可以正常创建或加入，但在有关删除完成前不发布分析。解除关联后才允许清理原 deletion request，避免外键悬挂或错误提前解除。
 
-账号 suspended 时现有 RequireAuth 阻断其访问；同事务撤销该用户贡献的快照引用，authRevision++，源查询排除其数据。恢复 active 后不自动恢复已经显式撤销的 grants。暂停不释放其团队名额，也不自动转移所有权。
+账号 suspended 时现有 RequireAuth 阻断其访问；同事务撤销该用户贡献的快照引用及其创建的活动分享链接，authRevision++，源查询排除其数据。恢复 active 后不自动恢复已经显式撤销的 grants 或链接。暂停不释放其团队名额，也不自动转移所有权。
 
 ### 11.4 后台清理
 
 - ready 分析快照默认 30 分钟保留，最长不超过关联导出任务完成所需时间；导出中快照被引用时延迟物理清理。授权撤销不受保留期影响，逻辑上立即失效。
 - obsolete / expired 快照及 rows 批量删除，避免长事务；完成后任务只留摘要，不留个人指标。
 - 待接受邀请到期后立即逻辑失效，邮箱密文及邮件载荷在终态 30 天后清理；账号注销可以更早要求清理。幂等回执 7 天后清理。
+- 分享链接的 token 密文、hash、元信息与消费记录按第 9.4 节分别清理；消费记录清理不得恢复链接可用次数。
 - 解散团队清除 current、grants、快照、导出、头像；审计按去标识保留策略处理，不删除成员个人 usage_events。
 
 ## 12. 前端页面与状态管理
@@ -583,12 +667,13 @@ installation / time_range / all_usage 删除同样会影响团队快照。领取
 | `/teams` | 未登录介绍；无团队入口及本人邀请；有团队进入总览 | 已登录后 GET me/team；无团队再加载 me/team-invitations |
 | `/teams/new` | 创建表单，已有团队时给出当前团队入口 | GET me/team；加载账号默认时区 |
 | `/teams/invitations/:invitationId` | 邮箱绑定的邀请预览、本人共享选择、接受结果 | 邀请详情 + me/team |
+| `/teams/join/:linkId` | 读取分享凭证、登录回跳、预览、本人确认加入 | 登录后 POST link preview + me/team；仅点击加入才 POST accept |
 | `/teams/:teamId` | 总览、首次使用提示、趋势与贡献列表 | TeamContext + analysis |
-| `/teams/:teamId/members` | 已加入成员、管理侧邀请、成员抽屉 | members；有权限时 invitations；周期数据绑定 snapshotId |
+| `/teams/:teamId/members` | 已加入成员、管理侧邮箱邀请 / 分享链接、成员抽屉 | members；有权限时 invitations / invite-links；周期数据绑定 snapshotId |
 | `/teams/:teamId/analytics` | 日期 / 分类筛选、趋势、分布和导出 | analysis + 同 snapshotId 的 filter-options |
 | `/teams/:teamId/settings` | 资料、头像、本人共享、操作记录及退出 / 解散 | TeamContext + my-sharing；管理者按需 audit-events |
 
-路由声明把 new / invitations 与动态 teamId 明确分开，不把字符串 new 交给团队查询。Tab 使用路由表达，日期与 Agent / provider / model 筛选使用 URL query；切换 Tab 保留适用筛选。用户离开团队后清掉该团队的 query 缓存和成员抽屉。
+路由声明把 new / invitations / join 与动态 teamId 明确分开，不把这些字面量交给团队查询。Tab 使用路由表达，日期与 Agent / provider / model 筛选使用 URL query；切换 Tab 保留适用筛选。用户离开团队后清掉该团队的 query 缓存和成员抽屉。
 
 不引入新的全局状态库；首版用现有 React hooks、Context 与 API client。请求函数增加 AbortSignal，离开页面、快速切换日期或授权版本变化时中止旧请求；另用 request sequence + teamId + authRevision 检查迟到响应，不能只靠 AbortController。
 
@@ -618,11 +703,15 @@ checkingMembership
 
 ### 12.3 邀请、设置与成员操作
 
-邀请页始终先展示团队名、邀请人、角色、有效期和默认关闭的共享选择，由本人点击接受。未登录保留回跳；邮箱不符展示通用不可访问状态与切换账号入口，不暴露收件邮箱。已有其他团队时显示当前团队入口和单团队说明，不提供自动替换团队按钮。
+两类邀请在登录后展示团队名、邀请人、角色、有效期和默认关闭的共享选择，由本人点击接受。未登录保留回跳；只有定向邮箱邀请执行收件邮箱匹配，分享链接执行 token 验证。已有其他团队时显示当前团队入口和单团队说明，不提供自动替换团队按钮。
 
 共享设置保留 serverState / draftState 两份状态；新增授权仅在保存成功后生效。关闭 base 或减少维度，确认框说明将移除哪些历史团队指标；取消确认保留草稿。409 时刷新服务器状态，提示重新核对，不将旧草稿自动覆盖保存。保存成功返回新授权时间，并清空旧版本分析结果。
 
-邀请对话框一次一个邮箱，默认 member；owner 才能选择 admin。响应区分“邀请已创建、邮件待发送”和“投递失败”，待接受数可变、已加入数不变。批量导入不属于首版。
+邀请对话框有“分享链接 / 邮箱邀请”两个 Tab，默认分享链接。链接页先选择有效期和最多可加入人数，再点击“生成链接”；成功后显示链接、有效期、已加入次数、复制按钮。仅真正生成 / 重新生成时写链接，打开弹窗或切换 Tab 不生成。管理侧列表支持复制、撤销、重新生成；重新生成前确认旧链接将失效，失败保留旧状态，成功再替换。
+
+邮箱页一次一个邮箱，默认 member；owner 才能选择 admin。响应区分“邀请已创建、邮件待发送”和“投递失败”，待接受数可变、已加入数不变。分享链接不计入邮箱待接受数量。批量导入不属于首版。
+
+分享链接加入页状态：读取凭证 → 登录 / 建档 → 验证链接 → 待确认 → 提交 → 已加入；旁路状态为凭证丢失、已在本队、已有其他团队、到期、撤销、次数用尽或需要定向再邀请。网络重试复用 Idempotency-Key 与共享选择，成功只导航一次。链接凭证按第 9.4 节暂存和清除，错误上报必须主动过滤 fragment 与 token 字段。
 
 成员详情抽屉约 420 px，小屏占满可用宽度；打开后移动焦点、Esc 关闭、关闭后回到来源行。无 named 授权的用户仍可出现在成员名单，但不允许打开用量详情。团队同步状态只来自该成员已授权且 named 可见事件的 max_received_at，不暴露个人设备在线状态或未共享活动。
 
@@ -658,7 +747,8 @@ analysis 未指定 snapshotId 时取得最新有效快照；指定 snapshotId �
 | `server/internal/teams/service.go` | 团队用例、字段与角色校验、时间范围、错误映射 |
 | `server/internal/teams/metrics.go` | 授权维度判定、Token 规范化、费用去重与覆盖率；配套 fixture 测试 |
 | `server/internal/store/store.go` | 新 TeamsStore 子接口，以及用例输入 / 输出约定 |
-| `server/internal/store/mysql/teams.go` | 关系、邀请、授权、角色、幂等回执的事务实现 |
+| `server/internal/store/mysql/teams.go` | 关系、邮箱邀请、授权、角色、幂等回执的事务实现 |
+| `server/internal/store/mysql/team_invite_links.go` | 链接创建 / 复制 / 撤销 / 重新生成，消费防重、额度与成员写入事务 |
 | `server/internal/store/mysql/team_analysis.go` | 快照查询、排队、版本校验与聚合行读取 |
 | `server/internal/store/memory/` | 与 MySQL 同契约的内存实现，供 HTTP / Service 测试 |
 | `server/db/queries/teams.sql` | 参数化查询、锁定与条件更新；生成 sqlcgen，不手改生成文件 |
@@ -672,7 +762,7 @@ analysis 未指定 snapshotId 时取得最新有效快照；指定 snapshotId �
 | `web/src/pages/teams/` | 入口、创建、邀请、总览、成员、分析、设置及公共控件 |
 | `web/src/App.tsx`、`i18n/locales/` | 路由和中英文文案 |
 
-Store 的事务接口以业务命名：CreateTeamTx、CreateInvitationTx、AcceptInvitationTx、UpdateSharingTx、ChangeMemberRoleTx、RemoveMemberTx、LeaveTeamTx、TransferOwnershipTx、DissolveTeamTx、QueueTeamExportTx。输入包含 actor、目标、期望版本、规范化请求与幂等信息；输出明确 Changed / Replay / AlreadyMember，不让 Handler 猜 RowsAffected 的业务含义。
+Store 的事务接口以业务命名：CreateTeamTx、CreateInvitationTx、AcceptInvitationTx、CreateInviteLinkTx、RevokeInviteLinkTx、RegenerateInviteLinkTx、AcceptInviteLinkTx、UpdateSharingTx、ChangeMemberRoleTx、RemoveMemberTx、LeaveTeamTx、TransferOwnershipTx、DissolveTeamTx、QueueTeamExportTx。输入包含 actor、目标、期望版本、规范化请求与幂等信息；输出明确 Changed / Replay / AlreadyMember，不让 Handler 猜 RowsAffected 的业务含义。两种接受方式调用同一内部成员写入步骤，但不能通过调用两个独立 Tx 嵌套来实现。
 
 分析侧分为 ResolveTeamRange、GetOrQueueAnalysis、ClaimAnalysis、BuildAnalysis、PublishAnalysis；发布要求显式提供 claim token / generation、capturedAuthRevision、capturedSourceRevision 与 publishedGeneration。共享函数只接收已检查的授权事实，不能通过某个调用方忘记传 filter 就默认允许全量数据。
 
@@ -684,7 +774,7 @@ Store 的事务接口以业务命名：CreateTeamTx、CreateInvitationTx、Accep
 
 维护同一迁移的三处副本：`server/db/migrations/`、`server/internal/migrate/migrations/`、`docs/ddl/mysql/`。更新 server/sqlc.yaml 的显式 schema 清单并重新生成查询代码，沿用现有 Runner 的迁移锁、dirty 恢复和部署命令。
 
-建表顺序：teams（头像先不关联外键）→ memberships → current → grants / invitations → receipts / revisions → snapshots / rows → exports / audit / upload_objects / deletion_barriers → 补头像 FK → 扩展 email_outbox。跨 users / installations / deletion requests 的 ID 类型、字符集、排序规则与既有表完全一致。
+建表顺序：teams（头像先不关联外键）→ memberships → current → grants / invitations / invite_links → invite_link_joins → receipts / revisions → snapshots / rows → exports / audit / upload_objects / deletion_barriers → 补头像 FK → 扩展 email_outbox。跨 users / installations / deletion requests 的 ID 类型、字符集、排序规则与既有表完全一致。
 
 这批表初始为空；**不从 leaderboard_visibility=team 推断成员，不自动创建团队或打开授权**。仅对既有 outbox 增加可空字段及索引，已有认证邮件保持可处理。MySQL DDL 会隐式提交，不能把多条建表包在 BEGIN 中就认为可以整体回滚；失败依照现有 Runner 的实际状态和校验恢复，禁止直接清 dirty 标记跳过。
 
@@ -692,7 +782,7 @@ Store 的事务接口以业务命名：CreateTeamTx、CreateInvitationTx、Accep
 
 | 阶段 | 交付内容 | 完成条件 |
 | --- | --- | --- |
-| A：关系与创建 | 迁移、角色权限、单团队事务、邀请邮件、创建 / 接受页 | 并发唯一性与邮箱绑定测试通过；共享默认关闭 |
+| A：关系与创建 | 迁移、角色权限、单团队事务、邮箱与分享链接、创建 / 接受页 | 并发唯一性、邮箱绑定、链接防重与最后次数竞争通过；共享默认关闭 |
 | B：授权与数据 | grants、源版本、快照、费用口径、全部删除屏障与撤权 hooks | 撤回、退出、租约接管和数据删除不返回旧贡献 |
 | C：可用页面 | 总览、成员、分析、设置、同步状态与 i18n | 真实接口联调、三种宽度和全部主要错误状态通过 |
 | D：管理与交付 | 导出、头像、审计、清理、监控和发布演练 | 端到端与实际 MySQL 检查通过，可开启功能 |
@@ -716,6 +806,7 @@ Store 的事务接口以业务命名：CreateTeamTx、CreateInvitationTx、Accep
 - 事实读取走 user + occurred_at 索引；按成员 / 日期分段流式处理但共享同一个 RR 读事务，不能每段重新开启快照。数据库读事务上限初始 60 秒，超过后返回明确处理上限并提示缩短范围，不静默截断数据。
 - 高基数行采用有界分批聚合与数据库暂存，不能将 90 天所有原始事件装入单个 Go map。Top 列表默认 20 条，另有完整分页；其余贡献用“其他”桶保持总和一致，不丢掉未共享分类桶。filter-options 同样分页 / 搜索。
 - 管理请求初始按用户每分钟 30 次；邮件发送按团队每小时 50 次、同收件人重发间隔 60 秒；限流按实际投递行为计数，命中的幂等回执不重复扣配额。范围与阈值配置化，不增加“每个账号可多团队”的配置。
+- 分享链接 preview / accept 按账号 + IP 限流，初始每分钟 30 / 10 次；不能只按 linkId 限流让一个人阻断整组加入。生成链接沿用管理限流，加入计数与邮件配额独立；管理复制只记录审计，不消耗链接使用次数。
 - 目标测试规模：100 位成员、范围内 100 万有效事件；非媒体管理接口 p95 < 500 ms，ready 分析读取 p95 < 800 ms，普通构建 30 秒内完成。达不到时先看查询计划、授权联接和暂存开销，再决定是否引入增量物化；不通过削弱授权时刻换性能。
 
 metrics 记录请求延迟 / 错误码、TEAM_MEMBERSHIP_EXISTS 次数、事务重试、队列等待、构建时间 / 行数、租约接管、authRevision 冲突、删除屏障年龄、导出撤销、邮件失败与孤立对象清理数。指标标签不使用邮箱、userId、teamId，避免泄露与高基数；受控结构化诊断日志可含内部资源 ID 和 requestId。
@@ -734,7 +825,7 @@ metrics 记录请求延迟 / 错误码、TEAM_MEMBERSHIP_EXISTS 次数、事务�
 | T04 | 任意用户访问其他团队、成员 ID、快照、头像或导出 | 同一安全 404，不泄露邮箱、存在性或内部分类 |
 | T05 | 管理员提升自己、移除 owner、降权与接受邀请并发 | 事务时权限生效；不产生越权管理员或双 owner |
 | T06 | 转移与解散 / 接受邀请并发 | 每个 active 团队恰有有效 owner；转移不释放原 owner 名额 |
-| T07 | 错误邮箱、未登录、7 天边界、撤销、重发、旧链接 | 只有验证邮箱匹配者可接受；GET 不写成员；旧链接不可复活 |
+| T07 | 定向邮箱邀请：错误邮箱、未登录、7 天边界、撤销、重发、旧链接 | 只有验证邮箱匹配者可接受；GET 不写成员；旧邮箱邀请不可复活 |
 | T08 | 基础共享关闭创建 / 加入，公开隐私切换 | 不产生隐式授权；个人公开配置不影响团队 grants |
 | T09 | 授权前后 1 ms、延迟上传、named 单独开关、保存不变 | 无历史回填；撤回移除历史维度；未变化维度时间不重置 |
 | T10 | 退出后再加入同团队并重新授权 | 新 membershipId；旧授权 / 导出不可恢复；历史个人事件不带入 |
@@ -752,8 +843,15 @@ metrics 记录请求延迟 / 错误码、TEAM_MEMBERSHIP_EXISTS 次数、事务�
 | T22 | 头像超限 / 伪扩展、上传后降权、CSV 公式文本 | 内容验证与完成时授权生效；下载不执行恶意单元格公式 |
 | T23 | 创建页错误、并发名额冲突、取消、成功后刷新 | 输入保留；默认不共享；成功恰 1 个成员；刷新不重复创建 |
 | T24 | 所有角色、空 / 更新 / 失败态、中英文、360 / 736 / 1024 px | 控件与权限一致；无横向溢出；键盘与焦点操作可用 |
+| T25 | 多个不同邮箱账号使用同一分享链接；与邮箱接受 / 创建并发 | 无需指定邮箱匹配；仍一人一队；固定 member，默认无共享 |
+| T26 | 链接仅剩一次额度，同时两名新用户接受 | 至多一人成功；成员、grants、消费记录与计数原子一致 |
+| T27 | 预览、复制、响应丢失重试、已在队、退出后重试、回执过期 | 不重复扣次数；仍有效链接的消费记录不能因 7 天回执清理而丢失 |
+| T28 | 接受与撤销 / 重新生成 / 创建者降权、暂停、解散并发 | 提交顺序裁决；旧链接不再新加成员，已加入关系保留 |
+| T29 | 被移除用户改用另一条活动链接 / 移除前旧邮件，再经新定向邮箱邀请 | 旧入口拒绝返回；移除后管理员明确再次邀请可以建立新关系 |
+| T30 | fragment 读取清除、登录 / 注册 / 刷新、15 分钟超时、复制失败 | 凭证不进请求 URL / return_to / 日志；回跳可恢复或明确要求重开；复制反馈真实 |
+| T31 | linkId 枚举、错误 token、密钥轮换、创建幂等恢复、篡改 role / usedCount | 不泄露团队；可用密文正确恢复；终态不重生；不能提升角色或改配额 |
 
-并发测试使用屏障 / 可控事务步骤安排交错，不靠 sleep 猜顺序；至少对 T01、T05、T06、T11–T15 使用真实 MySQL。Memory Store 通过不代表数据库约束、隔离级别、锁顺序已经验证。
+并发测试使用屏障 / 可控事务步骤安排交错，不靠 sleep 猜顺序；至少对 T01、T05、T06、T11–T15、T25–T29 使用真实 MySQL。Memory Store 通过不代表数据库约束、隔离级别、锁顺序已经验证。
 
 ### 16.2 实施时应执行的检查
 
@@ -761,7 +859,7 @@ metrics 记录请求延迟 / 错误码、TEAM_MEMBERSHIP_EXISTS 次数、事务�
 2. 新建空库运行全部迁移；另在已有 0001–0004 的脱敏库增量升级，校验三份 SQL checksum、索引、FK、CHECK、Runner dirty 恢复与既有认证邮件。
 3. 使用专用测试 MySQL 执行事务和 Worker 集成测试，按项目现有约定设置 `TOKENDANCE_TEST_MYSQL_DSN`。未设置该变量导致测试 skip，必须报告“未验证”，不能计为通过。
 4. 在 server 目录运行 `go test ./...`；更新 sqlc 后执行 `server/scripts/verify-sqlc.ps1` 检查生成结果与生产引用。若环境支持 race，再对并发相关包运行 race 检查。
-5. 在 web 目录运行 `npm run typecheck`、`npm test`、`npm run build`；新增团队 E2E 覆盖真实创建 → 邀请 → 接受 → 授权 → 撤回 → 退出。邮件使用测试 Provider，不向真实用户发送验收邮件。
+5. 在 web 目录运行 `npm run typecheck`、`npm test`、`npm run build`；新增团队 E2E 覆盖真实创建 → 邮箱 / 分享链接邀请 → 接受 → 授权 → 撤回 → 退出，两种路径分别验证。邮件使用测试 Provider，不向真实用户发送验收邮件。
 6. 联调在实际 `/token-dance/` 子路径验证登录回跳、页面刷新、API、私有头像、CSV 下载与错误恢复；压测记录数据规模、机器配置、SQL 计划及 p95，核实第 15 节目标。
 
 最终上线门槛：单团队唯一性、所有权不变量、本人授权、不回填、撤回与退出失效、删除屏障、后台任务分代保护和导出鉴权全部通过；页面交互完成且没有用 0 或旧数据掩盖不可用状态。
