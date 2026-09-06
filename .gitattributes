@@ -3,5 +3,6 @@
 # `cargo fmt --check`.
 *.rs text eol=lf
 
-# Embedded migration checksums must be identical on Windows and Linux builds.
-*.sql text eol=lf
+# Preserve committed SQL bytes: historical migrations include both LF and CRLF.
+# Checkout normalization would change their already-applied SHA-256 checksums.
+*.sql -text
