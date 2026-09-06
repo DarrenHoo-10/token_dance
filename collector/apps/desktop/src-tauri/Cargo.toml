@@ -2,7 +2,7 @@
 
 [package]
 name = "tokendance-desktop"
-version = "0.1.10"
+version = "0.1.12"
 edition = "2021"
 authors = ["TokenDance Team"]
 description = "TokenDance Desktop Collector Settings Shell"
@@ -32,9 +32,11 @@ sha2 = "0.10"
 base64 = "0.22"
 rusqlite = { version = "0.32", features = ["bundled"] }
 tauri = { version = "2", features = ["tray-icon"] }
+self-replace = "1"
+semver = "1"
+tempfile = "3"
 
 [dev-dependencies]
-tempfile = "3"
 privacy = { path = "../../../crates/privacy" }
 
 [build-dependencies]
