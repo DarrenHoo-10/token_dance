@@ -77,11 +77,11 @@ fn parse_response(value: &Value, provider: &str) -> Result<AgentQuota, &'static 
 
 async fn fetch(client: &Client, url: &str, authorization: HeaderValue, label: &str) -> Result<AgentQuota, &'static str> {
     let mut response = client.get(url).header(reqwest::header::AUTHORIZATION, authorization)
-        .send().await.map_err(|_| "unavailable")?;
+        .send().await.map_err(|_| "network_error")?;
     if matches!(response.status().as_u16(), 401 | 403) { return Err("auth_required"); }
     if !response.status().is_success() || response.content_length().is_some_and(|n| n > RESPONSE_LIMIT as u64) { return Err("unavailable"); }
     let mut body = vec![];
-    while let Some(chunk) = response.chunk().await.map_err(|_| "unavailable")? {
+    while let Some(chunk) = response.chunk().await.map_err(|_| "network_error")? {
         if body.len() + chunk.len() > RESPONSE_LIMIT { return Err("unavailable"); }
         body.extend_from_slice(&chunk);
     }
@@ -215,6 +215,15 @@ mod tests {
         assert_eq!(failed.observed_at, old.observed_at);
         assert_eq!(failed.windows[0].used_percent, 3.0);
         assert_eq!(failed.status.as_deref(), Some("auth_required"));
+    }
+
+    #[tokio::test]
+    async fn quota_timeout_is_a_network_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = Client::builder().no_proxy().timeout(Duration::from_millis(100)).build().unwrap();
+        let url = format!("http://{}/quota", listener.local_addr().unwrap());
+        assert_eq!(fetch(&client, &url, HeaderValue::from_static("test-key-only"), "GLM").await.unwrap_err(), "network_error");
+        drop(listener);
     }
 
     #[tokio::test]

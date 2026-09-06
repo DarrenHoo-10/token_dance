@@ -23,15 +23,15 @@ export function quotaWindowLabel(window: AgentQuota['windows'][number], zh: bool
 }
 
 export function quotaStatusText(quota: AgentQuota | undefined, zh: boolean): string | null {
-  const name = quota?.agentId === 'grok-build' ? 'Grok Build' : quota?.agentId === 'cursor' ? 'Cursor' : 'ZCode';
+  const names: Record<string, string> = { 'grok-build': 'Grok Build', cursor: 'Cursor', zcode: 'ZCode', codex: 'Codex', 'claude-code': 'Claude Code', pi: 'Pi', 'deepseek-harness': 'DeepSeek Harness' };
+  const name = names[quota?.agentId ?? ''] ?? quota?.agentId ?? '';
   switch (quota?.status) {
-    case 'not_connected': return name === 'ZCode' ? (zh ? '请在 ZCode 登录并启用 Coding Plan' : 'Sign in and enable Coding Plan in ZCode') : (zh ? `请先在 ${name} 登录` : `Sign in to ${name} first`);
-    case 'auth_required': return zh ? `登录已失效，请在 ${name} 重新登录` : `Session expired · Sign in again in ${name}`;
-    case 'unavailable': return quota.windows.length
-      ? (zh ? '查询失败，显示上次记录，稍后重试' : 'Query failed · Showing previous reading · Retrying')
-      : (zh ? '额度暂时无法查询，稍后自动重试' : 'Quota temporarily unavailable · Retrying');
-    case 'no_quota': return zh ? '当前账号未返回可展示的套餐额度' : 'No supported plan quota returned for this account';
-    case 'unlimited': return zh ? '当前套餐未设置额度上限' : 'No quota cap for this plan';
+    case 'not_connected': return zh ? `请在 ${name} 登录` : `Sign in to ${name}`;
+    case 'auth_required': return zh ? `请在 ${name} 重新登录` : `Sign in again to ${name}`;
+    case 'network_error': return zh ? '连接异常' : 'Connection error';
+    case 'unavailable': return zh ? '查询异常' : 'Query failed';
+    case 'no_quota': return zh ? '暂无额度' : 'No quota';
+    case 'unlimited': return zh ? '不限额' : 'Unlimited';
     default: return null;
   }
 }
