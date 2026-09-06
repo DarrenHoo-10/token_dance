@@ -190,21 +190,26 @@ fn website_url(value: &str) -> Result<tauri::Url, String> {
 pub fn open_website(url: String) -> Result<(), String> {
     let url = website_url(&url)?;
     #[cfg(target_os = "windows")]
-    let mut command = {
-        use std::os::windows::process::CommandExt;
-        let mut command = std::process::Command::new("explorer.exe");
-        command.creation_flags(0x08000000);
-        command
-    };
-    #[cfg(target_os = "macos")]
-    let mut command = std::process::Command::new("open");
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let mut command = std::process::Command::new("xdg-open");
-    command
-        .arg(url.as_str())
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    Ok(())
+    {
+        use windows::core::{w, PCWSTR};
+        use windows::Win32::UI::{Shell::ShellExecuteW, WindowsAndMessaging::SW_SHOWNORMAL};
+        let target: Vec<u16> = url.as_str().encode_utf16().chain(Some(0)).collect();
+        // Ask Windows to open the registered HTTPS handler directly. Spawning
+        // Explorer only reports process creation, even when no browser opens.
+        let result = unsafe { ShellExecuteW(None, w!("open"), PCWSTR(target.as_ptr()), None, None, SW_SHOWNORMAL) };
+        if result.0 as isize <= 32 { return Err("BROWSER_OPEN_FAILED".into()); }
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        #[cfg(target_os = "macos")]
+        let mut command = std::process::Command::new("open");
+        #[cfg(not(target_os = "macos"))]
+        let mut command = std::process::Command::new("xdg-open");
+        let status = command.arg(url.as_str()).status().map_err(|_| "BROWSER_OPEN_FAILED")?;
+        if !status.success() { return Err("BROWSER_OPEN_FAILED".into()); }
+        Ok(())
+    }
 }
 
 #[tauri::command]
