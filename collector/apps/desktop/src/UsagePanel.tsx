@@ -10,16 +10,18 @@ import { brandLogo } from './brand';
 import './styles/usage-panel.css';
 import { useWindowReady } from './window-ready';
 import { UpdateNotice } from './components/SoftwareUpdate';
+import { useTrayLanguage } from './use-tray-language';
 
 const format = (value: number) => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 2 }).format(value);
 
 export function UsagePanel() {
   const [lang, setLang] = useState<'zh' | 'en'>(() => localStorage.getItem('tokendance.language') === 'en' ? 'en' : 'zh');
+  useTrayLanguage(lang);
   const [range, setRange] = useState<UsageRange>('today');
   const [data, setData] = useState<{ agents: AgentConfig[]; status: DaemonStatus } | null>(null);
   const [quotas, setQuotas] = useState<AgentQuota[]>([]);
   const [error, setError] = useState(false);
-  useWindowReady(data !== null || error);
+  useWindowReady(true);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const refresh = useRef<() => Promise<void>>(async () => {});

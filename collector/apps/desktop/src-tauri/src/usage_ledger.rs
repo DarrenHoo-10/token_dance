@@ -1,5 +1,5 @@
 use crate::pricing::{Catalog, CostCoverage, CostLedger};
-use chrono::{Local, NaiveDate};
+use chrono::{Local, NaiveDate, Utc};
 use protocol::{Accuracy, EventEnvelope, EventPayload};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -101,6 +101,17 @@ pub struct AgentUsageSnapshot {
     pub history_start: String,
 }
 
+/// Lightweight today totals. `today_tokens` is `None` when no listed agent has a
+/// known (accuracy != unknown) usage record; known agents with no events today
+/// contribute 0.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedgerTodaySummary {
+    pub today_tokens: Option<u128>,
+    pub known_source_count: usize,
+    pub known_agent_ids: Vec<String>,
+    pub last_recorded_change_at_ms: Option<i64>,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct AgentDay {
     tokens: u64,
@@ -117,6 +128,8 @@ struct LedgerFile {
     pricing: CostLedger,
     days: BTreeMap<String, BTreeMap<String, AgentDay>>,
     seen: BTreeMap<String, HashSet<String>>,
+    #[serde(default)]
+    last_recorded_change_at_ms: Option<i64>,
 }
 
 /// Device-local daily token ledger ("本机数据"). The WAL only keeps unacked
@@ -194,6 +207,9 @@ impl UsageLedger {
             }
             seen.insert(event.event_id.clone());
             changed = true;
+        }
+        if changed {
+            self.file.last_recorded_change_at_ms = Some(Utc::now().timestamp_millis());
         }
         changed
     }
@@ -273,6 +289,56 @@ impl UsageLedger {
             pricing,
             history_start,
         })
+    }
+
+    pub fn last_recorded_change_at_ms(&self) -> Option<i64> {
+        self.file.last_recorded_change_at_ms
+    }
+
+    fn has_known_token_records(&self, agent_id: &str) -> bool {
+        self.file
+            .days
+            .values()
+            .any(|day| day.get(agent_id).is_some_and(|item| item.accuracy > 0))
+    }
+
+    /// Today tokens for an agent with known coverage. `None` if the agent has
+    /// never produced a usage event; `Some(0)` if it has, but not on `today`.
+    /// Cost-only rows keep accuracy unknown and are not a real zero.
+    pub fn known_today_tokens(&self, agent_id: &str, today: NaiveDate) -> Option<u64> {
+        if !self.has_known_token_records(agent_id) {
+            return None;
+        }
+        let date = today.format("%Y-%m-%d").to_string();
+        Some(
+            self.file
+                .days
+                .get(&date)
+                .and_then(|day| day.get(agent_id))
+                .map(|day| day.tokens)
+                .unwrap_or(0),
+        )
+    }
+
+    pub fn today_summary(&self, today: NaiveDate, agent_ids: &[&str]) -> LedgerTodaySummary {
+        let mut total = 0u128;
+        let mut known_agent_ids = Vec::new();
+        for id in agent_ids {
+            if let Some(tokens) = self.known_today_tokens(id, today) {
+                total = total.saturating_add(u128::from(tokens));
+                known_agent_ids.push((*id).to_string());
+            }
+        }
+        LedgerTodaySummary {
+            today_tokens: if known_agent_ids.is_empty() {
+                None
+            } else {
+                Some(total)
+            },
+            known_source_count: known_agent_ids.len(),
+            known_agent_ids,
+            last_recorded_change_at_ms: self.file.last_recorded_change_at_ms,
+        }
     }
 
     /// Enrich only events already present in local totals. Historical replay
