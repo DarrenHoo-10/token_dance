@@ -8,6 +8,7 @@ import { WeeklyTrend } from './components/WeeklyTrend';
 import { AnnualActivity, QuotaRings } from './components/UsageDetails';
 import { brandLogo } from './brand';
 import './styles/usage-panel.css';
+import { useWindowReady } from './window-ready';
 
 const format = (value: number) => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 2 }).format(value);
 
@@ -17,6 +18,7 @@ export function UsagePanel() {
   const [data, setData] = useState<{ agents: AgentConfig[]; status: DaemonStatus } | null>(null);
   const [quotas, setQuotas] = useState<AgentQuota[]>([]);
   const [error, setError] = useState(false);
+  useWindowReady(data !== null || error);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const refresh = useRef<() => Promise<void>>(async () => {});
@@ -25,6 +27,7 @@ export function UsagePanel() {
   useEffect(() => {
     let disposed = false;
     let loading = false;
+    let firstLoad = true;
     let loadingQuotas = false;
     const loadQuotas = async () => {
       if (loadingQuotas || document.hidden) return;
@@ -34,7 +37,8 @@ export function UsagePanel() {
       finally { loadingQuotas = false; }
     };
     const load = async () => {
-      if (loading || document.hidden) return;
+      if (loading || (document.hidden && !firstLoad)) return;
+      firstLoad = false;
       loading = true;
       setLang(localStorage.getItem('tokendance.language') === 'en' ? 'en' : 'zh');
       try {

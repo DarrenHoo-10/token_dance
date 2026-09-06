@@ -128,6 +128,7 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .manage(app_state)
         .manage(commands::account::AccountState::default())
+        .manage(commands::window::WindowPresentation::default())
         .invoke_handler(tauri::generate_handler![
             commands::daemon::get_daemon_status,
             commands::daemon::toggle_global_pause,
@@ -150,6 +151,7 @@ pub fn run() {
             commands::autostart::get_autostart_status,
             commands::autostart::set_autostart,
             commands::window::hide_window,
+            commands::window::window_ready,
             commands::window::show_window,
             commands::window::quit_app,
             commands::window::open_settings,
@@ -160,31 +162,29 @@ pub fn run() {
         ])
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::Focused(false)) && window.label() == "main" {
-                let _ = window.hide();
+                // WebView2 can enqueue a blur while a hidden window is being
+                // shown/focused. Recheck actual focus instead of hiding on that
+                // obsolete notification (which produces a show-hide flash).
+                let window = window.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    if window.is_visible().unwrap_or(false) && !window.is_focused().unwrap_or(true) {
+                        window.state::<commands::window::WindowPresentation>().cancel(window.label());
+                        let _ = window.hide();
+                    }
+                });
             }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
+                window.state::<commands::window::WindowPresentation>().cancel(window.label());
                 let _ = window.hide();
             }
         })
         .setup(|app| {
-            if let Some(window) = app.get_webview_window("main") {
-                // Autostart passes --minimized to stay in the tray; a normal
-                // launch opens the usage panel directly.
-                if std::env::args().any(|arg| arg == "--minimized") {
-                    let _ = window.hide();
-                } else {
-                    if let Ok(Some(monitor)) = window.current_monitor() {
-                        let point = tauri::PhysicalPosition::new(
-                            (monitor.position().x + 1) as f64,
-                            (monitor.position().y + 1) as f64,
-                        );
-                        let _ = commands::window::show_usage_panel(app.handle(), point);
-                    } else {
-                        let _ = window.show();
-                        let _ = window.set_focus();
-                    }
-                }
+            // Keep the native WebView hidden until React has committed its
+            // first data/error screen. Autostart never requests presentation.
+            if !std::env::args().any(|arg| arg == "--minimized") {
+                let _ = commands::window::request_initial_panel(app.handle());
             }
             let state = app.state::<AppState>().inner().clone();
             CollectorDaemon::new(state.clone()).start();
