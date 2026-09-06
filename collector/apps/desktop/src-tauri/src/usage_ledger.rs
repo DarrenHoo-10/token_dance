@@ -1,3 +1,4 @@
+use crate::pricing::{Catalog, CostLedger, CostCoverage};
 use chrono::{Local, NaiveDate};
 use protocol::{Accuracy, EventEnvelope, EventPayload};
 use serde::{Deserialize, Serialize};
@@ -74,6 +75,7 @@ pub struct DayUsage {
     pub tokens: u64,
     #[serde(default)]
     pub costs: BTreeMap<String, u64>,
+    #[serde(default)] pub pricing: CostCoverage,
 }
 
 pub struct AgentUsageSnapshot {
@@ -82,6 +84,7 @@ pub struct AgentUsageSnapshot {
     pub accuracy: String,
     pub daily_usage: Vec<DayUsage>,
     pub total_costs: BTreeMap<String, u64>,
+    pub pricing: CostCoverage,
     pub history_start: String,
 }
 
@@ -97,6 +100,7 @@ struct AgentDay {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct LedgerFile {
+    #[serde(default)] pricing: CostLedger,
     days: BTreeMap<String, BTreeMap<String, AgentDay>>,
     seen: BTreeMap<String, HashSet<String>>,
 }
@@ -107,16 +111,19 @@ struct LedgerFile {
 pub struct UsageLedger {
     path: PathBuf,
     file: LedgerFile,
+    pub catalog: Catalog,
 }
 
 impl UsageLedger {
     pub fn load(dir: &Path) -> Self {
         let path = dir.join(LEDGER_FILE);
-        let file = fs::read(&path)
+        let mut file: LedgerFile = fs::read(&path)
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
-        Self { path, file }
+        let catalog=Catalog::load(dir);
+        file.pricing.reprice(&catalog);
+        Self { path, file, catalog }
     }
 
     /// Record token usage from collected envelopes. Idempotent per event id,
@@ -141,6 +148,7 @@ impl UsageLedger {
                 continue;
             }
             let date_key = date.format("%Y-%m-%d").to_string();
+            changed |= self.file.pricing.record(event, &date_key, tokens.unwrap_or(0), &self.catalog);
             let seen = self.file.seen.entry(date_key.clone()).or_default();
             if seen.contains(&event.event_id) {
                 continue;
@@ -176,6 +184,10 @@ impl UsageLedger {
         if !known {
             return None;
         }
+        let recorded_days = self.file.days.iter().filter(|(_,agents)| agents.get(agent_id).is_some_and(|d|!d.costs.is_empty())).map(|(d,_)|d.clone()).collect();
+        let priced_days=self.file.pricing.days(agent_id,&recorded_days);
+        let mut pricing=CostCoverage::default();
+        for (date,day) in &priced_days {if date.as_str()<=today.format("%Y-%m-%d").to_string().as_str(){pricing.add(day);}}
         let mut week = Vec::with_capacity(DISPLAY_DAYS as usize);
         let mut total = 0u64;
         let mut accuracy = u8::MAX;
@@ -200,7 +212,7 @@ impl UsageLedger {
             let day = self.file.days.get(&date).and_then(|agents| agents.get(agent_id));
             let tokens = day.map_or(0, |day| day.tokens);
             let costs = day.map_or_else(BTreeMap::new, |day| day.costs.clone());
-            week.push(DayUsage { date, tokens, costs });
+            week.push(DayUsage { pricing: priced_days.get(&date).cloned().unwrap_or_default(), date, tokens, costs });
         }
         Some(AgentUsageSnapshot {
             today_tokens: week.last().map_or(0, |day| day.tokens),
@@ -208,10 +220,30 @@ impl UsageLedger {
             accuracy: accuracy_name(if accuracy == u8::MAX { 0 } else { accuracy }).into(),
             daily_usage: week,
             total_costs,
+            pricing,
             history_start,
         })
     }
 
+    /// Enrich only events already present in local totals. Historical replay
+    /// must not silently expand the token accounting period or coverage.
+    pub fn record_pricing(&mut self, events: &[EventEnvelope]) -> bool {
+        let mut changed=false;
+        for event in events {
+            let Some(date)=local_date(&event.occurred_at).map(|d|d.format("%Y-%m-%d").to_string()) else {continue;};
+            if !self.file.seen.get(&date).is_some_and(|seen|seen.contains(&event.event_id)){continue;}
+            changed |= self.file.pricing.record(event,&date,event_tokens(event).unwrap_or(0),&self.catalog);
+        }
+        changed
+    }
+    pub fn backfilled(&self) -> bool { self.file.pricing.backfilled }
+    pub fn finish_backfill(&mut self) { self.file.pricing.backfilled=true; }
+    pub fn apply_prices(&mut self, catalog: Catalog) -> Result<(), String> {
+        self.file.pricing.reprice(&catalog);
+        self.catalog=catalog;
+        self.save()?;
+        std::fs::write(self.path.with_file_name("openrouter-prices.json"),serde_json::to_vec(&self.catalog).map_err(|e|e.to_string())?).map_err(|e|e.to_string())
+    }
     pub fn save(&self) -> Result<(), String> {
         let bytes = serde_json::to_vec(&self.file).map_err(|error| error.to_string())?;
         let tmp = self.path.with_extension("json.tmp");

@@ -43,6 +43,7 @@ pub struct WalStore {
     snapshot_seq: u64,
     reopen_segment: Option<u64>,
     fault: FaultHook,
+    observed: Option<Vec<EventEnvelope>>,
 }
 
 struct SegmentWriter {
@@ -92,6 +93,7 @@ impl WalStore {
             snapshot_seq: 0,
             reopen_segment: None,
             fault: FaultHook::default(),
+            observed: None,
         };
         let snapshot_seq = store.load_snapshot(&key)?;
         store.snapshot_seq = snapshot_seq;
@@ -100,6 +102,27 @@ impl WalStore {
         Ok(store)
     }
 
+    /// Opt-in, ephemeral observations for local analytics; never changes ACK state.
+    pub fn capture_observations(&mut self) {self.observed=Some(Vec::new());}
+    pub fn observations_enabled(&self)->bool{self.observed.is_some()}
+    pub fn take_observations(&mut self)->Vec<EventEnvelope>{self.observed.as_mut().map(std::mem::take).unwrap_or_default()}
+    /// Read retained, already normalized events without requeueing acknowledged uploads.
+    pub fn visit_retained_events(&self, mut visit:impl FnMut(&[EventEnvelope])) -> Result<(),WalError> {
+        let key=load_key(&self.keys)?;
+        for id in list_segment_ids(&self.root.join("wal"))? {
+            if self.isolated.iter().any(|item|item.segment_id==id){continue;}
+            let path=segment_path(&self.root,id);
+            let data=fs::read(&path).map_err(|e|WalError::io(&path,e))?;
+            for frame in decode_segment(&data,&key,self.limits.max_frame_payload)? {
+                if frame.frame_type==FrameType::Txn {
+                    let persisted:PersistedTransaction=decode_cbor(&frame.plaintext).map_err(WalError::Payload)?;
+                    let txn=Transaction::from(persisted);
+                    visit(&txn.normalized_events);
+                }
+            }
+        }
+        Ok(())
+    }
     pub fn inject_fault(&mut self, point: FaultPoint) {
         self.fault.push(point);
     }
@@ -115,6 +138,7 @@ impl WalStore {
         if class == AppendClass::Historical && !bp.allow_historical_scan() {
             return Err(WalError::HardBackpressure);
         }
+        let observed=self.observed.as_ref().map(|_|txn.normalized_events.clone());
         txn.normalized_events
             .retain(|event| !self.acked.contains(&event.event_id));
         if txn.transaction_id.is_empty() {
@@ -128,6 +152,7 @@ impl WalStore {
             FrameType::Txn,
             &encode_cbor(&persisted).map_err(WalError::Payload)?,
         )?;
+        if let (Some(buffer),Some(events))=(&mut self.observed,observed){buffer.extend(events);}
         self.apply_txn(txn, true);
         self.maybe_snapshot()?;
         Ok(seq)

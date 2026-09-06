@@ -4,6 +4,7 @@ pub mod commands;
 pub mod daemon;
 pub mod state;
 pub mod usage_ledger;
+pub mod pricing;
 
 use std::fs;
 use std::panic;
