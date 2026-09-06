@@ -16,6 +16,7 @@ import (
 	"tokendance/internal/migrate"
 	"tokendance/internal/pricing"
 	"tokendance/internal/provider"
+	"tokendance/internal/ranking"
 	"tokendance/internal/store/mysql"
 	"tokendance/internal/store/redisx"
 	"tokendance/internal/worker"
@@ -90,6 +91,9 @@ func main() {
 			log.Fatalf("Fatal Redis worker connection error: %v", err)
 		}
 		defer rdb.Close()
+		if wrk != nil {
+			wrk.SetRanking(ranking.NewIndex(rdb))
+		}
 		log.Printf("Worker Redis ready (db=%d).", cfg.RedisDB)
 	}
 

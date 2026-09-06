@@ -4,11 +4,13 @@ import (
 	"database/sql"
 	"time"
 
+	"tokendance/internal/ranking"
 	"tokendance/internal/store"
 )
 
 type Store struct {
-	db *sql.DB
+	db      *sql.DB
+	ranking *ranking.Index
 }
 
 func NewStore(db *sql.DB) *Store {
@@ -21,16 +23,22 @@ func (s *Store) DB() *sql.DB {
 	return s.db
 }
 
-func (s *Store) Auth() store.AuthStore               { return &authStore{db: s.db} }
-func (s *Store) Profile() store.ProfileStore         { return &profileStore{db: s.db} }
-func (s *Store) Privacy() store.PrivacyStore         { return &privacyStore{db: s.db} }
-func (s *Store) Analytics() store.AnalyticsStore     { return &analyticsStore{db: s.db} }
-func (s *Store) Device() store.DeviceStore           { return &deviceStore{db: s.db} }
-func (s *Store) Ingest() store.IngestStore           { return &ingestStore{db: s.db} }
-func (s *Store) Export() store.ExportStore           { return &exportStore{db: s.db} }
-func (s *Store) Search() store.SearchStore           { return &searchStore{db: s.db} }
-func (s *Store) Leaderboard() store.LeaderboardStore { return &leaderboardStore{db: s.db} }
-func (s *Store) Media() store.MediaStore             { return &mediaStore{db: s.db} }
+func (s *Store) SetRanking(idx *ranking.Index) {
+	s.ranking = idx
+}
+
+func (s *Store) Auth() store.AuthStore           { return &authStore{db: s.db} }
+func (s *Store) Profile() store.ProfileStore     { return &profileStore{db: s.db} }
+func (s *Store) Privacy() store.PrivacyStore     { return &privacyStore{db: s.db} }
+func (s *Store) Analytics() store.AnalyticsStore { return &analyticsStore{db: s.db} }
+func (s *Store) Device() store.DeviceStore       { return &deviceStore{db: s.db} }
+func (s *Store) Ingest() store.IngestStore       { return &ingestStore{db: s.db} }
+func (s *Store) Export() store.ExportStore       { return &exportStore{db: s.db} }
+func (s *Store) Search() store.SearchStore       { return &searchStore{db: s.db} }
+func (s *Store) Leaderboard() store.LeaderboardStore {
+	return &leaderboardStore{db: s.db, index: s.ranking}
+}
+func (s *Store) Media() store.MediaStore { return &mediaStore{db: s.db} }
 
 // Helper conversions for database/sql scanning
 

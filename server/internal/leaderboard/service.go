@@ -20,25 +20,35 @@ func NewService(st store.Store) *Service {
 }
 
 func (s *Service) GetLeaderboards(ctx context.Context, boardKey, window, metric string, cursor *string, limit int) (*domain.LeaderboardResponse, error) {
-	if boardKey == "" {
-		boardKey = "global"
+	return s.Query(ctx, store.LeaderboardQuery{
+		BoardKey: boardKey,
+		Window:   window,
+		Metric:   metric,
+		Cursor:   cursor,
+		Limit:    limit,
+	})
+}
+
+func (s *Service) Query(ctx context.Context, q store.LeaderboardQuery) (*domain.LeaderboardResponse, error) {
+	if q.BoardKey == "" {
+		q.BoardKey = "global"
 	}
-	if window == "" {
-		window = "30d"
+	if q.Window == "" {
+		q.Window = "30d"
 	}
-	if metric == "" {
-		metric = "tokens"
+	if q.Metric == "" {
+		q.Metric = "tokens"
 	}
-	if limit <= 0 || limit > 100 {
-		limit = 50
+	if q.Limit <= 0 || q.Limit > 100 {
+		q.Limit = 50
 	}
-	if boardKey == "global" && metric == "tokens" && cursor != nil {
-		after, err := strconv.Atoi(*cursor)
+	if q.BoardKey == "global" && q.Metric == "tokens" && q.Cursor != nil {
+		after, err := strconv.Atoi(*q.Cursor)
 		if err != nil || after < 0 || after >= 1000 {
 			return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidCursor", "cursor must be within the top 1000", nil, domain.ErrInvalidArgument)
 		}
 	}
-	result, err := s.store.GetLeaderboard(ctx, boardKey, window, metric, cursor, limit)
+	result, err := s.store.GetLeaderboardView(ctx, q)
 	if errors.Is(err, domain.ErrInvalidArgument) {
 		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidArgument", "invalid leaderboard query", nil, err)
 	}

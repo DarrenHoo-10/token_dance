@@ -26,6 +26,7 @@ import (
 	"tokendance/internal/privacy"
 	"tokendance/internal/profile"
 	"tokendance/internal/provider"
+	"tokendance/internal/ranking"
 	"tokendance/internal/search"
 	"tokendance/internal/store"
 	"tokendance/internal/store/memory"
@@ -84,6 +85,9 @@ func main() {
 			log.Fatalf("Fatal Redis connection error: %v", err)
 		}
 		defer rdb.Close()
+		if mysqlStore, ok := st.(*mysql.Store); ok {
+			mysqlStore.SetRanking(ranking.NewIndex(rdb))
+		}
 		log.Printf("Redis ready (db=%d).", cfg.RedisDB)
 	}
 
