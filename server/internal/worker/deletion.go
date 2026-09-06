@@ -177,6 +177,9 @@ func deletionPhaseForCursor(cursor uint64) string {
 }
 
 func (w *Worker) executeDeletionClaim(ctx context.Context, claim *deletionClaim) error {
+	if err := w.registerTeamDeletionBarriers(ctx, claim); err != nil {
+		return err
+	}
 	for claim.cursor < 6 {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -381,9 +384,22 @@ func (w *Worker) deletionDeleteObjects(ctx context.Context, claim *deletionClaim
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT IGNORE INTO deletion_object_keys (request_id, object_key, object_kind)
+			SELECT ?, object_key, 'export' FROM team_export_jobs
+			WHERE requester_user_id = ? AND object_key IS NOT NULL AND object_key <> ''`, claim.requestID, userID); err != nil {
+			return fmt.Errorf("queue team export object keys: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT IGNORE INTO deletion_object_keys (request_id, object_key, object_kind)
 			SELECT ?, object_key, 'upload' FROM user_upload_objects
 			WHERE user_id = ? AND object_key <> ''`, claim.requestID, userID); err != nil {
 			return fmt.Errorf("queue upload object keys: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT IGNORE INTO deletion_object_keys (request_id, object_key, object_kind)
+			SELECT ?, object_key, 'upload' FROM team_upload_objects
+			WHERE uploader_user_id = ? AND object_key <> ''
+			  AND (status <> 'ready' OR expires_at IS NOT NULL)`, claim.requestID, userID); err != nil {
+			return fmt.Errorf("queue team upload object keys: %w", err)
 		}
 		return nil
 	}); err != nil {
@@ -444,6 +460,21 @@ func (w *Worker) deletionDeleteObjects(ctx context.Context, claim *deletionClaim
 		if _, err := tx.ExecContext(ctx, "DELETE FROM data_export_jobs WHERE user_id = ?", userID); err != nil {
 			return fmt.Errorf("delete export jobs: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx, "DELETE FROM team_export_jobs WHERE requester_user_id = ?", userID); err != nil {
+			return fmt.Errorf("delete team export jobs: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE teams t
+			JOIN team_upload_objects o ON o.object_id = t.avatar_object_id
+			SET t.avatar_object_id = NULL
+			WHERE o.uploader_user_id = ? AND (o.status <> 'ready' OR o.expires_at IS NOT NULL)`, userID); err != nil {
+			return fmt.Errorf("clear expired team avatars: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			DELETE FROM team_upload_objects
+			WHERE uploader_user_id = ? AND (status <> 'ready' OR expires_at IS NOT NULL)`, userID); err != nil {
+			return fmt.Errorf("delete team upload object rows: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM user_upload_objects WHERE user_id = ?", userID); err != nil {
 			return fmt.Errorf("delete upload object rows: %w", err)
 		}
@@ -481,6 +512,9 @@ func (w *Worker) deletionDeleteIdentity(ctx context.Context, claim *deletionClai
 				{`DELETE FROM installations WHERE user_id = ?`, []interface{}{userID}},
 			}
 			if err := execDeletionStatements(ctx, tx, statements); err != nil {
+				return err
+			}
+			if err := deidentifyTeamIdentity(ctx, tx, userID); err != nil {
 				return err
 			}
 			if _, err := tx.ExecContext(ctx, `
@@ -521,32 +555,64 @@ func (w *Worker) deletionDeleteIdentity(ctx context.Context, claim *deletionClai
 }
 
 func (w *Worker) deletionReconcileAndComplete(ctx context.Context, claim *deletionClaim) error {
-	return w.withDeletionClaimLock(ctx, claim, func(tx *sql.Tx) error {
-		if err := reconcileDeletionResiduals(ctx, tx, claim); err != nil {
-			return err
+	tx, err := w.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin deletion complete: %w", err)
+	}
+	defer tx.Rollback()
+
+	if claim.userID.Valid {
+		var userID string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT user_id FROM users WHERE user_id = ? FOR UPDATE`, claim.userID.String).Scan(&userID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("lock deletion user for complete: %w", err)
 		}
-		auditToken, err := crypto.GenerateOpaqueToken(13)
-		if err != nil {
-			return fmt.Errorf("generate deletion audit reference: %w", err)
+	}
+	if err := lockDeletionBarrierTeams(ctx, tx, claim.requestID); err != nil {
+		return err
+	}
+
+	var one int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT 1 FROM data_deletion_requests
+		WHERE request_id = ? AND request_status = 'running'
+		  AND claim_token = ? AND claim_generation = ? AND locked_by = ?
+		FOR UPDATE`, claim.requestID, claim.claimToken, claim.generation, w.workerID).Scan(&one); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("deletion claim fenced")
 		}
-		res, err := tx.ExecContext(ctx, `
-			UPDATE data_deletion_requests
-			SET request_status = 'completed', phase = 'completed', progress_cursor = 6,
-			    completed_at = CURRENT_TIMESTAMP(3), audit_reference = ?,
-			    active_account_key = NULL, claim_token = NULL, locked_by = NULL,
-			    lease_expires_at = NULL, last_error_code = NULL,
-			    updated_at = CURRENT_TIMESTAMP(3)
-			WHERE request_id = ? AND request_status = 'running'
-			  AND claim_token = ? AND claim_generation = ? AND locked_by = ?`,
-			"aud_"+auditToken, claim.requestID, claim.claimToken, claim.generation, w.workerID)
-		if err != nil {
-			return fmt.Errorf("complete deletion request: %w", err)
-		}
-		if err := requireOneRow(res); err != nil {
-			return fmt.Errorf("complete deletion request: %w", err)
-		}
-		return nil
-	})
+		return fmt.Errorf("lock deletion complete: %w", err)
+	}
+	if err := reconcileDeletionResiduals(ctx, tx, claim); err != nil {
+		return err
+	}
+	if err := releaseTeamDeletionBarriersTx(ctx, tx, claim.requestID, w.clk.Now().UTC().Truncate(time.Millisecond)); err != nil {
+		return err
+	}
+	auditToken, err := crypto.GenerateOpaqueToken(13)
+	if err != nil {
+		return fmt.Errorf("generate deletion audit reference: %w", err)
+	}
+	res, err := tx.ExecContext(ctx, `
+		UPDATE data_deletion_requests
+		SET request_status = 'completed', phase = 'completed', progress_cursor = 6,
+		    completed_at = CURRENT_TIMESTAMP(3), audit_reference = ?,
+		    active_account_key = NULL, claim_token = NULL, locked_by = NULL,
+		    lease_expires_at = NULL, last_error_code = NULL,
+		    updated_at = CURRENT_TIMESTAMP(3)
+		WHERE request_id = ? AND request_status = 'running'
+		  AND claim_token = ? AND claim_generation = ? AND locked_by = ?`,
+		"aud_"+auditToken, claim.requestID, claim.claimToken, claim.generation, w.workerID)
+	if err != nil {
+		return fmt.Errorf("complete deletion request: %w", err)
+	}
+	if err := requireOneRow(res); err != nil {
+		return fmt.Errorf("complete deletion request: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit deletion complete: %w", err)
+	}
+	return nil
 }
 
 func reconcileDeletionResiduals(ctx context.Context, tx *sql.Tx, claim *deletionClaim) error {
@@ -761,6 +827,196 @@ func (w *Worker) failDeletionClaim(ctx context.Context, claim *deletionClaim, co
 		return fmt.Errorf("mark deletion failed: %w", err)
 	}
 	return nil
+}
+
+func (w *Worker) registerTeamDeletionBarriers(ctx context.Context, claim *deletionClaim) error {
+	if !claim.userID.Valid {
+		return nil
+	}
+	tx, err := w.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin team deletion barrier: %w", err)
+	}
+	defer tx.Rollback()
+
+	if claim.scope == "installation" {
+		installationID, err := claimInstallationID(claim)
+		if err != nil {
+			return err
+		}
+		var locked string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT installation_id FROM installations WHERE installation_id = ? FOR UPDATE`, installationID).Scan(&locked); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("lock installation for team barrier: %w", err)
+		}
+	}
+
+	var userID string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT user_id FROM users WHERE user_id = ? FOR UPDATE`, claim.userID.String).Scan(&userID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("lock user for team barrier: %w", err)
+	}
+
+	teamIDs, err := loadAffectedDeletionTeams(ctx, tx, claim.requestID, userID)
+	if err != nil {
+		return err
+	}
+	if err := lockTeamsByID(ctx, tx, teamIDs); err != nil {
+		return err
+	}
+
+	var one int
+	if err := tx.QueryRowContext(ctx, `
+		SELECT 1 FROM data_deletion_requests
+		WHERE request_id = ? AND request_status = 'running'
+		  AND claim_token = ? AND claim_generation = ? AND locked_by = ?
+		FOR UPDATE`, claim.requestID, claim.claimToken, claim.generation, w.workerID).Scan(&one); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("deletion claim fenced")
+		}
+		return fmt.Errorf("lock deletion request for team barrier: %w", err)
+	}
+
+	now := w.clk.Now().UTC().Truncate(time.Millisecond)
+	for _, teamID := range teamIDs {
+		res, err := tx.ExecContext(ctx, `
+			INSERT INTO team_deletion_barriers (deletion_request_id, team_id, blocked_at)
+			VALUES (?, ?, ?)
+			ON DUPLICATE KEY UPDATE blocked_at = blocked_at`, claim.requestID, teamID, now)
+		if err != nil {
+			return fmt.Errorf("register team deletion barrier: %w", err)
+		}
+		affected, _ := res.RowsAffected()
+		if affected == 1 {
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE teams SET auth_revision = auth_revision + 1 WHERE team_id = ?`, teamID); err != nil {
+				return fmt.Errorf("bump auth revision for deletion barrier: %w", err)
+			}
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit team deletion barriers: %w", err)
+	}
+	return nil
+}
+
+func loadAffectedDeletionTeams(ctx context.Context, tx *sql.Tx, requestID, userID string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT team_id FROM (
+			SELECT team_id FROM user_current_teams WHERE user_id = ?
+			UNION
+			SELECT team_id FROM team_memberships WHERE user_id = ?
+			UNION
+			SELECT team_id FROM team_deletion_barriers WHERE deletion_request_id = ?
+		) t
+		ORDER BY team_id ASC`, userID, userID, requestID)
+	if err != nil {
+		return nil, fmt.Errorf("list deletion barrier teams: %w", err)
+	}
+	defer rows.Close()
+	var teamIDs []string
+	for rows.Next() {
+		var teamID string
+		if err := rows.Scan(&teamID); err != nil {
+			return nil, fmt.Errorf("scan deletion barrier team: %w", err)
+		}
+		teamIDs = append(teamIDs, teamID)
+	}
+	return teamIDs, rows.Err()
+}
+
+func lockTeamsByID(ctx context.Context, tx *sql.Tx, teamIDs []string) error {
+	for _, teamID := range teamIDs {
+		var locked string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT team_id FROM teams WHERE team_id = ? FOR UPDATE`, teamID).Scan(&locked); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return fmt.Errorf("lock team %s: %w", teamID, err)
+		}
+	}
+	return nil
+}
+
+func lockDeletionBarrierTeams(ctx context.Context, tx *sql.Tx, requestID string) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT team_id FROM team_deletion_barriers
+		WHERE deletion_request_id = ? AND released_at IS NULL
+		ORDER BY team_id ASC`, requestID)
+	if err != nil {
+		return fmt.Errorf("list open deletion barriers: %w", err)
+	}
+	var teamIDs []string
+	for rows.Next() {
+		var teamID string
+		if err := rows.Scan(&teamID); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan open deletion barrier: %w", err)
+		}
+		teamIDs = append(teamIDs, teamID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	return lockTeamsByID(ctx, tx, teamIDs)
+}
+
+func releaseTeamDeletionBarriersTx(ctx context.Context, tx *sql.Tx, requestID string, now time.Time) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT team_id FROM team_deletion_barriers
+		WHERE deletion_request_id = ? AND released_at IS NULL
+		ORDER BY team_id ASC`, requestID)
+	if err != nil {
+		return fmt.Errorf("list barriers to release: %w", err)
+	}
+	var teamIDs []string
+	for rows.Next() {
+		var teamID string
+		if err := rows.Scan(&teamID); err != nil {
+			rows.Close()
+			return err
+		}
+		teamIDs = append(teamIDs, teamID)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE team_deletion_barriers
+		SET released_at = ?
+		WHERE deletion_request_id = ? AND released_at IS NULL`, now, requestID); err != nil {
+		return fmt.Errorf("release team deletion barriers: %w", err)
+	}
+	for _, teamID := range teamIDs {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE teams SET auth_revision = auth_revision + 1 WHERE team_id = ?`, teamID); err != nil {
+			return fmt.Errorf("bump auth revision after barrier release: %w", err)
+		}
+	}
+	return nil
+}
+
+func deidentifyTeamIdentity(ctx context.Context, tx *sql.Tx, userID string) error {
+	statements := []struct {
+		query string
+		args  []interface{}
+	}{
+		{`UPDATE team_invitations SET recipient_ciphertext = x'' WHERE inviter_user_id = ? OR accepted_by_user_id = ?`, []interface{}{userID, userID}},
+		{`UPDATE team_invite_links SET token_ciphertext = x'' WHERE creator_user_id = ?`, []interface{}{userID}},
+		{`DELETE FROM team_invite_link_joins WHERE user_id = ?`, []interface{}{userID}},
+		{`UPDATE team_audit_events SET actor_user_id = NULL, safe_details_json = JSON_OBJECT('redacted', TRUE) WHERE actor_user_id = ?`, []interface{}{userID}},
+		{`UPDATE team_memberships SET ended_at = COALESCE(ended_at, CURRENT_TIMESTAMP(3)), end_reason = COALESCE(end_reason, 'account_deleted') WHERE user_id = ? AND ended_at IS NULL`, []interface{}{userID}},
+		{`DELETE FROM user_current_teams WHERE user_id = ?`, []interface{}{userID}},
+	}
+	return execDeletionStatements(ctx, tx, statements)
 }
 
 func claimInstallationID(claim *deletionClaim) (string, error) {

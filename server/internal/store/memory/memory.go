@@ -86,6 +86,22 @@ type MemoryStore struct {
 	userTrendFixtures  map[string][]UserTrendFixture
 	publishedSnapshots map[string]*domain.LeaderboardResponse
 	buildingSnapshots  map[string]*domain.LeaderboardResponse
+
+	teams              map[string]*domain.Team
+	teamMemberships    map[string]*domain.TeamMembership
+	userCurrentTeams   map[string]*domain.UserCurrentTeam
+	teamGrants         map[string]*domain.TeamSharingGrant
+	teamInvitations    map[string]*domain.TeamInvitation
+	teamInviteLinks    map[string]*domain.TeamInviteLink
+	teamInviteLinkJoins map[string]*domain.TeamInviteLinkJoin
+	teamReceipts       map[string]*domain.TeamCommandReceipt
+	teamRevisions      map[string]*domain.TeamSourceRevision
+	teamSnapshots      map[string]*domain.TeamAnalysisSnapshot
+	teamAnalysisRows   map[string][]domain.TeamAnalysisRow
+	teamExports        map[string]*domain.TeamExportJob
+	teamAudits         map[string]*domain.TeamAuditEvent
+	teamUploadObjects  map[string]*domain.TeamUploadObject
+	teamBarriers       map[string]*domain.TeamDeletionBarrier
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -113,6 +129,21 @@ func NewMemoryStore() *MemoryStore {
 		userTrendFixtures:  make(map[string][]UserTrendFixture),
 		publishedSnapshots: make(map[string]*domain.LeaderboardResponse),
 		buildingSnapshots:  make(map[string]*domain.LeaderboardResponse),
+		teams:              make(map[string]*domain.Team),
+		teamMemberships:    make(map[string]*domain.TeamMembership),
+		userCurrentTeams:   make(map[string]*domain.UserCurrentTeam),
+		teamGrants:         make(map[string]*domain.TeamSharingGrant),
+		teamInvitations:    make(map[string]*domain.TeamInvitation),
+		teamInviteLinks:    make(map[string]*domain.TeamInviteLink),
+		teamInviteLinkJoins: make(map[string]*domain.TeamInviteLinkJoin),
+		teamReceipts:       make(map[string]*domain.TeamCommandReceipt),
+		teamRevisions:      make(map[string]*domain.TeamSourceRevision),
+		teamSnapshots:      make(map[string]*domain.TeamAnalysisSnapshot),
+		teamAnalysisRows:   make(map[string][]domain.TeamAnalysisRow),
+		teamExports:        make(map[string]*domain.TeamExportJob),
+		teamAudits:         make(map[string]*domain.TeamAuditEvent),
+		teamUploadObjects:  make(map[string]*domain.TeamUploadObject),
+		teamBarriers:       make(map[string]*domain.TeamDeletionBarrier),
 	}
 }
 
@@ -139,6 +170,7 @@ func (m *MemoryStore) Export() store.ExportStore           { return m }
 func (m *MemoryStore) Search() store.SearchStore           { return &memorySearchStore{m: m} }
 func (m *MemoryStore) Leaderboard() store.LeaderboardStore { return m }
 func (m *MemoryStore) Media() store.MediaStore             { return m }
+func (m *MemoryStore) Teams() store.TeamsStore             { return m }
 
 // --- AuthStore Implementation ---
 

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	mysqlerr "github.com/go-sql-driver/mysql"
 
@@ -179,6 +180,12 @@ func (s *ingestStore) CommitIngest(ctx context.Context, batch domain.IngestBatch
 		return nil, fmt.Errorf("update installation last seen: %w", err)
 	}
 
+	if result.AcceptedCount > 0 {
+		if err := bumpTeamSourceRevisionForUser(ctx, tx, userID, batch.ReceivedAt); err != nil {
+			return nil, err
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit ingest transaction: %w", err)
 	}
@@ -228,6 +235,34 @@ func nullableJSON(value []byte) interface{} {
 		return nil
 	}
 	return value
+}
+
+func bumpTeamSourceRevisionForUser(ctx context.Context, tx *sql.Tx, userID string, now time.Time) error {
+	var teamID string
+	err := tx.QueryRowContext(ctx, `
+		SELECT team_id FROM user_current_teams WHERE user_id = ?`, userID).Scan(&teamID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("lookup ingest user team: %w", err)
+	}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT team_id FROM teams WHERE team_id = ? FOR UPDATE`, teamID).Scan(&teamID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("lock ingest team: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO team_source_revisions (team_id, source_revision, changed_at)
+		VALUES (?, 1, ?)
+		ON DUPLICATE KEY UPDATE
+		  source_revision = source_revision + 1,
+		  changed_at = VALUES(changed_at)`, teamID, now); err != nil {
+		return fmt.Errorf("bump team source revision: %w", err)
+	}
+	return nil
 }
 
 func isDuplicateKey(err error) bool {

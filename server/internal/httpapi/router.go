@@ -15,6 +15,7 @@ import (
 	"tokendance/internal/privacy"
 	"tokendance/internal/profile"
 	"tokendance/internal/search"
+	"tokendance/internal/teams"
 )
 
 func NewRouter(
@@ -28,7 +29,7 @@ func NewRouter(
 	searchService *search.Service,
 	leaderboardService *leaderboard.Service,
 ) *chi.Mux {
-	return NewRouterWithReadiness(
+	return NewRouterWithTeams(
 		authService,
 		profileService,
 		privacyService,
@@ -38,6 +39,7 @@ func NewRouter(
 		mediaService,
 		searchService,
 		leaderboardService,
+		nil,
 		nil,
 	)
 }
@@ -54,10 +56,7 @@ func NewRouterWithReadiness(
 	leaderboardService *leaderboard.Service,
 	readinessChecker func(ctx context.Context) error,
 ) *chi.Mux {
-	r := chi.NewRouter()
-
-	mw := NewMiddlewareWithConfig(authService, authService.Config())
-	handlers := NewHandlersWithReadiness(
+	return NewRouterWithTeams(
 		authService,
 		profileService,
 		privacyService,
@@ -67,6 +66,38 @@ func NewRouterWithReadiness(
 		mediaService,
 		searchService,
 		leaderboardService,
+		nil,
+		readinessChecker,
+	)
+}
+
+func NewRouterWithTeams(
+	authService *auth.Service,
+	profileService *profile.Service,
+	privacyService *privacy.Service,
+	analyticsService *analytics.Service,
+	deviceService *device.Service,
+	exportService *export.Service,
+	mediaService *media.Service,
+	searchService *search.Service,
+	leaderboardService *leaderboard.Service,
+	teamsService *teams.Service,
+	readinessChecker func(ctx context.Context) error,
+) *chi.Mux {
+	r := chi.NewRouter()
+
+	mw := NewMiddlewareWithConfig(authService, authService.Config())
+	handlers := NewHandlersWithTeams(
+		authService,
+		profileService,
+		privacyService,
+		analyticsService,
+		deviceService,
+		exportService,
+		mediaService,
+		searchService,
+		leaderboardService,
+		teamsService,
 		readinessChecker,
 	)
 
@@ -176,6 +207,64 @@ func NewRouterWithReadiness(
 			mr.With(mw.RequireCSRF).Post("/deletion-requests", handlers.RequestDeletion)
 			mr.Get("/deletion-requests/{id}", handlers.GetDeletion)
 			mr.With(mw.RequireCSRF).Post("/deletion-requests/{id}/cancel", handlers.CancelDeletion)
+
+			mr.Get("/team", handlers.GetMyTeam)
+			mr.Get("/team-invitations", handlers.GetMyTeamInvitations)
+		})
+
+		api.Group(func(tr chi.Router) {
+			tr.Use(mw.RequireAuth)
+			tr.Use(mw.RateLimit(30, time.Minute))
+
+			tr.With(mw.RequireCSRF).Post("/teams", handlers.CreateTeam)
+			tr.Route("/teams/{teamId}", func(t chi.Router) {
+				t.Get("/", handlers.GetTeam)
+				t.With(mw.RequireCSRF).Patch("/", handlers.PatchTeam)
+
+				t.Get("/members", handlers.ListTeamMembers)
+				t.Get("/members/{membershipId}", handlers.GetTeamMember)
+				t.With(mw.RequireCSRF).Patch("/members/{membershipId}/role", handlers.ChangeMemberRole)
+				t.With(mw.RequireCSRF).Post("/members/{membershipId}/remove", handlers.RemoveMember)
+
+				t.Get("/invitations", handlers.ListTeamInvitations)
+				t.With(mw.RequireCSRF).Post("/invitations", handlers.CreateInvitation)
+				t.With(mw.RequireCSRF).Post("/invitations/{invitationId}/revoke", handlers.RevokeInvitation)
+				t.With(mw.RequireCSRF).Post("/invitations/{invitationId}/resend", handlers.ResendInvitation)
+
+				t.Get("/invite-links", handlers.ListInviteLinks)
+				t.With(mw.RequireCSRF).Post("/invite-links", handlers.CreateInviteLink)
+				t.With(mw.RequireCSRF).Post("/invite-links/{linkId}/share-url", handlers.InviteLinkShareURL)
+				t.With(mw.RequireCSRF).Post("/invite-links/{linkId}/revoke", handlers.RevokeInviteLink)
+				t.With(mw.RequireCSRF).Post("/invite-links/{linkId}/regenerate", handlers.RegenerateInviteLink)
+
+				t.Get("/my-sharing", handlers.GetMySharing)
+				t.With(mw.RequireCSRF).Patch("/my-sharing", handlers.UpdateMySharing)
+
+				t.Get("/analysis", handlers.GetTeamAnalysis)
+				t.Get("/filter-options", handlers.GetTeamFilterOptions)
+
+				t.With(mw.RequireCSRF).Post("/exports", handlers.CreateTeamExport)
+				t.Get("/exports", handlers.ListTeamExports)
+				t.Get("/exports/{exportId}", handlers.GetTeamExport)
+				t.Get("/exports/{exportId}/content", handlers.DownloadTeamExport)
+
+				t.With(mw.RequireCSRF).Post("/leave", handlers.LeaveTeam)
+				t.With(mw.RequireCSRF).Post("/transfer-ownership", handlers.TransferOwnership)
+				t.With(mw.RequireCSRF).Post("/dissolve", handlers.DissolveTeam)
+
+				t.Get("/audit-events", handlers.ListTeamAuditEvents)
+
+				t.With(mw.RequireCSRF).Post("/avatar-upload-intents", handlers.CreateTeamAvatarIntent)
+				t.With(mw.RequireCSRF).Put("/avatar-upload-intents/{objectId}/content", handlers.UploadTeamAvatarContent)
+				t.With(mw.RequireCSRF).Post("/avatar-upload-intents/{objectId}/complete", handlers.CompleteTeamAvatar)
+				t.With(mw.RequireCSRF).Delete("/avatar", handlers.ClearTeamAvatar)
+				t.Get("/avatar/content", handlers.GetTeamAvatarContent)
+			})
+
+			tr.Get("/team-invitations/{invitationId}", handlers.GetInvitationPreview)
+			tr.With(mw.RequireCSRF).Post("/team-invitations/{invitationId}/accept", handlers.AcceptInvitation)
+			tr.With(mw.RequireCSRF).Post("/team-invite-links/{linkId}/preview", handlers.PreviewInviteLink)
+			tr.With(mw.RequireCSRF, mw.RateLimit(10, time.Minute)).Post("/team-invite-links/{linkId}/accept", handlers.AcceptInviteLink)
 		})
 	})
 

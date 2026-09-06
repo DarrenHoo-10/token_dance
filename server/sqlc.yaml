@@ -6,6 +6,7 @@ sql:
       - "db/migrations/0002_tokendance_user_system.sql"
       - "db/migrations/0003_tokendance_analytics_extensions.sql"
       - "db/migrations/0004_deletion_workflow_fencing.sql"
+      - "db/migrations/0005_tokendance_teams.sql"
     queries: "db/queries"
     gen:
       go:

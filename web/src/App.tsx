@@ -31,7 +31,16 @@ import { ExportsSettingsPage } from '@/pages/settings/ExportsSettingsPage';
 import { PublicProfilePage } from '@/pages/public/PublicProfilePage';
 import { LeaderboardPage } from '@/pages/public/LeaderboardPage';
 import { CommunityPage } from '@/pages/public/CommunityPage';
+import { TeamProvider } from '@/context/TeamContext';
 import { TeamDashboardPage } from '@/pages/teams/TeamDashboardPage';
+import { CreateTeamPage } from '@/pages/teams/CreateTeamPage';
+import { InvitationPage } from '@/pages/teams/InvitationPage';
+import { JoinTeamPage } from '@/pages/teams/JoinTeamPage';
+import { TeamLayout } from '@/pages/teams/TeamLayout';
+import { TeamOverviewPage } from '@/pages/teams/TeamOverviewPage';
+import { TeamMembersPage } from '@/pages/teams/TeamMembersPage';
+import { TeamAnalyticsPage } from '@/pages/teams/TeamAnalyticsPage';
+import { TeamSettingsPage } from '@/pages/teams/TeamSettingsPage';
 import { NotFoundPage } from '@/pages/system/NotFoundPage';
 
 export const RootRedirect: React.FC = () => {
@@ -46,6 +55,7 @@ export const App: React.FC = () => {
       <NotificationProvider>
         <AuthProvider>
           <BrowserRouter basename={import.meta.env.BASE_URL} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+            <TeamProvider>
             <Routes>
               {/* Standalone Auth & Onboarding */}
               <Route path="/login" element={<LoginPage />} />
@@ -80,11 +90,21 @@ export const App: React.FC = () => {
                 <Route path="/leaderboard" element={<LeaderboardPage />} />
                 <Route path="/leaderboard/list" element={<LeaderboardListPage />} />
                 <Route path="/teams" element={<TeamDashboardPage />} />
+                <Route path="/teams/new" element={<CreateTeamPage />} />
+                <Route path="/teams/invitations/:invitationId" element={<InvitationPage />} />
+                <Route path="/teams/join/:linkId" element={<JoinTeamPage />} />
+                <Route path="/teams/:teamId" element={<TeamLayout />}>
+                  <Route index element={<TeamOverviewPage />} />
+                  <Route path="members" element={<TeamMembersPage />} />
+                  <Route path="analytics" element={<TeamAnalyticsPage />} />
+                  <Route path="settings" element={<TeamSettingsPage />} />
+                </Route>
 
                 {/* 404 catch-all */}
                 <Route path="*" element={<NotFoundPage />} />
               </Route>
             </Routes>
+            </TeamProvider>
           </BrowserRouter>
         </AuthProvider>
       </NotificationProvider>

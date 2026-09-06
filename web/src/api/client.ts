@@ -78,12 +78,7 @@ class ApiHttpClient {
     return 'req_' + Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
   }
 
-  private async request<T>(
-    path: string,
-    options: RequestInit = {},
-    versionPrefix = '/api/v1'
-  ): Promise<T> {
-    const url = `${this.baseUrl}${versionPrefix}${path}`;
+  private buildHeaders(options: RequestInit): Headers {
     const headers = new Headers(options.headers || {});
 
     if (!headers.has('Accept')) {
@@ -107,6 +102,42 @@ class ApiHttpClient {
       headers.set('X-Request-Id', this.generateRequestId());
     }
 
+    return headers;
+  }
+
+  private async parseError(response: Response): Promise<ApiError> {
+    const contentType = response.headers.get('Content-Type') || '';
+    const isJson = contentType.includes('application/json');
+    let errorDetail: ApiErrorDetail = {
+      code: `HTTP_${response.status}`,
+      messageKey: `errors.http_${response.status}`,
+    };
+
+    if (isJson) {
+      try {
+        const body = (await response.json()) as ApiErrorResponse;
+        if (body && body.error) {
+          errorDetail = body.error;
+        }
+      } catch {
+        // ignore parse error
+      }
+    } else {
+      const text = await response.text();
+      errorDetail.details = { text };
+    }
+
+    return new ApiError(response.status, errorDetail);
+  }
+
+  private async request<T>(
+    path: string,
+    options: RequestInit = {},
+    versionPrefix = '/api/v1'
+  ): Promise<T> {
+    const url = `${this.baseUrl}${versionPrefix}${path}`;
+    const headers = this.buildHeaders(options);
+
     const response = await fetch(url, {
       ...options,
       headers,
@@ -121,26 +152,7 @@ class ApiHttpClient {
     const isJson = contentType.includes('application/json');
 
     if (!response.ok) {
-      let errorDetail: ApiErrorDetail = {
-        code: `HTTP_${response.status}`,
-        messageKey: `errors.http_${response.status}`,
-      };
-
-      if (isJson) {
-        try {
-          const body = (await response.json()) as ApiErrorResponse;
-          if (body && body.error) {
-            errorDetail = body.error;
-          }
-        } catch {
-          // ignore parse error
-        }
-      } else {
-        const text = await response.text();
-        errorDetail.details = { text };
-      }
-
-      throw new ApiError(response.status, errorDetail);
+      throw await this.parseError(response);
     }
 
     if (!isJson) {
@@ -148,6 +160,49 @@ class ApiHttpClient {
     }
 
     return (await response.json()) as T;
+  }
+
+  public async requestJson<T>(
+    path: string,
+    options: RequestInit = {},
+    versionPrefix = '/api/v1'
+  ): Promise<T> {
+    return this.request<T>(path, options, versionPrefix);
+  }
+
+  public async requestBinary(
+    path: string,
+    options: RequestInit = {},
+    versionPrefix = '/api/v1'
+  ): Promise<{ blob: Blob; filename: string | null }> {
+    const url = `${this.baseUrl}${versionPrefix}${path}`;
+    const headers = this.buildHeaders(options);
+    if (!headers.has('Accept') || headers.get('Accept') === 'application/json') {
+      headers.set('Accept', 'text/csv, application/octet-stream, */*');
+    }
+
+    const response = await fetch(url, {
+      ...options,
+      headers,
+      credentials: 'include',
+    });
+
+    if (!response.ok) {
+      throw await this.parseError(response);
+    }
+
+    const disposition = response.headers.get('Content-Disposition');
+    let filename: string | null = null;
+    if (disposition) {
+      const utf = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+      const quoted = /filename="([^"]+)"/i.exec(disposition);
+      const plain = /filename=([^;]+)/i.exec(disposition);
+      if (utf) filename = decodeURIComponent(utf[1]);
+      else if (quoted) filename = quoted[1];
+      else if (plain) filename = plain[1].trim();
+    }
+
+    return { blob: await response.blob(), filename };
   }
 
   // --- Auth APIs ---

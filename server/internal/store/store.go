@@ -18,6 +18,7 @@ type Store interface {
 	Search() SearchStore
 	Leaderboard() LeaderboardStore
 	Media() MediaStore
+	Teams() TeamsStore
 }
 
 type RegistrationTxInput struct {

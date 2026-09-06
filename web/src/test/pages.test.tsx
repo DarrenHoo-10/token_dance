@@ -9,6 +9,7 @@ import { api, ApiError } from '@/api/client';
 import { LeaderboardPage } from '@/pages/public/LeaderboardPage';
 import { PublicProfilePage } from '@/pages/public/PublicProfilePage';
 import { CommunityPage } from '@/pages/public/CommunityPage';
+import { TeamProvider } from '@/context/TeamContext';
 import { TeamDashboardPage } from '@/pages/teams/TeamDashboardPage';
 import { ActivityPage } from '@/pages/me/ActivityPage';
 import { PersonalDashboardPage } from '@/pages/me/PersonalDashboardPage';
@@ -76,14 +77,25 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       expect(screen.getByText('这里暂时留白')).toBeInTheDocument();
     });
 
-    it('shows teams as unavailable without fabricated metrics or controls', () => {
-      renderWithProviders(<TeamDashboardPage />, '/teams');
-      expect(screen.getByRole('heading', { name: '小团队 Token 分析' })).toBeInTheDocument();
-      expect(screen.getByText('团队功能尚未开放')).toBeInTheDocument();
+    it('shows the signed-out teams intro without fabricated metrics or controls', async () => {
+      vi.spyOn(api, 'getSession').mockResolvedValue({ authenticated: false, user: null });
+      render(
+        <LocaleProvider>
+          <NotificationProvider>
+            <AuthProvider>
+              <MemoryRouter initialEntries={['/teams']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+                <TeamProvider>
+                  <TeamDashboardPage />
+                </TeamProvider>
+              </MemoryRouter>
+            </AuthProvider>
+          </NotificationProvider>
+        </LocaleProvider>
+      );
+      expect(await screen.findByRole('heading', { name: '和同伴一起记录 AI 用量' })).toBeInTheDocument();
       expect(screen.queryByText('410.1M')).not.toBeInTheDocument();
       expect(screen.queryByText('Max Bauer')).not.toBeInTheDocument();
-      expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
-      expect(screen.getByRole('link', { name: '查看个人数据' })).toHaveAttribute('href', '/me');
+      expect(screen.getByRole('link', { name: '前往登录' })).toHaveAttribute('href', '/login?return_to=%2Fteams');
     });
   });
 

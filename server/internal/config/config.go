@@ -114,6 +114,13 @@ type Config struct {
 	SMTPTLSMode      string `json:"smtpTlsMode,omitempty"`
 	SMTPEHLOName     string `json:"smtpEhloName,omitempty"`
 	TestAuthCode     string `json:"-"`
+
+	TeamsEnabled         bool   `json:"teamsEnabled"`
+	TeamsCreateEnabled   bool   `json:"teamsCreateEnabled"`
+	TeamsJoinEnabled     bool   `json:"teamsJoinEnabled"`
+	TeamsAnalysisEnabled bool   `json:"teamsAnalysisEnabled"`
+	TeamsExportEnabled   bool   `json:"teamsExportEnabled"`
+	TeamsPublicBaseURL   string `json:"teamsPublicBaseUrl,omitempty"`
 }
 
 func deriveDevKey(purpose string) []byte {
@@ -160,9 +167,15 @@ func DefaultConfig() *Config {
 		AEADKeys: VersionedKeyring{CurrentVersion: 1, Keys: map[uint16][]byte{
 			1: []byte(DefaultDevEncryptionKey),
 		}},
-		EmailProvider: "sink",
-		SMTPPort:      587,
-		SMTPTLSMode:   "starttls",
+		EmailProvider:        "sink",
+		SMTPPort:             587,
+		SMTPTLSMode:          "starttls",
+		TeamsEnabled:         false,
+		TeamsCreateEnabled:   false,
+		TeamsJoinEnabled:     false,
+		TeamsAnalysisEnabled: false,
+		TeamsExportEnabled:   false,
+		TeamsPublicBaseURL:   "",
 	}
 }
 
@@ -439,6 +452,32 @@ func LoadFromEnv() (*Config, error) {
 			return nil, fmt.Errorf("invalid TOKENDANCE_OBJECT_USE_PATH_STYLE: %w", e)
 		}
 		cfg.ObjectUsePathStyle = b
+	}
+	setString("TOKENDANCE_TEAMS_PUBLIC_BASE_URL", &cfg.TeamsPublicBaseURL)
+	parseBool := func(name string, dst *bool) error {
+		if v := os.Getenv(name); v != "" {
+			b, e := strconv.ParseBool(v)
+			if e != nil {
+				return fmt.Errorf("invalid %s: %w", name, e)
+			}
+			*dst = b
+		}
+		return nil
+	}
+	if err := parseBool("TOKENDANCE_TEAMS_ENABLED", &cfg.TeamsEnabled); err != nil {
+		return nil, err
+	}
+	if err := parseBool("TOKENDANCE_TEAMS_CREATE_ENABLED", &cfg.TeamsCreateEnabled); err != nil {
+		return nil, err
+	}
+	if err := parseBool("TOKENDANCE_TEAMS_JOIN_ENABLED", &cfg.TeamsJoinEnabled); err != nil {
+		return nil, err
+	}
+	if err := parseBool("TOKENDANCE_TEAMS_ANALYSIS_ENABLED", &cfg.TeamsAnalysisEnabled); err != nil {
+		return nil, err
+	}
+	if err := parseBool("TOKENDANCE_TEAMS_EXPORT_ENABLED", &cfg.TeamsExportEnabled); err != nil {
+		return nil, err
 	}
 
 	if err := cfg.Validate(); err != nil {
