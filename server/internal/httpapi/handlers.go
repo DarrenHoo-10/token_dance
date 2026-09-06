@@ -168,12 +168,14 @@ func (h *Handlers) RequestRegisterCode(w http.ResponseWriter, r *http.Request) {
 }
 
 type RegisterRequest struct {
-	Email    string `json:"email"`
-	Code     string `json:"code"`
-	Password string `json:"password"`
-	ReturnTo string `json:"returnTo"`
-	Locale   string `json:"locale"`
-	Timezone string `json:"timezone"`
+	DisplayName string `json:"displayName"`
+	AvatarID    string `json:"avatarId"`
+	Email       string `json:"email"`
+	Code        string `json:"code"`
+	Password    string `json:"password"`
+	ReturnTo    string `json:"returnTo"`
+	Locale      string `json:"locale"`
+	Timezone    string `json:"timezone"`
 }
 
 func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +185,7 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.auth.CompleteRegistration(r.Context(), req.Email, req.Code, req.Password, req.ReturnTo, req.Locale, req.Timezone)
+	result, err := h.auth.CompleteRegistration(r.Context(), req.Email, req.Code, req.Password, req.ReturnTo, req.Locale, req.Timezone, auth.RegistrationProfile{DisplayName: req.DisplayName, AvatarID: req.AvatarID})
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -196,6 +198,7 @@ func (h *Handlers) Register(w http.ResponseWriter, r *http.Request) {
 			"userId":             result.User.UserID,
 			"handle":             result.User.Handle,
 			"displayName":        result.User.DisplayName,
+			"avatarUrl":          result.User.AvatarURL,
 			"locale":             result.User.Locale,
 			"onboardingRequired": result.User.OnboardingCompletedAt == nil,
 			"productState":       result.User.ProductState(),

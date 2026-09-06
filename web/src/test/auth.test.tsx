@@ -341,6 +341,16 @@ describe('Auth & Onboarding Flow Tests', () => {
       expect(screen.getByText('创建你的 TokenDance 账户')).toBeInTheDocument();
     });
 
+    const nickname = screen.getByLabelText('昵称') as HTMLInputElement;
+    expect(nickname.value).toMatch(/.+_[a-z0-9]{4}$/);
+    expect(screen.getAllByRole('radio')).toHaveLength(4);
+    expect(screen.getAllByRole('radio').filter(radio => (radio as HTMLInputElement).checked)).toHaveLength(1);
+    const oldNickname = nickname.value;
+    fireEvent.click(screen.getByRole('button', { name: '换个昵称' }));
+    expect(nickname.value).not.toBe(oldNickname);
+    fireEvent.change(nickname, { target: { value: '薄荷小猫' } });
+    fireEvent.click(screen.getByRole('radio', { name: '狐狸' }));
+    expect(screen.getByRole('radio', { name: '狐狸' })).toBeChecked();
     fireEvent.change(screen.getByPlaceholderText('name@example.com'), { target: { value: 'newuser@example.com' } });
     fireEvent.change(screen.getByPlaceholderText('6 位数字验证码'), { target: { value: '123456' } });
     fireEvent.change(screen.getByPlaceholderText('至少 8 个字符'), { target: { value: 'password123' } });
@@ -354,6 +364,8 @@ describe('Auth & Onboarding Flow Tests', () => {
       expect.objectContaining({
         locale: 'zh-CN',
         timezone: expect.any(String),
+        displayName: '薄荷小猫',
+        avatarId: 'fox',
       })
     );
   });
