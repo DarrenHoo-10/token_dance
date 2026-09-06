@@ -1,9 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { usageTokens, usageCosts, annualUsage, quotaStale, quotaStatusText } from '../src/usage-analytics.ts';
+import { usageTokens, usageCosts, annualUsage, quotaStale, quotaStatusText, quotaWindowLabel } from '../src/usage-analytics.ts';
 import { lastSevenDays } from '../src/weekly-usage.ts';
 const now = new Date(2026, 8, 5, 12);
 const dates = lastSevenDays(now);
+test('quota labels separate shared weekly usage and Cursor billing pools', () => {
+  assert.equal(quotaWindowLabel({label:'shared_week', windowMinutes:10080}, true), '共享周额度');
+  assert.equal(quotaWindowLabel({label:'auto', windowMinutes:44640}, true), 'Auto 额度');
+  assert.equal(quotaWindowLabel({label:'api', windowMinutes:0}, false), 'API quota');
+  assert.equal(quotaWindowLabel({windowMinutes:0}, true), '当前周期额度');
+  assert.equal(quotaWindowLabel({windowMinutes:300}, true), '5 小时额度');
+  for (const [agentId, name] of [['grok-build','Grok Build'],['cursor','Cursor']]) {
+    const message = quotaStatusText({agentId,status:'auth_required',windows:[]}, true);
+    assert.ok(message.includes(name)); assert.ok(!message.includes('ZCode'));
+  }
+});
 const agent = { id: 'codex', accuracy: 'exact', todayTokens: 7, totalTokens: 1000,
   dailyUsage: dates.map((date, i) => ({ date, tokens: i + 1, costs: { USD: 10000000 } })), totalCosts: { USD: 200000000 }, historyStart: dates[0] };
 

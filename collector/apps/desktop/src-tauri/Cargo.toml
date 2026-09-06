@@ -2,7 +2,7 @@
 
 [package]
 name = "tokendance-desktop"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2021"
 authors = ["TokenDance Team"]
 description = "TokenDance Desktop Collector Settings Shell"
@@ -26,9 +26,11 @@ tokio = { version = "1", features = ["full", "sync", "time"] }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 ulid = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "system-proxy"] }
 cookie = "0.18"
 sha2 = "0.10"
+base64 = "0.22"
+rusqlite = { version = "0.32", features = ["bundled"] }
 tauri = { version = "2", features = ["tray-icon"] }
 
 [dev-dependencies]

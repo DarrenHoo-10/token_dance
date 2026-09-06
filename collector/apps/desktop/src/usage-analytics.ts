@@ -7,17 +7,31 @@ export interface AgentQuota {
   observedAt: string;
   plan?: string;
   status?: string;
-  windows: { usedPercent: number; windowMinutes: number; resetsAt: number | null; provider?: string }[];
+  windows: { usedPercent: number; windowMinutes: number; resetsAt: number | null; provider?: string; label?: string }[];
+}
+
+export function quotaWindowLabel(window: AgentQuota['windows'][number], zh: boolean): string {
+  const labels: Record<string, [string, string]> = {
+    shared_week: ['共享周额度', 'Shared weekly quota'], shared_quota: ['共享套餐额度', 'Shared plan quota'],
+    auto: ['Auto 额度', 'Auto quota'], api: ['API 额度', 'API quota'],
+    plan: ['套餐额度', 'Plan quota'], personal_limit: ['个人额度上限', 'Personal limit'],
+  };
+  if (window.label && labels[window.label]) return labels[window.label][zh ? 0 : 1];
+  const mins = window.windowMinutes;
+  if (mins <= 0) return zh ? '当前周期额度' : 'Current cycle quota';
+  return mins % 1440 === 0 ? `${mins / 1440}${zh ? ' 日额度' : '-day quota'}` : mins % 60 === 0 ? `${mins / 60}${zh ? ' 小时额度' : '-hour quota'}` : `${mins}${zh ? ' 分钟额度' : '-minute quota'}`;
 }
 
 export function quotaStatusText(quota: AgentQuota | undefined, zh: boolean): string | null {
+  const name = quota?.agentId === 'grok-build' ? 'Grok Build' : quota?.agentId === 'cursor' ? 'Cursor' : 'ZCode';
   switch (quota?.status) {
-    case 'not_connected': return zh ? '请在 ZCode 登录并启用 Coding Plan' : 'Sign in and enable Coding Plan in ZCode';
-    case 'auth_required': return zh ? '登录已失效，请在 ZCode 重新登录' : 'Session expired · Sign in again in ZCode';
+    case 'not_connected': return name === 'ZCode' ? (zh ? '请在 ZCode 登录并启用 Coding Plan' : 'Sign in and enable Coding Plan in ZCode') : (zh ? `请先在 ${name} 登录` : `Sign in to ${name} first`);
+    case 'auth_required': return zh ? `登录已失效，请在 ${name} 重新登录` : `Session expired · Sign in again in ${name}`;
     case 'unavailable': return quota.windows.length
       ? (zh ? '查询失败，显示上次记录，稍后重试' : 'Query failed · Showing previous reading · Retrying')
       : (zh ? '额度暂时无法查询，稍后自动重试' : 'Quota temporarily unavailable · Retrying');
-    case 'no_quota': return zh ? '未返回支持的个人套餐额度' : 'No supported personal plan quota returned';
+    case 'no_quota': return zh ? '当前账号未返回可展示的套餐额度' : 'No supported plan quota returned for this account';
+    case 'unlimited': return zh ? '当前套餐未设置额度上限' : 'No quota cap for this plan';
     default: return null;
   }
 }
