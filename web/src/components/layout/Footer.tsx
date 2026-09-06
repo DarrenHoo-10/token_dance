@@ -1,8 +1,9 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { useLocale } from '@/context/LocaleContext';
 
 export const Footer: React.FC = () => {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
 
   return (
     <footer
@@ -34,10 +35,12 @@ export const Footer: React.FC = () => {
           <span>{t('common.heroTagline')}</span>
         </div>
 
-        <div style={{ display: 'flex', gap: 20, fontFamily: 'var(--font-mono)', fontSize: 11 }}>
+        <nav aria-label={locale === 'zh-CN' ? '帮助与下载' : 'Help and downloads'} style={{ display: 'flex', flexWrap: 'wrap', gap: 20, fontSize: 12 }}>
+          <Link to="/download">{locale === 'zh-CN' ? '客户端下载' : 'Download'}</Link>
+          <Link to="/docs/quickstart">{locale === 'zh-CN' ? '使用文档' : 'Docs'}</Link>
+          <Link to="/docs/privacy">{locale === 'zh-CN' ? '数据与隐私' : 'Data & privacy'}</Link>
           <span>TOKENDANCE · 2026</span>
-          <span>{t('auth.privacyPledge')}</span>
-        </div>
+        </nav>
       </div>
     </footer>
   );
