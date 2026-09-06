@@ -1,7 +1,7 @@
 -- TokenDance precomputed leaderboard window scores and ranking outbox
 -- Target: MySQL 8.0.34+
--- Prerequisite: 0001_tokendance_server.sql, 0002_tokendance_user_system.sql,
---               0003_tokendance_analytics_extensions.sql, 0004_deletion_workflow_fencing.sql
+-- Prerequisite: 0001-0004. Numbered 0006 because some environments already
+-- applied a different 0005 (teams). Do not reuse 0005.
 
 SET NAMES utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 SET time_zone = '+00:00';
