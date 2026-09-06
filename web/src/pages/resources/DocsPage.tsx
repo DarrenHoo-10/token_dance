@@ -1,10 +1,9 @@
 import { Fragment, useEffect, useRef } from 'react';
 import { Link, NavLink, useLocation, useParams } from 'react-router-dom';
-import { ArrowDownToLine, ArrowRight, ArrowLeft, ArrowUpRight } from 'lucide-react';
+import { ArrowDownToLine, ArrowRight, ArrowLeft } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { NotFoundPage } from '@/pages/system/NotFoundPage';
 import { getArticles, type DocSection } from './docsContent';
-import { releasesUrl } from './windowsRelease';
 import { useResourceNavigation } from './useResourceNavigation';
 import './resources.css';
 
@@ -43,7 +42,7 @@ export function DocsPage() {
       <article className="doc-article" ref={articleRef}>
         <div className="doc-breadcrumb">{zh ? '使用文档' : 'Docs'} / {article.group}</div><h2>{article.title}</h2><p className="doc-lead">{article.lead}</p>
         {article.sections.map((section, index) => article.slug === 'faq' ? <details className="doc-faq" key={section.id} id={section.id} open={index === 0 || hash === `#${section.id}`}><summary>{section.title}</summary><SectionBody section={section} /></details> : <section className="doc-section" key={section.id} id={section.id}><h3>{section.title}</h3><SectionBody section={section} /></section>)}
-        {article.slug === 'releases' && <a className="resource-link" href={releasesUrl} target="_blank" rel="noreferrer">{zh ? '在 GitHub 查看全部发行版本' : 'View all releases on GitHub'}<ArrowUpRight size={15} aria-hidden="true" /></a>}
+        {article.slug === 'releases' && <Link className="resource-link" to="/download">{zh ? '查看当前版本与更新说明' : 'View the current version and release notes'}<ArrowRight size={15} aria-hidden="true" /></Link>}
         <div className="doc-next"><Link className="resource-link" to="/leaderboard"><ArrowLeft size={15} aria-hidden="true" />{zh ? '返回排行榜' : 'Back to leaderboard'}</Link>{next && <Link to={`/docs/${next.slug}`}><small>{zh ? '继续阅读' : 'Read next'}</small><strong>{next.label} →</strong></Link>}</div>
       </article>
       <nav className="doc-toc" aria-label={zh ? '本页目录' : 'On this page'}><strong>{zh ? '本页内容' : 'On this page'}</strong>{article.sections.map(section => <Link key={section.id} to={`#${section.id}`} aria-current={hash === `#${section.id}` ? 'location' : undefined}>{section.title.replace(/^\d\. /, '')}</Link>)}</nav>

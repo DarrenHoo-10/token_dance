@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "releases": [
+    {
+      "version": "0.2.0",
+      "platform": "windows-x64",
+      "publishedAt": "2026-09-07T00:00:00Z",
+      "notes": "Example release for contract tests.",
+      "prerelease": false,
+      "exe": {
+        "url": "https://downloads.example.com/0.2.0/TokenDance.exe",
+        "sha256": "9b8db510ef42b8ed54a3712636fda55a4f8cfcd5493e20b74ab00cd4f3979f2d",
+        "size": 2
+      }
+    }
+  ]
+}

@@ -39,8 +39,8 @@ export function getArticles(zh: boolean): DocArticle[] {
       { id: 'platform', title: '支持哪些操作系统？', paragraphs: ['当前仅支持 Windows x64。使用一个桌面客户端连接多个受支持的 AI 工具，各来源的采集方式和前置条件可在来源设置中检查。'] },
     ] },
     { slug: 'releases', label: '发布说明', group: '帮助与更新', title: '发布说明', lead: '下载页自动获取最新公开 Windows 版本，包含预览版。下载文件、版本号和发布说明始终来自同一份发行记录。', sections: [
-      { id: 'download', title: '获取最新 Windows 版本', paragraphs: ['前往下载页查看当前版本、发布日期、大小和预览版标记。可直接下载 EXE，也可选用同版本 ZIP 压缩包。', '若网络异常或 GitHub 暂时限制请求，可重试或前往 GitHub 发布页查看。不会将旧版本显示为最新版本。'], action: { to: '/download', label: '查看最新 Windows 版本' } },
-      { id: 'verify', title: '核对下载文件', paragraphs: ['发行包的 SHA-256 校验文件和完整变更说明均可从下载页打开。校验值用于确认文件一致性，不等同于 Windows 签名。', '更新前退出托盘中的旧程序，保留应用数据。系统要求、签名状态和已知问题以对应发行说明为准。'] },
+      { id: 'download', title: '获取最新 Windows 版本', paragraphs: ['前往下载页查看当前版本、发布日期、大小和预览版标记。可直接下载 EXE，也可选用同版本 ZIP 压缩包。', '若网络异常，请稍后重试。不会将旧版本显示为最新版本。'], action: { to: '/download', label: '查看最新 Windows 版本' } },
+      { id: 'verify', title: '核对下载文件', paragraphs: ['发行包的 SHA-256 校验值和更新说明可在下载页查看。校验值用于确认文件一致性，不等同于 Windows 签名。', '更新前退出托盘中的旧程序，保留应用数据。系统要求、签名状态和已知问题以对应发行说明为准。'] },
     ] },
   ] : [
     { slug: 'quickstart', label: 'Quick start', group: 'Getting started', title: 'Bring your first usage record to TokenDance.', lead: 'Install the Windows desktop app and sign in to sync local usage to your account. The app stays quietly in your system tray.', sections: [
@@ -79,8 +79,8 @@ export function getArticles(zh: boolean): DocArticle[] {
       { id: 'platform', title: 'Which operating systems are supported?', paragraphs: ['Currently Windows x64 only. One desktop app connects multiple supported tools. Check source settings for each tool’s requirements.'] },
     ] },
     { slug: 'releases', label: 'Release notes', group: 'Help & updates', title: 'Release notes', lead: 'The download page checks the newest public Windows release, including previews. The file, version and release notes all come from the same release record.', sections: [
-      { id: 'download', title: 'Get the newest Windows release', paragraphs: ['See the download page for the current version, date, size and preview label. Download the EXE directly or choose the ZIP from the same release.', 'If the network fails or GitHub limits requests, retry or visit GitHub releases. An old version will never be presented as the latest.'], action: { to: '/download', label: 'Check the latest Windows version' } },
-      { id: 'verify', title: 'Verify your download', paragraphs: ['Open the SHA-256 checksum file and full release notes from the download page. Checksums confirm file consistency; they do not imply Windows code signing.', 'Quit the old app from the tray before updating and keep application data. Refer to the specific release notes for requirements, signing status and known issues.'] },
+      { id: 'download', title: 'Get the newest Windows release', paragraphs: ['See the download page for the current version, date, size and preview label. Download the EXE directly or choose the ZIP from the same release.', 'If the network fails, please retry later. An old version will never be presented as the latest.'], action: { to: '/download', label: 'Check the latest Windows version' } },
+      { id: 'verify', title: 'Verify your download', paragraphs: ['View the SHA-256 checksum and release notes on the download page. Checksums confirm file consistency; they do not imply Windows code signing.', 'Quit the old app from the tray before updating and keep application data. Refer to the specific release notes for requirements, signing status and known issues.'] },
     ] },
   ];
 }

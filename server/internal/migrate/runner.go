@@ -653,6 +653,9 @@ func (r *Runner) ResetCleanSchema(ctx context.Context) error {
 	}()
 
 	tables := []string{
+		"desktop_release_channels",
+		"desktop_release_publication",
+		"desktop_releases",
 		"ranking_outbox",
 		"aggregate_dirty_days",
 		"user_window_scores",
