@@ -34,6 +34,8 @@ func (s *Service) UploadAvatarContent(ctx context.Context, objectID, userID stri
 	return s.storage.PutObject(ctx, obj.ObjectKey, bytes.NewReader(data), int64(len(data)), *obj.ContentType)
 }
 
+// Active accounts participate in the leaderboard regardless of profile privacy.
+// Only their current, validated avatar is public; personal statistics remain gated.
 func (s *Service) ReadAvatar(ctx context.Context, objectID, viewerID string) ([]byte, string, error) {
 	obj, err := s.store.GetVisibleAvatar(ctx, objectID, viewerID)
 	if err != nil {

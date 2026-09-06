@@ -1,6 +1,6 @@
 import { LeaderboardTable } from '@/components/analytics/LeaderboardTable';
 import { RankChange } from '@/components/analytics/RankChange';
-import { avatarUrl } from '@/utils/avatar';
+import { UserAvatar } from '@/components/common/UserAvatar';
 import React, { useCallback, useRef, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
@@ -34,10 +34,7 @@ function TrendBadge({ value }: { value: number | null | undefined }) {
 }
 
 function PersonAvatar({ entry, className = '' }: { entry: LeaderboardEntry; className?: string }) {
-  if (entry.avatarUrl) {
-    return <img className={`leader-avatar ${className}`} src={avatarUrl(entry.avatarUrl)} alt={`${entry.displayName} profile`} />;
-  }
-  return <span className={`leader-avatar ${className} avatar-fallback`} aria-hidden="true">{entry.displayName.slice(0, 1).toUpperCase()}</span>;
+  return <UserAvatar url={entry.avatarUrl} name={entry.displayName} className={`leader-avatar ${className}`} fallbackClassName={`leader-avatar ${className} avatar-fallback`} alt={`${entry.displayName} profile`} />;
 }
 
 function PodiumCard({ entry }: { entry: LeaderboardEntry }) {
