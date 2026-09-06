@@ -65,6 +65,29 @@ async fn mock_collector() -> Collector {
     collector
 }
 
+#[tokio::test]
+async fn idle_files_sharing_a_source_do_not_rewrite_checkpoints() {
+    let dir = tempfile::tempdir().unwrap();
+    let collector = mock_collector().await;
+    let mut wal = open_wal(dir.path());
+    let pipeline = IngestPipeline::new(&collector, "dev.tokenshow.adapter.mock");
+    let paths = [dir.path().join("a.jsonl"), dir.path().join("b.jsonl")];
+    for path in &paths { write_lines(path, &["{}"]); }
+    for path in &paths {
+        let mut tailer = JsonlTailer::new(INSTALL, "mock-sessions", "mock-sessions", path);
+        pipeline.ingest(&mut tailer, &mut wal, false).await.unwrap();
+    }
+    let before = wal.spool_bytes();
+    for _ in 0..3 {
+        for path in &paths {
+            let mut tailer = JsonlTailer::new(INSTALL, "mock-sessions", "mock-sessions", path);
+            tailer.restore_matching(&wal);
+            pipeline.ingest(&mut tailer, &mut wal, false).await.unwrap();
+        }
+    }
+    assert_eq!(wal.spool_bytes(), before);
+}
+
 struct SlowAdapter {
     inner: MockAdapter,
     started: Arc<Notify>,

@@ -733,10 +733,11 @@ fn frames_to_keep(frames: &[KeptFrame], acked: &BTreeSet<String>) -> Vec<KeptFra
                 let Ok(txn) = decode_cbor::<PersistedTransaction>(&frame.plaintext) else {
                     return false;
                 };
+                // compact() has durably snapshotted every checkpoint already.
+                // Empty transactions must not accumulate forever and stall scanning.
                 txn.normalized_events
                     .iter()
                     .any(|event| !acked.contains(&event.event_id))
-                    || txn.normalized_events.is_empty()
             }
             FrameType::Ack => {
                 let Ok(ack) = decode_cbor::<AckPayload>(&frame.plaintext) else {

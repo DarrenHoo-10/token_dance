@@ -180,7 +180,7 @@ impl<'a> IngestPipeline<'a> {
             self.log.record("source_diagnostic", diagnostic);
         }
         let moved = wal
-            .latest_checkpoint(&tailer.logical_source_id)
+            .checkpoint(&tailer.logical_source_id, &poll.next_checkpoint.file_identity)
             .map(|item| {
                 item.offset != poll.next_checkpoint.offset
                     || item.generation != poll.next_checkpoint.generation
