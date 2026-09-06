@@ -60,6 +60,71 @@ func TestLeaderboardUTCDates(t *testing.T) {
 	}
 }
 
+func TestLiveLeaderboardRankChangesMySQL(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	for _, row := range []struct {
+		name             string
+		today, yesterday int
+	}{
+		{"alice", 300, 100}, {"bob", 50, 200}, {"carol", 20, 0}, {"dave", 100, 50},
+	} {
+		id := "usr_delta_" + row.name
+		seedTestUser(t, db, st, id, row.name, row.name, row.name+"@delta.test", true, now)
+		if _, err := db.Exec("UPDATE user_privacy_settings SET show_token_total=TRUE WHERE user_id=?", id); err != nil {
+			t.Fatal(err)
+		}
+		seedRankUsage(t, db, id, "2026-09-06", "codex", row.today, 0, 0)
+		if row.yesterday > 0 {
+			seedRankUsage(t, db, id, "2026-09-05", "codex", row.yesterday, 0, 0)
+		}
+	}
+	s := &leaderboardStore{db: db}
+	for _, window := range []string{"today", "7d", "30d", "all"} {
+		wanted := map[string]int{"alice": 1, "bob": -1, "dave": 0}
+		if window == "today" {
+			wanted["bob"] = -2
+			wanted["dave"] = 1
+		}
+		var cursor *string
+		seen := 0
+		for {
+			board, err := s.getLiveTokenLeaderboard(context.Background(), window, cursor, 2, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, entry := range board.Entries {
+				seen++
+				if entry.Handle == "carol" {
+					if !entry.IsNew || entry.RankDelta != nil {
+						t.Fatalf("new entry: %+v", entry)
+					}
+				} else if entry.IsNew || entry.RankDelta == nil || *entry.RankDelta != wanted[entry.Handle] {
+					t.Fatalf("%s change: %+v want %d", window, entry, wanted[entry.Handle])
+				}
+			}
+			if board.NextCursor == nil {
+				break
+			}
+			cursor = board.NextCursor
+		}
+		if seen != 4 {
+			t.Fatalf("missing paginated entries: %d", seen)
+		}
+	}
+	if _, err := db.Exec("UPDATE user_privacy_settings SET public_profile_enabled=FALSE WHERE user_id='usr_delta_bob'"); err != nil {
+		t.Fatal(err)
+	}
+	board, err := s.getLiveTokenLeaderboard(context.Background(), "today", nil, 10, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(board.Entries) != 3 || board.Entries[0].RankDelta == nil || *board.Entries[0].RankDelta != 0 {
+		t.Fatalf("both comparison periods must respect current privacy: %+v", board.Entries)
+	}
+}
+
 func TestLiveTokenLeaderboardMySQL(t *testing.T) {
 	st, db, cleanup := getTestStore(t)
 	defer cleanup()

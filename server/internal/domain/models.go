@@ -647,6 +647,7 @@ type LeaderboardEntry struct {
 	AvatarURL   *string `json:"avatarUrl"`
 	MetricValue string  `json:"metricValue"`
 	RankDelta   *int    `json:"rankDelta,omitempty"`
+	IsNew       bool    `json:"isNew,omitempty"`
 }
 
 type LeaderboardResponse struct {
