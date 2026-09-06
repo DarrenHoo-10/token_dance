@@ -5,7 +5,7 @@ pub mod runtime;
 pub mod upload;
 
 pub use detect::{detect_from_home, detect_local};
-pub use runtime::{collect_tick, CollectReport};
+pub use runtime::{collect_decoded, collect_tick, CollectReport, LocalCollectOutcome};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -25,7 +25,8 @@ use collector_core::Collector;
 use config_executor::{
     ApplyReport, EncryptedBackupStore, ExecutorError, SetupPlanExecutor, SetupVerifier,
 };
-use wal_spool::WalStore;
+use protocol::EventEnvelope;
+use wal_spool::{SourceCheckpoint, WalStore};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum OfficialAgent {
@@ -378,6 +379,17 @@ pub fn assemble_collector(
     Ok(collector)
 }
 
+#[derive(Debug, Clone)]
+pub struct DecodedSourceBatch {
+    pub adapter_id: String,
+    pub source_id: String,
+    pub events: Vec<EventEnvelope>,
+    pub accepted_events: usize,
+    pub previous: Option<SourceCheckpoint>,
+    pub next: SourceCheckpoint,
+    pub checkpoint_moved: bool,
+}
+
 pub struct ProductionService {
     pub collector: Collector,
     pub driver_registry: DriverRegistry,
@@ -442,8 +454,10 @@ impl ProductionService {
             JsonlTailer::new(self.collector.installation_id(), source_id, source_id, path);
         tailer.restore_matching(&self.wal);
         // Stable IDs dedupe old tokens while the startup replay fills new metrics.
-        let replay_codex = historical && (adapter_id == adapter_codex::ADAPTER_ID
-            || (adapter_id == adapter_grok_build::ADAPTER_ID && self.wal.observations_enabled()));
+        let replay_codex = historical
+            && (adapter_id == adapter_codex::ADAPTER_ID
+                || (adapter_id == adapter_grok_build::ADAPTER_ID
+                    && self.wal.observations_enabled()));
         if replay_codex {
             if !self.wal.backpressure().allow_historical_scan() {
                 return Ok(0);
@@ -456,6 +470,160 @@ impl ProductionService {
             .ingest(&mut tailer, wal, historical && !replay_codex)
             .await
             .map(|poll| poll.accepted_events)
+    }
+
+    /// Decode a JSONL source without writing the upload spool.
+    /// Uses `Backpressure::Normal` so a full upload cache cannot skip local capture.
+    pub async fn decode_jsonl_path(
+        &mut self,
+        adapter_id: &str,
+        source_id: &str,
+        path: &Path,
+        historical: bool,
+    ) -> Result<DecodedSourceBatch, acquisition::AcquisitionError> {
+        if !self.collector.is_enabled(adapter_id) {
+            return Err(acquisition::AcquisitionError::Other(
+                "adapter_disabled".into(),
+            ));
+        }
+        let mut tailer =
+            JsonlTailer::new(self.collector.installation_id(), source_id, source_id, path);
+        tailer.restore_matching(&self.wal);
+        let replay = historical
+            && (adapter_id == adapter_codex::ADAPTER_ID
+                || adapter_id == adapter_grok_build::ADAPTER_ID);
+        if replay {
+            tailer.reset_for_rescan();
+        }
+        let poll = tailer.poll(wal_spool::Backpressure::Normal, historical && !replay)?;
+        let previous = self
+            .wal
+            .checkpoint(source_id, &poll.next_checkpoint.file_identity)
+            .cloned();
+        let mut events = Vec::new();
+        for frame in poll.frames {
+            if !self.collector.is_enabled(adapter_id) {
+                return Err(acquisition::AcquisitionError::Other(
+                    "adapter_disabled".into(),
+                ));
+            }
+            match self.collector.decode(adapter_id, frame).await {
+                Ok(decoded) => {
+                    events.extend(decoded.iter().map(|item| item.as_envelope().clone()));
+                }
+                Err(_) => {}
+            }
+        }
+        let next = poll.next_checkpoint;
+        let checkpoint_moved = previous.as_ref().map_or(true, |item| {
+            item.offset != next.offset
+                || item.generation != next.generation
+                || item.file_identity != next.file_identity
+        });
+        Ok(DecodedSourceBatch {
+            adapter_id: adapter_id.to_string(),
+            source_id: source_id.to_string(),
+            accepted_events: events.len(),
+            events,
+            previous,
+            next,
+            checkpoint_moved,
+        })
+    }
+
+    /// Decode a SQLite snapshot source without writing the upload spool.
+    pub async fn decode_sqlite(
+        &mut self,
+        adapter_id: &str,
+        source_id: &str,
+    ) -> Result<DecodedSourceBatch, acquisition::AcquisitionError> {
+        if !self.collector.is_enabled(adapter_id) {
+            return Err(acquisition::AcquisitionError::Other(
+                "adapter_disabled".into(),
+            ));
+        }
+        let batch = {
+            let entry = self.driver_entry_mut(adapter_id, source_id)?;
+            let DriverInstance::SqliteSnapshot(driver) = &mut entry.driver else {
+                return Err(acquisition::AcquisitionError::Other(
+                    "source_driver_kind_mismatch".into(),
+                ));
+            };
+            entry.status = DriverTaskStatus::Running;
+            match driver.poll() {
+                Ok(batch) => {
+                    entry.status = DriverTaskStatus::Idle;
+                    batch
+                }
+                Err(error) => {
+                    entry.status = DriverTaskStatus::Failed("sqlite_poll_failed".into());
+                    return Err(error);
+                }
+            }
+        };
+        if batch.frames.is_empty() {
+            let previous = self.wal.latest_checkpoint(source_id).cloned();
+            let next = previous.clone().unwrap_or_else(|| SourceCheckpoint {
+                source_id: source_id.to_owned(),
+                path_template_id: source_id.to_owned(),
+                file_identity: source_id.to_owned(),
+                generation: 1,
+                file_len: 0,
+                offset: 0,
+                last_record_hash: None,
+                driver_checkpoint: batch.driver_checkpoint,
+                status: protocol::SourceCheckpointStatus::Current,
+            });
+            return Ok(DecodedSourceBatch {
+                adapter_id: adapter_id.to_string(),
+                source_id: source_id.to_string(),
+                events: Vec::new(),
+                accepted_events: 0,
+                previous,
+                next,
+                checkpoint_moved: false,
+            });
+        }
+        let mut events = Vec::new();
+        for frame in batch.frames {
+            if frame.source_id != source_id {
+                return Err(acquisition::AcquisitionError::Other(
+                    "source_mismatch".into(),
+                ));
+            }
+            match self.collector.decode(adapter_id, frame).await {
+                Ok(decoded) => {
+                    events.extend(decoded.iter().map(|item| item.as_envelope().clone()));
+                }
+                Err(_) => {}
+            }
+        }
+        let offset = batch.cursor.parse::<u64>().unwrap_or_else(|_| {
+            batch.cursor.bytes().fold(0_u64, |value, byte| {
+                value.wrapping_mul(109).wrapping_add(byte as u64)
+            })
+        });
+        let previous = self.wal.latest_checkpoint(source_id).cloned();
+        let next = SourceCheckpoint {
+            source_id: source_id.to_owned(),
+            path_template_id: source_id.to_owned(),
+            file_identity: source_id.to_owned(),
+            generation: 1,
+            file_len: offset,
+            offset,
+            last_record_hash: Some(batch.cursor),
+            driver_checkpoint: batch.driver_checkpoint,
+            status: protocol::SourceCheckpointStatus::Current,
+        };
+        Ok(DecodedSourceBatch {
+            adapter_id: adapter_id.to_string(),
+            source_id: source_id.to_string(),
+            accepted_events: events.len(),
+            events,
+            previous,
+            next,
+            checkpoint_moved: true,
+        })
     }
 
     pub async fn ingest_driver_batch(

@@ -1,11 +1,12 @@
-pub mod autostart;
 pub mod auto_sync;
+pub mod autostart;
 pub mod commands;
 pub mod daemon;
-pub mod state;
-pub mod usage_ledger;
+pub mod local_store;
 pub mod pricing;
+pub mod state;
 pub mod updates;
+pub mod usage_ledger;
 
 use std::fs;
 use std::panic;
@@ -58,10 +59,7 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
         true,
         None::<&str>,
     )?;
-    let tray_menu = Menu::with_items(
-        app,
-        &[&open_item, &toggle_pause_item, &quit_item],
-    )?;
+    let tray_menu = Menu::with_items(app, &[&open_item, &toggle_pause_item, &quit_item])?;
 
     // tauri.conf.json already creates `main-tray`. Rebuilding the same id panics
     // the process during setup, which looks like an instant flash-exit.
@@ -105,7 +103,8 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
             button_state: MouseButtonState::Up,
             position,
             ..
-        } = event {
+        } = event
+        {
             if let Err(error) = commands::window::show_usage_panel(tray.app_handle(), position) {
                 eprintln!("failed to show usage panel: {error}");
             }
@@ -116,7 +115,9 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
 
 pub fn run() {
     install_panic_hook();
-    if updates::apply_pending_before_start() { return; }
+    if updates::apply_pending_before_start() {
+        return;
+    }
 
     let app_state = match tauri::async_runtime::block_on(AppState::production()) {
         Ok(state) => state,
@@ -176,15 +177,20 @@ pub fn run() {
                 let window = window.clone();
                 tauri::async_runtime::spawn(async move {
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    if window.is_visible().unwrap_or(false) && !window.is_focused().unwrap_or(true) {
-                        window.state::<commands::window::WindowPresentation>().cancel(window.label());
+                    if window.is_visible().unwrap_or(false) && !window.is_focused().unwrap_or(true)
+                    {
+                        window
+                            .state::<commands::window::WindowPresentation>()
+                            .cancel(window.label());
                         let _ = window.hide();
                     }
                 });
             }
             if let WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                window.state::<commands::window::WindowPresentation>().cancel(window.label());
+                window
+                    .state::<commands::window::WindowPresentation>()
+                    .cancel(window.label());
                 let _ = window.hide();
             }
         })
@@ -266,7 +272,10 @@ mod tests {
         let (_root, state) = state().await;
         let status = state.get_daemon_status().await;
         assert_eq!(status.status, "RUNNING");
-        assert_eq!(status.total_adapters_count as usize, state.get_agents().await.len());
+        assert_eq!(
+            status.total_adapters_count as usize,
+            state.get_agents().await.len()
+        );
         let paused = state.toggle_global_pause().await.unwrap();
         assert_eq!(paused.status, "ACKNOWLEDGED");
         assert!(paused.state.global_paused);
@@ -309,5 +318,35 @@ mod tests {
         assert!(state.set_autostart(true).unwrap().enabled);
         assert!(state.get_autostart_status().unwrap().enabled);
         state.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn sqlite_usage_survives_restart_without_json_or_upload_wal() {
+        let root = tempfile::tempdir().unwrap();
+        let mut event = crate::auto_sync::tests::event('B');
+        event.agent_id = "codex".into();
+        event.occurred_at = chrono::Local::now().to_rfc3339();
+        {
+            let state = AppState::test(root.path().to_path_buf(), Arc::new(MockAutostart::new()))
+                .await
+                .unwrap();
+            assert!(state.record_usage(&[event.clone()]));
+            let agents = state.get_agents().await;
+            let codex = agents.iter().find(|agent| agent.id == "codex").unwrap();
+            assert_eq!(codex.today_tokens, 15);
+            assert_eq!(codex.total_tokens, 15);
+            assert!(!root.path().join("usage-ledger.json").exists());
+            assert!(root.path().join("tokendance.sqlite3").exists());
+            assert!(state.get_outbox().await.is_empty());
+        }
+        let state = AppState::test(root.path().to_path_buf(), Arc::new(MockAutostart::new()))
+            .await
+            .unwrap();
+        let agents = state.get_agents().await;
+        let codex = agents.iter().find(|agent| agent.id == "codex").unwrap();
+        assert_eq!(codex.total_tokens, 15);
+        assert_eq!(codex.today_tokens, 15);
+        assert!(state.get_outbox().await.is_empty());
+        assert!(!state.record_usage(&[event]));
     }
 }
