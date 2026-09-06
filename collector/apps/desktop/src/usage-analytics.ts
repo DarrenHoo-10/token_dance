@@ -6,7 +6,20 @@ export interface AgentQuota {
   agentId: string;
   observedAt: string;
   plan?: string;
-  windows: { usedPercent: number; windowMinutes: number; resetsAt: number | null }[];
+  status?: string;
+  windows: { usedPercent: number; windowMinutes: number; resetsAt: number | null; provider?: string }[];
+}
+
+export function quotaStatusText(quota: AgentQuota | undefined, zh: boolean): string | null {
+  switch (quota?.status) {
+    case 'not_connected': return zh ? '请在 ZCode 登录并启用 Coding Plan' : 'Sign in and enable Coding Plan in ZCode';
+    case 'auth_required': return zh ? '登录已失效，请在 ZCode 重新登录' : 'Session expired · Sign in again in ZCode';
+    case 'unavailable': return quota.windows.length
+      ? (zh ? '查询失败，显示上次记录，稍后重试' : 'Query failed · Showing previous reading · Retrying')
+      : (zh ? '额度暂时无法查询，稍后自动重试' : 'Quota temporarily unavailable · Retrying');
+    case 'no_quota': return zh ? '未返回支持的个人套餐额度' : 'No supported personal plan quota returned';
+    default: return null;
+  }
 }
 
 export function usageTokens(agent: AgentConfig, range: UsageRange, now = new Date()): number | null {
@@ -57,6 +70,7 @@ export function annualUsage(agents: AgentConfig[], now = new Date()) {
 }
 
 export function quotaStale(quota: AgentQuota, resetsAt: number | null, now = Date.now()) {
+  if (quota.status && quota.status !== 'ready') return true;
   const observed = Date.parse(quota.observedAt);
   return !Number.isFinite(observed) || observed > now || now - observed > 30 * 60 * 1000 || (resetsAt != null && resetsAt * 1000 <= now);
 }

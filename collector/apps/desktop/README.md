@@ -13,7 +13,7 @@
 
 原生 usage-ledger.json 持久化所有已记录日期及去重 ID，All time 不再等于旧版 8 天窗口。旧格式自动兼容，升级前已经清理并确认上传的历史无法从本地恢复；界面的 All time 指本机仍有记录的全部历史。IPC 每次返回最近 366 天以及全部历史累计。费用来自 CostRecorded 事件，按币种分别汇总，以亿分之一货币单位整数持久化；未接入或缺少记录显示 —，不把部分费用当成完整账单，也不根据总 Token 随意套单价。
 
-Codex 额度从 CODEX_HOME（默认用户目录 .codex）的近期 sessions 日志中读取 token_count 的 primary/secondary rate_limits。只扫描有上限的文件尾部、每分钟缓存，不读取登录凭据，也不把对话内容传给前端。额度显示已用比例和重置倒计时，记录超过 30 分钟或已过重置时间显示待更新。其他 Agent 尚无额度来源时显示“额度未接入”；不影响 Token 采集。
+Codex 额度从 CODEX_HOME（默认用户目录 .codex）的近期 sessions 日志中读取 token_count 的 primary/secondary rate_limits。只扫描有上限的文件尾部、每分钟缓存，不读取登录凭据，也不把对话内容传给前端。额度显示已用比例和重置倒计时，记录超过 30 分钟或已过重置时间显示待更新。其他 Agent 尚无额度来源时显示“套餐额度暂不支持查询”；不影响 Token 采集。
 
 `npm run test:usage` 在 Node 22.6+ 检查七日汇总、跨年日期、缺失历史和零用量。
 
@@ -43,4 +43,8 @@ Codex 额度从 CODEX_HOME（默认用户目录 .codex）的近期 sessions 日�
 
 Grok Build 用量来自本地已完成轮次日志。主列表按所选周期用量降序展示前三个有已知数据的来源，其余收进“其他来源”；今日为 0 时仍可查看历史累计；未接入的其他能力不会被提示为整个用量来源需要配置。
 
-额度查询目前接入 Codex 本地限额日志。ZCode 的本地 coding-plan-cache.json 仅保存套餐可用状态，其官方客户端通过账号认证单独查询套餐额度；桌面端尚未接入此查询，不能根据 Token 用量推算剩余额度。
+额度查询已接入 Codex 本地限额日志及 ZCode 个人 Coding Plan。ZCode 从本机 `.zcode/v2/config.json` 中读取已启用的智谱或 Z.ai 官方 Coding Plan 配置，使用现有 API Key 向对应官方 HTTPS 额度接口发出只读 GET 请求；不读取或解密 credentials.json，不刷新或创建密钥，不上传凭据到 TokenDance 网站。只接受官方提供商和对应主机，禁止重定向，超时 8 秒，响应最多 256 KiB。
+
+ZCode 每 5 分钟查询 5 小时及 7 日已用比例和重置时间，界面独立加载额度，不阻塞本机用量和同步状态。网络失败保留原读数与原记录时间并标记待更新；登录失效提示回到 ZCode 重新登录。账号或密钥变化、取消启用时清除旧账号额度缓存。仅支持个人 Coding Plan，暂不查询团队项目、Start Plan 余额或月度工具调用额度；不将这些额度混为 Token 限额。
+
+验证：`cargo test --manifest-path src-tauri/Cargo.toml --lib commands::quotas` 覆盖官方主机绑定、响应校验、毫秒重置时间、失败缓存及拒绝重定向。开发者可显式设置 `TOKENDANCE_VERIFY_ZCODE_QUOTA=1` 后运行忽略的 `live_zcode_quota` 测试验证本机已登录账号的只读查询；输出仅包含展示字段，不包含凭据。
