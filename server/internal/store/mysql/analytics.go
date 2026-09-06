@@ -122,6 +122,20 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 	addNullInt64(&userMsgNull, raw.userMessages)
 	maxNullTime(&maxComputedAtNull, raw.maxReceivedAt)
 
+	var costRecords, codeRecords, durationRecords, pricedRequests, totalRequests, openRouterRecords int
+	err = s.db.QueryRowContext(ctx, `SELECT COUNT(cost_amount),COUNT(code_generated_lines),
+      COALESCE(SUM(event_type IN ('turn_completed','session_ended') AND duration_ms IS NOT NULL),0),
+      COALESCE(SUM(event_type='model_usage_recorded' AND cost_amount IS NOT NULL),0),
+      COALESCE(SUM(event_type='model_usage_recorded'),0),
+      COALESCE(SUM(JSON_EXTRACT(safe_extension_json,'$.openrouter') IS NOT NULL),0)
+      FROM usage_events WHERE user_id=? AND occurred_at>=? AND occurred_at<=? AND accuracy IN ('exact','derived')`, userID, r.From.UTC(), r.To.UTC()).Scan(&costRecords, &codeRecords, &durationRecords, &pricedRequests, &totalRequests, &openRouterRecords)
+	if err != nil {
+		return nil, fmt.Errorf("query metric coverage: %w", err)
+	}
+	pricingSource := ""
+	if openRouterRecords > 0 {
+		pricingSource = "openrouter"
+	}
 	costAmtStr := fmt.Sprintf("%.8f", costAmount)
 	costCurr := "USD"
 	totTokensStr := fmt.Sprintf("%d", totalTokens)
@@ -219,13 +233,24 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 		dataWatermarkAt = &tVal
 	}
 
+	if durationRecords == 0 && (!activeDurationNull.Valid || activeDurationNull.Int64 == 0) {
+		durationMetric = domain.MetricBigInt{Supported: false}
+	}
+	costMetric := domain.MetricCost{Amount: &costAmtStr, Currency: &costCurr, Supported: costRecords > 0 || costAmount > 0, PricingSource: pricingSource, PricedRequests: pricedRequests, TotalRequests: totalRequests}
+	if !costMetric.Supported {
+		costMetric.Amount = nil
+	}
+	codeMetric := domain.MetricBigInt{Value: &codeLinesStr, Supported: codeRecords > 0 || codeLines > 0}
+	if !codeMetric.Supported {
+		codeMetric.Value = nil
+	}
 	return &domain.PersonalSummary{
 		Range: r,
 		Metrics: domain.PersonalSummaryMetrics{
-			EstimatedCost:      domain.MetricCost{Amount: &costAmtStr, Currency: &costCurr, Supported: true},
+			EstimatedCost:      costMetric,
 			TotalTokens:        domain.MetricBigInt{Value: &totTokensStr, Supported: true},
-			GeneratedCodeLines: domain.MetricBigInt{Value: &codeLinesStr, Supported: true},
-			TokensPerCodeLine:  domain.MetricDecimal{Value: tokensPerCodeLineStr, Supported: true},
+			GeneratedCodeLines: codeMetric,
+			TokensPerCodeLine:  domain.MetricDecimal{Value: tokensPerCodeLineStr, Supported: tokensPerCodeLineStr != nil},
 			InputContextTokens: inputMetric,
 			OutputTokens:       outputMetric,
 			CacheHitRate:       cacheHitMetric,

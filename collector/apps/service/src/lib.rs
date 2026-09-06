@@ -441,10 +441,18 @@ impl ProductionService {
         let mut tailer =
             JsonlTailer::new(self.collector.installation_id(), source_id, source_id, path);
         tailer.restore_matching(&self.wal);
+        // Stable IDs dedupe old tokens while the startup replay fills new metrics.
+        let replay_codex = historical && adapter_id == adapter_codex::ADAPTER_ID;
+        if replay_codex {
+            if !self.wal.backpressure().allow_historical_scan() {
+                return Ok(0);
+            }
+            tailer.reset_for_rescan();
+        }
         let collector = &self.collector;
         let wal = &mut self.wal;
         IngestPipeline::new(collector, adapter_id)
-            .ingest(&mut tailer, wal, historical)
+            .ingest(&mut tailer, wal, historical && !replay_codex)
             .await
             .map(|poll| poll.accepted_events)
     }

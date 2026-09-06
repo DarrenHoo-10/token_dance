@@ -249,3 +249,46 @@ fn manifest_compatibility_and_golden_summary_are_stable() {
         serde_json::from_str(include_str!("../fixtures/golden/session.summary.json")).unwrap();
     assert_eq!(golden["count"], 5);
 }
+
+#[tokio::test]
+async fn rollout_context_duration_and_successful_patch_are_collected() {
+    let adapter = CodexAdapter::new("0.130.0", "interactive", KEY);
+    let frames = vec![
+        serde_json::json!({"timestamp":"2026-09-06T00:00:00Z","type":"turn_context","payload":{"model":"gpt-5.6-sol"}}),
+        serde_json::json!({"timestamp":"2026-09-06T00:00:01Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":40,"output_tokens":20,"total_tokens":120}}}}),
+        serde_json::json!({"timestamp":"2026-09-06T00:00:02Z","type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"call1","input":"*** Begin Patch\n*** Update File: SECRET_PATH\n@@\n-OLD_SECRET\n+NEW_SECRET\n+NEW_SECRET2\n*** End Patch"}}),
+        serde_json::json!({"timestamp":"2026-09-06T00:00:03Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call1","output":"Success. Updated the following files:\nM SECRET_PATH"}}),
+        serde_json::json!({"timestamp":"2026-09-06T00:00:04Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn1","duration_ms":4500,"last_agent_message":"SECRET_RESPONSE"}}),
+    ];
+    let mut out = vec![];
+    for (i, v) in frames.iter().enumerate() {
+        out.extend(
+            adapter
+                .decode(RawFrame::jsonl(
+                    INSTALL,
+                    SOURCE_JSONL,
+                    format!("file:1:{}", i * 100),
+                    serde_json::to_vec(v).unwrap(),
+                ))
+                .await
+                .unwrap(),
+        );
+    }
+    assert!(out.iter().any(
+        |e| matches!(&e.payload,EventPayload::ModelUsageRecorded(p) if p.model_id=="gpt-5.6-sol")
+    ));
+    assert!(out.iter().any(|e|matches!(&e.payload,EventPayload::CodeChanged(p) if p.generated_lines.as_deref()==Some("2") && p.removed_lines=="1")));
+    assert!(out.iter().any(|e|matches!(&e.payload,EventPayload::TurnCompleted(p) if p.duration_ms.as_deref()==Some("4500"))));
+    let encoded = serde_json::to_string(&out).unwrap();
+    assert!(!encoded.contains("SECRET"));
+    for e in out {
+        assert!(PrivacyFilter.filter(e).is_ok())
+    }
+}
+#[tokio::test]
+async fn failed_patch_is_not_counted() {
+    let adapter = CodexAdapter::new("0.130.0", "interactive", KEY);
+    for (i,v) in [serde_json::json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"bad","input":"*** Begin Patch\n*** Add File: a\n+line\n*** End Patch"}}),serde_json::json!({"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"bad","output":"Failed to apply patch"}})].iter().enumerate(){
+ let out=adapter.decode(RawFrame::jsonl(INSTALL,SOURCE_JSONL,format!("file:1:{i}"),serde_json::to_vec(v).unwrap())).await.unwrap();assert!(!out.iter().any(|e|matches!(e.payload,EventPayload::CodeChanged(_))));
+ }
+}

@@ -377,7 +377,11 @@ impl AccountState {
                 }
             }
         };
-        *app.sync_status.write().await = next.into();
+        let mut status=app.sync_status.write().await;
+        if status.as_str()!=next {
+            collector_service::runtime::append_log(&app.control_dir_path(),&format!("sync status={next}"));
+        }
+        *status=next.into();
     }
 }
 
