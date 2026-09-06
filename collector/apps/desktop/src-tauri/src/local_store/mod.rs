@@ -12,6 +12,12 @@ use protocol::{EventEnvelope, EventPayload};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use wal_spool::SourceCheckpoint;
 
+mod rebuild;
+mod sync;
+
+pub use rebuild::{DiscoveredSource, RebuildFileProgress, ScanWorkItem};
+pub use sync::{DeliveryRecord, LeasedBatch};
+
 use crate::pricing::{Catalog, CostCoverage, CostLedger};
 use crate::usage_ledger::{
     accuracy_name, accuracy_rank, cost_units, event_tokens, local_date, AgentUsageSnapshot,
@@ -19,7 +25,7 @@ use crate::usage_ledger::{
 };
 
 const DB_FILE: &str = "tokendance.sqlite3";
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 const AGGREGATION_VERSION: i64 = 1;
 const PARSE_VERSION: &str = "1";
 const BUSY_TIMEOUT_MS: u64 = 5_000;
@@ -101,6 +107,64 @@ CREATE TABLE daily_skill_metrics (
 );
 ";
 
+const SCHEMA_V2: &str = "
+ALTER TABLE source_checkpoints ADD COLUMN driver_checkpoint TEXT;
+CREATE TABLE rebuild_jobs (
+    job_id TEXT PRIMARY KEY,
+    scan_root TEXT NOT NULL,
+    adapter_id TEXT NOT NULL DEFAULT '',
+    source_id TEXT NOT NULL DEFAULT '',
+    discovery_cursor TEXT NOT NULL DEFAULT '',
+    discovered_files INTEGER NOT NULL DEFAULT 0,
+    processed_files INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    error_code TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX idx_rebuild_jobs_source ON rebuild_jobs(adapter_id, source_id);
+CREATE TABLE rebuild_job_files (
+    job_id TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    file_identity TEXT NOT NULL DEFAULT '',
+    mtime_unix INTEGER NOT NULL DEFAULT 0,
+    file_len INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    error_code TEXT,
+    PRIMARY KEY (job_id, file_path)
+);
+CREATE INDEX idx_rebuild_job_files_work ON rebuild_job_files(job_id, status, mtime_unix);
+CREATE TABLE sync_targets (
+    target_id TEXT PRIMARY KEY,
+    account_id TEXT NOT NULL UNIQUE,
+    binding_generation INTEGER NOT NULL,
+    installation_id TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE sync_delivery (
+    target_id TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    local_seq INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    lease_id TEXT,
+    lease_generation INTEGER NOT NULL DEFAULT 0,
+    lease_until INTEGER,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    next_attempt_at INTEGER,
+    last_error TEXT,
+    PRIMARY KEY (target_id, event_id)
+);
+CREATE UNIQUE INDEX idx_sync_delivery_event ON sync_delivery(event_id);
+CREATE INDEX idx_sync_delivery_work ON sync_delivery(target_id, status, next_attempt_at, local_seq);
+CREATE TABLE sync_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    active_target_id TEXT,
+    sync_enabled INTEGER NOT NULL DEFAULT 1
+);
+INSERT INTO sync_state (id, active_target_id, sync_enabled) VALUES (1, NULL, 1);
+";
+
 pub struct LocalStore {
     conn: Connection,
     catalog: Catalog,
@@ -143,24 +207,44 @@ impl LocalStore {
         events: &[EventEnvelope],
         checkpoints: &[SourceCheckpoint],
     ) -> Result<bool, String> {
-        self.commit_batch_inner(events, checkpoints, false)
+        self.commit_batch_inner(events, checkpoints, &[], false)
+    }
+
+    pub fn commit_scan_batch(
+        &mut self,
+        events: &[EventEnvelope],
+        checkpoints: &[SourceCheckpoint],
+        progress: &[RebuildFileProgress],
+    ) -> Result<bool, String> {
+        self.commit_batch_inner(events, checkpoints, progress, false)
     }
 
     fn commit_batch_inner(
         &mut self,
         events: &[EventEnvelope],
         checkpoints: &[SourceCheckpoint],
+        progress: &[RebuildFileProgress],
         abort: bool,
     ) -> Result<bool, String> {
         let tx = self.conn.transaction().map_err(|error| error.to_string())?;
         let mut changed = false;
         let mut dirty_agents = HashSet::new();
+        let target_id = active_target_id(&tx)?;
         for event in events {
-            changed |= apply_event(&tx, event, &mut self.pricing, &self.catalog)?;
+            let outcome = apply_event(&tx, event, &mut self.pricing, &self.catalog)?;
+            changed |= outcome.changed;
+            if outcome.inserted {
+                if let Some(target_id) = target_id.as_deref() {
+                    enqueue_delivery(&tx, target_id, event)?;
+                }
+            }
             dirty_agents.insert(event.agent_id.clone());
         }
         for checkpoint in checkpoints {
             upsert_checkpoint(&tx, checkpoint)?;
+        }
+        for item in progress {
+            rebuild::apply_file_progress(&tx, item)?;
         }
         for agent in dirty_agents {
             refresh_agent_coverage(&tx, &agent, &self.pricing)?;
@@ -171,6 +255,28 @@ impl LocalStore {
         }
         tx.commit().map_err(|error| error.to_string())?;
         Ok(changed)
+    }
+
+    pub fn load_checkpoint(
+        &self,
+        source_id: &str,
+        file_identity: &str,
+    ) -> Option<SourceCheckpoint> {
+        load_checkpoint(&self.conn, source_id, file_identity)
+    }
+
+    pub fn checkpoint_for_path(&self, source_id: &str, path: &Path) -> Option<SourceCheckpoint> {
+        let meta = std::fs::metadata(path).ok()?;
+        let identity = acquisition::file_identity(path, &meta);
+        self.load_checkpoint(source_id, &identity)
+    }
+
+    pub fn event_count(&self) -> u64 {
+        self.conn
+            .query_row("SELECT COUNT(*) FROM events", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .unwrap_or(0) as u64
     }
 
     pub fn agent_usage(&self, agent_id: &str, today: NaiveDate) -> Option<AgentUsageSnapshot> {
@@ -336,8 +442,8 @@ fn migrate(conn: &mut Connection) -> Result<(), String> {
         Err(error) if error.to_string().contains("no such table") => 0,
         Err(error) => return Err(error.to_string()),
     };
-    if current >= SCHEMA_VERSION {
-        return Ok(());
+    if current > SCHEMA_VERSION {
+        return Err(format!("unsupported schema version {current}"));
     }
     let tx = conn.transaction().map_err(|error| error.to_string())?;
     if current == 0 {
@@ -347,6 +453,17 @@ fn migrate(conn: &mut Connection) -> Result<(), String> {
             "INSERT INTO schema_meta (id, schema_version, aggregation_version, pricing_json)
              VALUES (1, ?1, ?2, '{}')",
             params![SCHEMA_VERSION, AGGREGATION_VERSION],
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    if current < 2 {
+        tx.execute_batch(SCHEMA_V2)
+            .map_err(|error| error.to_string())?;
+    }
+    if current != 0 && current < SCHEMA_VERSION {
+        tx.execute(
+            "UPDATE schema_meta SET schema_version = ?1 WHERE id = 1",
+            params![SCHEMA_VERSION],
         )
         .map_err(|error| error.to_string())?;
     }
@@ -374,12 +491,17 @@ fn save_pricing(tx: &Transaction, pricing: &CostLedger) -> Result<(), String> {
     Ok(())
 }
 
+struct ApplyOutcome {
+    changed: bool,
+    inserted: bool,
+}
+
 fn apply_event(
     tx: &Transaction,
     event: &EventEnvelope,
     pricing: &mut CostLedger,
     catalog: &Catalog,
-) -> Result<bool, String> {
+) -> Result<ApplyOutcome, String> {
     let envelope_json = serde_json::to_string(event).map_err(|error| error.to_string())?;
     let inserted = tx
         .execute(
@@ -405,21 +527,33 @@ fn apply_event(
         maybe_enrich_unknown_model(tx, event)?;
     }
     let Some(date) = local_date(&event.occurred_at) else {
-        return Ok(inserted);
+        return Ok(ApplyOutcome {
+            changed: inserted,
+            inserted,
+        });
     };
     if date > Local::now().date_naive() {
-        return Ok(inserted);
+        return Ok(ApplyOutcome {
+            changed: inserted,
+            inserted,
+        });
     }
     let date_key = date.format("%Y-%m-%d").to_string();
     let tokens = event_tokens(event).unwrap_or(0);
     let pricing_changed = pricing.record(event, &date_key, tokens, catalog);
     if !inserted {
-        return Ok(pricing_changed);
+        return Ok(ApplyOutcome {
+            changed: pricing_changed,
+            inserted,
+        });
     }
     bump_agent_metrics(tx, event, &date_key, tokens)?;
     bump_model_metrics(tx, event, &date_key, tokens)?;
     bump_skill_metrics(tx, event, &date_key)?;
-    Ok(true)
+    Ok(ApplyOutcome {
+        changed: true,
+        inserted: true,
+    })
 }
 
 fn maybe_enrich_unknown_model(tx: &Transaction, event: &EventEnvelope) -> Result<(), String> {
@@ -639,16 +773,23 @@ fn upsert_checkpoint(tx: &Transaction, checkpoint: &SourceCheckpoint) -> Result<
         ],
     )
     .map_err(|error| error.to_string())?;
+    let driver_checkpoint = checkpoint
+        .driver_checkpoint
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|error| error.to_string())?;
     tx.execute(
         "INSERT INTO source_checkpoints (
-            source_id, file_identity, generation, file_offset, file_len, cursor, status
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+            source_id, file_identity, generation, file_offset, file_len, cursor, status, driver_checkpoint
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(source_id, file_identity) DO UPDATE SET
             generation = excluded.generation,
             file_offset = excluded.file_offset,
             file_len = excluded.file_len,
             cursor = excluded.cursor,
-            status = excluded.status
+            status = excluded.status,
+            driver_checkpoint = excluded.driver_checkpoint
          WHERE excluded.generation > source_checkpoints.generation
             OR (excluded.generation = source_checkpoints.generation
                 AND excluded.file_offset >= source_checkpoints.file_offset)",
@@ -660,10 +801,98 @@ fn upsert_checkpoint(tx: &Transaction, checkpoint: &SourceCheckpoint) -> Result<
             checkpoint.file_len as i64,
             checkpoint.last_record_hash,
             format!("{:?}", checkpoint.status),
+            driver_checkpoint,
         ],
     )
     .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+fn load_checkpoint(
+    conn: &Connection,
+    source_id: &str,
+    file_identity: &str,
+) -> Option<SourceCheckpoint> {
+    conn.query_row(
+        "SELECT COALESCE(f.path_template_id, c.source_id), c.generation, c.file_offset, c.file_len,
+                c.cursor, c.status, c.driver_checkpoint
+         FROM source_checkpoints c
+         LEFT JOIN source_files f
+            ON f.source_id = c.source_id AND f.file_identity = c.file_identity
+         WHERE c.source_id = ?1 AND c.file_identity = ?2",
+        params![source_id, file_identity],
+        |row| {
+            let driver: Option<String> = row.get(6)?;
+            Ok(SourceCheckpoint {
+                source_id: source_id.to_string(),
+                path_template_id: row.get(0)?,
+                file_identity: file_identity.to_string(),
+                generation: row.get::<_, i64>(1)? as u64,
+                offset: row.get::<_, i64>(2)? as u64,
+                file_len: row.get::<_, i64>(3)? as u64,
+                last_record_hash: row.get(4)?,
+                driver_checkpoint: driver.and_then(|raw| serde_json::from_str(&raw).ok()),
+                status: parse_checkpoint_status(&row.get::<_, String>(5)?),
+            })
+        },
+    )
+    .optional()
+    .ok()
+    .flatten()
+}
+
+fn parse_checkpoint_status(raw: &str) -> protocol::SourceCheckpointStatus {
+    match raw {
+        "Discovered" => protocol::SourceCheckpointStatus::Discovered,
+        "Scanning" => protocol::SourceCheckpointStatus::Scanning,
+        "Stale" => protocol::SourceCheckpointStatus::Stale,
+        "Rotated" => protocol::SourceCheckpointStatus::Rotated,
+        "Truncated" => protocol::SourceCheckpointStatus::Truncated,
+        "PermissionDenied" => protocol::SourceCheckpointStatus::PermissionDenied,
+        "Incompatible" => protocol::SourceCheckpointStatus::Incompatible,
+        _ => protocol::SourceCheckpointStatus::Current,
+    }
+}
+
+fn active_target_id(tx: &Transaction) -> Result<Option<String>, String> {
+    tx.query_row(
+        "SELECT active_target_id FROM sync_state WHERE id = 1",
+        [],
+        |row| row.get::<_, Option<String>>(0),
+    )
+    .map_err(|error| error.to_string())
+}
+
+fn enqueue_delivery(
+    tx: &Transaction,
+    target_id: &str,
+    event: &EventEnvelope,
+) -> Result<(), String> {
+    let local_seq: i64 = tx
+        .query_row(
+            "SELECT local_seq FROM events WHERE event_id = ?1",
+            params![event.event_id],
+            |row| row.get(0),
+        )
+        .map_err(|error| error.to_string())?;
+    tx.execute(
+        "INSERT OR IGNORE INTO sync_delivery (target_id, event_id, local_seq, status)
+         VALUES (?1, ?2, ?3, 'pending')",
+        params![target_id, event.event_id, local_seq],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+pub(crate) fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+pub(crate) fn rfc3339_now() -> String {
+    chrono::Utc::now().to_rfc3339()
 }
 
 fn refresh_agent_coverage(
@@ -757,9 +986,69 @@ fn cost_map_json(costs: &BTreeMap<String, u64>) -> String {
 }
 
 #[cfg(test)]
+pub(crate) fn test_envelope(
+    agent_id: &str,
+    event_id: &str,
+    total: u64,
+    accuracy: protocol::Accuracy,
+) -> EventEnvelope {
+    let occurred_at = chrono::Local::now()
+        .date_naive()
+        .and_hms_opt(12, 0, 0)
+        .unwrap()
+        .and_local_timezone(chrono::Local)
+        .unwrap()
+        .to_rfc3339();
+    test_envelope_at(agent_id, event_id, &occurred_at, total, accuracy)
+}
+
+#[cfg(test)]
+pub(crate) fn test_envelope_at(
+    agent_id: &str,
+    event_id: &str,
+    occurred_at: &str,
+    total: u64,
+    accuracy: protocol::Accuracy,
+) -> EventEnvelope {
+    use protocol::{EventSource, SourceKind, TokenUsage};
+    EventEnvelope {
+        schema_version: "1.0".into(),
+        event_id: event_id.into(),
+        adapter_id: "adapter-test".into(),
+        adapter_version: "1.0.0".into(),
+        agent_id: agent_id.into(),
+        agent_version: None,
+        installation_id: "ins_test".into(),
+        occurred_at: occurred_at.into(),
+        session_hash: None,
+        turn_hash: None,
+        tool_call_hash: None,
+        source: EventSource {
+            kind: SourceKind::Otlp,
+            cursor_hmac: String::new(),
+            raw_fingerprint_hmac: String::new(),
+        },
+        accuracy,
+        payload: EventPayload::ModelUsageRecorded(protocol::ModelUsageRecordedPayload {
+            provider_id: "test".into(),
+            model_id: "test-model".into(),
+            tokens: TokenUsage {
+                input_tokens: Some("10".into()),
+                output_tokens: Some("5".into()),
+                cache_read_tokens: None,
+                cache_write_tokens: None,
+                reasoning_tokens: None,
+                tool_tokens: None,
+                total_tokens: Some(total.to_string()),
+            },
+        }),
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    use protocol::{Accuracy, EventSource, SourceKind, TokenUsage};
+    use protocol::Accuracy;
 
     fn envelope(
         agent_id: &str,
@@ -767,38 +1056,13 @@ mod tests {
         total: u64,
         accuracy: Accuracy,
     ) -> EventEnvelope {
-        EventEnvelope {
-            schema_version: "1.0".into(),
-            event_id: format!("evt-{agent_id}-{occurred_at}-{total}"),
-            adapter_id: "adapter-test".into(),
-            adapter_version: "1.0.0".into(),
-            agent_id: agent_id.into(),
-            agent_version: None,
-            installation_id: "ins_test".into(),
-            occurred_at: occurred_at.into(),
-            session_hash: None,
-            turn_hash: None,
-            tool_call_hash: None,
-            source: EventSource {
-                kind: SourceKind::Otlp,
-                cursor_hmac: String::new(),
-                raw_fingerprint_hmac: String::new(),
-            },
+        test_envelope_at(
+            agent_id,
+            &format!("evt-{agent_id}-{occurred_at}-{total}"),
+            occurred_at,
+            total,
             accuracy,
-            payload: EventPayload::ModelUsageRecorded(protocol::ModelUsageRecordedPayload {
-                provider_id: "test".into(),
-                model_id: "test-model".into(),
-                tokens: TokenUsage {
-                    input_tokens: Some("10".into()),
-                    output_tokens: Some("5".into()),
-                    cache_read_tokens: None,
-                    cache_write_tokens: None,
-                    reasoning_tokens: None,
-                    tool_tokens: None,
-                    total_tokens: Some(total.to_string()),
-                },
-            }),
-        }
+        )
     }
 
     fn today_local_noon(days_ago: i64) -> String {
@@ -860,7 +1124,7 @@ mod tests {
         let first = envelope("codex", &today_local_noon(0), 40, Accuracy::Exact);
         let second = envelope("codex", &today_local_noon(0), 60, Accuracy::Derived);
         let err = store
-            .commit_batch_inner(&[first, second], &[], true)
+            .commit_batch_inner(&[first, second], &[], &[], true)
             .unwrap_err();
         assert_eq!(err, "injected_abort");
         assert!(store

@@ -4,6 +4,7 @@ pub mod commands;
 pub mod daemon;
 pub mod local_store;
 pub mod pricing;
+pub mod rebuild;
 pub mod state;
 pub mod updates;
 pub mod usage_ledger;

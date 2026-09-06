@@ -276,21 +276,27 @@ impl Connection {
 
     async fn sync_once(&mut self, app: &AppState) -> Result<&'static str, String> {
         if self.cookies.is_empty() {
+            let _ = app.deactivate_sync_account();
             return Ok("LOGIN_REQUIRED");
         }
         let session = self.session().await?;
         let Some(user) = session.user else {
             self.transport = None;
+            let _ = app.deactivate_sync_account();
             return Ok("LOGIN_REQUIRED");
         };
         if user.onboarding_required {
             return Ok("NEEDS_PROFILE");
         }
+        if !app.sync_enabled() {
+            return Ok("SYNC_OFF");
+        }
         let status = app.get_daemon_status().await;
         if status.global_paused {
             return Ok("PAUSED");
         }
-        if status.events_pending > 0 {
+        let target_id = app.activate_sync_account(&user.user_id).await?;
+        if app.pending_sync_count() > 0 {
             *app.sync_status.write().await = "SYNCING".into();
         }
         if self.transport.is_none() {
@@ -301,29 +307,66 @@ impl Connection {
                 .await?;
         }
         let transport = self.transport.as_ref().ok_or("DEVICE_UNAVAILABLE")?;
-        let events = { app.service.lock().await.wal.unacked_events() };
-        if events.is_empty() {
+        let lease_id = wal_spool::new_prefixed_id("lse");
+        let leased = app.lease_sync_batch(&lease_id, 100)?;
+        if !leased.target_id.is_empty()
+            && (leased.target_id != target_id || leased.account_id != user.user_id)
+        {
+            let _ = app.release_sync_lease(&leased.target_id, &lease_id);
+            return Ok("LOGIN_REQUIRED");
+        }
+        if leased.events.is_empty() {
             return Ok("SYNCED");
         }
-        let batch = auto_sync::batch(transport.installation_id(), events)?;
-        let ack = transport
-            .upload(&batch)
-            .await
-            .map_err(|error| match error {
-                uploader::TransportError::Auth => "DEVICE_UNAVAILABLE",
-                _ => "UPLOAD_FAILED",
-            })?;
+        let mut events = leased.events;
+        let batch = loop {
+            match auto_sync::batch(transport.installation_id(), events.clone()) {
+                Ok(batch) => break batch,
+                Err(error) if error == "EVENT_TOO_LARGE" => {
+                    let poison = events.remove(0);
+                    app.isolate_sync_events(&target_id, &[poison.event_id], "EVENT_TOO_LARGE")?;
+                    if events.is_empty() {
+                        return Ok("SYNCED");
+                    }
+                }
+                Err(error) => {
+                    let _ = app.release_sync_lease(&target_id, &lease_id);
+                    return Err(error);
+                }
+            }
+        };
+        let ack = match transport.upload(&batch).await {
+            Ok(ack) => ack,
+            Err(error) => {
+                let _ = app.release_sync_lease(&target_id, &lease_id);
+                return Err(match error {
+                    uploader::TransportError::Auth => "DEVICE_UNAVAILABLE".into(),
+                    _ => "UPLOAD_FAILED".into(),
+                });
+            }
+        };
         let checked = auto_sync::checked_ack(&batch, &ack)?;
         if !checked.acked_event_ids.is_empty() {
+            app.ack_sync_batch(&target_id, &lease_id, &checked.acked_event_ids)?;
             app.acknowledge_auto_sync(checked).await?;
         }
-        if ack.rejected.iter().any(|item| !item.retryable) {
-            return Err("REJECTED_EVENTS".into());
+        let mut isolated = Vec::new();
+        let mut retry = Vec::new();
+        for rejected in &ack.rejected {
+            if rejected.retryable {
+                retry.push(rejected.event_id.clone());
+            } else {
+                isolated.push(rejected.event_id.clone());
+            }
         }
-        if !ack.rejected.is_empty() {
-            return Err("UPLOAD_FAILED".into());
+        if !isolated.is_empty() {
+            app.isolate_sync_events(&target_id, &isolated, "rejected")?;
         }
-        let pending = app.service.lock().await.wal.unacked_count();
+        if !retry.is_empty() {
+            app.retry_sync_events(&target_id, &lease_id, &retry, "rejected_retryable", 10)?;
+        }
+        let _ = app.release_sync_lease(&target_id, &lease_id);
+        let pending = app.pending_sync_count();
         Ok(if pending == 0 { "SYNCED" } else { "WAITING" })
     }
 }
@@ -334,6 +377,7 @@ impl AccountState {
         // no request can use an old account or device transport.
         let mut guard = self.0.lock().await;
         let Some(current) = guard.as_mut() else {
+            let _ = app.deactivate_sync_account();
             *app.sync_status.write().await = "LOGIN_REQUIRED".into();
             return;
         };
@@ -377,11 +421,14 @@ impl AccountState {
                 }
             }
         };
-        let mut status=app.sync_status.write().await;
-        if status.as_str()!=next {
-            collector_service::runtime::append_log(&app.control_dir_path(),&format!("sync status={next}"));
+        let mut status = app.sync_status.write().await;
+        if status.as_str() != next {
+            collector_service::runtime::append_log(
+                &app.control_dir_path(),
+                &format!("sync status={next}"),
+            );
         }
-        *status=next.into();
+        *status = next.into();
     }
 }
 
@@ -576,6 +623,9 @@ pub async fn login_account(
     };
     let _ = send_browser_result(&mut stream, "200 OK", message).await;
     let session = result?;
+    if let Some(user) = &session.user {
+        let _ = app.activate_sync_account(&user.user_id).await;
+    }
     *app.sync_status.write().await = "WAITING".into();
     Ok(session)
 }
@@ -686,6 +736,7 @@ pub async fn logout_account(
     }
     *guard = None;
     let _ = fs::remove_file(persist_path());
+    let _ = app.deactivate_sync_account();
     *app.sync_status.write().await = "LOGIN_REQUIRED".into();
     Ok(())
 }
@@ -894,6 +945,7 @@ mod tests {
         let account = AccountState(Mutex::new(Some(client)), Mutex::new(()), AtomicU64::new(0));
         account.auto_sync_tick(&app).await;
         assert_eq!(app.sync_status.read().await.as_str(), "RETRYING");
+        assert_eq!(app.get_daemon_status().await.status, "RUNNING");
         assert_eq!(app.get_daemon_status().await.events_pending, 2);
         assert_eq!(app.get_daemon_status().await.events_uploaded, 0);
         account.auto_sync_tick(&app).await; // Backoff performs no network request.
@@ -914,8 +966,51 @@ mod tests {
         let account = AccountState(Mutex::new(Some(client)), Mutex::new(()), AtomicU64::new(0));
         account.auto_sync_tick(&app).await;
         assert_eq!(app.sync_status.read().await.as_str(), "LOGIN_REQUIRED");
-        assert_eq!(app.get_daemon_status().await.events_pending, 2);
+        assert_eq!(app.lock_store().event_count(), 2);
+        assert_eq!(app.get_daemon_status().await.events_pending, 0);
         assert_eq!(server.join().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn account_switch_does_not_upload_previous_account_history() {
+        let (_root, app) = crate::auto_sync::tests::seeded_app().await;
+        app.activate_sync_account("account-a").await.unwrap();
+        assert_eq!(app.lock_store().pending_sync_count(), 2);
+        let (origin, server) = mock_server(vec![session_response()]);
+        let mut client = Connection::new(origin.clone()).unwrap();
+        client
+            .cookies
+            .insert("tokendance_session".into(), "fixture-session".into());
+        client.transport = Some(HttpTransport::new_claimed(
+            origin.as_str(),
+            client.client.clone(),
+            "ins_fixture",
+            Arc::new(InMemoryDeviceSigner::from_seed([7; 32])),
+        ));
+        let account = AccountState(Mutex::new(Some(client)), Mutex::new(()), AtomicU64::new(0));
+        account.auto_sync_tick(&app).await;
+        assert_eq!(app.sync_status.read().await.as_str(), "SYNCED");
+        assert_eq!(app.get_daemon_status().await.events_pending, 0);
+        assert_eq!(
+            app.lock_store()
+                .delivery_for_event(&crate::auto_sync::tests::event('B').event_id)
+                .unwrap()
+                .target_id,
+            "tgt:account-a"
+        );
+        assert_eq!(
+            app.lock_store()
+                .delivery_for_event(&crate::auto_sync::tests::event('B').event_id)
+                .unwrap()
+                .status,
+            "pending"
+        );
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].starts_with("GET /api/v1/auth/session "));
+        assert!(!requests
+            .iter()
+            .any(|request| request.contains("/v1/telemetry/batches")));
     }
 
     #[tokio::test]
