@@ -1,0 +1,29 @@
+# Audited historical false positives: synthetic encryption keys and token metrics.
+# Fingerprints are exact commit/file/rule/line matches; new findings still fail.
+5208c3a9e6b69c42d5ab355459730c0b63663ea6:server/internal/config/config_test.go:generic-api-key:81
+bba635fb6005d8c18d5985bcedd38fea95556324:server/internal/auth/service_test.go:generic-api-key:242
+bba635fb6005d8c18d5985bcedd38fea95556324:server/internal/httpapi/security_test.go:generic-api-key:37
+d5a2cbeec559a6d8a405c29cd01ca1aadffee7b3:server/internal/store/mysql/analytics.go:generic-api-key:226
+bd0add2f5c630601dddae29b8ad143a08fdc68d1:server/internal/store/memory/memory.go:generic-api-key:868
+
+# Audited historical HTTP test fixtures, local-only development DSNs, and one f-string interpolation.
+82f1d7dff0a5267776457a8aeee72adf235befee:server/internal/httpapi/registration_profile_test.go:login-json-password:18
+2be23c000098e521c108d11c24339cbcd8a1bd28:deploy/provision.py:mysql-dsn-password:49
+780bde7a060ab242fba558dbcc00a1dc2efd503a:server/cmd/api/main.go:mysql-dsn-password:22
+780bde7a060ab242fba558dbcc00a1dc2efd503a:server/cmd/worker/main.go:mysql-dsn-password:29
+780bde7a060ab242fba558dbcc00a1dc2efd503a:server/internal/store/mysqlstore/integration_test.go:mysql-dsn-password:36
+780bde7a060ab242fba558dbcc00a1dc2efd503a:server/internal/store/redisstore/failover_integration_test.go:mysql-dsn-password:165
+95b91efed48a3e6d70cb53308bf936b814e5824e:server/internal/httpapi/acceptance_test.go:login-json-password:295
+95b91efed48a3e6d70cb53308bf936b814e5824e:server/internal/httpapi/acceptance_test.go:login-json-password:296
+95b91efed48a3e6d70cb53308bf936b814e5824e:server/internal/httpapi/acceptance_test.go:login-json-password:824
+bba635fb6005d8c18d5985bcedd38fea95556324:server/internal/httpapi/security_test.go:login-json-password:176
+bba635fb6005d8c18d5985bcedd38fea95556324:server/internal/httpapi/security_test.go:login-json-password:291
+d5a2cbeec559a6d8a405c29cd01ca1aadffee7b3:server/internal/httpapi/acceptance_test.go:login-json-password:108
+d5a2cbeec559a6d8a405c29cd01ca1aadffee7b3:server/internal/httpapi/acceptance_test.go:login-json-password:172
+d5a2cbeec559a6d8a405c29cd01ca1aadffee7b3:server/internal/httpapi/acceptance_test.go:login-json-password:233
+d5a2cbeec559a6d8a405c29cd01ca1aadffee7b3:server/internal/httpapi/acceptance_test.go:login-json-password:275
+d5a2cbeec559a6d8a405c29cd01ca1aadffee7b3:server/internal/httpapi/acceptance_test.go:login-json-password:295
+d5a2cbeec559a6d8a405c29cd01ca1aadffee7b3:server/internal/httpapi/acceptance_test.go:login-json-password:482
+d5a2cbeec559a6d8a405c29cd01ca1aadffee7b3:server/internal/httpapi/acceptance_test.go:login-json-password:590
+d5a2cbeec559a6d8a405c29cd01ca1aadffee7b3:server/internal/httpapi/acceptance_test.go:login-json-password:610
+bd0add2f5c630601dddae29b8ad143a08fdc68d1:server/internal/httpapi/router_test.go:login-json-password:125

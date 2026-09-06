@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo 'Install Gitleaks 8.30.1 before committing. See SECURITY.md.' >&2
+  exit 1
+fi
+exec gitleaks git . --pre-commit --staged --redact=100 --no-banner --log-level error --ignore-gitleaks-allow
