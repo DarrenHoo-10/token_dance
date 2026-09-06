@@ -72,7 +72,10 @@ type rawSummary struct {
 func (s *analyticsStore) queryRawSummary(ctx context.Context, userID string, intervals []rawInterval) (rawSummary, error) {
 	var total rawSummary
 	const query = `
-		SELECT COUNT(*), COALESCE(SUM(cost_amount), 0),
+		SELECT COUNT(*), COALESCE(SUM(CASE WHEN JSON_EXTRACT(e.safe_extension_json,'$.openrouter') IS NOT NULL
+ AND e.turn_hash IS NOT NULL AND EXISTS(SELECT 1 FROM usage_events reported WHERE reported.user_id=e.user_id
+ AND reported.agent_id=e.agent_id AND reported.turn_hash=e.turn_hash AND reported.occurred_date=e.occurred_date
+ AND reported.cost_source='provider_reported' AND reported.cost_amount IS NOT NULL) THEN 0 ELSE e.cost_amount END),0),
 		       COALESCE(SUM(COALESCE(token_total, COALESCE(token_input, 0) + COALESCE(token_output, 0) + COALESCE(token_cache_read, 0) + COALESCE(token_cache_write, 0) + COALESCE(token_reasoning, 0))), 0),
 		       COALESCE(SUM(COALESCE(code_generated_lines, 0)), 0),
 		       COALESCE(SUM(COALESCE(token_input, 0)), 0),
@@ -80,11 +83,14 @@ func (s *analyticsStore) queryRawSummary(ctx context.Context, userID string, int
 		       COALESCE(SUM(COALESCE(token_cache_read, 0)), 0),
 		       COALESCE(SUM(COALESCE(token_cache_write, 0)), 0),
 		       COALESCE(SUM(COALESCE(token_reasoning, 0)), 0),
-		       COALESCE(SUM(COALESCE(duration_ms, 0)), 0),
-		       COALESCE(SUM(event_type = 'turn_completed'), 0),
-		       COALESCE(SUM(event_type = 'turn_completed' AND turn_trigger = 'user'), 0),
+		       COALESCE(SUM(CASE WHEN e.event_type='session_ended' AND e.parent_session_hash IS NULL THEN COALESCE(e.duration_ms,0)
+ WHEN e.event_type='turn_completed' AND NOT EXISTS(SELECT 1 FROM usage_events ended WHERE ended.user_id=e.user_id
+ AND ended.agent_id=e.agent_id AND ended.session_hash=e.session_hash AND ended.occurred_date=e.occurred_date
+ AND ended.event_type='session_ended' AND ended.parent_session_hash IS NULL AND ended.duration_ms IS NOT NULL) THEN COALESCE(e.duration_ms,0) ELSE 0 END),0),
+		       COALESCE(SUM(event_type IN ('turn_started','turn_completed')), 0),
+		       COALESCE(SUM(event_type = 'turn_started' AND turn_trigger = 'user'), 0),
 		       MAX(received_at)
-		FROM usage_events
+		FROM usage_events e
 		WHERE user_id = ? AND occurred_at >= ? AND occurred_at < ?
 		  AND accuracy IN ('exact', 'derived')`
 	for _, interval := range intervals {
