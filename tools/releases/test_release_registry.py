@@ -163,8 +163,8 @@ class RegistryTests(unittest.TestCase):
         # Go migration tests reset this dedicated container database, never a shared DB.
         with self.db.cursor() as cursor:
             cursor.execute('CREATE DATABASE td_migration_test')
-        env = {**os.environ, 'TOKENDANCE_TEST_MYSQL_DSN':
-               f'root:{self.password}@tcp(127.0.0.1:{self.port})/td_migration_test?parseTime=true'}
+        dsn = 'root:' + self.password + f'@tcp(127.0.0.1:{self.port})/td_migration_test?parseTime=true'
+        env = {**os.environ, 'TOKENDANCE_TEST_MYSQL_DSN': dsn}
         result = subprocess.run(['go', 'test', './internal/migrate', '-count=1'],
                                 cwd=ROOT / 'server', env=env, capture_output=True,
                                 text=True, timeout=240)
