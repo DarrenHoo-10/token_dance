@@ -521,10 +521,15 @@ export interface LeaderboardResponse {
   entries: LeaderboardEntry[];
   nextCursor?: string | null;
   dataWatermarkAt?: string | null;
+  ownEntry?: LeaderboardEntry | null;
+  viewKind?: string;
+  generation?: string;
+  revision?: string;
   // Aliases
   agent?: string;
   generatedAt?: string;
   totalEntries?: number;
+  totalParticipants?: number;
   totalTokens?: string;
   timezone?: string;
 }

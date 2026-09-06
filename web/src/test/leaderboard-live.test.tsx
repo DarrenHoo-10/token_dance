@@ -21,6 +21,7 @@ beforeEach(() => {
   vi.spyOn(api,'getActivityCalendar').mockRejectedValue(new Error('unavailable'));
   vi.spyOn(api,'getAgentBreakdowns').mockRejectedValue(new Error('unavailable'));
   vi.spyOn(api,'getLeaderboard').mockResolvedValue(board);
+  vi.spyOn(api,'getMyLeaderboard').mockImplementation((params) => api.getLeaderboard(params));
 });
 describe('Live leaderboard', () => {
   it('explains that a private profile still stays on the board', async () => {

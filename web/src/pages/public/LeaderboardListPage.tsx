@@ -5,7 +5,7 @@ import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from '@/context/AuthContext';
 import { useVisibleRefresh } from '@/hooks/useVisibleRefresh';
 import { LeaderboardTable } from '@/components/analytics/LeaderboardTable';
-import type { LeaderboardResponse, LeaderboardEntry } from '@/types/api';
+import type { LeaderboardResponse } from '@/types/api';
 
 export function LeaderboardListPage() {
   const { locale } = useLocale(); const zh = locale === 'zh-CN';
@@ -19,31 +19,19 @@ export function LeaderboardListPage() {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
-  const [own, setOwn] = useState<{ window: string; userId: string; entry: LeaderboardEntry } | null>(null);
   const hasSnapshotRef = useRef(false);
-
-  useEffect(() => {
-    let active = true;
-    if (!authenticated || !user) {
-      setOwn(null);
-      return () => { active = false; };
-    }
-    api.getPersonalSummary(window).then(summary => {
-      if (active) setOwn(summary.ranking.entry ? { window, userId: accountKey, entry: summary.ranking.entry } : null);
-    }, () => {
-      if (active) setOwn((prev) => (prev?.window === window && prev.userId === accountKey ? prev : null));
-    });
-    return () => { active = false; };
-  }, [window, authenticated, accountKey, retry]);
-
-  const ownEntry = authenticated && own?.window === window && own.userId === accountKey ? own.entry : null;
+  const snapshotRef = useRef<string | undefined>();
 
   useEffect(() => {
     let active = true;
     if (!hasSnapshotRef.current) setLoading(true);
-    api.getLeaderboard({ window, cursor, limit: 20 }).then(value => {
+    const snapshotId = cursor ? snapshotRef.current : undefined;
+    api.getLeaderboardView(authenticated, snapshotId
+      ? { window, cursor, limit: 20, snapshotId }
+      : { window, cursor, limit: 20 }).then(value => {
       if (!active) return;
       hasSnapshotRef.current = true;
+      snapshotRef.current = value.snapshotId || undefined;
       setData(value);
       setFailed(false);
     }, () => {
@@ -52,7 +40,7 @@ export function LeaderboardListPage() {
       if (active) setLoading(false);
     });
     return () => { active = false; };
-  }, [window, cursor, retry, accountKey]);
+  }, [window, cursor, retry, accountKey, authenticated]);
 
   useVisibleRefresh(() => setRetry((value) => value + 1));
 
@@ -65,14 +53,14 @@ export function LeaderboardListPage() {
   );
 
   return <section className="leaderboard-list-page">
-    <div className="panel-header"><div><h1>{zh ? '排行榜' : 'Leaderboard'}</h1><p className="text-muted">UTC</p></div><div className="leaderboard-total"><span>{zh ? '总人数' : 'Total'}</span><strong>{data?.totalEntries == null ? '—' : data.totalEntries.toLocaleString()}</strong><Link to="/leaderboard">{zh ? '返回概览' : 'Back to overview'} →</Link></div></div>
+    <div className="panel-header"><div><h1>{zh ? '排行榜' : 'Leaderboard'}</h1><p className="text-muted">UTC</p></div><div className="leaderboard-total"><span>{zh ? '总人数' : 'Total'}</span><strong>{(data?.totalParticipants ?? data?.totalEntries) == null ? '—' : (data.totalParticipants ?? data.totalEntries)!.toLocaleString()}</strong><Link to="/leaderboard">{zh ? '返回概览' : 'Back to overview'} →</Link></div></div>
     <div className="panel leaderboard-list-panel">
       <div className="range-tabs" role="tablist" aria-label={zh ? '排行榜周期' : 'Leaderboard period'}>
         {(['today', '7d', '30d', 'all'] as const).map((key, index) => <button key={key} role="tab" aria-selected={window === key} className={window === key ? 'active' : ''} onClick={() => setParams({ window: key })}>{(zh ? ['今天', '近 7 天', '近 30 天', '全部时间'] : ['Today', '7 days', '30 days', 'All time'])[index]}</button>)}
       </div>
       {loading && !data ? <p className="leaderboard-empty" role="status">{zh ? '加载中…' : 'Loading…'}</p> : !data && failed ? connectionError : data ? <>
         {failed && connectionError}
-        {data.entries.length ? <LeaderboardTable entries={data.entries} ownEntry={ownEntry} /> : <p className="leaderboard-empty">{zh ? '暂无账号' : 'No accounts yet'}</p>}
+        {data.entries.length ? <LeaderboardTable entries={data.entries} ownEntry={authenticated ? data.ownEntry : null} /> : <p className="leaderboard-empty">{zh ? '暂无账号' : 'No accounts yet'}</p>}
         <div className="leaderboard-pagination"><span>{zh ? `第 ${Math.floor(Number(cursor || 0) / 20) + 1} / ${Math.max(1, Math.ceil(Math.min(1000, data.totalEntries ?? 0) / 20))} 页` : `Page ${Math.floor(Number(cursor || 0) / 20) + 1} / ${Math.max(1, Math.ceil(Math.min(1000, data.totalEntries ?? 0) / 20))}`}</span><div>
           <button className="btn btn-outline" disabled={!cursor} onClick={() => setParams({ window, ...(Number(cursor) > 20 ? { cursor: String(Number(cursor) - 20) } : {}) })}>{zh ? '上一页' : 'Previous'}</button>
           <button className="btn btn-outline" disabled={!data.nextCursor || Number(data.nextCursor) >= 1000} onClick={() => data.nextCursor && Number(data.nextCursor) < 1000 && setParams({ window, cursor: data.nextCursor })}>{zh ? '下一页' : 'Next'}</button>
