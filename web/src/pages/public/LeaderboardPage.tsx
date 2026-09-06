@@ -11,7 +11,7 @@ import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from '@/context/AuthContext';
 import { useVisibleRefresh } from '@/hooks/useVisibleRefresh';
 import { api } from '@/api/client';
-import type { LeaderboardEntry, PersonalSummary, CalendarDay, BreakdownItem } from '@/types/api';
+import type { LeaderboardEntry, LeaderboardResponse, PersonalSummary, CalendarDay, BreakdownItem } from '@/types/api';
 
 type Range = 'Today' | '7 Days' | '30 Days' | 'All Time';
 
@@ -60,7 +60,7 @@ export const LeaderboardPage: React.FC = () => {
   const [range, setRange] = useState<Range>('Today');
   const requestId = useRef(0);
   const hasSnapshotRef = useRef(false);
-  const [boardSummary, setBoardSummary] = useState<{ totalTokens?: string; totalEntries?: number }>({});
+  const [boardSummary, setBoardSummary] = useState<Partial<LeaderboardResponse>>({});
   const [sharing, setSharing] = useState<{ publicProfileEnabled: boolean; showTokenTotal: boolean } | null>(null);
 
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
@@ -78,7 +78,7 @@ export const LeaderboardPage: React.FC = () => {
     const id = ++requestId.current;
     if (!hasSnapshotRef.current) setLoading(true);
     try {
-      const res = await api.getLeaderboard({ window: windowByRange[range], limit: 10 });
+      const res = await api.getLeaderboardView(authenticated, { window: windowByRange[range], limit: 10 });
       if (id !== requestId.current) return;
       hasSnapshotRef.current = true;
       setBoardSummary(res);
@@ -90,7 +90,7 @@ export const LeaderboardPage: React.FC = () => {
     } finally {
       if (id === requestId.current) setLoading(false);
     }
-  }, [range]);
+  }, [range, authenticated]);
 
   useEffect(() => {
     void fetchLeaderboard();
@@ -161,7 +161,7 @@ export const LeaderboardPage: React.FC = () => {
       {loadError && connectionError}
       {podium.length > 0 && <div className="podium-grid">{podium.map((entry) => <PodiumCard key={entry.rankNo} entry={entry} />)}</div>}
       <div className="leaderboard-list-heading"><h2>{zh ? '排行榜' : 'Rankings'}</h2><Link to={`/leaderboard/list?window=${windowByRange[range]}`}>{zh ? '查看完整列表' : 'View full list'} →</Link></div>
-      <LeaderboardTable entries={entries} />
+      <LeaderboardTable entries={entries} ownEntry={authenticated ? boardSummary.ownEntry : null} />
     </>;
   };
 
@@ -177,7 +177,7 @@ export const LeaderboardPage: React.FC = () => {
         <div className="hero-landscape" aria-hidden="true"><span className="line-dot dot-a" /><span className="line-dot dot-b" /><span className="line-dot dot-c" /><div className="line-segment segment-a" /><div className="line-segment segment-b" /><div className="line-segment segment-c" /><div className="peak peak-a" /><div className="peak peak-b" /><div className="peak peak-c" /><div className="bar bar-a" /><div className="bar bar-b" /><div className="bar bar-c" /></div>
         <div className="summary-grid">
           <div className="summary-card"><span className="summary-icon"><Flame /></span><div><strong>{boardSummary.totalTokens == null ? '—' : boardSummary.totalTokens === '0' ? '0' : formatTokens(boardSummary.totalTokens)}</strong><p>{zh ? '本期 Token' : 'Tokens · period'}</p></div></div>
-          <div className="summary-card"><span className="summary-icon"><Users /></span><div><strong>{boardSummary.totalEntries ?? '—'}</strong><p>{zh ? '总人数' : 'Total'}</p></div></div>
+          <div className="summary-card"><span className="summary-icon"><Users /></span><div><strong>{boardSummary.totalParticipants ?? boardSummary.totalEntries ?? '—'}</strong><p>{zh ? '总人数' : 'Total'}</p></div></div>
           <div className="summary-card"><span className="summary-icon"><Users /></span><div><strong>UTC</strong><p>{zh ? '统一统计时区' : 'Leaderboard timezone'}</p></div></div>
         </div>
       </section>

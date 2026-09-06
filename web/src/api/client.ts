@@ -494,7 +494,46 @@ class ApiHttpClient {
     q?: string;
     cursor?: string;
     limit?: number;
+    snapshotId?: string;
   }): Promise<LeaderboardResponse> {
+    return this.request<LeaderboardResponse>(`/public/leaderboards?${this.leaderboardQuery(params)}`, { method: 'GET' });
+  }
+
+  public async getMyLeaderboard(params: {
+    board?: string;
+    window?: string;
+    metric?: string;
+    cursor?: string;
+    limit?: number;
+    snapshotId?: string;
+  }): Promise<LeaderboardResponse> {
+    return this.request<LeaderboardResponse>(`/me/leaderboards?${this.leaderboardQuery(params)}`, { method: 'GET' });
+  }
+
+  public async getLeaderboardView(authenticated: boolean, params: {
+    board?: string;
+    window?: string;
+    metric?: string;
+    cursor?: string;
+    limit?: number;
+    snapshotId?: string;
+  }): Promise<LeaderboardResponse> {
+    if (authenticated) {
+      return this.getMyLeaderboard(params);
+    }
+    return this.getLeaderboard(params);
+  }
+
+  private leaderboardQuery(params: {
+    board?: string;
+    window?: string;
+    metric?: string;
+    agent?: string;
+    q?: string;
+    cursor?: string;
+    limit?: number;
+    snapshotId?: string;
+  }): string {
     const searchParams = new URLSearchParams();
     if (params.board) searchParams.set('board', params.board);
     if (params.window) searchParams.set('window', params.window);
@@ -503,8 +542,8 @@ class ApiHttpClient {
     if (params.q) searchParams.set('q', params.q);
     if (params.cursor) searchParams.set('cursor', params.cursor);
     if (params.limit) searchParams.set('limit', params.limit.toString());
-
-    return this.request<LeaderboardResponse>(`/public/leaderboards?${searchParams.toString()}`, { method: 'GET' });
+    if (params.snapshotId) searchParams.set('snapshotId', params.snapshotId);
+    return searchParams.toString();
   }
 
 }
