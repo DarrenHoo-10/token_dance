@@ -1,4 +1,8 @@
 #![forbid(unsafe_code)]
+mod session_context;
+use session_context::SessionContext;
+use std::collections::BTreeMap;
+use std::sync::Mutex;
 
 use adapter_sdk::{
     event_id, keyed_hmac, raw_fingerprint, Accuracy, AdapterError, AdapterHealth, AdapterManifest,
@@ -10,7 +14,7 @@ use adapter_sdk::{
 use async_trait::async_trait;
 use protocol::{
     CodeChangedPayload, ModelUsageRecordedPayload, SessionStartedPayload, SkillInvokeType,
-    SkillInvokedPayload, ToolInvokedPayload, TurnStartedPayload,
+    SkillInvokedPayload, ToolInvokedPayload, TurnCompletedPayload, TurnStartedPayload,
 };
 use serde_json::{Map, Value};
 
@@ -35,6 +39,7 @@ pub struct CodexAdapter {
     detected: bool,
     otel_available: bool,
     hmac_key: Vec<u8>,
+    sessions: Mutex<BTreeMap<String, SessionContext>>,
 }
 
 impl CodexAdapter {
@@ -50,6 +55,7 @@ impl CodexAdapter {
             detected: true,
             otel_available: true,
             hmac_key: hmac_key.into(),
+            sessions: Mutex::new(BTreeMap::new()),
         }
     }
     pub fn with_otel(mut self, available: bool) -> Self {
@@ -185,6 +191,36 @@ impl AgentAdapter for CodexAdapter {
         Ok(sources)
     }
     async fn decode(&self, frame: RawFrame) -> Result<Vec<NormalizedEvent>, AdapterError> {
+        if frame.source_kind == SourceKind::JsonlTail
+            && matches!(
+                frame.source_id.as_str(),
+                SOURCE_JSONL | "codex-archived-sessions"
+            )
+        {
+            let key = format!(
+                "{}:{}",
+                frame.source_id,
+                frame
+                    .cursor
+                    .rsplit_once(':')
+                    .map(|(p, _)| p)
+                    .unwrap_or(&frame.cursor)
+            );
+            let mut sessions = self
+                .sessions
+                .lock()
+                .map_err(|_| AdapterError::decode_failed("session context lock"))?;
+            if sessions.len() > 2048 {
+                sessions.clear();
+            }
+            return decode_jsonl_context(
+                &self.manifest,
+                &self.version,
+                &self.hmac_key,
+                &frame,
+                sessions.entry(key).or_default(),
+            );
+        }
         decode_frame(&self.manifest, &self.version, &self.hmac_key, frame)
     }
     async fn health(&self) -> AdapterHealth {
@@ -232,6 +268,21 @@ fn decode_jsonl(
     hmac_key: &[u8],
     frame: &RawFrame,
 ) -> Result<Vec<NormalizedEvent>, AdapterError> {
+    decode_jsonl_context(
+        manifest,
+        version,
+        hmac_key,
+        frame,
+        &mut SessionContext::default(),
+    )
+}
+fn decode_jsonl_context(
+    manifest: &AdapterManifest,
+    version: &str,
+    hmac_key: &[u8],
+    frame: &RawFrame,
+    context: &mut SessionContext,
+) -> Result<Vec<NormalizedEvent>, AdapterError> {
     let text = std::str::from_utf8(&frame.payload)
         .map_err(|e| AdapterError::decode_failed(e.to_string()))?;
     let mut events = Vec::new();
@@ -239,9 +290,19 @@ fn decode_jsonl(
         let Ok(value) = serde_json::from_str::<Value>(line) else {
             continue;
         };
-        let Some(value) = flatten_codex_record(value) else {
+        let patch = context.observe(&value);
+        let Some(mut value) = patch.or_else(|| flatten_codex_record(value)) else {
             continue;
         };
+        if value.get("type").and_then(Value::as_str) == Some("token.usage") {
+            if let Some(model) = &context.model {
+                value
+                    .as_object_mut()
+                    .unwrap()
+                    .entry("model")
+                    .or_insert(Value::String(model.clone()));
+            }
+        }
         if let Some(event) = decode_record(
             manifest,
             version,
@@ -296,6 +357,16 @@ fn flatten_codex_record(value: Value) -> Option<Value> {
                 if let Some(turn_id) = payload.get("turn_id").cloned() {
                     out.insert("turn_id".into(), turn_id);
                 }
+                Some(Value::Object(out))
+            }
+            Some("task_complete") => {
+                out.insert("type".into(), Value::String("turn.completed".into()));
+                for key in ["turn_id", "duration_ms"] {
+                    if let Some(v) = payload.get(key) {
+                        out.insert(key.into(), v.clone());
+                    }
+                }
+                out.insert("success".into(), Value::Bool(true));
                 Some(Value::Object(out))
             }
             Some("token_count") => {
@@ -426,6 +497,11 @@ fn decode_record(
         }),
         "turn.started" => EventPayload::TurnStarted(TurnStartedPayload {
             trigger: Some(protocol::TurnTrigger::User),
+        }),
+        "turn.completed" => EventPayload::TurnCompleted(TurnCompletedPayload {
+            success: o.get("success").and_then(Value::as_bool).unwrap_or(false),
+            duration_ms: num(o, "duration_ms"),
+            error_class: None,
         }),
         "token.usage" => EventPayload::ModelUsageRecorded(ModelUsageRecordedPayload {
             provider_id: string_any(o, &["provider"]).unwrap_or_else(|| "openai".into()),

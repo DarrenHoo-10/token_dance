@@ -43,7 +43,13 @@ function formatCost(amount: string | null | undefined, currency: string | null |
 }
 
 export const MetricGrid: React.FC<MetricGridProps> = ({ metrics }) => {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
+  const zh=locale==='zh-CN';
+  const cost=metrics.estimatedCost;
+  const unpriced=Math.max(0,(cost?.totalRequests??0)-(cost?.pricedRequests??0));
+  const costHint=cost?.pricingSource==='openrouter'
+    ? (zh ? `OpenRouter 参考价估算${unpriced ? ` · ${unpriced} 次用量未匹配价格` : ''}` : `OpenRouter estimate${unpriced ? ` · ${unpriced} unpriced requests` : ''}`)
+    : cost?.supported ? t('metrics.currentPeriod') : (zh?'尚无可用费用记录':'No cost data yet');
 
   return (
     <div className="metric-grid-10" aria-label={t('dashboard.coreMetricsLabel')}>
@@ -51,7 +57,7 @@ export const MetricGrid: React.FC<MetricGridProps> = ({ metrics }) => {
       <MetricCard
         label={t('metrics.estimatedCost')}
         value={formatCost(metrics.estimatedCost?.amount, metrics.estimatedCost?.currency)}
-        hint={metrics.estimatedCost?.amount ? t('metrics.currentPeriod') : undefined}
+        hint={costHint}
         supported={metrics.estimatedCost?.supported}
       />
 
@@ -67,7 +73,7 @@ export const MetricGrid: React.FC<MetricGridProps> = ({ metrics }) => {
       <MetricCard
         label={t('metrics.generatedCodeLines')}
         value={formatNumber(metrics.generatedCodeLines?.value)}
-        hint={metrics.generatedCodeLines?.change || t('metrics.lines')}
+        hint={metrics.generatedCodeLines?.supported ? (metrics.generatedCodeLines?.change || t('metrics.lines')) : (zh?'尚未采集代码行':'No code-line data yet')}
         supported={metrics.generatedCodeLines?.supported}
       />
 
@@ -75,7 +81,7 @@ export const MetricGrid: React.FC<MetricGridProps> = ({ metrics }) => {
       <MetricCard
         label={t('metrics.tokensPerCodeLine')}
         value={metrics.tokensPerCodeLine?.value ? parseFloat(metrics.tokensPerCodeLine.value).toFixed(1) : null}
-        hint={t('metrics.average')}
+        hint={metrics.tokensPerCodeLine?.supported ? t('metrics.average') : (zh?'需要代码行数据':'Code-line data required')}
         supported={metrics.tokensPerCodeLine?.supported}
       />
 
@@ -107,7 +113,7 @@ export const MetricGrid: React.FC<MetricGridProps> = ({ metrics }) => {
       <MetricCard
         label={t('metrics.activeDurationMs')}
         value={formatDurationHours(metrics.activeDurationMs?.value)}
-        hint={t('metrics.activeTime')}
+        hint={metrics.activeDurationMs?.supported ? t('metrics.activeTime') : (zh?'尚未采集时长':'No duration data yet')}
         supported={metrics.activeDurationMs?.supported}
       />
 

@@ -15,10 +15,14 @@ import (
 	"tokendance/internal/clock"
 	"tokendance/internal/crypto"
 	"tokendance/internal/email"
+	"tokendance/internal/pricing"
 	"tokendance/internal/provider"
 )
 
 type Worker struct {
+	pricing       *pricing.Client
+	priceCursor   uint64
+	priceRetry    time.Time
 	db            *sql.DB
 	workerID      string
 	clk           clock.Clock
@@ -560,6 +564,9 @@ func (w *Worker) ProcessExpirations(ctx context.Context) error {
 
 // RunPass runs one full pass of all worker tasks
 func (w *Worker) RunPass(ctx context.Context) {
+	if _, err := w.ProcessPrices(ctx); err != nil {
+		log.Printf("[Worker] Price estimation error: %v", err)
+	}
 	if _, err := w.ProcessAggregates(ctx); err != nil {
 		log.Printf("[Worker %s] Aggregate processing error: %v", w.workerID, err)
 	}

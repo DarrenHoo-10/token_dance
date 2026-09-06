@@ -23,6 +23,19 @@ describe('Dashboard Components Tests', () => {
     userMessageCount: { value: '18400', supported: true },
   };
 
+  it('labels partial OpenRouter estimates and missing collection instead of zero', () => {
+    render(<LocaleProvider><MetricGrid metrics={{ ...mockMetrics,
+      estimatedCost: {amount:'2.5',currency:'USD',supported:true,pricingSource:'openrouter',pricedRequests:8,totalRequests:10},
+      generatedCodeLines: {value:null,supported:false},
+      tokensPerCodeLine: {value:null,supported:false},
+      activeDurationMs: {value:null,supported:false},
+    }} /></LocaleProvider>);
+    expect(screen.getByText('OpenRouter 参考价估算 · 2 次用量未匹配价格')).toBeInTheDocument();
+    expect(screen.getByText('尚未采集代码行')).toBeInTheDocument();
+    expect(screen.getByText('尚未采集时长')).toBeInTheDocument();
+    expect(screen.queryByText('0.0h')).not.toBeInTheDocument();
+  });
+
   it('renders all 10 core metrics in MetricGrid', () => {
     render(
       <LocaleProvider>
