@@ -2,3 +2,6 @@
 # checkouts (core.autocrlf=true) do not convert *.rs to CRLF and fail
 # `cargo fmt --check`.
 *.rs text eol=lf
+
+# Embedded migration checksums must be identical on Windows and Linux builds.
+*.sql text eol=lf
