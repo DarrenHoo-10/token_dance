@@ -27,7 +27,7 @@ func TestMigrationEmbedLoading(t *testing.T) {
 		t.Fatalf("expected 5 migrations, got %d", len(migs))
 	}
 
-	expected := []string{"0001", "0002", "0003", "0004", "0005"}
+	expected := []string{"0001", "0002", "0003", "0004", "0006"}
 	for i, m := range migs {
 		if m.Version != expected[i] {
 			t.Errorf("migration %d: expected version %s, got %s", i, expected[i], m.Version)
