@@ -219,11 +219,16 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 	var rank *int
 	var delta *int
 	var percentile *float64
+	var ownEntry *domain.LeaderboardEntry
 	if u.LeaderboardVisibility == domain.LeaderboardVisibilityPublic {
 		var rankErr error
-		rank, percentile, rankErr = (&leaderboardStore{db: s.db}).liveTokenRank(ctx, userID, string(r.Key), time.Now())
+		ownEntry, percentile, rankErr = (&leaderboardStore{db: s.db}).liveOwnTokenEntry(ctx, userID, string(r.Key), time.Now())
 		if rankErr != nil {
 			return nil, fmt.Errorf("query personal token rank: %w", rankErr)
+		}
+		if ownEntry != nil {
+			rank = &ownEntry.RankNo
+			delta = ownEntry.RankDelta
 		}
 	}
 
@@ -259,6 +264,7 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 			UserMessageCount:   userMessageMetric,
 		},
 		Ranking: domain.PersonalSummaryRanking{
+			Entry:      ownEntry,
 			Visibility: u.LeaderboardVisibility,
 			Rank:       rank,
 			Delta:      delta,

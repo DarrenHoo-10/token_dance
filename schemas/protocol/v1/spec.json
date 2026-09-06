@@ -72,6 +72,7 @@
     "SkillInvokedPayload": {
       "type": "const:skill_invoked",
       "skillKey": "hmac",
+      "skillPublicName?": "identifier",
       "invokeType": "SkillInvokeType",
       "success": "boolean",
       "pluginKey?": "hmac",

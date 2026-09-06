@@ -363,6 +363,7 @@ fn decode_record(
             let record: SkillRecord =
                 serde_json::from_value(value).map_err(decode_error(line_no))?;
             EventPayload::SkillInvoked(SkillInvokedPayload {
+                skill_public_name: None,
                 skill_key: hmac(hmac_key, &[&record.skill]),
                 invoke_type: SkillInvokeType::Native,
                 success: record.success,
