@@ -1,6 +1,7 @@
 import { LeaderboardTable } from '@/components/analytics/LeaderboardTable';
 import { RankChange } from '@/components/analytics/RankChange';
 import { UserAvatar } from '@/components/common/UserAvatar';
+import { DesktopDownloadCard } from '@/pages/resources/DesktopDownloadCard';
 import React, { useCallback, useRef, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
@@ -202,6 +203,7 @@ export const LeaderboardPage: React.FC = () => {
           <div className="streak-line"><span>{zh ? '连续活跃' : 'Streak'}</span><div><Flame /><strong>{streak || 0}</strong>{zh ? '天' : 'days'}</div></div>
         </> : <p className="side-card-empty">{zh ? '登录后查看你的排名与统计。' : 'Sign in to see your rank and stats.'}</p>}
       </section>
+      <DesktopDownloadCard />
       <section className="side-card activity-card"><div className="card-heading"><h2>{zh ? 'Token 活跃度' : 'Token Activity'}</h2><CircleHelp /></div>
         {authenticated ? <>
           <div className="month-row"><span>{monthLabel || (zh ? '暂无数据' : 'No data')}</span><div><button type="button" aria-label="Previous month"><ChevronLeft /></button><button type="button" aria-label="Next month"><ChevronRight /></button></div></div>

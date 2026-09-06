@@ -1,7 +1,7 @@
 import { avatarUrl } from '@/utils/avatar';
 import React, { useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { ChevronDown, Database, FileText, LogOut, Settings, UserRound } from 'lucide-react';
+import { ChevronDown, Database, BarChart3, LogOut, Settings, UserRound } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
@@ -9,7 +9,7 @@ import { Button } from '@/components/common/Button';
 
 export const Navbar: React.FC = () => {
   const { user, authenticated, logout } = useAuth();
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const navigate = useNavigate();
   const location = useLocation();
   const [dropdownOpen, setDropdownOpen] = useState(false);
@@ -73,6 +73,12 @@ export const Navbar: React.FC = () => {
         >
           TokenBoard
         </NavLink>
+        <NavLink to="/download" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+          {locale === 'zh-CN' ? '客户端下载' : 'Download'}
+        </NavLink>
+        <NavLink to="/docs" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+          {locale === 'zh-CN' ? '使用文档' : 'Docs'}
+        </NavLink>
       </nav>
 
       <div className="nav-actions">
@@ -80,9 +86,9 @@ export const Navbar: React.FC = () => {
           type="button"
           className="nav-document"
           onClick={() => navigate(authenticated ? '/me' : '/login?return_to=%2Fme')}
-          aria-label={t('nav.tokenBoard')}
+          aria-label={t('publicProfile.headline')}
         >
-          <FileText size={22} aria-hidden="true" />
+          <BarChart3 size={22} aria-hidden="true" />
         </button>
 
         <LocaleSwitcher />

@@ -33,6 +33,8 @@ import { LeaderboardPage } from '@/pages/public/LeaderboardPage';
 import { CommunityPage } from '@/pages/public/CommunityPage';
 import { TeamDashboardPage } from '@/pages/teams/TeamDashboardPage';
 import { NotFoundPage } from '@/pages/system/NotFoundPage';
+import { DownloadPage } from '@/pages/resources/DownloadPage';
+import { DocsPage } from '@/pages/resources/DocsPage';
 
 export const RootRedirect: React.FC = () => {
   const { authenticated, loading } = useAuth();
@@ -79,6 +81,9 @@ export const App: React.FC = () => {
                 <Route path="/community" element={<CommunityPage />} />
                 <Route path="/leaderboard" element={<LeaderboardPage />} />
                 <Route path="/leaderboard/list" element={<LeaderboardListPage />} />
+                <Route path="/download" element={<DownloadPage />} />
+                <Route path="/docs" element={<Navigate to="/docs/quickstart" replace />} />
+                <Route path="/docs/:slug" element={<DocsPage />} />
                 <Route path="/teams" element={<TeamDashboardPage />} />
 
                 {/* 404 catch-all */}
