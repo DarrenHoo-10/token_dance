@@ -18,7 +18,7 @@ use wal_spool::InjectedKeyProvider;
 use wal_spool::{AckPayload, KeyProvider, OsKeyProvider, WalStore};
 
 use crate::autostart::{AutostartProvider, SystemAutostartManager};
-use crate::local_store::LocalStore;
+use crate::local_store::{LeasedBatch, LocalStore};
 use crate::usage_ledger::DayUsage;
 
 const COLLECTOR_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -310,6 +310,8 @@ pub struct AppState {
     autostart: Arc<dyn AutostartProvider>,
     shutting_down: Arc<StdMutex<bool>>,
     local_store: Arc<StdMutex<LocalStore>>,
+    storage_error: Arc<StdMutex<Option<String>>>,
+    rebuilding: Arc<StdMutex<bool>>,
 }
 
 impl AppState {
@@ -377,6 +379,8 @@ impl AppState {
             autostart,
             shutting_down: Arc::new(StdMutex::new(false)),
             local_store: Arc::new(StdMutex::new(LocalStore::open(&root)?)),
+            storage_error: Arc::new(StdMutex::new(None)),
+            rebuilding: Arc::new(StdMutex::new(false)),
         };
         state.apply_saved_agent_controls().await?;
         state.persist_control().await?;
@@ -385,6 +389,85 @@ impl AppState {
 
     pub fn control_dir_path(&self) -> PathBuf {
         (*self.control_dir).clone()
+    }
+
+    pub(crate) fn lock_store(&self) -> std::sync::MutexGuard<'_, LocalStore> {
+        self.local_store.lock().expect("local store poisoned")
+    }
+
+    pub fn set_storage_error(&self, error: &str) {
+        *self.storage_error.lock().expect("storage error poisoned") = Some(error.to_string());
+    }
+
+    pub fn clear_storage_error(&self) {
+        *self.storage_error.lock().expect("storage error poisoned") = None;
+    }
+
+    pub fn set_rebuilding(&self, rebuilding: bool) {
+        *self.rebuilding.lock().expect("rebuild flag poisoned") = rebuilding;
+    }
+
+    pub fn pending_sync_count(&self) -> usize {
+        self.lock_store().pending_sync_count()
+    }
+
+    pub async fn activate_sync_account(&self, account_id: &str) -> Result<String, String> {
+        let installation = self
+            .service
+            .lock()
+            .await
+            .collector
+            .installation_id()
+            .to_string();
+        self.lock_store()
+            .activate_account(account_id, &installation)
+    }
+
+    pub fn deactivate_sync_account(&self) -> Result<(), String> {
+        self.lock_store().deactivate_account()
+    }
+
+    pub fn lease_sync_batch(&self, lease_id: &str, limit: usize) -> Result<LeasedBatch, String> {
+        self.lock_store().lease_batch(lease_id, limit)
+    }
+
+    pub fn ack_sync_batch(
+        &self,
+        target_id: &str,
+        lease_id: &str,
+        event_ids: &[String],
+    ) -> Result<usize, String> {
+        self.lock_store().ack_leased(target_id, lease_id, event_ids)
+    }
+
+    pub fn isolate_sync_events(
+        &self,
+        target_id: &str,
+        event_ids: &[String],
+        error: &str,
+    ) -> Result<(), String> {
+        self.lock_store()
+            .isolate_events(target_id, event_ids, error)
+    }
+
+    pub fn retry_sync_events(
+        &self,
+        target_id: &str,
+        lease_id: &str,
+        event_ids: &[String],
+        error: &str,
+        delay_secs: i64,
+    ) -> Result<(), String> {
+        self.lock_store()
+            .retry_events(target_id, lease_id, event_ids, error, delay_secs)
+    }
+
+    pub fn release_sync_lease(&self, target_id: &str, lease_id: &str) -> Result<(), String> {
+        self.lock_store().release_lease(target_id, lease_id)
+    }
+
+    pub fn sync_enabled(&self) -> bool {
+        self.lock_store().sync_enabled()
     }
 
     pub async fn backfill_local_prices(&self) {
@@ -462,35 +545,53 @@ impl AppState {
 
     pub async fn get_daemon_status(&self) -> DaemonStatus {
         let control = self.control.read().await;
+        let sync_status = self.sync_status.read().await.clone();
         let service = self.service.lock().await;
         let runtimes = service.collector.runtimes();
         let active = runtimes
             .iter()
             .filter(|runtime| runtime.enabled && runtime.detected)
             .count();
-        let pending = service.wal.unacked_count();
+        let wal_spool_bytes = service.wal.spool_bytes();
+        let total_adapters_count = runtimes.len();
+        drop(service);
+        let store = self.lock_store();
+        let pending = store.pending_sync_count();
+        let collected = store.event_count();
+        let rebuilding =
+            *self.rebuilding.lock().expect("rebuild flag poisoned") || store.rebuild_in_progress();
+        drop(store);
+        let storage_error = self
+            .storage_error
+            .lock()
+            .expect("storage error poisoned")
+            .is_some();
+        let collection_status = if control.global_paused {
+            "PAUSED"
+        } else if storage_error {
+            "STORAGE_ERROR"
+        } else if rebuilding {
+            "REBUILDING"
+        } else {
+            "RUNNING"
+        };
         DaemonStatus {
-            status: if control.global_paused {
-                "PAUSED"
-            } else {
-                "RUNNING"
-            }
-            .into(),
+            status: collection_status.into(),
             global_paused: control.global_paused,
             pid: std::process::id(),
             uptime_secs: self.start_time.elapsed().as_secs(),
             collector_version: COLLECTOR_VERSION.into(),
-            events_collected: pending as u64 + control.events_uploaded,
+            events_collected: collected,
             events_pending: pending,
             events_uploaded: control.events_uploaded,
             memory_rss_bytes: 0,
             cpu_usage_pct: 0.0,
-            wal_spool_bytes: service.wal.spool_bytes(),
+            wal_spool_bytes,
             active_adapters_count: active,
-            total_adapters_count: runtimes.len(),
+            total_adapters_count,
             autostart_enabled: self.autostart.is_enabled().unwrap_or(false),
             last_heartbeat_at: Utc::now().to_rfc3339(),
-            sync_status: self.sync_status.read().await.clone(),
+            sync_status,
             last_sync_at: control.last_sync_time.clone(),
         }
     }
@@ -624,16 +725,22 @@ impl AppState {
     }
 
     pub async fn preview_upload_batch(&self) -> OperationAck<UploadBatchPreview> {
-        let service = self.service.lock().await;
-        let events = service
-            .wal
-            .unacked_events()
+        let installation_id = self
+            .service
+            .lock()
+            .await
+            .collector
+            .installation_id()
+            .to_string();
+        let events = self
+            .lock_store()
+            .peek_pending_events(100)
             .into_iter()
             .filter_map(|event| serde_json::to_value(event).ok())
             .collect::<Vec<_>>();
         OperationAck::acknowledged(UploadBatchPreview {
             batch_id: format!("preview_{}", Uuid::new_v4().simple()),
-            installation_id: service.collector.installation_id().into(),
+            installation_id,
             created_at: Utc::now().to_rfc3339(),
             event_count: events.len(),
             events,
@@ -642,12 +749,10 @@ impl AppState {
     }
 
     pub async fn get_outbox(&self) -> Vec<OutboxEnvelope> {
-        let service = self.service.lock().await;
-        service
-            .wal
-            .unacked_events()
+        self.lock_store()
+            .pending_outbox(100)
             .into_iter()
-            .filter_map(|event| {
+            .filter_map(|(event, status)| {
                 let value = serde_json::to_value(&event).ok()?;
                 let event_id = value.get("eventId")?.as_str()?.to_string();
                 let payload = value.get("payload").cloned().unwrap_or_default();
@@ -664,7 +769,7 @@ impl AppState {
                     agent_id: event.agent_id,
                     occurred_at: event.occurred_at,
                     event_type,
-                    delivery_status: "QUEUED".into(),
+                    delivery_status: status.to_uppercase(),
                     accuracy: format!("{:?}", event.accuracy).to_lowercase(),
                     payload_summary: "privacy-filtered event".into(),
                     payload,
@@ -680,14 +785,6 @@ impl AppState {
     pub async fn acknowledge_auto_sync(&self, ack: AckPayload) -> Result<(), String> {
         let count = ack.acked_event_ids.len() as u64;
         let server_time = ack.server_acked_at.clone();
-        {
-            let mut service = self.service.lock().await;
-            service
-                .wal
-                .append_ack(ack)
-                .map_err(|_| "LOCAL_STORAGE_ERROR")?;
-            let _ = service.wal.compact();
-        }
         {
             let mut control = self.control.write().await;
             control.events_uploaded = control.events_uploaded.saturating_add(count);
@@ -770,7 +867,7 @@ impl AppState {
     }
 
     pub async fn list_devices(&self) -> Vec<CollectorDevice> {
-        let pending = self.service.lock().await.wal.unacked_count() as u32;
+        let pending = self.pending_sync_count() as u32;
         let mut devices = self.control.read().await.devices.clone();
         if let Some(current) = devices.first_mut() {
             current.pending_events = pending;

@@ -72,7 +72,9 @@ async fn idle_files_sharing_a_source_do_not_rewrite_checkpoints() {
     let mut wal = open_wal(dir.path());
     let pipeline = IngestPipeline::new(&collector, "dev.tokenshow.adapter.mock");
     let paths = [dir.path().join("a.jsonl"), dir.path().join("b.jsonl")];
-    for path in &paths { write_lines(path, &["{}"]); }
+    for path in &paths {
+        write_lines(path, &["{}"]);
+    }
     for path in &paths {
         let mut tailer = JsonlTailer::new(INSTALL, "mock-sessions", "mock-sessions", path);
         pipeline.ingest(&mut tailer, &mut wal, false).await.unwrap();
@@ -86,6 +88,23 @@ async fn idle_files_sharing_a_source_do_not_rewrite_checkpoints() {
         }
     }
     assert_eq!(wal.spool_bytes(), before);
+}
+
+#[test]
+fn poll_with_limit_bounds_frames_without_wal_backpressure() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("many.jsonl");
+    write_lines(&path, &["{\"n\":1}", "{\"n\":2}", "{\"n\":3}", "{\"n\":4}"]);
+    let mut tailer = JsonlTailer::new(INSTALL, "mock-sessions", "mock-sessions", &path);
+    let first = tailer.poll_with_limit(2, true).unwrap();
+    assert_eq!(first.frames.len(), 2);
+    assert!(first.next_checkpoint.offset < first.next_checkpoint.file_len);
+    let second = tailer.poll_with_limit(8, true).unwrap();
+    assert_eq!(second.frames.len(), 2);
+    assert_eq!(
+        second.next_checkpoint.offset,
+        second.next_checkpoint.file_len
+    );
 }
 
 struct SlowAdapter {

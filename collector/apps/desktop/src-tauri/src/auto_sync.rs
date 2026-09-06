@@ -75,9 +75,14 @@ pub(crate) mod tests {
     }
     pub(crate) async fn seeded_app() -> (tempfile::TempDir, crate::state::AppState) {
         let (root, app) = crate::tests::state().await;
-        let events = vec![event('B'), event('C')]
+        let events: Vec<_> = vec![event('B'), event('C')]
             .into_iter()
-            .map(|event| privacy::PrivacyFilter.filter(event).unwrap())
+            .map(|event| {
+                privacy::PrivacyFilter
+                    .filter(event)
+                    .unwrap()
+                    .into_envelope()
+            })
             .collect();
         let checkpoint = wal_spool::SourceCheckpoint {
             source_id: "sync-fixture".into(),
@@ -90,15 +95,7 @@ pub(crate) mod tests {
             driver_checkpoint: None,
             status: protocol::SourceCheckpointStatus::Current,
         };
-        app.service
-            .lock()
-            .await
-            .wal
-            .append_txn(
-                wal_spool::Transaction::new("", "sync-fixture", None, checkpoint, events, ""),
-                wal_spool::AppendClass::Realtime,
-            )
-            .unwrap();
+        app.commit_local(&events, &[checkpoint]).unwrap();
         (root, app)
     }
     #[test]

@@ -4,7 +4,10 @@ pub mod detect;
 pub mod runtime;
 pub mod upload;
 
-pub use detect::{detect_from_home, detect_local};
+pub use detect::{
+    detect_from_home, detect_local, enumerate_all_source_files, EnumeratedSourceFile,
+    EnumeratedSourceKind,
+};
 pub use runtime::{collect_decoded, collect_tick, CollectReport, LocalCollectOutcome};
 
 use std::collections::BTreeMap;
@@ -500,6 +503,42 @@ impl ProductionService {
             .wal
             .checkpoint(source_id, &poll.next_checkpoint.file_identity)
             .cloned();
+        self.decode_polled_jsonl(adapter_id, source_id, previous, poll)
+            .await
+    }
+
+    /// Decode a JSONL file from a persisted SQLite checkpoint. Does not reset
+    /// for a full rescan; rebuild resume depends on the supplied offset.
+    pub async fn decode_jsonl_file(
+        &mut self,
+        adapter_id: &str,
+        source_id: &str,
+        path: &Path,
+        checkpoint: Option<&SourceCheckpoint>,
+        max_frames: usize,
+    ) -> Result<DecodedSourceBatch, acquisition::AcquisitionError> {
+        if !self.collector.is_enabled(adapter_id) {
+            return Err(acquisition::AcquisitionError::Other(
+                "adapter_disabled".into(),
+            ));
+        }
+        let mut tailer =
+            JsonlTailer::new(self.collector.installation_id(), source_id, source_id, path);
+        if let Some(checkpoint) = checkpoint {
+            tailer.restore(checkpoint);
+        }
+        let poll = tailer.poll_with_limit(max_frames, checkpoint.is_some())?;
+        self.decode_polled_jsonl(adapter_id, source_id, checkpoint.cloned(), poll)
+            .await
+    }
+
+    async fn decode_polled_jsonl(
+        &mut self,
+        adapter_id: &str,
+        source_id: &str,
+        previous: Option<SourceCheckpoint>,
+        poll: acquisition::PollResult,
+    ) -> Result<DecodedSourceBatch, acquisition::AcquisitionError> {
         let mut events = Vec::new();
         for frame in poll.frames {
             if !self.collector.is_enabled(adapter_id) {
@@ -537,10 +576,30 @@ impl ProductionService {
         adapter_id: &str,
         source_id: &str,
     ) -> Result<DecodedSourceBatch, acquisition::AcquisitionError> {
+        self.decode_sqlite_from(adapter_id, source_id, None).await
+    }
+
+    pub async fn decode_sqlite_from(
+        &mut self,
+        adapter_id: &str,
+        source_id: &str,
+        checkpoint: Option<&SourceCheckpoint>,
+    ) -> Result<DecodedSourceBatch, acquisition::AcquisitionError> {
         if !self.collector.is_enabled(adapter_id) {
             return Err(acquisition::AcquisitionError::Other(
                 "adapter_disabled".into(),
             ));
+        }
+        if let Some(checkpoint) = checkpoint {
+            if let Some(entry) = self.driver_registry.entry_mut(adapter_id, source_id) {
+                if let DriverInstance::SqliteSnapshot(driver) = &mut entry.driver {
+                    if let Some(wal_spool::DriverCheckpoint::SqliteSnapshot { query_cursors }) =
+                        &checkpoint.driver_checkpoint
+                    {
+                        driver.restore_query_cursors(query_cursors);
+                    }
+                }
+            }
         }
         let batch = {
             let entry = self.driver_entry_mut(adapter_id, source_id)?;
@@ -562,8 +621,10 @@ impl ProductionService {
             }
         };
         if batch.frames.is_empty() {
-            let previous = self.wal.latest_checkpoint(source_id).cloned();
-            let next = previous.clone().unwrap_or_else(|| SourceCheckpoint {
+            let previous = checkpoint
+                .cloned()
+                .or_else(|| self.wal.latest_checkpoint(source_id).cloned());
+            let mut next = previous.clone().unwrap_or_else(|| SourceCheckpoint {
                 source_id: source_id.to_owned(),
                 path_template_id: source_id.to_owned(),
                 file_identity: source_id.to_owned(),
@@ -571,9 +632,12 @@ impl ProductionService {
                 file_len: 0,
                 offset: 0,
                 last_record_hash: None,
-                driver_checkpoint: batch.driver_checkpoint,
+                driver_checkpoint: batch.driver_checkpoint.clone(),
                 status: protocol::SourceCheckpointStatus::Current,
             });
+            if batch.driver_checkpoint.is_some() {
+                next.driver_checkpoint = batch.driver_checkpoint;
+            }
             return Ok(DecodedSourceBatch {
                 adapter_id: adapter_id.to_string(),
                 source_id: source_id.to_string(),
@@ -603,7 +667,9 @@ impl ProductionService {
                 value.wrapping_mul(109).wrapping_add(byte as u64)
             })
         });
-        let previous = self.wal.latest_checkpoint(source_id).cloned();
+        let previous = checkpoint
+            .cloned()
+            .or_else(|| self.wal.latest_checkpoint(source_id).cloned());
         let next = SourceCheckpoint {
             source_id: source_id.to_owned(),
             path_template_id: source_id.to_owned(),

@@ -25,10 +25,46 @@ pub fn detect_from_home(home: &Path) -> DetectionSnapshot {
     snapshot
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnumeratedSourceKind {
+    Jsonl,
+    GrokUpdates,
+    Sqlite,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveredFile {
+    pub path: PathBuf,
+    pub mtime: SystemTime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnumeratedSourceFile {
+    pub adapter_id: &'static str,
+    pub source_id: String,
+    pub scan_root: PathBuf,
+    pub path: PathBuf,
+    pub mtime_unix: u64,
+    pub kind: EnumeratedSourceKind,
+}
+
+/// Complete JSONL listing. Callers that still want a hot window pass a limit;
+/// rebuild uses [`discover_jsonl_files`] with no cap.
 pub fn list_jsonl_files(root: &Path, limit: usize) -> Vec<PathBuf> {
+    discover_jsonl_files(root)
+        .into_iter()
+        .take(limit.max(1))
+        .map(|file| file.path)
+        .collect()
+}
+
+pub fn discover_jsonl_files(root: &Path) -> Vec<DiscoveredFile> {
     if root.is_file() {
         return if is_jsonl(root) {
-            vec![root.to_path_buf()]
+            vec![DiscoveredFile {
+                path: root.to_path_buf(),
+                mtime: mtime_of(root),
+            }]
         } else {
             Vec::new()
         };
@@ -41,9 +77,77 @@ pub fn list_jsonl_files(root: &Path, limit: usize) -> Vec<PathBuf> {
     files.sort_by_key(|(mtime, _)| Reverse(*mtime));
     files
         .into_iter()
-        .take(limit.max(1))
-        .map(|(_, path)| path)
+        .map(|(mtime, path)| DiscoveredFile { path, mtime })
         .collect()
+}
+
+/// Enumerate every authorized JSONL, archive, and agent-DB source without a
+/// "last N files" cap. Recent files are sorted first so rebuild can prefer them.
+pub fn enumerate_all_source_files(snapshot: &DetectionSnapshot) -> Vec<EnumeratedSourceFile> {
+    let mut files = Vec::new();
+    for (agent, source_id, config) in snapshot.iter_sources() {
+        let Some(path) = config.path.as_ref() else {
+            continue;
+        };
+        let adapter = adapter_id(agent);
+        if is_sqlite_path(path) {
+            files.push(EnumeratedSourceFile {
+                adapter_id: adapter,
+                source_id: source_id.to_string(),
+                scan_root: path.clone(),
+                path: path.clone(),
+                mtime_unix: unix_secs(mtime_of(path)),
+                kind: EnumeratedSourceKind::Sqlite,
+            });
+            continue;
+        }
+        let grok_history = source_id == adapter_grok_build::HISTORY_SOURCE_ID;
+        let discovered = if grok_history {
+            discover_grok_history_files(path)
+        } else {
+            discover_jsonl_files(path)
+        };
+        let kind = if grok_history {
+            EnumeratedSourceKind::GrokUpdates
+        } else {
+            EnumeratedSourceKind::Jsonl
+        };
+        for file in discovered {
+            files.push(EnumeratedSourceFile {
+                adapter_id: adapter,
+                source_id: source_id.to_string(),
+                scan_root: path.clone(),
+                path: file.path,
+                mtime_unix: unix_secs(file.mtime),
+                kind,
+            });
+        }
+    }
+    files.sort_by(|left, right| {
+        right
+            .mtime_unix
+            .cmp(&left.mtime_unix)
+            .then_with(|| left.path.cmp(&right.path))
+    });
+    files
+}
+
+fn is_sqlite_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("sqlite") || ext.eq_ignore_ascii_case("vscdb"))
+}
+
+fn mtime_of(path: &Path) -> SystemTime {
+    fs::metadata(path)
+        .and_then(|meta| meta.modified())
+        .unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
+fn unix_secs(time: SystemTime) -> u64 {
+    time.duration_since(SystemTime::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0)
 }
 
 pub fn detected_adapter_ids(snapshot: &DetectionSnapshot) -> Vec<&'static str> {
@@ -291,9 +395,20 @@ pub fn grok_history_limit() -> usize {
 }
 
 pub fn list_grok_history_files(root: &Path, limit: usize) -> Vec<PathBuf> {
+    discover_grok_history_files(root)
+        .into_iter()
+        .take(limit.max(1))
+        .map(|file| file.path)
+        .collect()
+}
+
+pub fn discover_grok_history_files(root: &Path) -> Vec<DiscoveredFile> {
     if root.is_file() {
         return if is_grok_updates_file(root) {
-            vec![root.to_path_buf()]
+            vec![DiscoveredFile {
+                path: root.to_path_buf(),
+                mtime: mtime_of(root),
+            }]
         } else {
             Vec::new()
         };
@@ -306,8 +421,7 @@ pub fn list_grok_history_files(root: &Path, limit: usize) -> Vec<PathBuf> {
     files.sort_by_key(|(mtime, _)| Reverse(*mtime));
     files
         .into_iter()
-        .take(limit.max(1))
-        .map(|(_, path)| path)
+        .map(|(mtime, path)| DiscoveredFile { path, mtime })
         .collect()
 }
 
@@ -374,6 +488,43 @@ mod tests {
         let files = list_jsonl_files(root.path(), 8);
         assert_eq!(files.len(), 2);
         assert!(files[0].ends_with("new.jsonl"));
+    }
+
+    #[test]
+    fn discover_jsonl_files_returns_more_than_the_hot_window() {
+        let root = tempfile::tempdir().unwrap();
+        for index in 0..12 {
+            fs::write(root.path().join(format!("{index:02}.jsonl")), "{}\n").unwrap();
+        }
+        assert_eq!(list_jsonl_files(root.path(), 8).len(), 8);
+        assert_eq!(discover_jsonl_files(root.path()).len(), 12);
+    }
+
+    #[test]
+    fn enumerate_all_source_files_includes_archives_beyond_last_n() {
+        let home = tempfile::tempdir().unwrap();
+        let sessions = home.path().join(".codex").join("sessions");
+        let archived = home.path().join(".codex").join("archived_sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        fs::create_dir_all(&archived).unwrap();
+        fs::write(
+            home.path().join(".codex").join("version.json"),
+            "{\"version\":\"0.1.0\"}\n",
+        )
+        .unwrap();
+        for index in 0..20 {
+            fs::write(sessions.join(format!("s{index:02}.jsonl")), "{}\n").unwrap();
+            fs::write(archived.join(format!("a{index:02}.jsonl")), "{}\n").unwrap();
+        }
+        let snapshot = detect_from_home(home.path());
+        let files = enumerate_all_source_files(&snapshot);
+        assert!(files.len() >= 40, "got {}", files.len());
+        assert!(files
+            .iter()
+            .any(|file| file.source_id == adapter_codex::SOURCE_JSONL));
+        assert!(files
+            .iter()
+            .any(|file| file.source_id == "codex-archived-sessions"));
     }
 
     #[test]
