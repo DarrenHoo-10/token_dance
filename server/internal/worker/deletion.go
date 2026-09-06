@@ -11,6 +11,7 @@ import (
 
 	"tokendance/internal/crypto"
 	"tokendance/internal/provider"
+	mysqlstore "tokendance/internal/store/mysql"
 )
 
 const deletionLeaseDuration = 2 * time.Minute
@@ -310,6 +311,9 @@ func (w *Worker) deletionDeleteEvents(ctx context.Context, claim *deletionClaim)
 			if err := rebuildUserAggregates(ctx, tx, claim.userID.String, affectedDates); err != nil {
 				return err
 			}
+			if err := mysqlstore.UpsertCurrentWindowScoresTx(ctx, tx, claim.userID.String, w.clk.Now()); err != nil {
+				return err
+			}
 			if err := rebuildPublishedLeaderboards(ctx, tx, affectedDates, w.clk.Now()); err != nil {
 				return err
 			}
@@ -354,6 +358,9 @@ func (w *Worker) deletionDeleteAggregates(ctx context.Context, claim *deletionCl
 				if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE user_id = ?", userID); err != nil {
 					return fmt.Errorf("delete %s: %w", table, err)
 				}
+			}
+			if _, err := tx.ExecContext(ctx, "DELETE FROM aggregate_dirty_days WHERE user_id = ?", userID); err != nil {
+				return fmt.Errorf("delete aggregate dirty days: %w", err)
 			}
 		}
 		if _, err := tx.ExecContext(ctx, "DELETE FROM leaderboard_entries WHERE user_id = ?", userID); err != nil {
@@ -462,10 +469,14 @@ func (w *Worker) deletionDeleteIdentity(ctx context.Context, claim *deletionClai
 		userID := claim.userID.String
 		switch claim.scope {
 		case "account":
+			if err := mysqlstore.SyncWindowScoreEligibilityTx(ctx, tx, userID, false, w.clk.Now()); err != nil {
+				return err
+			}
 			statements := []struct {
 				query string
 				args  []interface{}
 			}{
+				{`DELETE FROM aggregate_dirty_days WHERE user_id = ?`, []interface{}{userID}},
 				{`DELETE FROM user_password_credentials WHERE user_id = ?`, []interface{}{userID}},
 				{`DELETE FROM email_outbox WHERE user_id = ?`, []interface{}{userID}},
 				{`DELETE FROM email_challenges WHERE user_id = ?`, []interface{}{userID}},

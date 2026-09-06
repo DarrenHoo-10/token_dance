@@ -652,16 +652,18 @@ type LeaderboardEntry struct {
 }
 
 type LeaderboardResponse struct {
-	TotalEntries    *int               `json:"totalEntries,omitempty"`
-	TotalTokens     *string            `json:"totalTokens,omitempty"`
-	Timezone        string             `json:"timezone,omitempty"`
-	SnapshotID      string             `json:"snapshotId"`
-	BoardKey        string             `json:"boardKey"`
-	Window          string             `json:"window"`
-	Metric          string             `json:"metric"`
-	Entries         []LeaderboardEntry `json:"entries"`
-	NextCursor      *string            `json:"nextCursor,omitempty"`
-	DataWatermarkAt *time.Time         `json:"dataWatermarkAt"`
+	TotalEntries      *int               `json:"totalEntries,omitempty"`
+	TotalParticipants *int               `json:"totalParticipants,omitempty"`
+	TotalTokens       *string            `json:"totalTokens,omitempty"`
+	Timezone          string             `json:"timezone,omitempty"`
+	Generation        string             `json:"generation,omitempty"`
+	SnapshotID        string             `json:"snapshotId"`
+	BoardKey          string             `json:"boardKey"`
+	Window            string             `json:"window"`
+	Metric            string             `json:"metric"`
+	Entries           []LeaderboardEntry `json:"entries"`
+	NextCursor        *string            `json:"nextCursor,omitempty"`
+	DataWatermarkAt   *time.Time         `json:"dataWatermarkAt"`
 }
 
 // Public Search Models

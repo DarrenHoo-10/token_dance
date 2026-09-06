@@ -436,6 +436,10 @@ func (s *authStore) CompleteRegistrationTx(ctx context.Context, in store.Registr
 		insertSecurityEvent(ctx, tx, in.SecurityEvent)
 	}
 
+	if err := InsertZeroWindowScoresTx(ctx, tx, in.User.UserID, userCreatedAt, now); err != nil {
+		return nil, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit registration: %w", err)
 	}

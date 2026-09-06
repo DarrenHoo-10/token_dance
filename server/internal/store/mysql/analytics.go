@@ -220,7 +220,7 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 	var delta *int
 	var percentile *float64
 	var ownEntry *domain.LeaderboardEntry
-	if u.LeaderboardVisibility == domain.LeaderboardVisibilityPublic {
+	if u.AccountStatus == domain.AccountStatusActive {
 		var rankErr error
 		ownEntry, percentile, rankErr = (&leaderboardStore{db: s.db}).liveOwnTokenEntry(ctx, userID, string(r.Key), time.Now())
 		if rankErr != nil {
