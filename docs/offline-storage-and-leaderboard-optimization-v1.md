@@ -21,6 +21,7 @@
 9. 显示总人数；排名持平和没有比较依据时留空，不显示“持平”“暂无对比”。
 10. Redis 每个周期维护全量排名索引，另发布前 2000 名热榜快照。第一阶段不按名次切分冷榜，不维护跨段搬移和补位链。
 11. MySQL 是云端可信数据源；Redis 是可重建的查询层，采用有监控、可恢复的最终一致性。
+12. Redis 与 MySQL 使用同一台腾讯云首尔主机、同一套直连方式：生产进程连本机端口，测试/本地开发经域名 `www.nexorai.com.cn` 直连，不写公网 IP，不走 SSH 隧道。MySQL 用库名 `tokendance_prod` / `tokendance_dev` 分开；Redis 没有库名，因此用独立实例 `tokendance-redis` 与 `redis_dev` 分开，不用同一个进程里的 `/0` `/1`。
 
 本方案更新既有设计中“公开资料且有用量才能参榜”和“上传缓存满则停止采集”的规则。其他权限边界沿用原有设计。
 
@@ -225,9 +226,60 @@ OpenRouter 价格表保存在本地。断网时使用最后成功获取的价格
 
 Redis 更新写绝对分数，不直接对每条重试任务执行 `ZINCRBY`。旧 revision 不能覆盖新 revision，分数因纠错或跨日下降也正常生效。
 
-## 9. Redis 全量索引和热榜设计
+## 9. Redis 部署、连接、全量索引和热榜设计
 
-### 9.1 Key 结构
+### 9.1 部署与连接
+
+Redis 仿照现有 MySQL 连接，不在开发机起本地 Redis，也不再经 SSH 隧道转发。
+
+当前 MySQL 的实际拓扑是：同一 Docker 实例、主机端口 `3307` 对公网直连，库名分开。生产 API/Worker 在云主机上读 `TOKENDANCE_MYSQL_DSN_FILE`，目标为 `127.0.0.1:3307/tokendance_prod`；测试/本地开发设置 `TOKENDANCE_MYSQL_DSN`，经域名 `www.nexorai.com.cn:3307` 连 `tokendance_dev`，与 phpMyAdmin `https://www.nexorai.com.cn/db_dev/` 同一主机。Redis 对齐这套方式：同一域名，用端口区分协议，不用 HTTP 路径转发。
+
+`www.nexorai.com.cn/token-dance/`、`/db_dev/` 这类路径只适用于网站和 phpMyAdmin，因为它们走 HTTPS，由 Nginx `location` 转发。MySQL 和 Redis 是独立 TCP 协议，握手里没有 URL path，Nginx 不能把 `https://www.nexorai.com.cn/tokendance_dev` 同时拆成 MySQL 和 Redis。正确共用域名的方式是：
+
+| 用途 | 地址 | 说明 |
+| --- | --- | --- |
+| 网站 / API | `https://www.nexorai.com.cn/token-dance/` | HTTP，Nginx 转到 `127.0.0.1:8130` |
+| 测试库控制台 | `https://www.nexorai.com.cn/db_dev/` | HTTP，phpMyAdmin |
+| 测试 MySQL | `www.nexorai.com.cn:3307`，库 `tokendance_dev` | TCP 直连，不经 Nginx path |
+| 测试 Redis | `www.nexorai.com.cn:6380`，实例 `redis_dev` | TCP 直连，对应 MySQL 的 `tokendance_dev` |
+| 生产 MySQL / Redis | `127.0.0.1:3307` / `127.0.0.1:6379` | API 与数据库同机，不绕公网域名 |
+
+| 环境 | 进程位置 | 连接目标 | 实例 | 配置来源 |
+| --- | --- | --- | --- | --- |
+| 生产 API / Worker | 云主机 | `127.0.0.1:6379` | `tokendance-redis` | `TOKENDANCE_REDIS_URL_FILE`，secret 文件，不进日志 |
+| 测试 / 本地开发 API / Worker | 开发机 | `www.nexorai.com.cn:6380` | `redis_dev` | `TOKENDANCE_REDIS_URL`，与 `TOKENDANCE_MYSQL_DSN` 一样走环境变量 |
+| 自动化测试 | 测试进程 | 空或不可达地址 | — | 空表示禁用 Redis，限流回退内存 |
+
+连接串格式对齐 MySQL DSN，使用 Redis URL，密码写在 URL 内并由 secret 文件或开发环境变量注入：
+
+```text
+# 生产（云主机本机，实例 tokendance-redis）
+redis://:<password>@127.0.0.1:6379/0
+
+# 测试/开发（经域名直连独立实例 redis_dev）
+redis://:<password>@www.nexorai.com.cn:6380/0
+```
+
+配置优先级：`TOKENDANCE_REDIS_URL_FILE` 覆盖 `TOKENDANCE_REDIS_URL`；解析成功后写入 `RedisAddr` / `RedisPassword` / `RedisDB`。`TOKENDANCE_REDIS_ADDR` 仅作为旧限流配置的兼容输入，生产启用 Redis 时必须走 URL 文件，不得把密码写进 `app.env`。生产若配置了 Redis，URL 必须来自 secret 文件，规则与 `TOKENDANCE_MYSQL_DSN_FILE` 相同。
+
+部署形态：
+
+| 项目 | 生产 `tokendance-redis` | 测试 `redis_dev` |
+| --- | --- | --- |
+| 对应 MySQL | 库 `tokendance_prod` | 库 `tokendance_dev` |
+| 镜像 / 卷 | `redis:7-alpine`，`tokendance-redis-data` | `redis:7-alpine`，`redis-dev-data` |
+| 端口 | 仅本机 `127.0.0.1:6379` | 公网 `6380`，经 `www.nexorai.com.cn:6380` |
+| 认证 | 独立 `requirepass`，`/etc/token-dance/secrets/redis_url` | 独立 `requirepass`，`/etc/token-dance/secrets/redis_dev_url` |
+| 持久化 | AOF `appendonly yes` | 同左 |
+| 内存策略 | `maxmemory-policy noeviction` | 同左 |
+
+Redis 没有 MySQL 那种命名库，`/0` `/1` 只是同一进程里的编号，`FLUSHALL` 会清掉两边。因此测试环境用独立容器 `redis_dev`，对应 MySQL 的 `tokendance_dev`；两边密码、数据卷、端口都分开。生产进程只连本机 `tokendance-redis`，开发进程只连 `redis_dev`。
+
+排行榜读模型上线前，Redis 仍可缺省：限流回退进程内实现，Session 和权限继续以 MySQL 为准。阶段 D 启用 Redis 读模型后，生产必须配置 `TOKENDANCE_REDIS_URL_FILE`；进程启动时对 URL 做 ping，失败则拒绝启动，与 MySQL DSN ping 失败同样处理。Redis 运行中故障仍按第 10.4 节降级到 MySQL 快照，不把 Redis 当可信数据源。
+
+测试/本地开发不再要求 `redis-tunnel.py`，也不写公网 IP。能经 `www.nexorai.com.cn:3307` 直连 MySQL `tokendance_dev` 的网络即可经同一域名直连 `redis_dev`（`www.nexorai.com.cn:6380`）。
+
+### 9.2 Key 结构
 
 每个周期独立维护以下结构。`{lb:global:<window>}` 为同周期脚本使用的 hash tag，`<g>` 为 UTC 周期/构建代次，`<s>` 为热快照 ID。
 
@@ -244,7 +296,7 @@ Redis 更新写绝对分数，不直接对每条重试任务执行 `ZINCRBY`。�
 
 其他周期使用 `7d`、`30d`、`all`。低频个人名次由全量索引回答，不再按 2000 人一段拆分冷 key。四个十万人榜约有 40 万个排名成员，这不是内存估算；还要压测 member、用户 HASH、版本信息、热榜及暂存重建代次的实际占用。
 
-### 9.2 精度和同分排序
+### 9.3 精度和同分排序
 
 Redis 普通 ZSET score 是浮点数，不能把大整数 Token 和注册时间拼进一个浮点 score。基线设计采用统一 `score=0` 的字典序 member：
 
@@ -256,7 +308,7 @@ member = 固定 30 位反向 Token 编码 | 固定宽度注册时间 | 用户 ID
 
 分数更新脚本先检查旧版本，移除该用户旧 member，再加入新 member，并同步用户映射和版本。删除成员后保留墓碑，旧消息不能重建已删除的成员。`ZCARD` 是当前成员总人数的依据，不再维护容易偏离的独立加减计数器。
 
-### 9.3 热榜捕获和发布
+### 9.4 热榜捕获和发布
 
 1. 对发生变化的周期每 10～30 秒合并发布一次；未变化则保留旧快照。名次变化少不代表分数写入少。
 2. 使用有界原子读取捕获前 2000 个 member、精确分数、人数、代次和 revision，确保它们来自同一状态；资料补齐在应用层完成，不能在脚本中做网络操作。
@@ -267,7 +319,7 @@ member = 固定 30 位反向 Token 编码 | 固定宽度注册时间 | 用户 ID
 
 前 2000 名是展示缓存，不是参榜资格集合。第 5000 名升入榜首、大批用户跨日掉分、批量注销等场景都从全量索引重新提取，不能只在原有 2000 人中调整顺序。
 
-### 9.4 读一致性边界
+### 9.5 读一致性边界
 
 **公开缓存接口**绑定 `snapshotId`，返回该快照的一页、总人数和水位。翻页继续使用同一快照；快照过期时重新获取。公开响应不包含个人排名，可使用短暂的应用内缓存，并按语言、周期、快照、页码区分缓存键。
 
@@ -282,7 +334,7 @@ member = 固定 30 位反向 Token 编码 | 固定宽度注册时间 | 用户 ID
 
 这是“读缓存”和“读取一致的个人排名”之间的明确取舍。若以后要求榜外个人名次也严格固定在任意旧快照，需要额外保存该快照的全体用户名次；本阶段不隐含新增这套大范围快照缓存。
 
-### 9.5 热 key 与执行资源
+### 9.6 热 key 与执行资源
 
 维护热榜可减少重复计算和返回体，但单实例中的 key 仍共享执行资源。禁止长 Lua、请求内全量排序、`KEYS` 扫描和同步重建十万成员。脚本只处理单用户或有界头部读取，耗时必须监控。
 
@@ -359,7 +411,7 @@ Redis 不可用时，限流读取 MySQL 最近完整排名快照及用户名次�
 | A：本地持久化 | 增加本地 SQLite Repository、事务采集、持久统计、单实例锁 | 离线与重启验收通过，不依赖上传队列 |
 | B：全量重建和同步 | 完整来源发现、断点续扫、价格重建、账号隔离的同步状态 | 老日志重复重建/补传不重复计数，坏记录不阻塞正常数据 |
 | C：云端分数模型 | 注册即零分入榜、日汇总增量、周期分数、可靠 Outbox、删除流程 | MySQL 持久分数和参考离线算法一致 |
-| D：Redis 读模型 | 全量索引、版本脚本、热榜发布、对账恢复、昨日快照 | 故障注入和十万用户压测达到门槛 |
+| D：Redis 读模型 | 云主机 Redis 直连（生产 `tokendance-redis` / 测试 `redis_dev`）、全量索引、版本脚本、热榜发布、对账恢复、昨日快照 | 故障注入和十万用户压测达到门槛；开发写入不得出现在生产实例 |
 | E：界面与上线 | API 接入、个人末行、总人数、精简文案、自动刷新 | 灰度验证实际 API、页面和发布包一致 |
 
 主要涉及：
@@ -367,6 +419,7 @@ Redis 不可用时，限流读取 MySQL 最近完整排名快照及用户名次�
 - `collector/apps/desktop/src-tauri/src/usage_ledger.rs`、`state.rs`、`daemon/mod.rs`、`commands/account.rs`：替换 JSON/上传队列驱动的本地数据访问。
 - `collector/apps/service/src/runtime.rs`、`detect.rs`、`collector/crates/acquisition`：完整来源枚举、增量读取和持久提交接口。
 - `collector/crates/wal-spool` / `uploader`：桌面路径逐步脱离自定义上传 WAL，复用传输协议和幂等逻辑；其他宿主未切换前保留兼容，不直接删除共享实现。
+- `server/internal/config`、`server/internal/store/redisx`、`server/cmd/api`、`server/cmd/worker`、`deploy/provision.py`：Redis URL 按 MySQL DSN 方式加载，生产读 secret 文件连本机 `tokendance-redis`，测试/开发经 `www.nexorai.com.cn:6380` 连 `redis_dev`。
 - `server/internal/store/mysql/live_leaderboard.go`、`analytics.go`、`worker`、`httpapi`：用预计算/Redis 查询替代请求内聚合，并移除私密主页对参榜的限制。
 - `server/internal/migrate/migrations` 与 `server/db/migrations`：按项目现有嵌入/文档规则维护兼容 DDL。
 - `web/src/pages/public/LeaderboardPage.tsx`、`LeaderboardListPage.tsx`、`LeaderboardTable.tsx`、`RankChange.tsx` 和隐私设置：统一新规则和显示。
@@ -395,6 +448,7 @@ Redis 不可用时，限流读取 MySQL 最近完整排名快照及用户名次�
 | 热榜发布 | 构建中失败、旧发布者恢复、持续高写入；只读到完整快照，不出现发布饥饿 |
 | 个人视图 | 热榜与 live revision 不同、本人跨过 1000 边界、切换账号/周期；页、人数和本人行不混用版本 |
 | 跨日 | 无上传用户滚出窗口、UTC 午夜、新注册、历史补传；当天周期和昨日比较基准正确 |
+| Redis 连接 | 生产只连本机 `tokendance-redis`（`127.0.0.1:6379`）；测试/开发经 `www.nexorai.com.cn:6380` 连 `redis_dev`；两边实例、密码、数据卷互不覆盖；生产 URL 来自 secret 文件且启动 ping 成功 |
 | Redis 恢复 | 数据部分丢失、全部重建、构建期间持续写入；人数、分数、版本、删除状态均能追平 |
 | 十万用户读压测 | 四周期全量成员，各含大量 0 分和同分；公开列表 100/500/1000 QPS 阶梯，认证榜外查询混合负载 |
 | 写与历史压测 | 模拟 100/1000/10000 活跃设备、集中历史补传和 30/365 日数据，记录事件/秒及积压排空时间 |
@@ -407,7 +461,7 @@ Redis 不可用时，限流读取 MySQL 最近完整排名快照及用户名次�
 
 ## 14. 交付范围与参考
 
-本次只提交方案文档。SQLite 数据库替换、Redis 接入、参榜权限变化、API/页面修改、生产重建和客户端发版均属于后续实施，不因提交本方案自动生效。
+本次以方案文档为主，并确定 Redis 连接方式：与 MySQL 一样直连现有云主机，生产用本机 `tokendance-redis`，测试用独立实例 `redis_dev`（`www.nexorai.com.cn:6380`），配置走 URL/secret 文件。SQLite 替换、排行榜读模型、参榜权限变化、API/页面修改、生产重建和客户端发版仍属后续实施，不因提交本方案自动生效。
 
 相关项目文档：
 
