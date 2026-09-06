@@ -5,6 +5,7 @@ pub mod daemon;
 pub mod state;
 pub mod usage_ledger;
 pub mod pricing;
+pub mod updates;
 
 use std::fs;
 use std::panic;
@@ -115,6 +116,7 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
 
 pub fn run() {
     install_panic_hook();
+    if updates::apply_pending_before_start() { return; }
 
     let app_state = match tauri::async_runtime::block_on(AppState::production()) {
         Ok(state) => state,
@@ -130,7 +132,12 @@ pub fn run() {
         .manage(app_state)
         .manage(commands::account::AccountState::default())
         .manage(commands::window::WindowPresentation::default())
+        .manage(std::sync::Arc::new(updates::UpdateState::default()))
         .invoke_handler(tauri::generate_handler![
+            updates::get_update_status,
+            updates::check_for_updates,
+            updates::set_auto_update,
+            updates::install_update,
             commands::daemon::get_daemon_status,
             commands::daemon::toggle_global_pause,
             commands::daemon::set_global_pause,
@@ -190,6 +197,7 @@ pub fn run() {
             let state = app.state::<AppState>().inner().clone();
             CollectorDaemon::new(state.clone()).start();
             commands::account::start_auto_sync(app.handle().clone(), state);
+            updates::start(app.handle());
             if let Err(error) = install_tray(app) {
                 write_crash_log(&format!("tray setup failed: {error}"));
             }
