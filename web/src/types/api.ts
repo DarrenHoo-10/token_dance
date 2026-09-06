@@ -204,6 +204,7 @@ export interface PersonalSummaryMetrics {
 }
 
 export interface PersonalSummaryRanking {
+  entry?: LeaderboardEntry;
   visibility?: LeaderboardVisibility | string;
   rank: number | null;
   delta?: number | null;

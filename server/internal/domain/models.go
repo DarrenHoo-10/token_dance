@@ -519,6 +519,7 @@ type PersonalSummaryMetrics struct {
 }
 
 type PersonalSummaryRanking struct {
+	Entry      *LeaderboardEntry     `json:"entry,omitempty"`
 	Visibility LeaderboardVisibility `json:"visibility"`
 	Rank       *int                  `json:"rank"`
 	Delta      *int                  `json:"delta"`

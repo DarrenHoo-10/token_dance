@@ -255,6 +255,7 @@ fn decode_line(
                 return Ok(None);
             };
             EventPayload::SkillInvoked(SkillInvokedPayload {
+                skill_public_name: None,
                 skill_key: format!("hmac-sha256:{}", keyed_hmac(EVENT_ID_KEY, &[&skill])),
                 invoke_type: parse_invoke_type(object.get("skillInvokeType")),
                 success: object

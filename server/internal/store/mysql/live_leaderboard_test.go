@@ -41,6 +41,20 @@ func TestLeaderboardTop1000MySQL(t *testing.T) {
 	if len(board.Entries) != 20 || board.Entries[19].RankNo != 1000 || board.NextCursor != nil {
 		t.Fatalf("top 1000 boundary failed: %+v", board)
 	}
+	if board.TotalEntries == nil || *board.TotalEntries != 1001 {
+		t.Fatal("total participant count was capped")
+	}
+	entry, _, err := (&leaderboardStore{db: db}).liveOwnTokenEntry(ctx, "usr_cap_1001", "today", now)
+	if err != nil || entry == nil || entry.RankNo != 1001 || entry.Handle != "cap_1001" || entry.MetricValue != "999" {
+		t.Fatalf("own entry outside top 1000: %+v %v", entry, err)
+	}
+	if _, err := db.Exec("UPDATE user_privacy_settings SET public_profile_enabled=FALSE WHERE user_id='usr_cap_1001'"); err != nil {
+		t.Fatal(err)
+	}
+	entry, _, err = (&leaderboardStore{db: db}).liveOwnTokenEntry(ctx, "usr_cap_1001", "today", now)
+	if err != nil || entry != nil {
+		t.Fatalf("nonparticipant has a public rank: %+v %v", entry, err)
+	}
 	cursor = "1000"
 	if _, err := st.Leaderboard().GetLeaderboard(ctx, "global", "today", "tokens", &cursor, 20); err == nil {
 		t.Fatal("cursor beyond top 1000 accepted")

@@ -54,6 +54,12 @@ const liveTokenRanking = `WITH totals AS (` + tokenTotals + `), ranked AS (
 )
 `
 
+const liveTokenComparison = liveTokenRanking + `, previous_totals AS (` + tokenTotals + `), previous_ranked AS (
+    SELECT user_id, ROW_NUMBER() OVER (ORDER BY tokens DESC, user_id ASC) AS rank_no
+    FROM previous_totals
+)
+`
+
 func (s *leaderboardStore) getLiveTokenLeaderboard(ctx context.Context, window string, cursor *string, limit int, now time.Time) (*domain.LeaderboardResponse, error) {
 	from, to, err := leaderboardDates(window, now)
 	if err != nil {
@@ -76,10 +82,7 @@ func (s *leaderboardStore) getLiveTokenLeaderboard(ctx context.Context, window s
 	if endRank > 1000 {
 		endRank = 1000
 	}
-	rows, err := s.db.QueryContext(ctx, liveTokenRanking+`, previous_totals AS (`+tokenTotals+`), previous_ranked AS (
-	    SELECT user_id, ROW_NUMBER() OVER (ORDER BY tokens DESC, user_id ASC) AS rank_no
-	    FROM previous_totals
-	)
+	rows, err := s.db.QueryContext(ctx, liveTokenComparison+`
 	SELECT stats.participants, stats.tokens, stats.watermark,
 	       ranked.rank_no, ranked.handle, ranked.display_name, ranked.avatar_url, ranked.tokens, previous_ranked.rank_no
 	FROM stats LEFT JOIN ranked ON ranked.rank_no > ? AND ranked.rank_no <= ?
@@ -136,4 +139,36 @@ func (s *leaderboardStore) liveTokenRank(ctx context.Context, userID, window str
 	}
 	percentile := float64(count-rank+1) / float64(count) * 100
 	return &rank, &percentile, nil
+}
+
+// This is used only by authenticated personal summaries. The public list stays
+// capped at 1000; callers never supply a different account's user ID.
+func (s *leaderboardStore) liveOwnTokenEntry(ctx context.Context, userID, window string, now time.Time) (*domain.LeaderboardEntry, *float64, error) {
+	from, to, err := leaderboardDates(window, now)
+	if err != nil {
+		return nil, nil, nil
+	}
+	previousFrom, previousTo, _ := leaderboardDates(window, now.UTC().AddDate(0, 0, -1))
+	var entry domain.LeaderboardEntry
+	var avatar sql.NullString
+	var previousRank sql.NullInt64
+	var count int
+	err = s.db.QueryRowContext(ctx, liveTokenComparison+`
+	SELECT ranked.rank_no, ranked.handle, ranked.display_name, ranked.avatar_url, ranked.tokens, previous_ranked.rank_no, stats.participants
+	FROM ranked CROSS JOIN stats LEFT JOIN previous_ranked ON previous_ranked.user_id = ranked.user_id
+	WHERE ranked.user_id = ?`, from, to, previousFrom, previousTo, userID).Scan(&entry.RankNo, &entry.Handle, &entry.DisplayName, &avatar, &entry.MetricValue, &previousRank, &count)
+	if err == sql.ErrNoRows {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	entry.AvatarURL = ptrFromNullString(avatar)
+	entry.IsNew = !previousRank.Valid
+	if previousRank.Valid {
+		delta := int(previousRank.Int64) - entry.RankNo
+		entry.RankDelta = &delta
+	}
+	percentile := float64(count-entry.RankNo+1) / float64(count) * 100
+	return &entry, &percentile, nil
 }

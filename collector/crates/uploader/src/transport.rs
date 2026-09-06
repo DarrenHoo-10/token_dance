@@ -527,6 +527,7 @@ fn flatten_claimed_event(event: &EventEnvelope) -> Result<Value, TransportError>
         }
         "skill_invoked" => {
             move_value(&mut payload, &mut flat, "skillKey", "skillKey");
+            move_value(&mut payload, &mut flat, "skillPublicName", "skillPublicName");
             move_value(&mut payload, &mut flat, "invokeType", "skillInvokeType");
             move_value(&mut payload, &mut flat, "pluginKey", "pluginKey");
             move_value(&mut payload, &mut flat, "success", "success");
