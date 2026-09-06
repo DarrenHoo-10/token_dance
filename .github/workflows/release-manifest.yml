@@ -2,9 +2,9 @@ name: release-manifest
 
 on:
   push:
-    paths: [web/**, tools/releases/**, schemas/**, deploy/nginx-token-dance.conf, .github/workflows/release-manifest.yml]
+    paths: [web/**, tools/releases/**, schemas/**, server/db/migrations/**, server/internal/migrate/**, deploy/nginx-token-dance.conf, .github/workflows/release-manifest.yml]
   pull_request:
-    paths: [web/**, tools/releases/**, schemas/**, deploy/nginx-token-dance.conf, .github/workflows/release-manifest.yml]
+    paths: [web/**, tools/releases/**, schemas/**, server/db/migrations/**, server/internal/migrate/**, deploy/nginx-token-dance.conf, .github/workflows/release-manifest.yml]
 
 permissions:
   contents: read
@@ -22,6 +22,12 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: python3 tools/releases/test_publish_manifest.py
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - run: python3 -m pip install -r tools/releases/requirements.txt
+      - run: python3 tools/releases/test_release_registry.py
       - run: npm --prefix web ci
       - run: npm --prefix web run typecheck
       - run: npm --prefix web test -- src/test/download-docs.test.tsx src/test/navigation.test.tsx

@@ -1,19 +1,16 @@
 """Publish metadata only after uploaded public OSS packages match the build.
 
-Standard library only. No OSS credentials are needed: CI uploads packages first.
-This command writes the manifest on the host where Nginx serves it.
+Verified releases are committed to MySQL, then projected to the public manifest.
+No OSS credentials are needed: CI uploads packages first.
 """
 
 import argparse
-from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import ipaddress
 import json
-import os
 from pathlib import Path
 import re
-import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -165,74 +162,33 @@ def verify_remote(asset):
         raise ValueError('Remote package differs from the verified local build')
 
 
-@contextmanager
-def manifest_lock(path):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    lock = path.with_name(path.name + '.lock')
-    fd = os.open(lock, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    try:
-        with os.fdopen(fd, 'w') as stream:
-            stream.write(str(os.getpid()))
-        yield
-    finally:
-        lock.unlink()
-
-
-def update_manifest(path, release, verify=verify_remote):
-    validate_manifest({'schemaVersion': 1, 'releases': [release]})
-    with manifest_lock(path):
-        current = {'schemaVersion': 1, 'releases': []}
-        if path.exists():
-            if path.stat().st_size > MAX_MANIFEST:
-                raise ValueError('Existing manifest too large')
-            current = json.loads(path.read_text(encoding='utf-8'))
-        validate_manifest(current)
-        target = version(release['version'])
-        matching = [r for r in current['releases'] if r['platform'] == release['platform']]
-        for previous in matching:
-            prior = version(previous['version'])
-            if prior > target:
-                raise ValueError('Refusing to publish an older version')
-            if prior == target:
-                if previous['exe'] != release['exe'] or previous.get('zip') != release.get('zip'):
-                    raise ValueError('A published version cannot change its packages')
-                return False
-        # Check the complete remote bytes without credentials before exposing links.
-        verify(release['exe'])
-        if release.get('zip'):
-            verify(release['zip'])
-        # The public feed keeps one current release per platform; OSS keeps history.
-        current['releases'] = [r for r in current['releases'] if r['platform'] != release['platform']] + [release]
-        data = (json.dumps(current, ensure_ascii=False, indent=2) + '\n').encode('utf-8')
-        if len(data) > MAX_MANIFEST or len(current['releases']) > 100:
-            raise ValueError('Manifest exceeds limit')
-        temporary = None
-        try:
-            with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
-                temporary = Path(stream.name)
-                stream.write(data)
-                stream.flush()
-                os.fsync(stream.fileno())
-            temporary.chmod(0o644)
-            os.replace(temporary, path)
-        finally:
-            if temporary is not None and temporary.exists():
-                temporary.unlink()
-        return True
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--version', required=True)
-    parser.add_argument('--exe', type=Path, required=True)
-    parser.add_argument('--exe-url', required=True)
+    parser.add_argument('--reconcile', action='store_true', help='Rebuild manifest from MySQL without build artifacts')
+    parser.add_argument('--version')
+    parser.add_argument('--exe', type=Path)
+    parser.add_argument('--exe-url')
     parser.add_argument('--zip', type=Path)
     parser.add_argument('--zip-url')
-    parser.add_argument('--build-info', type=Path, required=True)
-    parser.add_argument('--notes-file', type=Path, required=True)
+    parser.add_argument('--build-info', type=Path)
+    parser.add_argument('--notes-file', type=Path)
     parser.add_argument('--manifest', type=Path, required=True)
     parser.add_argument('--prerelease', action='store_true')
     args = parser.parse_args()
+    import release_registry
+    if args.reconcile:
+        if any([args.version, args.exe, args.exe_url, args.zip, args.zip_url,
+                args.build_info, args.notes_file, args.prerelease]):
+            parser.error('--reconcile cannot be combined with release arguments')
+        db = release_registry.connect()
+        try:
+            release_registry.reconcile(db, args.manifest)
+        finally:
+            db.close()
+        print('Release manifest reconciled from MySQL.')
+        return
+    if not all([args.version, args.exe, args.exe_url, args.build_info, args.notes_file]):
+        parser.error('Publishing requires version, exe, exe-url, build-info and notes-file')
     version(args.version)
     if bool(args.zip) != bool(args.zip_url):
         raise ValueError('ZIP path and URL must be supplied together')
@@ -247,12 +203,16 @@ def main():
     if args.zip:
         check_zip(args.zip, executable)
         release['zip'] = describe(args.zip, args.zip_url)
-    changed = update_manifest(args.manifest, release)
-    print('Release manifest published.' if changed else 'Release already published; manifest unchanged.')
+    db = release_registry.connect()
+    try:
+        changed = release_registry.publish(db, args.manifest, release, build, verify_remote)
+    finally:
+        db.close()
+    print('Release recorded in MySQL and manifest published.' if changed else 'Existing release verified; manifest reconciled from MySQL.')
 
 
 if __name__ == '__main__':
     try:
         main()
-    except (ValueError, OSError, KeyError, zipfile.BadZipFile):
-        raise SystemExit('Release not published: check package URLs, files, provenance and manifest. No secrets are logged.')
+    except Exception:
+        raise SystemExit('Release not published: check database configuration, package verification and file permissions; retry or reconcile after repair. No secrets are logged.')
