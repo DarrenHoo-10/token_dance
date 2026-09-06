@@ -38,6 +38,8 @@ pub struct AccountUser {
     pub display_name: String,
     pub handle: Option<String>,
     #[serde(default)]
+    pub avatar_url: Option<String>,
+    #[serde(default)]
     pub onboarding_required: bool,
 }
 
@@ -559,9 +561,55 @@ pub async fn get_account_session(
     Ok(session)
 }
 
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+
 #[tauri::command]
 pub async fn login_account(
     website: String,
+    mode: Option<String>,
+    state: State<'_, AccountState>,
+    app: State<'_, AppState>,
+) -> Result<AccountSession, String> {
+    wait_for_login(browser_login(website, mode, state, app)).await
+}
+
+fn browser_login_url(
+    origin: &Url,
+    mode: Option<&str>,
+    redirect: &str,
+    challenge: &str,
+    nonce: &str,
+) -> Result<Url, String> {
+    let mut return_to = Url::parse("https://local.invalid/desktop-login").unwrap();
+    return_to
+        .query_pairs_mut()
+        .append_pair("redirect_uri", redirect)
+        .append_pair("code_challenge", challenge)
+        .append_pair("state", nonce);
+    let page = match mode {
+        None | Some("login") => "login",
+        Some("register") => "register",
+        _ => return Err("INVALID_LOGIN_MODE".into()),
+    };
+    let mut login_url = origin.join(page).map_err(|_| "INVALID_WEBSITE")?;
+    login_url.query_pairs_mut().append_pair(
+        "return_to",
+        &format!("{}?{}", return_to.path(), return_to.query().unwrap()),
+    );
+    Ok(login_url)
+}
+
+async fn wait_for_login<T>(
+    future: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    tokio::time::timeout(LOGIN_TIMEOUT, future)
+        .await
+        .map_err(|_| "LOGIN_TIMEOUT".to_string())?
+}
+
+async fn browser_login(
+    website: String,
+    mode: Option<String>,
     state: State<'_, AccountState>,
     app: State<'_, AppState>,
 ) -> Result<AccountSession, String> {
@@ -589,24 +637,13 @@ pub async fn login_account(
         uuid::Uuid::new_v4().simple()
     );
     let challenge = format!("{:x}", Sha256::digest(verifier.as_bytes()));
-    let mut return_to = Url::parse("https://local.invalid/desktop-login").unwrap();
-    return_to
-        .query_pairs_mut()
-        .append_pair("redirect_uri", &redirect)
-        .append_pair("code_challenge", &challenge)
-        .append_pair("state", &nonce);
-    let mut login_url = origin.join("login").map_err(|_| "INVALID_WEBSITE")?;
-    login_url.query_pairs_mut().append_pair(
-        "return_to",
-        &format!("{}?{}", return_to.path(), return_to.query().unwrap()),
-    );
-    super::window::open_website(login_url.to_string())?;
-    let (mut stream, code) = tokio::time::timeout(
-        Duration::from_secs(300),
-        wait_browser_callback(&listener, &redirect, &nonce),
-    )
+    let login_url = browser_login_url(&origin, mode.as_deref(), &redirect, &challenge, &nonce)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        super::window::open_website(login_url.to_string())
+    })
     .await
-    .map_err(|_| "LOGIN_TIMEOUT")??;
+    .map_err(|_| "BROWSER_OPEN_FAILED")??;
+    let (mut stream, code) = wait_browser_callback(&listener, &redirect, &nonce).await?;
     let mut current = Connection::new(origin)?;
     let result: Result<AccountSession, String> = async {
         let session = current
@@ -751,6 +788,75 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    #[test]
+    fn login_and_registration_keep_callback_and_deployment_path() {
+        let origin = account_origin("https://example.test/token-dance").unwrap();
+        for mode in ["login", "register"] {
+            let url = browser_login_url(
+                &origin,
+                Some(mode),
+                "http://127.0.0.1:1234/callback",
+                "challenge",
+                "nonce",
+            )
+            .unwrap();
+            assert_eq!(url.path(), format!("/token-dance/{mode}"));
+            let target = url
+                .query_pairs()
+                .find(|(k, _)| k == "return_to")
+                .unwrap()
+                .1
+                .into_owned();
+            let target = Url::parse(&format!("https://example.test{target}")).unwrap();
+            assert_eq!(target.path(), "/desktop-login");
+            assert!(target
+                .query_pairs()
+                .any(|(k, v)| k == "redirect_uri" && v == "http://127.0.0.1:1234/callback"));
+            assert!(target
+                .query_pairs()
+                .any(|(k, v)| k == "state" && v == "nonce"));
+            assert!(target
+                .query_pairs()
+                .any(|(k, v)| k == "code_challenge" && v == "challenge"));
+        }
+        assert!(browser_login_url(&origin, Some("https://evil.test"), "", "", "").is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn browser_wait_expires_at_ten_minutes_and_releases_login_lock() {
+        let lock = Arc::new(Mutex::new(()));
+        let task_lock = lock.clone();
+        let task = tokio::spawn(async move {
+            wait_for_login(async move {
+                let _guard = task_lock.lock().await;
+                std::future::pending::<Result<(), String>>().await
+            })
+            .await
+        });
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(599)).await;
+        assert!(!task.is_finished());
+        assert!(lock.try_lock().is_err());
+        tokio::time::advance(Duration::from_secs(1)).await;
+        assert_eq!(task.await.unwrap(), Err("LOGIN_TIMEOUT".into()));
+        assert!(lock.try_lock().is_ok());
+    }
+
+    #[test]
+    fn account_user_preserves_avatar_and_accepts_older_sessions() {
+        let mut value = json!({"userId":"user", "displayName":"Jiayu", "handle":"jayzhang", "avatarUrl":"/api/v1/public/avatars/current"});
+        let user: AccountUser = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(user).unwrap()["avatarUrl"],
+            value["avatarUrl"]
+        );
+        value.as_object_mut().unwrap().remove("avatarUrl");
+        assert!(serde_json::from_value::<AccountUser>(value)
+            .unwrap()
+            .avatar_url
+            .is_none());
+    }
 
     #[test]
     fn browser_callback_is_bound_to_loopback_host_path_and_state() {

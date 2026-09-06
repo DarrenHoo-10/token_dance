@@ -36,8 +36,8 @@ describe('Navigation & Locale Switching Tests', () => {
 
     await waitFor(() => {
       expect(screen.getByText('TokenBoard')).toBeInTheDocument();
-      expect(screen.getByText('社区')).toBeInTheDocument();
-      expect(screen.getByText('团队')).toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: '社区' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: '团队' })).not.toBeInTheDocument();
     });
     expect(screen.queryByText('发现')).not.toBeInTheDocument();
     expect(screen.queryByRole('search')).not.toBeInTheDocument();
@@ -45,11 +45,13 @@ describe('Navigation & Locale Switching Tests', () => {
     const enBtn = screen.getByText('EN');
     fireEvent.click(enBtn);
 
-    expect(screen.getByText('Community')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Community' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Teams' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign In' })).toBeInTheDocument();
 
     const zhBtn = screen.getByText('中文');
     fireEvent.click(zhBtn);
-    expect(screen.getByText('社区')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '社区' })).not.toBeInTheDocument();
   });
 
   it('preserves query params, route, and input state across locale switches', () => {

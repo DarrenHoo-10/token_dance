@@ -38,7 +38,10 @@ semver = "1"
 tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell"] }
 
 [build-dependencies]
 tauri-build = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
