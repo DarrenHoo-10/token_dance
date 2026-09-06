@@ -222,100 +222,19 @@ pub async fn hide_window(window: WebviewWindow) -> Result<(), String> {
     Ok(())
 }
 
-/// If another TokenDance process is already running, show its panel and return true
-/// so this process can exit instead of fighting the collector lock / auto-update.
-pub fn activate_existing_instance() -> bool {
-    #[cfg(windows)]
-    {
-        activate_existing_instance_windows()
+/// Reuse the existing settings window when it is open; otherwise show usage.
+/// Going through presentation preserves loading, focus and orb visibility rules.
+pub(crate) fn activate_primary_window(app: &AppHandle) -> Result<(), String> {
+    if let Some(settings) = app.get_webview_window("settings") {
+        if settings.is_visible().unwrap_or(false)
+            || settings.is_minimized().unwrap_or(false)
+            || app.state::<WindowPresentation>().has_pending("settings")
+        {
+            return open_settings(app.clone());
+        }
     }
-    #[cfg(not(windows))]
-    {
-        false
-    }
+    request_initial_panel(app).map_err(|error| error.to_string())
 }
-
-#[cfg(windows)]
-fn activate_existing_instance_windows() -> bool {
-    use windows::core::BOOL;
-    use windows::Win32::Foundation::{HWND, LPARAM};
-    use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameW, GetWindowTextW, GetWindowThreadProcessId, IsIconic,
-        SetForegroundWindow, SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE,
-        SWP_SHOWWINDOW, SW_RESTORE, SW_SHOW,
-    };
-
-    const KEEP_ENUMERATING: BOOL = BOOL(1);
-
-    struct Found {
-        me: u32,
-        main: Option<HWND>,
-        other: Option<HWND>,
-    }
-
-    unsafe extern "system" fn callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let found = unsafe { &mut *(lparam.0 as *mut Found) };
-        let mut pid = 0u32;
-        unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
-        if pid == found.me {
-            return KEEP_ENUMERATING;
-        }
-        let mut class = [0u16; 64];
-        let class_len = unsafe { GetClassNameW(hwnd, &mut class) };
-        if class_len <= 0 {
-            return KEEP_ENUMERATING;
-        }
-        let class_name = String::from_utf16_lossy(&class[..class_len as usize]);
-        if class_name != "Tauri Window" {
-            return KEEP_ENUMERATING;
-        }
-        let mut title = [0u16; 256];
-        let title_len = unsafe { GetWindowTextW(hwnd, &mut title) };
-        if title_len <= 0 {
-            return KEEP_ENUMERATING;
-        }
-        let title = String::from_utf16_lossy(&title[..title_len as usize]);
-        if !title.starts_with("TokenDance") {
-            return KEEP_ENUMERATING;
-        }
-        if title.contains("用量") || title.contains("Usage") {
-            found.main = Some(hwnd);
-        } else if found.other.is_none() {
-            found.other = Some(hwnd);
-        }
-        KEEP_ENUMERATING
-    }
-
-    let mut found = Found {
-        me: std::process::id(),
-        main: None,
-        other: None,
-    };
-    let _ = unsafe { EnumWindows(Some(callback), LPARAM(&mut found as *mut Found as isize)) };
-    let Some(hwnd) = found.main.or(found.other) else {
-        return false;
-    };
-    unsafe {
-        let show = if IsIconic(hwnd).as_bool() {
-            SW_RESTORE
-        } else {
-            SW_SHOW
-        };
-        let _ = ShowWindow(hwnd, show);
-        let _ = SetWindowPos(
-            hwnd,
-            Some(HWND_TOPMOST),
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
-        );
-        let _ = SetForegroundWindow(hwnd);
-    }
-    true
-}
-
 #[tauri::command]
 pub async fn show_window(window: WebviewWindow) -> Result<(), String> {
     if window.label() == "settings" { open_settings(window.app_handle().clone()) }
