@@ -1,0 +1,21 @@
+.usage-header,.settings-header{position:relative;z-index:5}
+.desktop-update-wordmark{position:static;display:inline-flex;align-items:center}
+.desktop-update-notice{position:static}
+.usage-panel .desktop-update-badge,.settings-page .desktop-update-badge{position:relative;top:-10px;display:block;margin-left:6px;padding:2px 5px;border:1px solid #bd2635;border-radius:7px 7px 7px 2px;background:linear-gradient(145deg,#df414a,#bd2434);color:#fff;font:750 10px/15px "Segoe UI",sans-serif;letter-spacing:.65px;transform:rotate(-5deg);box-shadow:inset 0 1px 0 #ffffff38,0 3px 8px #b926342b,0 0 0 2px #fff;cursor:pointer}
+.usage-panel .desktop-update-badge:hover,.settings-page .desktop-update-badge:hover{background:linear-gradient(145deg,#e34b53,#c32637);box-shadow:inset 0 1px 0 #ffffff38,0 4px 11px #b9263438,0 0 0 2px #fff}
+.desktop-update-badge:after{content:"";position:absolute;inset:-5px -2px}
+.desktop-update-popover{position:absolute;z-index:20;top:calc(100% - 3px);left:18px;width:340px;max-width:calc(100vw - 38px);max-height:calc(100dvh - 100px);overflow:auto;box-sizing:border-box;padding:18px;background:#fff;color:#24272e;border:1px solid #e5e7ed;border-radius:12px;box-shadow:0 12px 32px #292c3526;font:12px/1.55 "Segoe UI","Microsoft YaHei",sans-serif}
+.desktop-update-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.desktop-update-heading h2{font-size:16px;letter-spacing:-.4px;font-weight:650;margin:0}
+.desktop-update-heading p{font-size:11px;color:#717b8f;margin:3px 0 0}
+.desktop-update-heading>button{width:28px;height:28px;border:1px solid #e5e7ed;background:#f8f9fb;border-radius:7px;flex-shrink:0}
+.desktop-update-notes{white-space:pre-wrap;overflow-wrap:anywhere;font-weight:400;letter-spacing:normal;margin:15px 0;padding:15px 0;border-block:1px solid #eceef3;max-height:260px;overflow:auto;font-size:12px}
+.desktop-update-status,.desktop-update-caption{font-size:11px;line-height:1.5;color:#626b76;margin:0 0 12px;letter-spacing:normal;font-weight:400}
+.desktop-update-caption{text-align:center;margin:9px 0 0;font-size:10px}
+.desktop-update-popover progress,.settings-updates progress{display:block;width:100%;height:5px;accent-color:#798aa5;margin:0 0 12px}
+.usage-panel .desktop-update-action,.settings-page .desktop-update-action{padding:8px 12px;border:1px solid #dce0e6;border-radius:8px;background:#f8f9fb;color:#24272e;font:600 12px/1.5 "Segoe UI","Microsoft YaHei",sans-serif;white-space:nowrap;cursor:pointer}
+.desktop-update-popover .desktop-update-action{width:100%}
+.desktop-update-error{font-size:11px;color:#ad3343;overflow-wrap:anywhere;font-weight:400;letter-spacing:normal}
+.settings-updates{margin:16px 0}
+.desktop-update-buttons{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;flex-shrink:0;max-width:50%}
+@media(max-width:370px){.usage-brand{gap:6px}.usage-window-controls button{width:29px}}
