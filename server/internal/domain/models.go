@@ -658,12 +658,16 @@ type LeaderboardResponse struct {
 	Timezone          string             `json:"timezone,omitempty"`
 	Generation        string             `json:"generation,omitempty"`
 	SnapshotID        string             `json:"snapshotId"`
+	Revision          string             `json:"revision,omitempty"`
+	ViewKind          string             `json:"viewKind,omitempty"`
 	BoardKey          string             `json:"boardKey"`
 	Window            string             `json:"window"`
 	Metric            string             `json:"metric"`
 	Entries           []LeaderboardEntry `json:"entries"`
+	OwnEntry          *LeaderboardEntry  `json:"ownEntry,omitempty"`
 	NextCursor        *string            `json:"nextCursor,omitempty"`
 	DataWatermarkAt   *time.Time         `json:"dataWatermarkAt"`
+	Stale             *bool              `json:"stale,omitempty"`
 }
 
 // Public Search Models

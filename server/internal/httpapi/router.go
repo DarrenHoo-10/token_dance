@@ -148,6 +148,7 @@ func NewRouterWithReadiness(
 
 			// Analytics
 			mr.Get("/summary", handlers.GetSummary)
+			mr.Get("/leaderboards", handlers.GetMyLeaderboards)
 			mr.Get("/trends/tokens", handlers.GetTokenTrends)
 			mr.Get("/breakdowns/agents", handlers.GetAgentBreakdowns)
 			mr.Get("/breakdowns/models", handlers.GetModelBreakdowns)

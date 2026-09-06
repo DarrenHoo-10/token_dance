@@ -30,6 +30,7 @@ import (
 	"tokendance/internal/privacy"
 	"tokendance/internal/profile"
 	"tokendance/internal/search"
+	"tokendance/internal/store"
 	"tokendance/internal/telemetry"
 )
 
@@ -1589,9 +1590,28 @@ func (h *Handlers) Search(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) GetLeaderboards(w http.ResponseWriter, r *http.Request) {
-	boardKey := r.URL.Query().Get("board")
-	window := r.URL.Query().Get("window")
-	metric := r.URL.Query().Get("metric")
+	q := leaderboardQueryFromRequest(r)
+	res, err := h.leaderboard.Query(r.Context(), q)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, res)
+}
+
+func (h *Handlers) GetMyLeaderboards(w http.ResponseWriter, r *http.Request) {
+	user := GetUserFromContext(r.Context())
+	q := leaderboardQueryFromRequest(r)
+	q.ViewerUserID = user.UserID
+	res, err := h.leaderboard.Query(r.Context(), q)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, res)
+}
+
+func leaderboardQueryFromRequest(r *http.Request) store.LeaderboardQuery {
 	cursor := r.URL.Query().Get("cursor")
 	var curPtr *string
 	if cursor != "" {
@@ -1603,13 +1623,18 @@ func (h *Handlers) GetLeaderboards(w http.ResponseWriter, r *http.Request) {
 			limit = val
 		}
 	}
-
-	res, err := h.leaderboard.GetLeaderboards(r.Context(), boardKey, window, metric, curPtr, limit)
-	if err != nil {
-		WriteError(w, r, err)
-		return
+	snapshotID := r.URL.Query().Get("snapshotId")
+	if snapshotID == "" {
+		snapshotID = r.URL.Query().Get("snapshot")
 	}
-	WriteJSON(w, http.StatusOK, res)
+	return store.LeaderboardQuery{
+		BoardKey:   r.URL.Query().Get("board"),
+		Window:     r.URL.Query().Get("window"),
+		Metric:     r.URL.Query().Get("metric"),
+		SnapshotID: snapshotID,
+		Cursor:     curPtr,
+		Limit:      limit,
+	}
 }
 
 func (h *Handlers) CompareUsers(w http.ResponseWriter, r *http.Request) {

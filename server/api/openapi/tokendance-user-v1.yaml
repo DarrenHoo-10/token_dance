@@ -2674,6 +2674,11 @@ components:
       properties:
         snapshotId:
           type: string
+        revision:
+          type: string
+        viewKind:
+          type: string
+          description: hot snapshot, live Redis index, or mysql fallback
         boardKey:
           type: string
         window:
@@ -2697,6 +2702,13 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/LeaderboardEntry'
+        ownEntry:
+          allOf:
+          - $ref: '#/components/schemas/LeaderboardEntry'
+          nullable: true
+          description: Authenticated viewer's rank when outside the public top 1000. Never accepted from a client-supplied user id.
+        stale:
+          type: boolean
         nextCursor:
           type: string
           nullable: true

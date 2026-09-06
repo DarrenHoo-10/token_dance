@@ -2022,6 +2022,10 @@ func (m *MemoryStore) PublishSnapshot(ctx context.Context, snapshotID string, bo
 	return nil
 }
 
+func (m *MemoryStore) GetLeaderboardView(ctx context.Context, q store.LeaderboardQuery) (*domain.LeaderboardResponse, error) {
+	return m.GetLeaderboard(ctx, q.BoardKey, q.Window, q.Metric, q.Cursor, q.Limit)
+}
+
 func (m *MemoryStore) GetLeaderboard(ctx context.Context, boardKey, window, metric string, cursor *string, limit int) (*domain.LeaderboardResponse, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
