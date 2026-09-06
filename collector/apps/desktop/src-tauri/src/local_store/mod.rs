@@ -176,6 +176,8 @@ pub struct LocalStore {
     pricing: CostLedger,
     dir: PathBuf,
     retention_clock: (chrono::DateTime<chrono::Utc>, std::time::Instant),
+    // Transient animation signal: reopening history must not trigger a fresh pulse.
+    last_recorded_change_at_ms: Option<i64>,
 }
 
 impl LocalStore {
@@ -202,6 +204,7 @@ impl LocalStore {
             pricing,
             dir: dir.to_path_buf(),
             retention_clock: (chrono::Utc::now(), std::time::Instant::now()),
+            last_recorded_change_at_ms: None,
         };
         store.reprice()?;
         Ok(store)
@@ -209,6 +212,44 @@ impl LocalStore {
 
     pub fn catalog(&self) -> &Catalog {
         &self.catalog
+    }
+
+    pub fn last_recorded_change_at_ms(&self) -> Option<i64> {
+        self.last_recorded_change_at_ms
+    }
+
+    /// Read the small durable rollup directly; do not reconstruct a legacy JSON ledger.
+    pub fn known_today_tokens(&self, agent_id: &str, today: NaiveDate) -> Option<u64> {
+        let known: bool = self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM daily_agent_metrics
+             WHERE agent_id = ?1 AND aggregation_version = ?2 AND accuracy > 0)",
+                params![agent_id, AGGREGATION_VERSION],
+                |row| row.get(0),
+            )
+            .ok()?;
+        if !known {
+            return None;
+        }
+        let tokens: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT tokens FROM daily_agent_metrics
+             WHERE day = ?1 AND agent_id = ?2 AND aggregation_version = ?3",
+                params![
+                    today.format("%Y-%m-%d").to_string(),
+                    agent_id,
+                    AGGREGATION_VERSION
+                ],
+                |row| row.get(0),
+            )
+            .optional()
+            .ok()?;
+        match tokens {
+            Some(value) => value.parse().ok(),
+            None => Some(0),
+        }
     }
 
     pub fn commit_batch(
@@ -238,11 +279,15 @@ impl LocalStore {
         let tx = self.conn.transaction().map_err(|error| error.to_string())?;
         let mut pricing = self.pricing.clone();
         let mut changed = false;
+        let mut usage_changed = false;
         let mut dirty_agents = HashSet::new();
         let target_id = active_target_id(&tx)?;
         for event in events {
             let outcome = apply_event(&tx, event, &mut pricing, &self.catalog)?;
             changed |= outcome.changed;
+            usage_changed |= outcome.changed
+                && (event_tokens(event).is_some()
+                    || matches!(event.payload, EventPayload::CostRecorded(_)));
             if outcome.inserted {
                 retention::record(
                     &tx,
@@ -271,6 +316,9 @@ impl LocalStore {
         }
         tx.commit().map_err(|error| error.to_string())?;
         self.pricing = pricing;
+        if usage_changed {
+            self.last_recorded_change_at_ms = Some(chrono::Utc::now().timestamp_millis());
+        }
         Ok(changed)
     }
 
@@ -662,7 +710,7 @@ fn bump_agent_metrics(
         .optional()
         .map_err(|error| error.to_string())?
         .unwrap_or_else(|| ("0".into(), 0, "{}".into(), 0, 0, 0, 0, 0));
-    if tokens > 0 {
+    if event_tokens(event).is_some() {
         row_tokens = add_u64_text(&row_tokens, tokens);
         let rank = i64::from(accuracy_rank(&event.accuracy));
         accuracy = if accuracy == 0 {
