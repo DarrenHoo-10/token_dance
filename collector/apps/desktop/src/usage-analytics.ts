@@ -99,7 +99,23 @@ export function usageTrend(agents: AgentConfig[], range: UsageRange, now = new D
   if (range === 'week') {
     return weeklyUsage(agents, now).points.map(point => ({ key: point.date, label: monthDay(point.date), tokens: point.tokens }));
   }
-  return annualUsage(agents, now).days.map(point => ({ key: point.date, label: monthDay(point.date), tokens: point.tokens }));
+  const year = annualUsage(agents, now);
+  let firstUsage: string | null = null;
+  for (const agent of agents) {
+    if (agent.accuracy === 'unknown') continue;
+    for (const day of agent.dailyUsage ?? []) {
+      if (agent.historyStart && day.date < agent.historyStart) continue;
+      if (!Number.isFinite(day.tokens) || day.tokens <= 0) continue;
+      if (!firstUsage || day.date < firstUsage) firstUsage = day.date;
+    }
+  }
+  if (!firstUsage || year.days.length === 0) {
+    return year.days.map(point => ({ key: point.date, label: monthDay(point.date), tokens: point.tokens }));
+  }
+  const startKey = firstUsage < year.days[0].date ? year.days[0].date : firstUsage;
+  const startIndex = year.days.findIndex(day => day.date >= startKey);
+  const days = startIndex < 0 ? year.days : year.days.slice(startIndex);
+  return days.map(point => ({ key: point.date, label: monthDay(point.date), tokens: point.tokens }));
 }
 
 export function annualUsage(agents: AgentConfig[], now = new Date()) {

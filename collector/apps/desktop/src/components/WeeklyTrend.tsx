@@ -10,18 +10,18 @@ const format = (value: number) => new Intl.NumberFormat("en", { notation: "compa
 
 function titleFor(range: UsageRange, zh: boolean) {
   if (range === "today") return zh ? "今日趋势" : "Today's trend";
-  if (range === "all") return zh ? "近 12 个月趋势" : "12-month trend";
+  if (range === "all") return zh ? "全部时间趋势" : "All-time trend";
   return zh ? "近 7 日趋势" : "7-day trend";
 }
 
 function hintFor(range: UsageRange, zh: boolean) {
   if (range === "today") return zh ? "含此刻 · 今日持续更新" : "Includes now · Live";
-  if (range === "all") return zh ? "过去 12 个月" : "Past 12 months";
+  if (range === "all") return zh ? "从首次用量起 · 最多 12 个月" : "From first usage · Up to 12 months";
   return zh ? "含今日 · 今日持续更新" : "Includes today · Live";
 }
 
 function showAxisLabel(range: UsageRange, point: TrendPoint, index: number, points: TrendPoint[]) {
-  if (range === "week") return true;
+  if (range === "week" || points.length <= 12) return true;
   if (range === "today") return index % 3 === 0 || index === points.length - 1;
   return index === 0 || index === points.length - 1 || (point.key.endsWith("-01") && Number(point.key.slice(5, 7)) % 2 === 1);
 }
@@ -109,7 +109,7 @@ export function WeeklyTrend({ points, range, lang }: { points: TrendPoint[]; ran
               <circle cx={x(index)} cy={y(point.tokens)} r={active === index ? 4 : 2.8} fill="#fff" stroke="#6f809b" strokeWidth="2" />
             </g>}
             {dense && active === index && <circle cx={x(index)} cy={y(point.tokens)} r="3.2" fill="#fff" stroke="#6f809b" strokeWidth="2" />}
-            {showAxisLabel(range, point, index, points) && <text x={x(index)} y="77" textAnchor="middle" className="usage-chart-label">{range === "today" ? String(Number(point.label.slice(0, 2))) : point.label}</text>}
+            {showAxisLabel(range, point, index, points) && <text x={x(index)} y="77" textAnchor="middle" className="usage-chart-label">{point.label}</text>}
           </g>;
         })}
       </svg>

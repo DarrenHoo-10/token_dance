@@ -56,9 +56,26 @@ test('week and all-time trends follow the selected range', () => {
   assert.equal(points.length, 7);
   assert.deepEqual(points.map(point => point.tokens), [1, 2, 3, 4, 5, 6, 7]);
   const year = usageTrend([agent], 'all', now);
-  assert.equal(year.length, 365);
+  assert.equal(year.length, 7);
+  assert.equal(year[0].key, dates[0]);
+  assert.equal(year[0].tokens, 1);
   assert.equal(year.at(-1).tokens, 7);
-  assert.equal(year[0].tokens, null);
+});
+test('all-time trend starts at first usage day and caps at one year', () => {
+  const long = [];
+  for (let i = 400; i >= 0; i--) {
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i, 12);
+    const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+    long.push({ date, tokens: i === 400 ? 9 : i === 0 ? 3 : 0 });
+  }
+  const points = usageTrend([{ ...agent, dailyUsage: long, historyStart: long[0].date }], 'all', now);
+  assert.equal(points.length, 365);
+  assert.equal(points.at(-1).tokens, 3);
+  assert.equal(points[0].tokens, 0);
+  const short = usageTrend([{ ...agent, dailyUsage: [{ date: dates[5], tokens: 4 }, { date: dates[6], tokens: 5 }], historyStart: dates[5] }], 'all', now);
+  assert.equal(short.length, 2);
+  assert.equal(short[0].key, dates[5]);
+  assert.equal(short[0].tokens, 4);
 });
 test('annual calendar includes leap day and local date boundaries', () => {
   const year = annualUsage([], new Date(2024, 2, 1, 0, 1));
