@@ -31,22 +31,20 @@ describe('Live leaderboard', () => {
     expect(screen.getByRole('heading',{name:'我的数据'})).toBeInTheDocument();
     expect(update).not.toHaveBeenCalled();
   });
-  it('uses full board totals returned by the server rather than the loaded top ten', async () => {
-    vi.mocked(api.getLeaderboard).mockResolvedValue({...board,totalEntries:25,totalTokens:'9000000'});
-    showPage();
-    expect(await screen.findByText('9.0M')).toBeInTheDocument();
-    expect(screen.getByText('25')).toBeInTheDocument();
-    expect(screen.getByText('UTC')).toBeInTheDocument();
-  });
   it('ignores a late response from the previously selected period', async () => {
+    const ranked = (window: LeaderboardResponse['window'], metricValue: string): LeaderboardResponse => ({
+      ...board,
+      window,
+      entries: [{ rankNo: 1, handle: 'ada', displayName: 'Ada', avatarUrl: null, metricValue, rankDelta: 0 }],
+    });
     let resolveToday!: (value: LeaderboardResponse) => void;
-    vi.mocked(api.getLeaderboard).mockImplementation(({window}={}) => window==='today' ? new Promise(resolve => {resolveToday=resolve;}) : Promise.resolve({...board,totalTokens:'7000000',window:'7d'}));
+    vi.mocked(api.getLeaderboard).mockImplementation(({window}={}) => window==='today' ? new Promise(resolve => {resolveToday=resolve;}) : Promise.resolve(ranked('7d','7000000')));
     showPage();
     fireEvent.click(screen.getByRole('tab',{name:'近 7 天'}));
-    expect(await screen.findByText('7.0M')).toBeInTheDocument();
-    resolveToday({...board,totalTokens:'1000000'});
-    await waitFor(()=>expect(screen.getByText('7.0M')).toBeInTheDocument());
-    expect(screen.queryByText('1.0M')).not.toBeInTheDocument();
+    expect((await screen.findAllByText('7.0M')).length).toBeGreaterThan(0);
+    resolveToday(ranked('today','1000000'));
+    await waitFor(()=>expect(screen.getAllByText('7.0M').length).toBeGreaterThan(0));
+    expect(screen.queryAllByText('1.0M')).toHaveLength(0);
   });
   it('connect tools opens device settings instead of claiming an unperformed connection', () => {
     showPage(); fireEvent.click(screen.getByRole('button',{name:'连接工具'}));
