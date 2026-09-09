@@ -9,7 +9,7 @@ export function LeaderboardTable({ entries, ownEntry }: { entries: LeaderboardEn
   const { locale } = useLocale(); const zh = locale === 'zh-CN';
   const rows = ownEntry && ownEntry.rankNo > 1000 ? [...entries, ownEntry] : entries;
   return <div className="leaderboard-table-scroll"><table className="leaderboard-data-table" aria-label={zh ? '排行榜列表' : 'Leaderboard list'}>
-    <thead><tr><th scope="col">{zh ? '排名' : 'Rank'}</th><th scope="col">{zh ? '开发者' : 'Developer'}</th><th scope="col">Token</th><th scope="col" title={zh ? '同一统计周期与昨日比较 · UTC' : 'Same ranking window compared with yesterday · UTC'}>{zh ? '较昨日' : 'Vs yesterday'}</th></tr></thead>
+    <thead><tr><th scope="col">{zh ? '排名' : 'Rank'}</th><th scope="col">{zh ? '开发者' : 'Developer'}</th><th scope="col">Token</th><th scope="col" title={zh ? '同一统计周期与昨日比较 · 北京时间' : 'Same ranking window compared with yesterday · Beijing time'}>{zh ? '较昨日' : 'Vs yesterday'}</th></tr></thead>
     <tbody>{rows.map(entry => <tr key={entry.handle} className={entry === ownEntry ? 'leaderboard-own-row' : undefined} aria-label={entry === ownEntry ? (zh ? '我的排名' : 'My rank') : undefined}>
       <td><span className={`list-rank rank-${entry.rankNo}`}>{entry.rankNo}</span></td>
       <td><Link className="leaderboard-person" to={`/u/${encodeURIComponent(entry.handle)}`}>

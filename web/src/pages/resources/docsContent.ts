@@ -8,7 +8,7 @@ export function getArticles(zh: boolean): DocArticle[] {
       { id: 'install', title: '1. 获取并运行客户端', paragraphs: ['从下载页获取 Windows 版 TokenDance.exe。运行后，点击 Windows 通知区域中的 TokenDance 图标打开用量面板。'], action: { to: '/download', label: '前往客户端下载' } },
       { id: 'login', title: '2. 登录你的账号', paragraphs: ['打开客户端的「设置」，点击「登录」。在浏览器中完成网站登录，再回到客户端确认账号已连接。', '已有网页登录状态时，可以直接完成授权。登录失效或授权未完成时，从客户端设置重新发起登录。'] },
       { id: 'collect', title: '3. 确认正在采集', paragraphs: ['在支持的 AI 工具里完成一次使用，再打开托盘面板查看 Token 用量。在设置中确认需要的采集来源已开启。', '保持采集开启、账号登录和网络连接，客户端会自动同步。收起面板不影响后台运行。'] },
-      { id: 'ranking', title: '4. 回到排行榜，找到自己', paragraphs: ['使用同一账号打开 TokenBoard，查看对应周期的排名。榜单按 UTC 统计，本机面板按本地日历日展示；跨时区时，两边的「今日」可能不同。'], note: '排行榜展示头像、昵称、Token 和排名。关闭详细资料页的公开开关，不会隐藏这些榜单信息。', action: { to: '/leaderboard', label: '打开排行榜' } },
+      { id: 'ranking', title: '4. 回到排行榜，找到自己', paragraphs: ['使用同一账号打开 TokenBoard，查看对应周期的排名。榜单按北京时间（UTC+8）统计，本机面板按本地日历日展示；跨时区时，两边的「今日」可能不同。'], note: '排行榜展示头像、昵称、Token 和排名。关闭详细资料页的公开开关，不会隐藏这些榜单信息。', action: { to: '/leaderboard', label: '打开排行榜' } },
     ] },
     { slug: 'install', label: '安装与运行', group: '开始使用', title: '安装与运行', lead: 'TokenDance 是常驻 Windows 托盘的桌面客户端。下载便携版后直接运行，无需为每个 AI 工具分别安装扩展。', sections: [
       { id: 'windows', title: '下载 Windows 版', paragraphs: ['当前支持 Windows x64。下载 TokenDance.exe，放在固定文件夹中运行；也可以下载 ZIP 压缩包，解压后运行其中的程序。', '版本号、文件大小和预览版标记均以下载页为准。需要 WebView2 Runtime；签名状态和其他运行要求以对应版本的发布说明为准。'], action: { to: '/download', label: '下载桌面客户端' } },
@@ -22,7 +22,7 @@ export function getArticles(zh: boolean): DocArticle[] {
     { slug: 'sync', label: '采集与同步', group: '了解 TokenDance', title: '采集与同步', lead: '本机面板记录设备上的用量，网站汇总已成功同步的记录。网络、账号和统计时区都会影响两边的展示。', sections: [
       { id: 'flow', title: '数据如何到达榜单', paragraphs: ['本机工具记录 → 客户端采集与隐私过滤 → 登录后自动同步 → 网站汇总。隐藏面板后，后台采集与同步仍会继续。'] },
       { id: 'states', title: '读懂同步状态', columns: ['状态', '你可以做什么'], rows: [ ['等待同步', '保持登录与网络连接，等待自动处理。'], ['网络异常', '确认网络可用；待同步记录保留，客户端自动重试。'], ['登录已失效', '打开设置重新登录，确认账号连接成功。'], ['采集已暂停', '从托盘菜单恢复采集；暂停时同步也会暂停。'], ['同步受阻', '检查设备是否停用、归属是否冲突，再处理对应提示。'] ] },
-      { id: 'time', title: '统计时间与历史', paragraphs: ['排行榜按 UTC 划分周期，本机面板使用本地日历日期。「全部时间」指本机仍有记录的全部历史，不保证能恢复升级前已清理的数据。', '不要将未知或不支持的数据当成零，也不要将未同步的本机记录当成网站已收录数据。'] },
+      { id: 'time', title: '统计时间与历史', paragraphs: ['排行榜按北京时间（UTC+8）划分周期，本机面板使用本地日历日期。「全部时间」指本机仍有记录的全部历史，不保证能恢复升级前已清理的数据。', '不要将未知或不支持的数据当成零，也不要将未同步的本机记录当成网站已收录数据。'] },
     ] },
     { slug: 'privacy', label: '数据与隐私', group: '了解 TokenDance', title: '数据与隐私', lead: '了解什么留在本机、什么会同步，以及其他人能在排行榜上看到什么。', sections: [
       { id: 'data', title: '同步什么', paragraphs: ['客户端将经过隐私过滤的用量记录发送到 TokenDance，用于汇总 Token、关联工具来源和计算排名。只有登录并连接设备后才进行账号同步。'] },
@@ -31,7 +31,7 @@ export function getArticles(zh: boolean): DocArticle[] {
       { id: 'quota', title: '额度查询', paragraphs: ['部分工具的额度从本机日志读取，部分工具复用本机有效登录状态向对应官方服务发起只读查询。凭据不上传到 TokenDance 网站。', '查询失败时，额度显示待更新，不作为真实零额度。'] },
     ] },
     { slug: 'faq', label: '常见问题', group: '帮助与更新', title: '常见问题', lead: '先确认账号、采集状态和统计周期，通常就能定位用量显示问题。', sections: [
-      { id: 'no-ranking', title: '客户端有数据，排行榜为什么还没有？', paragraphs: ['确认客户端和网站登录同一账号、采集没有暂停，并等待自动同步。检查同步提示；若登录失效需重新登录。网站按 UTC、本机按本地日期统计，请确认所选周期。'] },
+      { id: 'no-ranking', title: '客户端有数据，排行榜为什么还没有？', paragraphs: ['确认客户端和网站登录同一账号、采集没有暂停，并等待自动同步。检查同步提示；若登录失效需重新登录。网站按北京时间、本机按本地日期统计，请确认所选周期。'] },
       { id: 'background', title: '关闭面板，还会继续采集吗？', paragraphs: ['会。收起面板后后台继续运行；退出应用会停止。暂停采集时，自动同步也会暂停。'] },
       { id: 'quota', title: '为什么有 Token，却看不到额度或费用？', paragraphs: ['Token 采集、额度查询和费用记录是独立能力。未支持、缺少记录或查询待更新时显示为空或待更新，不应解释为零。'] },
       { id: 'offline', title: '断网后，用量会丢失吗？', paragraphs: ['待同步记录会保留在本机队列中，网络恢复后自动重试。不要在等待同步时删除应用数据。'] },

@@ -2,6 +2,24 @@
 -- community_stats_outbox carries "this metric date changed" signals written in
 -- the same transaction as the daily metric rebuild; the worker recomputes the
 -- whole day from daily_user_agent_metrics and overwrites both stores.
+
+-- Statistics days follow the product calendar (UTC+8). occurred_at stays a
+-- universal UTC timestamp; only the derived day key shifts. Daily tables are
+-- cleared so the worker rebuilds them from usage_events under the new keys.
+ALTER TABLE usage_events
+  MODIFY COLUMN occurred_date DATE GENERATED ALWAYS AS (DATE(occurred_at + INTERVAL 8 HOUR)) STORED;
+
+DELETE FROM daily_user_agent_metrics;
+DELETE FROM daily_user_agent_model_metrics;
+DELETE FROM daily_skill_metrics;
+DELETE FROM user_window_scores;
+DELETE FROM ranking_outbox;
+DELETE FROM leaderboard_entries;
+DELETE FROM leaderboard_snapshots;
+DELETE FROM community_daily_stats;
+DELETE FROM community_agent_daily_stats;
+DELETE FROM community_stats_outbox;
+
 CREATE TABLE community_daily_stats (
   metric_date     DATE NOT NULL,
   tokens_total    BIGINT UNSIGNED NOT NULL DEFAULT 0,

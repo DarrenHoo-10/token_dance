@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"tokendance/internal/crypto"
+	"tokendance/internal/domain"
 	"tokendance/internal/ranking"
 	"tokendance/internal/store"
 	mysqlstore "tokendance/internal/store/mysql"
@@ -283,13 +284,13 @@ func (w *Worker) ProcessCommunityStatsFinalize(ctx context.Context) error {
 	if w.db == nil {
 		return nil
 	}
-	now := w.clk.Now().UTC()
-	if sameUTCDay(w.lastStatsFinalized, now) {
+	now := w.clk.Now()
+	if sameStatsDay(w.lastStatsFinalized, now) {
 		return nil
 	}
 	w.lastStatsFinalized = now
 
-	yesterday := now.AddDate(0, 0, -1).Format("2006-01-02")
+	yesterday := domain.DayDate(now.AddDate(0, 0, -1))
 	if err := w.finalizeCommunityDay(ctx, yesterday, now); err != nil {
 		return err
 	}
@@ -310,7 +311,7 @@ func (w *Worker) backfillCommunityDays(ctx context.Context, now time.Time, days 
 	rows, err := w.db.QueryContext(ctx, `
 		SELECT metric_date FROM community_daily_stats
 		WHERE metric_date >= ? AND metric_date < ?`,
-		now.AddDate(0, 0, -days).Format("2006-01-02"), now.Format("2006-01-02"))
+		domain.DayDate(now.AddDate(0, 0, -days)), domain.DayDate(now))
 	if err != nil {
 		return fmt.Errorf("list community stats backfill gaps: %w", err)
 	}
@@ -328,7 +329,7 @@ func (w *Worker) backfillCommunityDays(ctx context.Context, now time.Time, days 
 		return fmt.Errorf("iterate community stats backfill gaps: %w", err)
 	}
 	for i := 1; i <= days; i++ {
-		date := now.AddDate(0, 0, -i).Format("2006-01-02")
+		date := domain.DayDate(now.AddDate(0, 0, -i))
 		if _, ok := present[date]; ok {
 			continue
 		}
@@ -356,8 +357,6 @@ func (w *Worker) pruneCommunityStatsOutbox(ctx context.Context, now time.Time) e
 	}
 }
 
-func sameUTCDay(a, b time.Time) bool {
-	ay, am, ad := a.UTC().Date()
-	by, bm, bd := b.UTC().Date()
-	return ay == by && am == bm && ad == bd
+func sameStatsDay(a, b time.Time) bool {
+	return domain.DayDate(a) == domain.DayDate(b)
 }

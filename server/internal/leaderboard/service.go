@@ -64,7 +64,7 @@ func (s *Service) Query(ctx context.Context, q store.LeaderboardQuery) (*domain.
 // missing day yields omitted fields so clients can show an empty state
 // instead of a fabricated zero.
 func (s *Service) GetCommunityStats(ctx context.Context, now time.Time) (*domain.CommunityStatsResponse, error) {
-	today := now.UTC().Format("2006-01-02")
+	today := domain.DayDate(now)
 	current, err := s.community.GetCommunityDailyStats(ctx, today)
 	if err != nil {
 		return nil, err
@@ -82,7 +82,7 @@ func (s *Service) GetCommunityStats(ctx context.Context, now time.Time) (*domain
 		CostAmount:   roundedCost(current.CostAmount),
 		ComputedAt:   &current.ComputedAt,
 	}
-	previous, err := s.community.GetCommunityDailyStats(ctx, now.UTC().AddDate(0, 0, -1).Format("2006-01-02"))
+	previous, err := s.community.GetCommunityDailyStats(ctx, domain.DayDate(now.AddDate(0, 0, -1)))
 	if err != nil {
 		return nil, err
 	}
