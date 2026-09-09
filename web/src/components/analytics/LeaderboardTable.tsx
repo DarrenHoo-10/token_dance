@@ -14,7 +14,7 @@ export function LeaderboardTable({ entries, ownEntry }: { entries: LeaderboardEn
       <td><span className={`list-rank rank-${entry.rankNo}`}>{entry.rankNo}</span></td>
       <td><Link className="leaderboard-person" to={`/u/${encodeURIComponent(entry.handle)}`}>
         <UserAvatar url={entry.avatarUrl} name={publicLeaderboardName(entry)} fallbackClassName="list-avatar" />
-        <span><strong>{publicLeaderboardName(entry)}{entry === ownEntry && <span className="leaderboard-me-badge">{zh ? '我' : 'You'}</span>}</strong></span>
+        <span className="leaderboard-person-name"><strong>{publicLeaderboardName(entry)}{entry === ownEntry && <span className="leaderboard-me-badge">{zh ? '我' : 'You'}</span>}</strong>{entry.displayName?.trim() && <span className="list-handle">@{entry.handle}</span>}</span>
       </Link></td>
       <td className="mono-num" title={Number(entry.metricValue).toLocaleString()}>{new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(Number(entry.metricValue))}</td>
       <td><RankChange value={entry.rankDelta} isNew={entry.isNew} /></td>

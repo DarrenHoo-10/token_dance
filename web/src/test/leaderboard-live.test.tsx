@@ -19,7 +19,6 @@ beforeEach(() => {
   vi.spyOn(api,'getPrivacy').mockResolvedValue(privacy);
   vi.spyOn(api,'getPersonalSummary').mockRejectedValue(new Error('unavailable'));
   vi.spyOn(api,'getActivityCalendar').mockRejectedValue(new Error('unavailable'));
-  vi.spyOn(api,'getAgentBreakdowns').mockRejectedValue(new Error('unavailable'));
   vi.spyOn(api,'getLeaderboard').mockResolvedValue(board);
   vi.spyOn(api,'getMyLeaderboard').mockImplementation((params) => api.getLeaderboard(params));
   vi.spyOn(api,'getCommunityStats').mockResolvedValue({ metricDate:'2026-09-09', timezone:'UTC' });
@@ -52,6 +51,10 @@ describe('Live leaderboard', () => {
       metricDate:'2026-09-09', timezone:'UTC',
       tokens:'186400000', developers:128, codeLines:'32800', interactions:'4600', costAmount:268.42,
       deltas:{ tokens:12.6, developers:8.4, codeLines:-50, interactions:12.3, costAmount:11.8 },
+      harnesses:[
+        { agentId:'zcode', label:'Zcode', tokens:'186400000', sharePct:64.2 },
+        { agentId:'codex', label:'Codex CLI', tokens:'58000000', sharePct:20 },
+      ],
     });
     showPage();
     expect(await screen.findByText('186.4M')).toBeInTheDocument();
@@ -61,6 +64,10 @@ describe('Live leaderboard', () => {
     expect(screen.getByText('$268.42')).toBeInTheDocument();
     expect(screen.getByText('↑ +12.6% vs 昨日')).toBeInTheDocument();
     expect(screen.getByText('↓ −50.0%')).toBeInTheDocument();
+    expect(screen.getByText('Zcode')).toBeInTheDocument();
+    expect(screen.getByText('Codex CLI')).toBeInTheDocument();
+    expect(screen.getByText('64%')).toBeInTheDocument();
+    expect(screen.getByText('社区今日 Token 占比 · 按 harness')).toBeInTheDocument();
   });
   it('keeps the hero empty instead of fabricating numbers when stats are unavailable', async () => {
     vi.mocked(api.getCommunityStats).mockRejectedValue(new Error('offline'));

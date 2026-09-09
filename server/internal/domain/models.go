@@ -682,6 +682,7 @@ type CommunityStatsResponse struct {
 	Interactions *string                 `json:"interactions,omitempty"`
 	CostAmount   *float64                `json:"costAmount,omitempty"`
 	Deltas       *CommunityStatsDeltaDTO `json:"deltas,omitempty"`
+	Harnesses    []CommunityHarnessDTO   `json:"harnesses,omitempty"`
 	ComputedAt   *time.Time              `json:"computedAt,omitempty"`
 }
 
@@ -691,6 +692,14 @@ type CommunityStatsDeltaDTO struct {
 	CodeLines    *float64 `json:"codeLines,omitempty"`
 	Interactions *float64 `json:"interactions,omitempty"`
 	CostAmount   *float64 `json:"costAmount,omitempty"`
+}
+
+// CommunityHarnessDTO is one harness's share of the community day (top N).
+type CommunityHarnessDTO struct {
+	AgentID  string   `json:"agentId"`
+	Label    string   `json:"label"`
+	Tokens   *string  `json:"tokens,omitempty"`
+	SharePct *float64 `json:"sharePct,omitempty"`
 }
 
 // Public Search Models

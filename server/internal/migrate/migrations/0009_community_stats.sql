@@ -15,6 +15,17 @@ CREATE TABLE community_daily_stats (
   PRIMARY KEY (metric_date)
 ) ENGINE = InnoDB;
 
+-- Per-harness (agent) token share of the community day, same precompute
+-- pipeline: the stats worker replaces the day's rows on every recompute.
+CREATE TABLE community_agent_daily_stats (
+  metric_date     DATE NOT NULL,
+  agent_id        VARCHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  tokens_total    BIGINT UNSIGNED NOT NULL DEFAULT 0,
+  computed_at     DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+                  ON UPDATE CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (metric_date, agent_id)
+) ENGINE = InnoDB;
+
 CREATE TABLE community_stats_outbox (
   task_id          CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
   metric_date      DATE NOT NULL,

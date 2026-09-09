@@ -64,32 +64,38 @@ type MemoryStore struct {
 
 	FaultInjector func(operation string) error
 
-	users              map[string]*domain.User
-	userCredentials    map[string]*domain.UserPasswordCredential
-	sessions           map[string]*domain.UserSession
-	emailChallenges    map[string]*domain.EmailChallenge
-	emailOutbox        map[string]*domain.EmailOutbox
-	privacySettings    map[string]*domain.UserPrivacySettings
-	publicProfiles     map[string]*domain.PublicUserProfile
-	handleHistory      map[string]*domain.UserHandleHistory
-	uploadObjects      map[string]*domain.UserUploadObject
-	bindingChallenges  map[string]*domain.DeviceBindingChallenge
-	installations      map[string]*domain.Installation
-	ingestNonces       map[string]time.Time
-	ingestBatches      map[string]*domain.IngestResult
-	ingestBatchHashes  map[string][32]byte
-	usageEvents        map[string]domain.UsageEvent
-	securityEvents     []domain.UserSecurityEvent
-	exportJobs         map[string]*domain.DataExportJob
-	deletionRequests   map[string]*domain.DataDeletionRequest
-	userMetricFixtures map[string]UserMetricFixture
-	userSkillFixtures  map[string][]UserSkillFixture
-	userTrendFixtures  map[string][]UserTrendFixture
-	publishedSnapshots map[string]*domain.LeaderboardResponse
-	buildingSnapshots  map[string]*domain.LeaderboardResponse
-	windowScores       map[string][]WindowScore
-	rankingOutbox      []RankingOutboxTask
-	communityDailyStats map[string]store.CommunityDailyTotals
+	users                    map[string]*domain.User
+	userCredentials          map[string]*domain.UserPasswordCredential
+	sessions                 map[string]*domain.UserSession
+	emailChallenges          map[string]*domain.EmailChallenge
+	emailOutbox              map[string]*domain.EmailOutbox
+	privacySettings          map[string]*domain.UserPrivacySettings
+	publicProfiles           map[string]*domain.PublicUserProfile
+	handleHistory            map[string]*domain.UserHandleHistory
+	uploadObjects            map[string]*domain.UserUploadObject
+	bindingChallenges        map[string]*domain.DeviceBindingChallenge
+	installations            map[string]*domain.Installation
+	ingestNonces             map[string]time.Time
+	ingestBatches            map[string]*domain.IngestResult
+	ingestBatchHashes        map[string][32]byte
+	usageEvents              map[string]domain.UsageEvent
+	securityEvents           []domain.UserSecurityEvent
+	exportJobs               map[string]*domain.DataExportJob
+	deletionRequests         map[string]*domain.DataDeletionRequest
+	userMetricFixtures       map[string]UserMetricFixture
+	userSkillFixtures        map[string][]UserSkillFixture
+	userTrendFixtures        map[string][]UserTrendFixture
+	publishedSnapshots       map[string]*domain.LeaderboardResponse
+	buildingSnapshots        map[string]*domain.LeaderboardResponse
+	windowScores             map[string][]WindowScore
+	rankingOutbox            []RankingOutboxTask
+	communityDailyStats      map[string]store.CommunityDailyTotals
+	communityAgentDailyStats map[communityAgentKey]store.CommunityAgentTokens
+}
+
+type communityAgentKey struct {
+	date    string
+	agentID string
 }
 
 type WindowScore struct {
@@ -115,32 +121,33 @@ type RankingOutboxTask struct {
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		users:              make(map[string]*domain.User),
-		userCredentials:    make(map[string]*domain.UserPasswordCredential),
-		sessions:           make(map[string]*domain.UserSession),
-		emailChallenges:    make(map[string]*domain.EmailChallenge),
-		emailOutbox:        make(map[string]*domain.EmailOutbox),
-		privacySettings:    make(map[string]*domain.UserPrivacySettings),
-		publicProfiles:     make(map[string]*domain.PublicUserProfile),
-		handleHistory:      make(map[string]*domain.UserHandleHistory),
-		uploadObjects:      make(map[string]*domain.UserUploadObject),
-		bindingChallenges:  make(map[string]*domain.DeviceBindingChallenge),
-		installations:      make(map[string]*domain.Installation),
-		ingestNonces:       make(map[string]time.Time),
-		ingestBatches:      make(map[string]*domain.IngestResult),
-		ingestBatchHashes:  make(map[string][32]byte),
-		usageEvents:        make(map[string]domain.UsageEvent),
-		securityEvents:     make([]domain.UserSecurityEvent, 0),
-		exportJobs:         make(map[string]*domain.DataExportJob),
-		deletionRequests:   make(map[string]*domain.DataDeletionRequest),
-		userMetricFixtures: make(map[string]UserMetricFixture),
-		userSkillFixtures:  make(map[string][]UserSkillFixture),
-		userTrendFixtures:  make(map[string][]UserTrendFixture),
-		publishedSnapshots: make(map[string]*domain.LeaderboardResponse),
-		buildingSnapshots:  make(map[string]*domain.LeaderboardResponse),
-		windowScores:       make(map[string][]WindowScore),
-		rankingOutbox:      make([]RankingOutboxTask, 0),
-		communityDailyStats: make(map[string]store.CommunityDailyTotals),
+		users:                    make(map[string]*domain.User),
+		userCredentials:          make(map[string]*domain.UserPasswordCredential),
+		sessions:                 make(map[string]*domain.UserSession),
+		emailChallenges:          make(map[string]*domain.EmailChallenge),
+		emailOutbox:              make(map[string]*domain.EmailOutbox),
+		privacySettings:          make(map[string]*domain.UserPrivacySettings),
+		publicProfiles:           make(map[string]*domain.PublicUserProfile),
+		handleHistory:            make(map[string]*domain.UserHandleHistory),
+		uploadObjects:            make(map[string]*domain.UserUploadObject),
+		bindingChallenges:        make(map[string]*domain.DeviceBindingChallenge),
+		installations:            make(map[string]*domain.Installation),
+		ingestNonces:             make(map[string]time.Time),
+		ingestBatches:            make(map[string]*domain.IngestResult),
+		ingestBatchHashes:        make(map[string][32]byte),
+		usageEvents:              make(map[string]domain.UsageEvent),
+		securityEvents:           make([]domain.UserSecurityEvent, 0),
+		exportJobs:               make(map[string]*domain.DataExportJob),
+		deletionRequests:         make(map[string]*domain.DataDeletionRequest),
+		userMetricFixtures:       make(map[string]UserMetricFixture),
+		userSkillFixtures:        make(map[string][]UserSkillFixture),
+		userTrendFixtures:        make(map[string][]UserTrendFixture),
+		publishedSnapshots:       make(map[string]*domain.LeaderboardResponse),
+		buildingSnapshots:        make(map[string]*domain.LeaderboardResponse),
+		windowScores:             make(map[string][]WindowScore),
+		rankingOutbox:            make([]RankingOutboxTask, 0),
+		communityDailyStats:      make(map[string]store.CommunityDailyTotals),
+		communityAgentDailyStats: make(map[communityAgentKey]store.CommunityAgentTokens),
 	}
 }
 
@@ -2057,6 +2064,45 @@ func (m *MemoryStore) GetCommunityDailyStats(ctx context.Context, date string) (
 		return &totals, nil
 	}
 	return nil, nil
+}
+
+func (m *MemoryStore) ReplaceCommunityAgentDay(ctx context.Context, date string, rows []store.CommunityAgentTokens) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key := range m.communityAgentDailyStats {
+		if key.date == date {
+			delete(m.communityAgentDailyStats, key)
+		}
+	}
+	for _, row := range rows {
+		m.communityAgentDailyStats[communityAgentKey{date: date, agentID: row.AgentID}] = row
+	}
+	return nil
+}
+
+func (m *MemoryStore) GetCommunityHarnessShares(ctx context.Context, date string, limit int) ([]store.CommunityHarness, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var rows []store.CommunityAgentTokens
+	for key, row := range m.communityAgentDailyStats {
+		if key.date == date {
+			rows = append(rows, store.CommunityAgentTokens{AgentID: key.agentID, TokensTotal: row.TokensTotal})
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].TokensTotal != rows[j].TokensTotal {
+			return rows[i].TokensTotal > rows[j].TokensTotal
+		}
+		return rows[i].AgentID < rows[j].AgentID
+	})
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	harnesses := make([]store.CommunityHarness, 0, len(rows))
+	for _, row := range rows {
+		harnesses = append(harnesses, store.CommunityHarness{AgentID: row.AgentID, Label: row.AgentID, TokensTotal: row.TokensTotal})
+	}
+	return harnesses, nil
 }
 
 func (m *MemoryStore) GetLeaderboard(ctx context.Context, boardKey, window, metric string, cursor *string, limit int) (*domain.LeaderboardResponse, error) {

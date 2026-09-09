@@ -9,6 +9,8 @@ import (
 
 	"tokendance/internal/crypto"
 	"tokendance/internal/ranking"
+	"tokendance/internal/store"
+	mysqlstore "tokendance/internal/store/mysql"
 )
 
 // communityStatsRecomputeInterval coalesces bursts: a day is recomputed at
@@ -177,12 +179,50 @@ func (w *Worker) recomputeCommunityDay(ctx context.Context, date string, now tim
 	); err != nil {
 		return fmt.Errorf("store community day %s: %w", date, err)
 	}
+	if err := w.recomputeCommunityAgentDay(ctx, date); err != nil {
+		return err
+	}
 	// MySQL first, Redis second: the row is the authoritative precomputed
 	// copy, the hash is the hot read path. Acking only happens after both.
 	return w.publishCommunityStats(ctx, ranking.CommunityStatsSnapshot{
 		Date: date, Tokens: tokens, Developers: developers, CodeLines: codeLines,
 		Interactions: interactions, CostAmount: costAmount, ComputedAt: now,
 	})
+}
+
+// recomputeCommunityAgentDay refreshes the per-harness token share of a day.
+func (w *Worker) recomputeCommunityAgentDay(ctx context.Context, date string) error {
+	rows, err := w.db.QueryContext(ctx, `
+		SELECT agent_id, CAST(COALESCE(SUM(exact_token_total + derived_token_total + estimated_token_total), 0) AS UNSIGNED)
+		FROM daily_user_agent_metrics
+		WHERE metric_date = ?
+		GROUP BY agent_id`, date)
+	if err != nil {
+		return fmt.Errorf("group community agent day %s: %w", date, err)
+	}
+	var agentRows []store.CommunityAgentTokens
+	for rows.Next() {
+		var row store.CommunityAgentTokens
+		if err := rows.Scan(&row.AgentID, &row.TokensTotal); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan community agent day %s: %w", date, err)
+		}
+		agentRows = append(agentRows, row)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate community agent day %s: %w", date, err)
+	}
+	if err := w.communityStatsStore().ReplaceCommunityAgentDay(ctx, date, agentRows); err != nil {
+		return fmt.Errorf("replace community agent day %s: %w", date, err)
+	}
+	return nil
+}
+
+// communityStatsStore wraps the raw worker connection with the shared
+// precompute-store SQL so worker and API never duplicate day-total queries.
+func (w *Worker) communityStatsStore() store.CommunityStatsStore {
+	return mysqlstore.NewStore(w.db).CommunityStats()
 }
 
 func (w *Worker) publishCommunityStats(ctx context.Context, snapshot ranking.CommunityStatsSnapshot) error {

@@ -12,7 +12,7 @@ import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from '@/context/AuthContext';
 import { useVisibleRefresh } from '@/hooks/useVisibleRefresh';
 import { api } from '@/api/client';
-import type { LeaderboardEntry, LeaderboardResponse, PersonalSummary, CalendarDay, BreakdownItem, CommunityStatsResponse } from '@/types/api';
+import type { LeaderboardEntry, LeaderboardResponse, PersonalSummary, CalendarDay, CommunityStatsResponse } from '@/types/api';
 
 type Range = 'Today' | '7 Days' | '30 Days' | 'All Time';
 
@@ -64,9 +64,11 @@ function PodiumCard({ entry }: { entry: LeaderboardEntry }) {
   return <article className={`podium-card ${winner ? 'winner' : ''}`}>
     <div className={`rank-medal rank-${entry.rankNo}`}>{entry.rankNo}</div>
     <div className="podium-avatar-wrap"><PersonAvatar entry={entry} className="podium-avatar" />{winner && <span className="crown">♛</span>}</div>
-    <strong>{publicLeaderboardName(entry)}</strong>
+    <div className="podium-id">
+      <strong>{publicLeaderboardName(entry)}</strong>
+      {entry.displayName?.trim() && <span className="podium-handle">@{entry.handle}</span>}
+    </div>
     <div className="podium-score-row"><span>{formatTokens(entry.metricValue)}</span><small><RankChange value={entry.rankDelta} isNew={entry.isNew} /></small></div>
-    <p>{entry.topAgent || '—'}</p>
   </article>;
 }
 
@@ -90,7 +92,6 @@ export const LeaderboardPage: React.FC = () => {
   const [allTimeSummary, setAllTimeSummary] = useState<PersonalSummary | null>(null);
   const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
   const [streak, setStreak] = useState(0);
-  const [agentTools, setAgentTools] = useState<BreakdownItem[]>([]);
   const [refreshTick, setRefreshTick] = useState(0);
   const [community, setCommunity] = useState<CommunityStatsResponse | null>(null);
 
@@ -133,7 +134,6 @@ export const LeaderboardPage: React.FC = () => {
       setSharing(null);
       setCalendarDays([]);
       setStreak(0);
-      setAgentTools([]);
       return () => {};
     }
     let cancelled = false;
@@ -143,16 +143,14 @@ export const LeaderboardPage: React.FC = () => {
       .catch(() => { /* Keep unavailable historical totals distinct from zero. */ });
     (async () => {
       try {
-        const [summaryRes, calRes, agentsRes] = await Promise.all([
+        const [summaryRes, calRes] = await Promise.all([
           api.getPersonalSummary('today'),
           api.getActivityCalendar('10w'),
-          api.getAgentBreakdowns('today'),
         ]);
         if (cancelled) return;
         setSummary(summaryRes);
         setCalendarDays(calRes.days || []);
         setStreak(calRes.currentStreak || 0);
-        setAgentTools(agentsRes.items || []);
       } catch {
         // Keep existing side cards when a background refresh fails.
       }
@@ -253,9 +251,9 @@ export const LeaderboardPage: React.FC = () => {
         </> : <p className="side-card-empty">{zh ? '登录后查看你的活跃度热力图。' : 'Sign in to see your activity heatmap.'}</p>}
       </section>
       <section className="side-card tools-card"><div className="card-heading"><h2>{zh ? '常用 harness' : 'Top harnesses'}</h2><button type="button" className="view-all">{zh ? '全部' : 'View all'}</button></div>
-        {agentTools.length > 0 ? <div className="tool-list">{agentTools.map((tool) => <div className="tool-row" key={tool.key}><span className="tool-mark">{tool.label.slice(0, 1).toUpperCase()}</span><strong>{tool.label}</strong><div className="tool-track"><i style={{ width: `${Math.round(tool.percentage)}%` }} /></div><span>{Math.round(tool.percentage)}%</span></div>)}</div>
-          : <p className="side-card-empty">{zh ? '登录并采集数据后展示常用 harness。' : 'Sign in to see the most used harnesses.'}</p>}
-        <p>{zh ? '基于今日消耗的 Token' : 'Based on tokens burned today'}</p></section>
+        {(community?.harnesses?.length ?? 0) > 0 ? <div className="tool-list">{community?.harnesses?.map((harness, index) => <div className="tool-row" key={harness.agentId}><span className="tool-mark" data-accent={index === 0 || undefined}>{harness.label.slice(0, 1).toUpperCase()}</span><strong>{harness.label}</strong><div className="tool-track"><i style={{ width: `${Math.round(harness.sharePct ?? 0)}%` }} data-accent={index === 0 || undefined} /></div><span>{Math.round(harness.sharePct ?? 0)}%</span></div>)}</div>
+          : <p className="side-card-empty">{zh ? '暂无社区 harness 用量数据。' : 'No harness usage recorded yet.'}</p>}
+        <p>{zh ? '社区今日 Token 占比 · 按 harness' : 'Community share of today’s tokens · by harness'}</p></section>
     </aside>
   </div></div>;
 };

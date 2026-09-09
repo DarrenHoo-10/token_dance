@@ -95,6 +95,22 @@ func (s *Service) GetCommunityStats(ctx context.Context, now time.Time) (*domain
 			CostAmount:   deltaPct(uint64(math.Round(current.CostAmount*100)), uint64(math.Round(previous.CostAmount*100))),
 		}
 	}
+	harnesses, err := s.community.GetCommunityHarnessShares(ctx, today, 5)
+	if err != nil {
+		return nil, err
+	}
+	for _, harness := range harnesses {
+		share := float64(0)
+		if current.TokensTotal > 0 {
+			share = math.Round(float64(harness.TokensTotal)/float64(current.TokensTotal)*1000) / 10
+		}
+		response.Harnesses = append(response.Harnesses, domain.CommunityHarnessDTO{
+			AgentID:  harness.AgentID,
+			Label:    harness.Label,
+			Tokens:   uint64String(harness.TokensTotal),
+			SharePct: &share,
+		})
+	}
 	return response, nil
 }
 

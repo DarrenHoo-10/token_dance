@@ -544,6 +544,13 @@ export interface CommunityStatsDeltas {
   costAmount?: number | null;
 }
 
+export interface CommunityHarness {
+  agentId: string;
+  label: string;
+  tokens?: string | null;
+  sharePct?: number | null;
+}
+
 export interface CommunityStatsResponse {
   metricDate: string;
   timezone: string;
@@ -553,5 +560,6 @@ export interface CommunityStatsResponse {
   interactions?: string | null;
   costAmount?: number | null;
   deltas?: CommunityStatsDeltas | null;
+  harnesses?: CommunityHarness[] | null;
   computedAt?: string | null;
 }

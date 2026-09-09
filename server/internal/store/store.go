@@ -145,6 +145,22 @@ type CommunityStatsStore interface {
 	SumCommunityDay(ctx context.Context, date string) (CommunityDailyTotals, error)
 	UpsertCommunityDailyStats(ctx context.Context, totals CommunityDailyTotals) error
 	GetCommunityDailyStats(ctx context.Context, date string) (*CommunityDailyTotals, error)
+	ReplaceCommunityAgentDay(ctx context.Context, date string, rows []CommunityAgentTokens) error
+	GetCommunityHarnessShares(ctx context.Context, date string, limit int) ([]CommunityHarness, error)
+}
+
+// CommunityAgentTokens is one harness's token total inside a metric day.
+type CommunityAgentTokens struct {
+	AgentID     string
+	TokensTotal uint64
+}
+
+// CommunityHarness is a display-ready harness row: tokens plus the agent
+// display name resolved by the store implementation.
+type CommunityHarness struct {
+	AgentID     string
+	Label       string
+	TokensTotal uint64
 }
 
 type AvatarReadyMeta struct {
