@@ -132,8 +132,6 @@ export const enUS = {
     companionError: 'Let’s try that again.',
     showPassword: 'Show password',
     hidePassword: 'Hide password',
-    pauseMotion: 'Pause animations',
-    resumeMotion: 'Resume animations',
     loginHeroLine1: 'Let Token',
     loginHeroLine2: 'Dance',
     registerHeroLine1: 'Create your',

@@ -63,8 +63,10 @@ describe('Auth & Onboarding Flow Tests', () => {
     expect(loginSpy).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: '隐藏密码' }));
     expect(passwordInput).toHaveAttribute('type', 'password');
-    fireEvent.click(screen.getByRole('button', { name: '暂停动画' }));
-    expect(document.querySelector('.login-page')).toHaveAttribute('data-motion', 'paused');
+    expect(screen.queryByRole('button', { name: '暂停动画' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '继续动画' })).not.toBeInTheDocument();
+    expect(document.querySelector('.login-motion-toggle')).not.toBeInTheDocument();
+    expect(document.querySelector('.login-page')).toHaveAttribute('data-motion', 'playing');
     fireEvent.click(submitBtn);
 
     await waitFor(() => {
@@ -105,6 +107,7 @@ describe('Auth & Onboarding Flow Tests', () => {
     await waitFor(() => {
       expect(screen.getByText('创建你的 TokenDance 账户')).toBeInTheDocument();
     });
+    expect(document.querySelector('.login-motion-toggle')).not.toBeInTheDocument();
 
     const emailInput = screen.getByPlaceholderText('name@example.com');
     const sendCodeBtn = screen.getByRole('button', { name: '获取验证码' });
