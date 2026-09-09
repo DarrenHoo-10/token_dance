@@ -5,20 +5,10 @@
 
 -- Statistics days follow the product calendar (UTC+8). occurred_at stays a
 -- universal UTC timestamp; only the derived day key shifts. Daily tables are
--- cleared so the worker rebuilds them from usage_events under the new keys.
+-- cleared below so the worker rebuilds them from usage_events under the new
+-- keys.
 ALTER TABLE usage_events
   MODIFY COLUMN occurred_date DATE GENERATED ALWAYS AS (DATE(occurred_at + INTERVAL 8 HOUR)) STORED;
-
-DELETE FROM daily_user_agent_metrics;
-DELETE FROM daily_user_agent_model_metrics;
-DELETE FROM daily_skill_metrics;
-DELETE FROM user_window_scores;
-DELETE FROM ranking_outbox;
-DELETE FROM leaderboard_entries;
-DELETE FROM leaderboard_snapshots;
-DELETE FROM community_daily_stats;
-DELETE FROM community_agent_daily_stats;
-DELETE FROM community_stats_outbox;
 
 CREATE TABLE community_daily_stats (
   metric_date     DATE NOT NULL,
@@ -63,3 +53,16 @@ CREATE TABLE community_stats_outbox (
   KEY idx_community_outbox_date (metric_date),
   KEY idx_community_outbox_cleanup (task_status, applied_at)
 ) ENGINE = InnoDB;
+
+-- The day key changed, so precomputed daily tables must be rebuilt from the
+-- raw event log; the worker repopulates them (and Redis) automatically.
+DELETE FROM daily_user_agent_metrics;
+DELETE FROM daily_user_agent_model_metrics;
+DELETE FROM daily_skill_metrics;
+DELETE FROM user_window_scores;
+DELETE FROM ranking_outbox;
+DELETE FROM leaderboard_entries;
+DELETE FROM leaderboard_snapshots;
+DELETE FROM community_daily_stats;
+DELETE FROM community_agent_daily_stats;
+DELETE FROM community_stats_outbox;
