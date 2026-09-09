@@ -27,3 +27,6 @@ d5a2cbeec559a6d8a405c29cd01ca1aadffee7b3:server/internal/httpapi/acceptance_test
 d5a2cbeec559a6d8a405c29cd01ca1aadffee7b3:server/internal/httpapi/acceptance_test.go:login-json-password:590
 d5a2cbeec559a6d8a405c29cd01ca1aadffee7b3:server/internal/httpapi/acceptance_test.go:login-json-password:610
 bd0add2f5c630601dddae29b8ad143a08fdc68d1:server/internal/httpapi/router_test.go:login-json-password:125
+
+# Dynamic f-string placeholder only; test password is generated with secrets.token_urlsafe.
+47ab1f0d64be977f006d77c9e07d4b72086412e8:tools/releases/test_release_registry.py:mysql-dsn-password:167

@@ -1,7 +1,7 @@
 # Security
 
 Keep passwords, tokens, private keys, personal exports, production logs, database
-dumps, and one-off server diagnostics outside this public repository. Runtime
+dumps, and one-off server diagnostics outside this repository. Runtime
 credentials belong in a secret manager or a restricted file/environment on the
 machine that needs them. Examples must use fictitious identities and placeholders.
 
@@ -12,11 +12,18 @@ then enable this repository's local hook:
 
 ```sh
 git config core.hooksPath .githooks
-gitleaks git . --log-opts=--all --redact=100 --ignore-gitleaks-allow
+gitleaks git . --pre-commit --staged --redact=100 --ignore-gitleaks-allow
 ```
 
-The hook scans staged changes. CI scans fetched Git history, including secrets
-that were committed and subsequently deleted. GitHub secret scanning and push
+The hook scans staged changes. CI runs once on push and scans only commits in
+the `before..after` range, including intermediate commits whose changes were
+subsequently deleted. It does not rescan all history or run a duplicate PR scan.
+New feature branches scan from their merge base with the default branch; branch
+creation at the default branch's tip and manual runs scan only the tip commit.
+Deleted branches are skipped. Missing commit objects fail the check rather than
+silently skipping commits. Fetching full history still allows these ranges to be
+resolved, but does not make the scan a full-history scan.
+GitHub secret scanning and push
 protection supplement these checks; ordinary passwords also require the custom
 rules in `.gitleaks.toml`. Run `python tools/security/test_secret_scan.py` when
 changing them. `GITLEAKS_BIN` can point to the installed executable.

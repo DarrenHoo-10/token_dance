@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://www.nexorai.com.cn/token-dance/">访问官网</a> ·
-  <a href="https://github.com/DarrenHoo-10/token_dance/releases">下载最新版本</a>
+  <a href="https://www.nexorai.com.cn/token-dance/download">下载最新版本</a>
 </p>
 
 TokenDance 是一款 AI 编程用量统计工具。它把不同 Agent 的 Token 消耗、费用和额度汇总到桌面，让你随时查看用量，也能在网站回顾个人数据和排行榜。
@@ -52,7 +52,7 @@ TokenDance 常驻 Windows 托盘，点击图标即可展开用量面板。也可
 
 ## 开始使用
 
-1. 前往 [下载页面](https://github.com/DarrenHoo-10/token_dance/releases)，在最新发布版本的 **Assets** 中下载 `TokenDance.exe` 或 Windows ZIP 压缩包。
+1. 前往 [下载页面](https://www.nexorai.com.cn/token-dance/download)，下载 `TokenDance.exe` 或 Windows ZIP 压缩包。
 2. 运行程序，在 Windows 右下角托盘打开用量面板。
 3. 在设置中选择需要采集的工具；如需网站同步，点击登录或注册。
 

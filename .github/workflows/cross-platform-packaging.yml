@@ -10,11 +10,13 @@ on:
   push:
     paths:
       - collector/**
+      - schemas/**
       - .github/workflows/cross-platform-packaging.yml
       - .gitattributes
   pull_request:
     paths:
       - collector/**
+      - schemas/**
       - .github/workflows/cross-platform-packaging.yml
       - .gitattributes
 
@@ -42,6 +44,8 @@ jobs:
         run: cargo test --locked --manifest-path collector/crates/platform-windows/Cargo.toml
       - name: Adapter Pack tests
         run: cargo test --locked --manifest-path collector/packaging/adapter-pack/Cargo.toml
+      - name: Desktop update manifest and replacement tests
+        run: cargo test --locked --manifest-path collector/apps/desktop/src-tauri/Cargo.toml updates::tests -- --test-threads=1
       - name: PowerShell syntax and fail-closed Authenticode tests
         shell: pwsh
         run: |
