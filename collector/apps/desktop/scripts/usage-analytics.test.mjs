@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { usageTokens, usageCosts, annualUsage, quotaStale, quotaStatusText, quotaWindowLabel } from '../src/usage-analytics.ts';
+import { usageTokens, usageCosts, annualUsage, usageTrend, quotaStale, quotaStatusText, quotaWindowLabel } from '../src/usage-analytics.ts';
 import { lastSevenDays } from '../src/weekly-usage.ts';
 const now = new Date(2026, 8, 5, 12);
 const dates = lastSevenDays(now);
@@ -39,6 +39,26 @@ test('annual calendar does not fill unrecorded history with zeros', () => {
   assert.equal(year.days.at(-1).tokens, 7);
   const oldZero = { ...agent, dailyUsage: [{ date: '2026-08-01', tokens: 0 }, ...agent.dailyUsage] };
   assert.equal(annualUsage([oldZero], now).days.find(day => day.date === '2026-08-01').tokens, null);
+});
+test('today trend uses 24 local hours and hides future hours', () => {
+  const noon = new Date(2026, 8, 10, 10, 30);
+  const hourly = Array.from({ length: 24 }, (_, hour) => ({ hour, tokens: hour + 1 }));
+  const points = usageTrend([{ ...agent, hourlyUsage: hourly }], 'today', noon);
+  assert.equal(points.length, 24);
+  assert.equal(points[0].label, '0:00');
+  assert.equal(points[9].tokens, 10);
+  assert.equal(points[10].tokens, 11);
+  assert.equal(points[11].tokens, null);
+  assert.equal(usageTrend([agent], 'today', noon).every(point => point.tokens === null), true);
+});
+test('week and all-time trends follow the selected range', () => {
+  const points = usageTrend([agent], 'week', now);
+  assert.equal(points.length, 7);
+  assert.deepEqual(points.map(point => point.tokens), [1, 2, 3, 4, 5, 6, 7]);
+  const year = usageTrend([agent], 'all', now);
+  assert.equal(year.length, 365);
+  assert.equal(year.at(-1).tokens, 7);
+  assert.equal(year[0].tokens, null);
 });
 test('annual calendar includes leap day and local date boundaries', () => {
   const year = annualUsage([], new Date(2024, 2, 1, 0, 1));

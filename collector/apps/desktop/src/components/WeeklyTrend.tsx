@@ -1,35 +1,118 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { TrendPoint, UsageRange } from "../usage-analytics";
 
-export function WeeklyTrend({ points, lang }: { points: { date: string; tokens: number | null }[]; lang: "zh" | "en" }) {
-  const [active, setActive] = useState<number | null>(null);
+const VIEW_W = 354;
+const PAD_L = 18;
+const PAD_R = 18;
+
+const format = (value: number) => new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 }).format(value);
+
+function titleFor(range: UsageRange, zh: boolean) {
+  if (range === "today") return zh ? "今日趋势" : "Today's trend";
+  if (range === "all") return zh ? "近 12 个月趋势" : "12-month trend";
+  return zh ? "近 7 日趋势" : "7-day trend";
+}
+
+function hintFor(range: UsageRange, zh: boolean) {
+  if (range === "today") return zh ? "含此刻 · 今日持续更新" : "Includes now · Live";
+  if (range === "all") return zh ? "过去 12 个月" : "Past 12 months";
+  return zh ? "含今日 · 今日持续更新" : "Includes today · Live";
+}
+
+function showAxisLabel(range: UsageRange, point: TrendPoint, index: number, points: TrendPoint[]) {
+  if (range === "week") return true;
+  if (range === "today") return index % 3 === 0 || index === points.length - 1;
+  return index === 0 || index === points.length - 1 || (point.key.endsWith("-01") && Number(point.key.slice(5, 7)) % 2 === 1);
+}
+
+export function WeeklyTrend({ points, range, lang }: { points: TrendPoint[]; range: UsageRange; lang: "zh" | "en" }) {
+  const [hover, setHover] = useState<number | null>(null);
+  const [pinned, setPinned] = useState<number | null>(null);
   const zh = lang === "zh";
   const available = points.some(point => point.tokens !== null);
   const max = Math.max(1, ...points.map(point => point.tokens ?? 0));
-  const x = (index: number) => 18 + index * 53;
+  const last = points.length <= 1 ? 1 : points.length - 1;
+  const x = (index: number) => PAD_L + index * (VIEW_W - PAD_L - PAD_R) / last;
   const y = (tokens: number) => 59 - (tokens / max) * 43;
-  const format = (value: number) => new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 2 }).format(value);
-  const label = (date: string) => `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
-  const selected = active === null ? null : points[active];
-  return <section className="usage-trend" aria-label={zh ? "7日 Token 用量趋势" : "7-day token usage trend"}>
-    <div className="usage-section-title"><h2>{zh ? "近 7 日趋势" : "7-day trend"}</h2><span aria-live="polite">{selected ? `${label(selected.date)} · ${selected.tokens === null ? "—" : selected.tokens.toLocaleString()} tokens` : zh ? "含今日 · 今日持续更新" : "Includes today · Live"}</span></div>
+  const dense = points.length > 32;
+  const active = hover ?? pinned;
+  const selected = active == null ? null : points[active];
+  const total = points.reduce((sum, point) => sum + (point.tokens ?? 0), 0);
+  const hasTotal = points.some(point => point.tokens !== null);
+  const captionValue = selected ? selected.tokens : hasTotal ? total : null;
+
+  useEffect(() => {
+    setHover(null);
+    setPinned(null);
+  }, [range, points.length]);
+
+  const indexAt = (clientX: number, target: SVGSVGElement) => {
+    const rect = target.getBoundingClientRect();
+    if (rect.width <= 0 || !available) return null;
+    const viewX = (clientX - rect.left) / rect.width * VIEW_W;
+    let nearest: number | null = null;
+    let best = Infinity;
+    points.forEach((point, index) => {
+      if (point.tokens === null) return;
+      const distance = Math.abs(x(index) - viewX);
+      if (distance < best) {
+        best = distance;
+        nearest = index;
+      }
+    });
+    return nearest;
+  };
+
+  let line = "";
+  let drawing = false;
+  points.forEach((point, index) => {
+    if (point.tokens === null) {
+      drawing = false;
+      return;
+    }
+    line += `${drawing ? "L" : "M"}${x(index).toFixed(2)} ${y(point.tokens).toFixed(2)} `;
+    drawing = true;
+  });
+
+  return <section className="usage-trend" aria-label={titleFor(range, zh)}>
+    <div className="usage-section-title">
+      <h2>{titleFor(range, zh)}</h2>
+      <span className="usage-trend-caption" aria-live="polite">
+        <small>{selected ? selected.label : hintFor(range, zh)}</small>
+        <strong>{captionValue === null ? "—" : format(captionValue)}</strong>
+      </span>
+    </div>
     <div className="usage-trend-plot">
-      <svg viewBox="0 0 354 82" role="group" aria-label={zh ? "每日 Token 折线图" : "Daily tokens line chart"}>
-        {[16, 37.5, 59].map(line => <line key={line} x1="18" x2="336" y1={line} y2={line} stroke="#eff0f3" />)}
-        {available && <text x="336" y="9" textAnchor="end" className="usage-chart-label">{format(max)}</text>}
+      <svg
+        viewBox={`0 0 ${VIEW_W} ${VIEW_H}`}
+        role="group"
+        aria-label={zh ? "Token 用量折线图" : "Token usage line chart"}
+        onMouseMove={event => setHover(indexAt(event.clientX, event.currentTarget))}
+        onMouseLeave={() => setHover(null)}
+        onClick={event => {
+          const index = indexAt(event.clientX, event.currentTarget);
+          setPinned(current => current === index ? null : index);
+        }}
+      >
+        {[16, 37.5, 59].map(lineY => <line key={lineY} x1={PAD_L} x2={VIEW_W - PAD_R} y1={lineY} y2={lineY} stroke="#eff0f3" />)}
+        {available && <text x={PAD_L} y="9" className="usage-chart-label">{format(max)}</text>}
+        {available && line && <path d={line.trim()} fill="none" stroke="#6f809b" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />}
+        {available && active != null && points[active]?.tokens != null && <line x1={x(active)} x2={x(active)} y1="16" y2="59" stroke="#c5cad4" strokeDasharray="2 3" />}
         {points.map((point, index) => {
-          const next = points[index + 1];
-          return <g key={point.date}>
-            {point.tokens !== null && next?.tokens != null && <line x1={x(index)} y1={y(point.tokens)} x2={x(index + 1)} y2={y(next.tokens)} stroke="#6f809b" strokeWidth="2.2" strokeLinecap="round" />}
-            {point.tokens !== null && <g tabIndex={0} role="img" aria-label={`${point.date}: ${point.tokens.toLocaleString()} tokens`} onFocus={() => setActive(index)} onBlur={() => setActive(null)} onMouseEnter={() => setActive(index)} onMouseLeave={() => setActive(null)}>
+          if (point.tokens === null) {
+            return showAxisLabel(range, point, index, points) ? <text key={point.key} x={x(index)} y="77" textAnchor="middle" className="usage-chart-label">{point.label}</text> : null;
+          }
+          return <g key={point.key}>
+            {!dense && <g tabIndex={0} role="img" aria-label={`${point.label}: ${point.tokens.toLocaleString()} tokens`} onFocus={() => setHover(index)} onBlur={() => setHover(null)}>
               <circle cx={x(index)} cy={y(point.tokens)} r="9" fill="transparent" />
               <circle cx={x(index)} cy={y(point.tokens)} r={active === index ? 4 : 2.8} fill="#fff" stroke="#6f809b" strokeWidth="2" />
-              <title>{point.date}: {point.tokens.toLocaleString()} tokens</title>
             </g>}
-            <text x={x(index)} y="77" textAnchor="middle" className="usage-chart-label">{label(point.date)}</text>
+            {dense && active === index && <circle cx={x(index)} cy={y(point.tokens)} r="3.2" fill="#fff" stroke="#6f809b" strokeWidth="2" />}
+            {showAxisLabel(range, point, index, points) && <text x={x(index)} y="77" textAnchor="middle" className="usage-chart-label">{range === "today" ? String(Number(point.label.slice(0, 2))) : point.label}</text>}
           </g>;
         })}
       </svg>
-      {!available && <p className="usage-trend-empty">{zh ? "每日用量数据待接入" : "Daily usage data not connected yet"}</p>}
+      {!available && <p className="usage-trend-empty">{range === "today" ? (zh ? "小时用量数据待接入" : "Hourly usage data not connected yet") : zh ? "每日用量数据待接入" : "Daily usage data not connected yet"}</p>}
     </div>
   </section>;
 }

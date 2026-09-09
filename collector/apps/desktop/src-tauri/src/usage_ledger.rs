@@ -1,5 +1,5 @@
 use crate::pricing::{Catalog, CostCoverage, CostLedger};
-use chrono::{Local, NaiveDate, Utc};
+use chrono::{Local, NaiveDate, Timelike, Utc};
 use protocol::{Accuracy, EventEnvelope, EventPayload};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -52,6 +52,15 @@ pub(crate) fn local_date(occurred_at: &str) -> Option<NaiveDate> {
         .map(|time| time.with_timezone(&Local).date_naive())
 }
 
+pub(crate) fn local_hour(occurred_at: &str) -> Option<(NaiveDate, u32)> {
+    chrono::DateTime::parse_from_rfc3339(occurred_at)
+        .ok()
+        .map(|time| {
+            let local = time.with_timezone(&Local);
+            (local.date_naive(), local.hour())
+        })
+}
+
 /// Total tokens carried by an envelope; `None` for non-usage events.
 pub(crate) fn event_tokens(event: &EventEnvelope) -> Option<u64> {
     let EventPayload::ModelUsageRecorded(payload) = &event.payload else {
@@ -89,6 +98,12 @@ pub struct DayUsage {
     pub costs: BTreeMap<String, u64>,
     #[serde(default)]
     pub pricing: CostCoverage,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HourUsage {
+    pub hour: u8,
+    pub tokens: u64,
 }
 
 pub struct AgentUsageSnapshot {
