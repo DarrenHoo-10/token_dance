@@ -718,12 +718,6 @@ h3 { font-size: 15px; margin-bottom: 4px; }
   color: var(--text-main);
 }
 
-.metric-card-hint {
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--good);
-}
-
 /* Approved TokenDance product shell and floating primary navigation */
 .product-shell {
   overflow-x: hidden;
