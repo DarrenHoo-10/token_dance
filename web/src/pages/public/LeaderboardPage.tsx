@@ -1,4 +1,5 @@
 import { LeaderboardTable } from '@/components/analytics/LeaderboardTable';
+import { publicLeaderboardName } from '@/components/analytics/leaderboardName';
 import { RankChange } from '@/components/analytics/RankChange';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { DesktopDownloadCard } from '@/pages/resources/DesktopDownloadCard';
@@ -35,7 +36,8 @@ function TrendBadge({ value }: { value: number | null | undefined }) {
 }
 
 function PersonAvatar({ entry, className = '' }: { entry: LeaderboardEntry; className?: string }) {
-  return <UserAvatar url={entry.avatarUrl} name={entry.displayName} className={`leader-avatar ${className}`} fallbackClassName={`leader-avatar ${className} avatar-fallback`} alt={`${entry.displayName} profile`} />;
+  const name = publicLeaderboardName(entry);
+  return <UserAvatar url={entry.avatarUrl} name={name} className={`leader-avatar ${className}`} fallbackClassName={`leader-avatar ${className} avatar-fallback`} alt={`${name} profile`} />;
 }
 
 function PodiumCard({ entry }: { entry: LeaderboardEntry }) {
@@ -43,7 +45,7 @@ function PodiumCard({ entry }: { entry: LeaderboardEntry }) {
   return <article className={`podium-card ${winner ? 'winner' : ''}`}>
     <div className={`rank-medal rank-${entry.rankNo}`}>{entry.rankNo}</div>
     <div className="podium-avatar-wrap"><PersonAvatar entry={entry} className="podium-avatar" />{winner && <span className="crown">♛</span>}</div>
-    <strong>{entry.handle}</strong>
+    <strong>{publicLeaderboardName(entry)}</strong>
     <div className="podium-score-row"><span>{formatTokens(entry.metricValue)}</span><small><RankChange value={entry.rankDelta} isNew={entry.isNew} /></small></div>
     <p>{entry.topAgent || '—'}</p>
   </article>;
