@@ -132,8 +132,6 @@ export const zhCN = {
     companionError: '没关系，再试一次。',
     showPassword: '显示密码',
     hidePassword: '隐藏密码',
-    pauseMotion: '暂停动画',
-    resumeMotion: '继续动画',
     loginHeroLine1: '让 Token',
     loginHeroLine2: '起舞',
     registerHeroLine1: '创建你的',

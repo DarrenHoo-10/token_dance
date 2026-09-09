@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
-import { ChartNoAxesColumnIncreasing, CircleAlert, Pause, Play, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { ChartNoAxesColumnIncreasing, CircleAlert, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
 import { useLocale } from '@/context/LocaleContext';
 import { LoginCompanions, TokenScene, type CompanionMood } from './LoginArt';
@@ -16,7 +16,6 @@ interface AuthLayoutProps {
 
 export function AuthLayout({ mode, returnTo, mood, errorMessage, children }: AuthLayoutProps) {
   const { locale, t } = useLocale();
-  const [motionPaused, setMotionPaused] = useState(false);
   const [pageHidden, setPageHidden] = useState(() => document.hidden);
   useEffect(() => {
     const updateVisibility = () => setPageHidden(document.hidden);
@@ -28,22 +27,13 @@ export function AuthLayout({ mode, returnTo, mood, errorMessage, children }: Aut
   const route = (path: string) => returnTo ? `${path}?return_to=${encodeURIComponent(returnTo)}` : path;
 
   return (
-    <div className="login-page" lang={locale} data-auth-mode={mode} data-motion={motionPaused || pageHidden ? 'paused' : 'playing'}>
+    <div className="login-page" lang={locale} data-auth-mode={mode} data-motion={pageHidden ? 'paused' : 'playing'}>
       <aside className="login-brand">
-        <TokenScene paused={motionPaused || pageHidden} />
+        <TokenScene paused={pageHidden} />
         <NavLink to="/" className="login-brand__logo" aria-label="TokenDance">
           <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" />
           <span>TokenDance</span>
         </NavLink>
-        <button
-          type="button"
-          className="login-motion-toggle"
-          onClick={() => setMotionPaused(!motionPaused)}
-          aria-label={t(motionPaused ? 'auth.resumeMotion' : 'auth.pauseMotion')}
-          aria-pressed={motionPaused}
-        >
-          {motionPaused ? <Play size={13} aria-hidden="true" /> : <Pause size={13} aria-hidden="true" />}
-        </button>
         <div className="login-brand__body">
           <div className="login-brand__copy">
             <h1>

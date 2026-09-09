@@ -34,8 +34,6 @@
 .login-brand__footer strong { font-size: 13px; font-weight: 600; }
 .login-brand__footer small { grid-column: 2; color: #aebaa8; font-size: 12px; line-height: 1.65; margin-top: 6px; }
 .login-brand__footer svg { color: var(--auth-accent); width: 22px; height: 22px; }
-.login-motion-toggle { position: absolute; top: 36px; right: 26px; display: grid; place-items: center; width: 40px; height: 40px; color: #b6c1ac; background: #10170d70; border: 1px solid #a5ba8b33; border-radius: 50%; cursor: pointer; z-index: 2; transition: color .2s, border-color .2s; }
-.login-motion-toggle:hover { color: var(--auth-accent); border-color: #b9f60080; }
 /* Preserve the original ribbon artwork with animated smoke around it. */
 .token-scene { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
 .token-scene picture, .token-scene img { display: block; width: 100%; height: 100%; }
@@ -153,7 +151,6 @@
 }
 @media (min-width: 960px) and (max-height: 820px) {
   .login-brand { padding-top: 28px; padding-bottom: 24px; }
-  .login-motion-toggle { top: 26px; }
   .login-brand__body { padding-top: 54px; padding-bottom: 150px; }
   .login-brand h1 { font-size: clamp(54px, 4.8vw, 76px); }
   .login-brand__footer { padding-top: 20px; }
@@ -168,13 +165,11 @@
 }
 /* On tablets and phones the brand becomes a compact header, keeping sign-in in view. */
 @media (max-width: 959px) {
-  .login-page[data-auth-mode="register"] .login-motion-toggle { display: none; }
   .login-page { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
   .login-brand { min-height: 0; padding: 22px 28px; background: var(--auth-surface); color: var(--auth-ink); overflow: visible; }
   .login-brand__logo { font-size: 21px; }
   .login-brand__logo img { width: 32px; height: 32px; }
   .login-brand__body, .login-brand__footer, .token-scene { display: none; }
-  .login-motion-toggle { top: 105px; right: 24px; width: 36px; height: 36px; color: #67745a; background: transparent; border-color: #c7d1bb; }
   .login-main { position: static; align-items: flex-start; padding: clamp(16px, 4vh, 42px) 28px 36px; }
   .login-locale { top: 25px; right: 28px; }
   .login-companions { height: 120px; margin-bottom: 18px; }
@@ -189,7 +184,6 @@
   .login-brand__logo { font-size: 20px; }
   .login-main { padding: 12px 24px 28px; }
   .login-locale { right: 24px; top: 23px; }
-  .login-motion-toggle { top: 130px; right: 18px; }
   .login-companions { height: 108px; width: 230px; margin-bottom: 16px; }
   .login-companions__friends { left: 17px; transform: scale(.83); }
   .login-companions__caption { top: -5px; right: 0; }
@@ -212,7 +206,6 @@
 .login-page[data-motion="paused"] *, .login-page[data-motion="paused"] *::before, .login-page[data-motion="paused"] *::after { animation: none !important; transition: none !important; }
 @media (prefers-reduced-motion: reduce) {
   .login-page *, .login-page *::before, .login-page *::after { animation: none !important; transition: none !important; }
-  .login-motion-toggle { display: none; }
   .login-submit:not(:disabled):hover > svg, .login-submit:not(:disabled):active { transform: none; }
   .token-scene__canvas { display: none; }
 }
