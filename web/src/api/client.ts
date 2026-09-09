@@ -38,6 +38,7 @@ import type {
   CreateDeletionRequest,
   PublicUserProfile,
   LeaderboardResponse,
+  CommunityStatsResponse,
 } from '@/types/api';
 
 export class ApiError extends Error {
@@ -522,6 +523,10 @@ class ApiHttpClient {
       return this.getMyLeaderboard(params);
     }
     return this.getLeaderboard(params);
+  }
+
+  public async getCommunityStats(): Promise<CommunityStatsResponse> {
+    return this.request<CommunityStatsResponse>('/public/leaderboards/stats', { method: 'GET' });
   }
 
   private leaderboardQuery(params: {

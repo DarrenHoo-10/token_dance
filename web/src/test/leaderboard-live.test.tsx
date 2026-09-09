@@ -22,6 +22,7 @@ beforeEach(() => {
   vi.spyOn(api,'getAgentBreakdowns').mockRejectedValue(new Error('unavailable'));
   vi.spyOn(api,'getLeaderboard').mockResolvedValue(board);
   vi.spyOn(api,'getMyLeaderboard').mockImplementation((params) => api.getLeaderboard(params));
+  vi.spyOn(api,'getCommunityStats').mockResolvedValue({ metricDate:'2026-09-09', timezone:'UTC' });
 });
 describe('Live leaderboard', () => {
   it('explains that a private profile still stays on the board', async () => {
@@ -46,9 +47,26 @@ describe('Live leaderboard', () => {
     await waitFor(()=>expect(screen.getAllByText('7.0M').length).toBeGreaterThan(0));
     expect(screen.queryAllByText('1.0M')).toHaveLength(0);
   });
-  it('connect tools opens device settings instead of claiming an unperformed connection', () => {
-    showPage(); fireEvent.click(screen.getByRole('button',{name:'连接工具'}));
-    expect(screen.getByRole('heading',{name:'设备设置'})).toBeInTheDocument();
+  it('renders precomputed community totals in the hero', async () => {
+    vi.mocked(api.getCommunityStats).mockResolvedValue({
+      metricDate:'2026-09-09', timezone:'UTC',
+      tokens:'186400000', developers:128, codeLines:'32800', interactions:'4600', costAmount:268.42,
+      deltas:{ tokens:12.6, developers:8.4, codeLines:-50, interactions:12.3, costAmount:11.8 },
+    });
+    showPage();
+    expect(await screen.findByText('186.4M')).toBeInTheDocument();
+    expect(screen.getByText('128')).toBeInTheDocument();
+    expect(screen.getByText('32.8K')).toBeInTheDocument();
+    expect(screen.getByText('4.6K')).toBeInTheDocument();
+    expect(screen.getByText('$268.42')).toBeInTheDocument();
+    expect(screen.getByText('↑ +12.6% vs 昨日')).toBeInTheDocument();
+    expect(screen.getByText('↓ −50.0%')).toBeInTheDocument();
+  });
+  it('keeps the hero empty instead of fabricating numbers when stats are unavailable', async () => {
+    vi.mocked(api.getCommunityStats).mockRejectedValue(new Error('offline'));
+    showPage();
+    expect((await screen.findAllByText('—')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('+0.0%')).not.toBeInTheDocument();
   });
   it('keeps existing rows and shows a short connection error after a failed refresh', async () => {
     const ranked = {

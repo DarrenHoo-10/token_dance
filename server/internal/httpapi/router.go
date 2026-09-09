@@ -123,6 +123,7 @@ func NewRouterWithReadiness(
 			pr.Get("/users/{handle}/skills", handlers.GetPublicSkills)
 			pr.Get("/search", handlers.Search)
 			pr.Get("/leaderboards", handlers.GetLeaderboards)
+			pr.Get("/leaderboards/stats", handlers.GetLeaderboardsStats)
 			pr.Get("/avatars/{id}", handlers.GetAvatarContent)
 			pr.Get("/compare", handlers.CompareUsers)
 		})

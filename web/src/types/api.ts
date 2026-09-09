@@ -535,3 +535,23 @@ export interface LeaderboardResponse {
   totalTokens?: string;
   timezone?: string;
 }
+
+export interface CommunityStatsDeltas {
+  tokens?: number | null;
+  developers?: number | null;
+  codeLines?: number | null;
+  interactions?: number | null;
+  costAmount?: number | null;
+}
+
+export interface CommunityStatsResponse {
+  metricDate: string;
+  timezone: string;
+  tokens?: string | null;
+  developers?: number | null;
+  codeLines?: string | null;
+  interactions?: string | null;
+  costAmount?: number | null;
+  deltas?: CommunityStatsDeltas | null;
+  computedAt?: string | null;
+}

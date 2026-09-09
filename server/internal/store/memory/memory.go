@@ -89,6 +89,7 @@ type MemoryStore struct {
 	buildingSnapshots  map[string]*domain.LeaderboardResponse
 	windowScores       map[string][]WindowScore
 	rankingOutbox      []RankingOutboxTask
+	communityDailyStats map[string]store.CommunityDailyTotals
 }
 
 type WindowScore struct {
@@ -139,6 +140,7 @@ func NewMemoryStore() *MemoryStore {
 		buildingSnapshots:  make(map[string]*domain.LeaderboardResponse),
 		windowScores:       make(map[string][]WindowScore),
 		rankingOutbox:      make([]RankingOutboxTask, 0),
+		communityDailyStats: make(map[string]store.CommunityDailyTotals),
 	}
 }
 
@@ -2024,6 +2026,37 @@ func (m *MemoryStore) PublishSnapshot(ctx context.Context, snapshotID string, bo
 
 func (m *MemoryStore) GetLeaderboardView(ctx context.Context, q store.LeaderboardQuery) (*domain.LeaderboardResponse, error) {
 	return m.GetLeaderboard(ctx, q.BoardKey, q.Window, q.Metric, q.Cursor, q.Limit)
+}
+
+// --- CommunityStatsStore Implementation ---
+
+func (m *MemoryStore) CommunityStats() store.CommunityStatsStore { return m }
+
+func (m *MemoryStore) SumCommunityDay(ctx context.Context, date string) (store.CommunityDailyTotals, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	totals, ok := m.communityDailyStats[date]
+	if !ok {
+		totals = store.CommunityDailyTotals{MetricDate: date, ComputedAt: time.Now().UTC()}
+	}
+	totals.MetricDate = date
+	return totals, nil
+}
+
+func (m *MemoryStore) UpsertCommunityDailyStats(ctx context.Context, totals store.CommunityDailyTotals) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.communityDailyStats[totals.MetricDate] = totals
+	return nil
+}
+
+func (m *MemoryStore) GetCommunityDailyStats(ctx context.Context, date string) (*store.CommunityDailyTotals, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if totals, ok := m.communityDailyStats[date]; ok {
+		return &totals, nil
+	}
+	return nil, nil
 }
 
 func (m *MemoryStore) GetLeaderboard(ctx context.Context, boardKey, window, metric string, cursor *string, limit int) (*domain.LeaderboardResponse, error) {

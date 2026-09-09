@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"tokendance/internal/domain"
+	"tokendance/internal/store"
 	"tokendance/internal/store/memory"
 )
 
@@ -83,5 +84,55 @@ func TestLeaderboardService(t *testing.T) {
 	}
 	if len(respAfter.Entries) != 2 || respAfter.Entries[0].Handle != "alice" || respAfter.Entries[1].Handle != "bob" {
 		t.Errorf("privacy toggle must not change membership: %+v", respAfter.Entries)
+	}
+}
+
+func TestGetCommunityStatsServesPrecomputedRowsWithDeltas(t *testing.T) {
+	ctx := context.Background()
+	st := memory.NewMemoryStore()
+	svc := NewService(st)
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+
+	if err := st.CommunityStats().UpsertCommunityDailyStats(ctx, store.CommunityDailyTotals{
+		MetricDate: "2026-09-08", TokensTotal: 100, Developers: 4, CodeLines: 200, Interactions: 40, CostAmount: 20, IsFinal: true,
+	}); err != nil {
+		t.Fatalf("seed yesterday: %v", err)
+	}
+	if err := st.CommunityStats().UpsertCommunityDailyStats(ctx, store.CommunityDailyTotals{
+		MetricDate: "2026-09-09", TokensTotal: 112, Developers: 5, CodeLines: 100, Interactions: 50, CostAmount: 0,
+	}); err != nil {
+		t.Fatalf("seed today: %v", err)
+	}
+
+	res, err := svc.GetCommunityStats(ctx, now)
+	if err != nil {
+		t.Fatalf("community stats: %v", err)
+	}
+	if res.Tokens == nil || *res.Tokens != "112" || res.Developers == nil || *res.Developers != 5 {
+		t.Fatalf("today totals missing: %+v", res)
+	}
+	if res.Deltas == nil || res.Deltas.Tokens == nil || *res.Deltas.Tokens != 12 {
+		t.Fatalf("expected +12%% tokens delta: %+v", res.Deltas)
+	}
+	if res.Deltas.CodeLines == nil || *res.Deltas.CodeLines != -50 {
+		t.Fatalf("expected -50%% code lines delta: %+v", res.Deltas)
+	}
+	if res.Deltas.CostAmount == nil || *res.Deltas.CostAmount != -100 {
+		t.Fatalf("expected -100%% cost delta: %+v", res.Deltas)
+	}
+}
+
+func TestGetCommunityStatsWithoutPrecomputedRowsStaysEmpty(t *testing.T) {
+	st := memory.NewMemoryStore()
+	svc := NewService(st)
+	res, err := svc.GetCommunityStats(context.Background(), time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("community stats: %v", err)
+	}
+	if res.Tokens != nil || res.Developers != nil || res.Deltas != nil {
+		t.Fatalf("cold day must not fabricate zeros: %+v", res)
+	}
+	if res.MetricDate != "2026-09-09" || res.Timezone != "UTC" {
+		t.Fatalf("unexpected envelope: %+v", res)
 	}
 }

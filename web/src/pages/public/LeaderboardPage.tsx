@@ -5,14 +5,14 @@ import { UserAvatar } from '@/components/common/UserAvatar';
 import React, { useCallback, useRef, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  ArrowUpRight, BarChart3, ChevronLeft, ChevronRight, CircleHelp,
+  BarChart3, ChevronLeft, ChevronRight, CircleHelp,
   Flame, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from '@/context/AuthContext';
 import { useVisibleRefresh } from '@/hooks/useVisibleRefresh';
 import { api } from '@/api/client';
-import type { LeaderboardEntry, LeaderboardResponse, PersonalSummary, CalendarDay, BreakdownItem } from '@/types/api';
+import type { LeaderboardEntry, LeaderboardResponse, PersonalSummary, CalendarDay, BreakdownItem, CommunityStatsResponse } from '@/types/api';
 
 type Range = 'Today' | '7 Days' | '30 Days' | 'All Time';
 
@@ -26,6 +26,26 @@ function formatTokens(raw: string | null | undefined): string {
   if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
   if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
   return String(Math.round(value));
+}
+
+function DeltaChip({ value, suffix }: { value?: number | null; suffix?: string }) {
+  if (value == null) return null;
+  const positive = value >= 0;
+  return (
+    <span className={`hero-delta ${positive ? 'up' : 'down'}`}>
+      {positive ? '↑' : '↓'} {positive ? '+' : '−'}{Math.abs(value).toFixed(1)}%{suffix ? ` ${suffix}` : ''}
+    </span>
+  );
+}
+
+function HeroMiniCard({ label, value, delta }: { label: string; value: string; delta?: number | null }) {
+  return (
+    <div className="hero-mini-card">
+      <span className="hero-mini-label">{label}</span>
+      <strong className="hero-mini-value">{value ?? '—'}</strong>
+      <DeltaChip value={delta} />
+    </div>
+  );
 }
 
 function TrendBadge({ value }: { value: number | null | undefined }) {
@@ -72,6 +92,7 @@ export const LeaderboardPage: React.FC = () => {
   const [streak, setStreak] = useState(0);
   const [agentTools, setAgentTools] = useState<BreakdownItem[]>([]);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [community, setCommunity] = useState<CommunityStatsResponse | null>(null);
 
   const fetchLeaderboard = useCallback(async () => {
     const id = ++requestId.current;
@@ -94,6 +115,16 @@ export const LeaderboardPage: React.FC = () => {
   useEffect(() => {
     void fetchLeaderboard();
   }, [fetchLeaderboard, accountKey, refreshTick]);
+
+  const loadCommunity = useCallback(() => {
+    let cancelled = false;
+    api.getCommunityStats()
+      .then((res) => { if (!cancelled) setCommunity(res); })
+      .catch(() => { if (!cancelled) setCommunity(null); });
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => loadCommunity(), [loadCommunity, refreshTick]);
 
   const loadPersonal = useCallback(() => {
     if (!authenticated) {
@@ -167,10 +198,24 @@ export const LeaderboardPage: React.FC = () => {
   return <div className="token-home"><div className="home-dashboard">
     <section className="main-column" aria-label={zh ? 'Token 排行榜' : 'Token leaderboard'}>
       <section className="hero-block">
-        <div className="hero-copy"><h1>Let Token Dance</h1>
-          <div className="hero-actions">
-            <button className="primary-cta" type="button" onClick={() => document.querySelector('#leaderboard')?.scrollIntoView({ behavior: 'smooth' })}>{zh ? '查看排行榜' : 'View Leaderboard'} <ArrowUpRight /></button>
-            <button className="secondary-cta" type="button" onClick={() => navigate(authenticated ? '/settings/devices' : '/login?return_to=%2Fsettings%2Fdevices')}>{zh ? '连接工具' : 'Connect Tools'}</button>
+        <div className="hero-copy">
+          <div className="hero-title-row">
+            <h1>Let Token Dance</h1>
+            <span className="hero-live"><i aria-hidden="true" />LIVE · {zh ? '实时更新' : 'Live'}</span>
+          </div>
+          <p>{zh ? '今天，整个社区正在持续燃烧 Token' : 'The whole community is burning tokens today.'}</p>
+          <div className="hero-today">
+            <div className="hero-today-main">
+              <span className="hero-today-label">{zh ? '今日 Token' : 'Today’s tokens'}</span>
+              <strong className="hero-today-value">{community?.tokens ? formatTokens(community.tokens) : '—'}</strong>
+              <DeltaChip value={community?.deltas?.tokens} suffix={zh ? 'vs 昨日' : 'vs yesterday'} />
+            </div>
+            <div className="hero-mini-grid">
+              <HeroMiniCard label={zh ? '活跃开发者' : 'Active devs'} value={community?.developers != null ? community.developers.toLocaleString('en-US') : '—'} delta={community?.deltas?.developers} />
+              <HeroMiniCard label={zh ? '生成代码行' : 'Code lines'} value={formatTokens(community?.codeLines)} delta={community?.deltas?.codeLines} />
+              <HeroMiniCard label={zh ? 'AI 交互' : 'AI turns'} value={formatTokens(community?.interactions)} delta={community?.deltas?.interactions} />
+              <HeroMiniCard label={zh ? '预估费用' : 'Est. cost'} value={community?.costAmount != null ? `$${community.costAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'} delta={community?.deltas?.costAmount} />
+            </div>
           </div>
         </div>
         <div className="hero-landscape" aria-hidden="true"><span className="line-dot dot-a" /><span className="line-dot dot-b" /><span className="line-dot dot-c" /><div className="line-segment segment-a" /><div className="line-segment segment-b" /><div className="line-segment segment-c" /><div className="peak peak-a" /><div className="peak peak-b" /><div className="peak peak-c" /><div className="bar bar-a" /><div className="bar bar-b" /><div className="bar bar-c" /></div>
