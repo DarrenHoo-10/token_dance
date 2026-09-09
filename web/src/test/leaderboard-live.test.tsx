@@ -61,12 +61,12 @@ describe('Live leaderboard', () => {
     };
     vi.mocked(api.getLeaderboard).mockResolvedValueOnce(ranked).mockRejectedValueOnce(new Error('offline'));
     showPage();
-    expect(await screen.findByText('Ada')).toBeInTheDocument();
+    expect(await screen.findAllByText('Ada')).toHaveLength(2);
     expect(screen.queryByText('ada')).not.toBeInTheDocument();
     expect(screen.queryByText('持平')).not.toBeInTheDocument();
     expect(screen.queryByText('−')).not.toBeInTheDocument();
     await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
     expect(await screen.findByRole('alert')).toHaveTextContent('连接异常');
-    expect(screen.getByText('Ada')).toBeInTheDocument();
+    expect(screen.getAllByText('Ada')).toHaveLength(2);
   });
 });
