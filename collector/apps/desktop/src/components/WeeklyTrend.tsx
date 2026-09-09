@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { TrendPoint, UsageRange } from "../usage-analytics";
 
 const VIEW_W = 354;
+const VIEW_H = 82;
 const PAD_L = 18;
 const PAD_R = 18;
 
