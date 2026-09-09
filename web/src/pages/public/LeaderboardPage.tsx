@@ -252,9 +252,9 @@ export const LeaderboardPage: React.FC = () => {
           <div className="heat-legend"><span>{zh ? '少' : 'Less'}</span>{[0, 1, 2, 3, 4, 5].map((level) => <i key={level} data-level={level} />)}<span>{zh ? '多' : 'More'}</span></div>
         </> : <p className="side-card-empty">{zh ? '登录后查看你的活跃度热力图。' : 'Sign in to see your activity heatmap.'}</p>}
       </section>
-      <section className="side-card tools-card"><div className="card-heading"><h2>{zh ? '常用 Skill' : 'Top Skills'}</h2><button type="button" className="view-all">{zh ? '全部' : 'View all'}</button></div>
+      <section className="side-card tools-card"><div className="card-heading"><h2>{zh ? '常用 harness' : 'Top harnesses'}</h2><button type="button" className="view-all">{zh ? '全部' : 'View all'}</button></div>
         {agentTools.length > 0 ? <div className="tool-list">{agentTools.map((tool) => <div className="tool-row" key={tool.key}><span className="tool-mark">{tool.label.slice(0, 1).toUpperCase()}</span><strong>{tool.label}</strong><div className="tool-track"><i style={{ width: `${Math.round(tool.percentage)}%` }} /></div><span>{Math.round(tool.percentage)}%</span></div>)}</div>
-          : <p className="side-card-empty">{zh ? '登录并采集数据后展示常用 Skill。' : 'Sign in and collect data to see your top skills.'}</p>}
+          : <p className="side-card-empty">{zh ? '登录并采集数据后展示常用 harness。' : 'Sign in to see the most used harnesses.'}</p>}
         <p>{zh ? '基于今日消耗的 Token' : 'Based on tokens burned today'}</p></section>
     </aside>
   </div></div>;
