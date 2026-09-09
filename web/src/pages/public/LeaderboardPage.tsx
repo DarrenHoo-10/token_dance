@@ -2,12 +2,11 @@ import { LeaderboardTable } from '@/components/analytics/LeaderboardTable';
 import { publicLeaderboardName } from '@/components/analytics/leaderboardName';
 import { RankChange } from '@/components/analytics/RankChange';
 import { UserAvatar } from '@/components/common/UserAvatar';
-import { DesktopDownloadCard } from '@/pages/resources/DesktopDownloadCard';
 import React, { useCallback, useRef, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowUpRight, BarChart3, ChevronLeft, ChevronRight, CircleHelp,
-  Flame, TrendingDown, TrendingUp, Users,
+  Flame, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from '@/context/AuthContext';
@@ -168,18 +167,13 @@ export const LeaderboardPage: React.FC = () => {
   return <div className="token-home"><div className="home-dashboard">
     <section className="main-column" aria-label={zh ? 'Token 排行榜' : 'Token leaderboard'}>
       <section className="hero-block">
-        <div className="hero-copy"><h1>Let Token Dance</h1><p>{zh ? '看看今天谁正在与 AI 一起创造。' : 'See who’s building the most with AI today.'}</p>
+        <div className="hero-copy"><h1>Let Token Dance</h1>
           <div className="hero-actions">
             <button className="primary-cta" type="button" onClick={() => document.querySelector('#leaderboard')?.scrollIntoView({ behavior: 'smooth' })}>{zh ? '查看排行榜' : 'View Leaderboard'} <ArrowUpRight /></button>
             <button className="secondary-cta" type="button" onClick={() => navigate(authenticated ? '/settings/devices' : '/login?return_to=%2Fsettings%2Fdevices')}>{zh ? '连接工具' : 'Connect Tools'}</button>
           </div>
         </div>
         <div className="hero-landscape" aria-hidden="true"><span className="line-dot dot-a" /><span className="line-dot dot-b" /><span className="line-dot dot-c" /><div className="line-segment segment-a" /><div className="line-segment segment-b" /><div className="line-segment segment-c" /><div className="peak peak-a" /><div className="peak peak-b" /><div className="peak peak-c" /><div className="bar bar-a" /><div className="bar bar-b" /><div className="bar bar-c" /></div>
-        <div className="summary-grid">
-          <div className="summary-card"><span className="summary-icon"><Flame /></span><div><strong>{boardSummary.totalTokens == null ? '—' : boardSummary.totalTokens === '0' ? '0' : formatTokens(boardSummary.totalTokens)}</strong><p>{zh ? '本期 Token' : 'Tokens · period'}</p></div></div>
-          <div className="summary-card"><span className="summary-icon"><Users /></span><div><strong>{boardSummary.totalParticipants ?? boardSummary.totalEntries ?? '—'}</strong><p>{zh ? '总人数' : 'Total'}</p></div></div>
-          <div className="summary-card"><span className="summary-icon"><Users /></span><div><strong>UTC</strong><p>{zh ? '统一统计时区' : 'Leaderboard timezone'}</p></div></div>
-        </div>
       </section>
 
       {authenticated && sharing && !sharing.publicProfileEnabled && <div className="panel" role="status" style={{ marginBottom: 16 }}>
@@ -205,7 +199,6 @@ export const LeaderboardPage: React.FC = () => {
           <div className="streak-line"><span>{zh ? '连续活跃' : 'Streak'}</span><div><Flame /><strong>{streak || 0}</strong>{zh ? '天' : 'days'}</div></div>
         </> : <p className="side-card-empty">{zh ? '登录后查看你的排名与统计。' : 'Sign in to see your rank and stats.'}</p>}
       </section>
-      <DesktopDownloadCard />
       <section className="side-card activity-card"><div className="card-heading"><h2>{zh ? 'Token 活跃度' : 'Token Activity'}</h2><CircleHelp /></div>
         {authenticated ? <>
           <div className="month-row"><span>{monthLabel || (zh ? '暂无数据' : 'No data')}</span><div><button type="button" aria-label="Previous month"><ChevronLeft /></button><button type="button" aria-label="Next month"><ChevronRight /></button></div></div>
@@ -214,9 +207,9 @@ export const LeaderboardPage: React.FC = () => {
           <div className="heat-legend"><span>{zh ? '少' : 'Less'}</span>{[0, 1, 2, 3, 4, 5].map((level) => <i key={level} data-level={level} />)}<span>{zh ? '多' : 'More'}</span></div>
         </> : <p className="side-card-empty">{zh ? '登录后查看你的活跃度热力图。' : 'Sign in to see your activity heatmap.'}</p>}
       </section>
-      <section className="side-card tools-card"><div className="card-heading"><h2>{zh ? '常用工具' : 'Top Tools'}</h2><button type="button" className="view-all">{zh ? '全部' : 'View all'}</button></div>
+      <section className="side-card tools-card"><div className="card-heading"><h2>{zh ? '常用 Skill' : 'Top Skills'}</h2><button type="button" className="view-all">{zh ? '全部' : 'View all'}</button></div>
         {agentTools.length > 0 ? <div className="tool-list">{agentTools.map((tool) => <div className="tool-row" key={tool.key}><span className="tool-mark">{tool.label.slice(0, 1).toUpperCase()}</span><strong>{tool.label}</strong><div className="tool-track"><i style={{ width: `${Math.round(tool.percentage)}%` }} /></div><span>{Math.round(tool.percentage)}%</span></div>)}</div>
-          : <p className="side-card-empty">{zh ? '登录并采集数据后展示常用工具。' : 'Sign in and collect data to see your top tools.'}</p>}
+          : <p className="side-card-empty">{zh ? '登录并采集数据后展示常用 Skill。' : 'Sign in and collect data to see your top skills.'}</p>}
         <p>{zh ? '基于今日消耗的 Token' : 'Based on tokens burned today'}</p></section>
     </aside>
   </div></div>;
