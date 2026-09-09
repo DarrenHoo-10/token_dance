@@ -326,7 +326,7 @@ impl AppState {
         Self::build(
             root,
             key_provider,
-            Arc::new(SystemAutostartManager::new("TokenDanceCollector")),
+            Arc::new(SystemAutostartManager::new("TokenDance")),
         )
         .await
     }

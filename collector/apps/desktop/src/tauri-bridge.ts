@@ -641,10 +641,10 @@ export async function getAutostartStatus(): Promise<AutostartInfo> {
     platform: isWin ? "windows" : "macos",
     method: isWin ? "HKCU_Registry_Run" : "LaunchAgents_Plist",
     targetPath: isWin
-      ? "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\TokenDanceCollector"
+      ? "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\TokenDance"
       : "~/Library/LaunchAgents/io.tokendance.collector.plist",
     details: isWin
-      ? 'Command: "tokendance-collector.exe" --minimized'
+      ? 'Command: "TokenDance.exe" --minimized'
       : "User-level LaunchAgents plist",
   };
 }
