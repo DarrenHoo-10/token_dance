@@ -75,7 +75,7 @@ export function UsagePanel() {
   const week = weeklyUsage(agents);
   const status = data?.status;
   const paused = status?.globalPaused;
-  const healthy = status?.status === 'RUNNING' && !error;
+  const healthy = (status?.status === 'RUNNING' || status?.status === 'REBUILDING') && !error;
   const periods: { key: UsageRange; label: string }[] = [{ key: 'today', label: text('今日', 'Today') }, { key: 'week', label: text('近 7 日', '7 days') }, { key: 'all', label: text('全部时间', 'All time') }];
   const costLabel = (items: AgentConfig[], key: UsageRange) => {
     const costs = usageCosts(items, key);

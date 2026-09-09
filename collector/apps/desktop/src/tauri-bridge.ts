@@ -103,7 +103,7 @@ export interface UploadBatchPreview {
 export interface DaemonStatus {
   syncStatus?: "LOGIN_REQUIRED" | "WAITING" | "SYNCING" | "SYNCED" | "RETRYING" | "PAUSED" | "NEEDS_PROFILE" | "NEEDS_ATTENTION";
   lastSyncAt?: string | null;
-  status: "RUNNING" | "PAUSED" | "DEGRADED" | "STOPPED";
+  status: "RUNNING" | "PAUSED" | "DEGRADED" | "STOPPED" | "REBUILDING" | "STORAGE_ERROR";
   globalPaused: boolean;
   pid: number;
   uptimeSecs: number;

@@ -20,6 +20,7 @@ export function OrbSettings({ zh: zhProp }: { zh?: boolean } = {}) {
   const details = useOrbDetailsSnapshot();
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
+  const [open, setOpen] = useState(false);
   const disabled = busy || !preferences || error;
 
   const apply = async (patch: Omit<OrbPreferencesPatch, 'expectedRevision'>) => {
@@ -46,12 +47,24 @@ export function OrbSettings({ zh: zhProp }: { zh?: boolean } = {}) {
   const options = details.snapshot?.options ?? [];
 
   return (
-    <section className="settings-section orb-settings" aria-labelledby="orb-heading">
-      <div className="settings-section-heading">
-        <h2 id="orb-heading">{t('悬浮球', 'Floating orb')}</h2>
-        <span>{t('更改自动保存', 'Changes save automatically')}</span>
-      </div>
-      <div className="settings-sheet">
+    <section className="settings-sources orb-settings" aria-labelledby="orb-heading">
+      <button
+        type="button"
+        className="settings-disclosure"
+        aria-expanded={open}
+        aria-controls="settings-orb-list"
+        onClick={() => setOpen(value => !value)}
+      >
+        <div>
+          <h2 id="orb-heading">{t('悬浮球', 'Floating orb')}</h2>
+          <p>{t('主窗口收起后显示，打开主窗口时自动隐藏', 'Show when the main window is minimized; hide when it opens')}</p>
+        </div>
+        <span>
+          {enabled ? t('已显示', 'Shown') : t('已隐藏', 'Hidden')}
+          <b aria-hidden="true">{open ? '−' : '+'}</b>
+        </span>
+      </button>
+      <div id="settings-orb-list" hidden={!open} className="settings-source-list">
         <div className="settings-row">
           <div>
             <h3>{t('显示悬浮球', 'Show floating orb')}</h3>
@@ -108,8 +121,8 @@ export function OrbSettings({ zh: zhProp }: { zh?: boolean } = {}) {
             ))}
           </select>
         </div>
+        {notice && <p className="orb-empty" role="status">{notice}</p>}
       </div>
-      {notice && <p className="orb-empty" role="status">{notice}</p>}
     </section>
   );
 }
