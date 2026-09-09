@@ -22,11 +22,11 @@ const (
 var leaderboardWindows = []string{"today", "7d", "30d", "all"}
 
 func WindowGeneration(now time.Time) string {
-	return now.UTC().Format("2006-01-02")
+	return domain.DayDate(now)
 }
 
 func previousWindowGeneration(now time.Time) string {
-	return now.UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	return domain.DayDate(now.AddDate(0, 0, -1))
 }
 
 func newRankingOutboxID() (string, error) {

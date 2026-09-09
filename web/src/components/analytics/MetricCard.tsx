@@ -1,10 +1,8 @@
 import React from 'react';
-import { useLocale } from '@/context/LocaleContext';
 
 export interface MetricCardProps {
   label: string;
   value: string | null;
-  hint?: string;
   supported?: boolean;
   unit?: string;
 }
@@ -12,12 +10,9 @@ export interface MetricCardProps {
 export const MetricCard: React.FC<MetricCardProps> = ({
   label,
   value,
-  hint,
   supported = true,
   unit,
 }) => {
-  const { t } = useLocale();
-
   return (
     <div className="metric-card">
       <div className="metric-card-label">
@@ -42,10 +37,6 @@ export const MetricCard: React.FC<MetricCardProps> = ({
         ) : (
           <span style={{ color: 'var(--text-subtle)', fontSize: 16 }}>—</span>
         )}
-      </div>
-
-      <div className="metric-card-hint">
-        {hint || (supported ? ' ' : t('common.notSupported'))}
       </div>
     </div>
   );

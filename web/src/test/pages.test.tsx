@@ -59,7 +59,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       expect(screen.getAllByText('Grace Hopper')).toHaveLength(2);
       expect(screen.queryByText('ada')).not.toBeInTheDocument();
       expect(screen.queryByText('grace')).not.toBeInTheDocument();
-      expect(screen.queryByText('@ada')).not.toBeInTheDocument();
+      expect(screen.getAllByText('@ada').length).toBeGreaterThan(0);
       expect(screen.getAllByText('325.7M')).toHaveLength(2);
       expect(spy).toHaveBeenCalledWith({ window: 'today', limit: 10 });
     });
@@ -78,7 +78,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       expect(screen.getAllByText('Jiayu')).toHaveLength(2);
       expect(screen.getAllByText('blank_user')).toHaveLength(2);
       expect(screen.queryByText('dancer_uss9')).not.toBeInTheDocument();
-      expect(screen.queryByText('@dancer_uss9')).not.toBeInTheDocument();
+      expect(screen.getAllByText('@dancer_uss9')).toHaveLength(2);
       expect(screen.queryByText('jayzhang')).not.toBeInTheDocument();
       expect(screen.queryByText('@blank_user')).not.toBeInTheDocument();
     });

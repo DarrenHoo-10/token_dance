@@ -670,6 +670,38 @@ type LeaderboardResponse struct {
 	Stale             *bool              `json:"stale,omitempty"`
 }
 
+// CommunityStatsResponse projects precomputed daily community totals. Every
+// field is nil/omitted when the precomputed row is missing so clients can
+// render an empty state instead of a zero.
+type CommunityStatsResponse struct {
+	MetricDate   string                  `json:"metricDate"`
+	Timezone     string                  `json:"timezone"`
+	Tokens       *string                 `json:"tokens,omitempty"`
+	Developers   *uint64                 `json:"developers,omitempty"`
+	CodeLines    *string                 `json:"codeLines,omitempty"`
+	Interactions *string                 `json:"interactions,omitempty"`
+	CostAmount   *float64                `json:"costAmount,omitempty"`
+	Deltas       *CommunityStatsDeltaDTO `json:"deltas,omitempty"`
+	Harnesses    []CommunityHarnessDTO   `json:"harnesses,omitempty"`
+	ComputedAt   *time.Time              `json:"computedAt,omitempty"`
+}
+
+type CommunityStatsDeltaDTO struct {
+	Tokens       *float64 `json:"tokens,omitempty"`
+	Developers   *float64 `json:"developers,omitempty"`
+	CodeLines    *float64 `json:"codeLines,omitempty"`
+	Interactions *float64 `json:"interactions,omitempty"`
+	CostAmount   *float64 `json:"costAmount,omitempty"`
+}
+
+// CommunityHarnessDTO is one harness's share of the community day (top N).
+type CommunityHarnessDTO struct {
+	AgentID  string   `json:"agentId"`
+	Label    string   `json:"label"`
+	Tokens   *string  `json:"tokens,omitempty"`
+	SharePct *float64 `json:"sharePct,omitempty"`
+}
+
 // Public Search Models
 type SearchUserResult struct {
 	Handle      string  `json:"handle"`

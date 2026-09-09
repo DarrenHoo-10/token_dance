@@ -382,6 +382,11 @@ func (w *Worker) ProcessAggregates(ctx context.Context) (int, error) {
 	if err := rebuildPublishedLeaderboards(ctx, tx, mapKeys(allDates), now); err != nil {
 		return 0, err
 	}
+	// Same-transaction signal: these days' community totals are stale and the
+	// stats worker should recompute them from the settled daily aggregates.
+	if err := mysqlstore.EnqueueCommunityStatsOutboxTx(ctx, tx, mapKeys(allDates), now); err != nil {
+		return 0, err
+	}
 	if err := mysqlstore.PruneOldWindowScoresTx(ctx, tx, now); err != nil {
 		return 0, err
 	}

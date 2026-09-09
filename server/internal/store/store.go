@@ -17,6 +17,7 @@ type Store interface {
 	Export() ExportStore
 	Search() SearchStore
 	Leaderboard() LeaderboardStore
+	CommunityStats() CommunityStatsStore
 	Media() MediaStore
 }
 
@@ -124,6 +125,42 @@ type LeaderboardStore interface {
 	PublishSnapshot(ctx context.Context, snapshotID string, boardKey, window, metric string, entries []domain.LeaderboardEntry, now time.Time) error
 	GetLeaderboard(ctx context.Context, boardKey, window, metric string, cursor *string, limit int) (*domain.LeaderboardResponse, error)
 	GetLeaderboardView(ctx context.Context, q LeaderboardQuery) (*domain.LeaderboardResponse, error)
+}
+
+// CommunityDailyTotals is one precomputed day of whole-community aggregates.
+// The stats worker recomputes a day from daily_user_agent_metrics and
+// overwrites the row; request paths only read these rows, never aggregate.
+type CommunityDailyTotals struct {
+	MetricDate   string    `json:"metricDate"`
+	TokensTotal  uint64    `json:"tokensTotal"`
+	Developers   uint64    `json:"developers"`
+	CodeLines    uint64    `json:"codeLines"`
+	Interactions uint64    `json:"interactions"`
+	CostAmount   float64   `json:"costAmount"`
+	IsFinal      bool      `json:"isFinal"`
+	ComputedAt   time.Time `json:"computedAt"`
+}
+
+type CommunityStatsStore interface {
+	SumCommunityDay(ctx context.Context, date string) (CommunityDailyTotals, error)
+	UpsertCommunityDailyStats(ctx context.Context, totals CommunityDailyTotals) error
+	GetCommunityDailyStats(ctx context.Context, date string) (*CommunityDailyTotals, error)
+	ReplaceCommunityAgentDay(ctx context.Context, date string, rows []CommunityAgentTokens) error
+	GetCommunityHarnessShares(ctx context.Context, date string, limit int) ([]CommunityHarness, error)
+}
+
+// CommunityAgentTokens is one harness's token total inside a metric day.
+type CommunityAgentTokens struct {
+	AgentID     string
+	TokensTotal uint64
+}
+
+// CommunityHarness is a display-ready harness row: tokens plus the agent
+// display name resolved by the store implementation.
+type CommunityHarness struct {
+	AgentID     string
+	Label       string
+	TokensTotal uint64
 }
 
 type AvatarReadyMeta struct {

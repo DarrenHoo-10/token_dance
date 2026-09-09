@@ -13,7 +13,7 @@ import (
 // All participants share UTC calendar boundaries. Read committed aggregates so
 // first publication, new uploads and privacy changes do not need a snapshot job.
 func leaderboardDates(window string, now time.Time) (string, string, error) {
-	end := now.UTC()
+	end := now.In(domain.DayTZ)
 	start := end
 	switch window {
 	case "today":
