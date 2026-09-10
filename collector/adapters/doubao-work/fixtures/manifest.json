@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schemas.tokenshow.dev/adapter-manifest/v1.json",
+  "manifestVersion": "1.0",
+  "id": "dev.tokenshow.adapter.doubao-work",
+  "name": "Doubao Work",
+  "version": "1.0.0",
+  "protocolVersion": "1.0",
+  "agent": { "id": "doubao-work", "versionRange": ">=1.0.0 <3.0.0" },
+  "platforms": ["windows-x64", "windows-arm64"],
+  "sources": ["jsonl_tail"],
+  "permissions": {
+    "readPaths": [{ "template": "AGENT_CONFIG_HOME", "relativeGlob": "**/*.jsonl", "access": "read" }],
+    "writePaths": [],
+    "commands": [],
+    "networkDomains": []
+  },
+  "capabilities": ["tokens", "sessions", "turns", "code"]
+}

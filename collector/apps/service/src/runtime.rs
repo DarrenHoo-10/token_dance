@@ -78,7 +78,9 @@ pub async fn collect_tick(
             .extension()
             .and_then(|ext| ext.to_str())
             .is_some_and(|ext| {
-                ext.eq_ignore_ascii_case("sqlite") || ext.eq_ignore_ascii_case("vscdb")
+                ext.eq_ignore_ascii_case("sqlite")
+                    || ext.eq_ignore_ascii_case("vscdb")
+                    || ext.eq_ignore_ascii_case("db")
             })
         {
             match service.poll_sqlite(adapter, source_id).await {
@@ -156,7 +158,9 @@ pub async fn collect_decoded(
             .extension()
             .and_then(|ext| ext.to_str())
             .is_some_and(|ext| {
-                ext.eq_ignore_ascii_case("sqlite") || ext.eq_ignore_ascii_case("vscdb")
+                ext.eq_ignore_ascii_case("sqlite")
+                    || ext.eq_ignore_ascii_case("vscdb")
+                    || ext.eq_ignore_ascii_case("db")
             })
         {
             match service.decode_sqlite(adapter, source_id).await {

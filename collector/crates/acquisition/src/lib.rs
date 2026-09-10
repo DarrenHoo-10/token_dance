@@ -11,9 +11,10 @@ mod otlp;
 mod pipeline;
 
 pub use drivers::{
-    detect_zcode_sqlite, registry_snapshot, DriverBatch, DriverEntry, DriverInstance, DriverKind,
-    DriverRegistry, DriverTaskStatus, RemoteApiDriver, RemotePollError, RuntimeStreamDriver,
-    SecretResolver, SqliteAdapterPlan, SqliteSnapshotDriver, ZcodeSqliteDetection,
+    detect_opencode_sqlite, detect_zcode_sqlite, registry_snapshot, DriverBatch, DriverEntry,
+    DriverInstance, DriverKind, DriverRegistry, DriverTaskStatus, OpenCodeSqliteDetection,
+    RemoteApiDriver, RemotePollError, RuntimeStreamDriver, SecretResolver, SqliteAdapterPlan,
+    SqliteSnapshotDriver, ZcodeSqliteDetection,
     REMOTE_API_OVERLAP,
 };
 pub use error::AcquisitionError;
