@@ -212,42 +212,52 @@ pub fn decode_jsonl(
         let value: Value = serde_json::from_str(line).map_err(|err| {
             AdapterError::decode_failed(format!("invalid JSON at line {line_no}: {err}"))
         })?;
-        let Some(value) = normalize_record(value, frame.source_kind)? else {
-            continue;
-        };
-        let object = value.as_object().ok_or_else(|| {
-            AdapterError::decode_failed(format!("record at line {line_no} is not an object"))
-        })?;
-        let record_type = object
-            .get("type")
-            .and_then(Value::as_str)
-            .ok_or_else(|| {
-                AdapterError::decode_failed(format!("record at line {line_no} is missing type"))
-            })?
-            .to_owned();
-        if !known_type(&record_type) {
-            continue;
-        }
-        if matches!(record_type.as_str(), "tool_invoked" | "skill_invoked") {
-            let Some(invocation_id) = object.get("toolCallId").and_then(Value::as_str) else {
-                continue;
-            };
-            if !terminal_ids.insert(format!("{record_type}:{invocation_id}")) {
+        for value in normalize_records(value, frame.source_kind)? {
+            let object = value.as_object().ok_or_else(|| {
+                AdapterError::decode_failed(format!("record at line {line_no} is not an object"))
+            })?;
+            let record_type = object
+                .get("type")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    AdapterError::decode_failed(format!("record at line {line_no} is missing type"))
+                })?
+                .to_owned();
+            if !known_type(&record_type) {
                 continue;
             }
+            if matches!(record_type.as_str(), "tool_invoked" | "skill_invoked") {
+                let Some(invocation_id) = object.get("toolCallId").and_then(Value::as_str) else {
+                    continue;
+                };
+                if !terminal_ids.insert(format!("{record_type}:{invocation_id}")) {
+                    continue;
+                }
+            }
+            if matches!(record_type.as_str(), "model_usage_recorded" | "code_changed") {
+                if let Some(identity) = object
+                    .get("semanticEventId")
+                    .and_then(Value::as_str)
+                    .or_else(|| object.get("toolCallId").and_then(Value::as_str))
+                {
+                    if !terminal_ids.insert(format!("{record_type}:{identity}")) {
+                        continue;
+                    }
+                }
+            }
+            events.push(decode_record(
+                manifest,
+                agent_version,
+                hmac_key,
+                frame,
+                RecordInput {
+                    value,
+                    record_type: &record_type,
+                    raw_line: line,
+                    line_no,
+                },
+            )?);
         }
-        events.push(decode_record(
-            manifest,
-            agent_version,
-            hmac_key,
-            frame,
-            RecordInput {
-                value,
-                record_type: &record_type,
-                raw_line: line,
-                line_no,
-            },
-        )?);
     }
     Ok(events)
 }
@@ -340,14 +350,7 @@ fn decode_record(
         "code_changed" => {
             let record: CodeRecord =
                 serde_json::from_value(value).map_err(decode_error(line_no))?;
-            EventPayload::CodeChanged(CodeChangedPayload {
-                added_lines: record.added.to_string(),
-                removed_lines: record.removed.to_string(),
-                generated_lines: record.generated.map(|v| v.to_string()),
-                accepted_lines: record.accepted.map(|v| v.to_string()),
-                file_count: record.file_count,
-                language: record.language,
-            })
+            EventPayload::CodeChanged(code_changed_payload(record))
         }
         "agent_spawned" => {
             let record: AgentRecord =
@@ -437,19 +440,24 @@ fn version_major(version: &str) -> Option<u64> {
         .ok()
 }
 
-fn normalize_record(value: Value, source_kind: SourceKind) -> Result<Option<Value>, AdapterError> {
+fn normalize_records(value: Value, source_kind: SourceKind) -> Result<Vec<Value>, AdapterError> {
     let source = match value.as_object() {
         Some(source) => source,
-        None => return Ok(None),
+        None => return Ok(vec![]),
     };
     ensure_schema_version(source)?;
+    if source_kind == SourceKind::JsonlTail {
+        if let Some(native) = native_history_records(source) {
+            return Ok(native);
+        }
+    }
     let Some(name) = source
         .get("name")
         .or_else(|| source.get("event"))
         .or_else(|| source.get("type"))
         .and_then(Value::as_str)
     else {
-        return Ok(None);
+        return Ok(vec![]);
     };
     let normalized_type = match source_kind {
         SourceKind::Otlp => match name {
@@ -470,8 +478,8 @@ fn normalize_record(value: Value, source_kind: SourceKind) -> Result<Option<Valu
             | "claude_code.skill.invoked"
             | "claude_code.skill.injected"
             | "claude_code.skill.loaded"
-            | "claude_code.skill.execution.started" => return Ok(None),
-            _ => return Ok(None),
+            | "claude_code.skill.execution.started" => return Ok(vec![]),
+            _ => return Ok(vec![]),
         },
         SourceKind::JsonlTail => match name {
             "claude_code.session.started" => "session_started",
@@ -491,12 +499,163 @@ fn normalize_record(value: Value, source_kind: SourceKind) -> Result<Option<Valu
             | "claude_code.skill.invoked"
             | "claude_code.skill.injected"
             | "claude_code.skill.loaded"
-            | "claude_code.skill.execution.started" => return Ok(None),
-            _ => return Ok(None),
+            | "claude_code.skill.execution.started" => return Ok(vec![]),
+            _ => return Ok(vec![]),
         },
-        _ => return Ok(None),
+        _ => return Ok(vec![]),
     };
-    Ok(Some(build_normalized(source, name, normalized_type)))
+    Ok(vec![build_normalized(source, name, normalized_type)])
+}
+
+fn native_history_records(source: &Map<String, Value>) -> Option<Vec<Value>> {
+    let record_type = source.get("type").and_then(Value::as_str)?;
+    if source.get("name").is_some() || record_type.starts_with("claude_code.") {
+        return None;
+    }
+    if record_type != "assistant" {
+        return Some(vec![]);
+    }
+    let message = source.get("message").and_then(Value::as_object)?;
+    let occurred_at = source
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .unwrap_or("1970-01-01T00:00:00Z");
+    let session_id = source
+        .get("sessionId")
+        .or_else(|| source.get("session_id"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let mut records = Vec::new();
+    if let Some(usage) = usage_from_message(message, session_id, occurred_at) {
+        records.push(usage);
+    }
+    if let Some(content) = message.get("content").and_then(Value::as_array) {
+        for item in content {
+            let Some(tool) = item.as_object() else {
+                continue;
+            };
+            if let Some(changed) = code_changed_from_tool_use(tool, session_id, occurred_at) {
+                records.push(changed);
+            }
+        }
+    }
+    Some(records)
+}
+
+fn usage_from_message(
+    message: &Map<String, Value>,
+    session_id: &str,
+    occurred_at: &str,
+) -> Option<Value> {
+    let usage = message.get("usage").and_then(Value::as_object)?;
+    let model_id = message.get("model").and_then(Value::as_str).unwrap_or("");
+    if model_id.is_empty() {
+        return None;
+    }
+    let input = json_u64(usage, &["input_tokens", "inputTokens"]);
+    let output = json_u64(usage, &["output_tokens", "outputTokens"]);
+    let cache_read = json_u64(usage, &["cache_read_input_tokens", "cacheReadTokens"]);
+    let cache_write = json_u64(
+        usage,
+        &["cache_creation_input_tokens", "cacheWriteTokens"],
+    );
+    let reasoning = usage
+        .get("output_tokens_details")
+        .and_then(Value::as_object)
+        .and_then(|details| json_u64(details, &["thinking_tokens", "reasoning_tokens"]))
+        .or_else(|| json_u64(usage, &["reasoning_tokens"]));
+    let total = json_u64(usage, &["total_tokens", "totalTokens"]).or_else(|| {
+        Some(
+            input.unwrap_or(0)
+                + output.unwrap_or(0)
+                + cache_read.unwrap_or(0)
+                + cache_write.unwrap_or(0),
+        )
+    });
+    if input.unwrap_or(0) == 0 && output.unwrap_or(0) == 0 && total.unwrap_or(0) == 0 {
+        return None;
+    }
+    let message_id = message.get("id").and_then(Value::as_str).unwrap_or("");
+    Some(serde_json::json!({
+        "type": "model_usage_recorded",
+        "occurredAt": occurred_at,
+        "sessionId": session_id,
+        "semanticEventId": format!("claude-usage:{message_id}"),
+        "providerId": "anthropic",
+        "modelId": model_id,
+        "tokens": {
+            "input": input,
+            "output": output,
+            "cacheRead": cache_read,
+            "cacheWrite": cache_write,
+            "reasoning": reasoning,
+            "total": total
+        }
+    }))
+}
+
+fn code_changed_from_tool_use(
+    tool: &Map<String, Value>,
+    session_id: &str,
+    occurred_at: &str,
+) -> Option<Value> {
+    if tool.get("type").and_then(Value::as_str) != Some("tool_use") {
+        return None;
+    }
+    let name = tool.get("name").and_then(Value::as_str).unwrap_or("");
+    if !matches!(name, "Write" | "Edit" | "NotebookEdit") {
+        return None;
+    }
+    let input = tool.get("input").and_then(Value::as_object);
+    let old_text = input
+        .and_then(|input| json_string(input, &["old_string", "oldString"]))
+        .unwrap_or("");
+    let new_text = input
+        .and_then(|input| json_string(input, &["new_string", "newString", "content", "contents"]))
+        .unwrap_or("");
+    if old_text.is_empty() && new_text.is_empty() {
+        return None;
+    }
+    let added = line_count(new_text);
+    let removed = line_count(old_text);
+    if added == 0 && removed == 0 {
+        return None;
+    }
+    let call_id = tool.get("id").and_then(Value::as_str)?;
+    Some(serde_json::json!({
+        "type": "code_changed",
+        "occurredAt": occurred_at,
+        "sessionId": session_id,
+        "toolCallId": call_id,
+        "semanticEventId": format!("claude-edit:{call_id}"),
+        "added": added,
+        "removed": removed,
+        "generated": added,
+        "fileCount": 1
+    }))
+}
+
+fn line_count(text: &str) -> u64 {
+    if text.is_empty() {
+        0
+    } else {
+        u64::try_from(text.lines().count()).unwrap_or(0)
+    }
+}
+
+fn json_string<'a>(value: &'a Map<String, Value>, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_str))
+}
+
+fn json_u64(value: &Map<String, Value>, keys: &[&str]) -> Option<u64> {
+    keys.iter().find_map(|key| {
+        value.get(*key).and_then(|item| match item {
+            Value::Number(number) => number.as_u64(),
+            Value::String(text) => text.parse().ok(),
+            _ => None,
+        })
+    })
 }
 
 fn build_normalized(source: &Map<String, Value>, name: &str, normalized_type: &str) -> Value {
@@ -762,15 +921,30 @@ struct SkillRecord {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CodeRecord {
+    #[serde(default)]
     added: u64,
+    #[serde(default)]
     removed: u64,
     #[serde(default)]
     generated: Option<u64>,
     #[serde(default)]
     accepted: Option<u64>,
+    #[serde(default)]
     file_count: u32,
     #[serde(default)]
     language: Option<String>,
+}
+
+fn code_changed_payload(record: CodeRecord) -> CodeChangedPayload {
+    let generated = record.generated.unwrap_or(record.added);
+    CodeChangedPayload {
+        added_lines: record.added.to_string(),
+        removed_lines: record.removed.to_string(),
+        generated_lines: Some(generated.to_string()),
+        accepted_lines: record.accepted.map(|v| v.to_string()),
+        file_count: record.file_count.max(1),
+        language: record.language,
+    }
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

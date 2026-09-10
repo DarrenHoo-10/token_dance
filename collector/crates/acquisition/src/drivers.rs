@@ -452,6 +452,8 @@ impl SqliteAdapterPlan {
             Self::ZcodeV3 => &[
                 "SELECT rowid AS id, id AS session_ref, time_created FROM session WHERE rowid > ?1 ORDER BY rowid",
                 "SELECT rowid AS id, session_id, provider_id, model_id, input_tokens, output_tokens, computed_total_tokens, tool_call_count, completed_at FROM model_usage WHERE rowid > ?1 AND status = 'completed' ORDER BY rowid",
+                "SELECT COALESCE(time_updated, time_created) AS id, id AS session_ref, time_created, summary_additions, summary_deletions, summary_files, 'code_changed' AS event_type FROM session WHERE COALESCE(time_updated, time_created) > ?1 AND (IFNULL(summary_additions,0) > 0 OR IFNULL(summary_deletions,0) > 0) ORDER BY COALESCE(time_updated, time_created), rowid",
+                "SELECT time_updated AS id, session_id, time_updated AS time_created, json_extract(data, '$.callID') AS callId, CASE json_extract(data, '$.tool') WHEN 'Write' THEN CASE WHEN IFNULL(json_extract(data, '$.state.input.content'), '') = '' THEN 0 ELSE 1 + LENGTH(json_extract(data, '$.state.input.content')) - LENGTH(REPLACE(json_extract(data, '$.state.input.content'), CHAR(10), '')) END ELSE CASE WHEN IFNULL(json_extract(data, '$.state.input.new_string'), '') = '' THEN 0 ELSE 1 + LENGTH(json_extract(data, '$.state.input.new_string')) - LENGTH(REPLACE(json_extract(data, '$.state.input.new_string'), CHAR(10), '')) END END AS addedLines, CASE json_extract(data, '$.tool') WHEN 'Edit' THEN CASE WHEN IFNULL(json_extract(data, '$.state.input.old_string'), '') = '' THEN 0 ELSE 1 + LENGTH(json_extract(data, '$.state.input.old_string')) - LENGTH(REPLACE(json_extract(data, '$.state.input.old_string'), CHAR(10), '')) END ELSE 0 END AS removedLines, 1 AS fileCount, 'code_changed' AS event_type FROM part WHERE time_updated > ?1 AND json_extract(data, '$.type') = 'tool' AND json_extract(data, '$.tool') IN ('Edit', 'Write') AND json_extract(data, '$.state.status') = 'completed' ORDER BY time_updated, rowid",
             ],
         }
     }
@@ -641,25 +643,39 @@ fn normalize_sqlite_record(plan: SqliteAdapterPlan, row: &mut Map<String, Value>
     match plan {
         SqliteAdapterPlan::ZcodeV3 => {
             // Session probe rows carry `session_ref`; usage rows carry `session_id`.
+            // Code rows are tagged event_type=code_changed and must not leak diffs/paths.
+            let event_type = row.remove("event_type");
             let session_ref = row.remove("session_ref");
             let timestamp = row
                 .remove("completed_at")
                 .or_else(|| row.remove("time_created"));
-            match session_ref {
-                Some(session_ref) => {
-                    row.insert("type".into(), Value::String("session".into()));
+            if event_type.as_ref().and_then(Value::as_str) == Some("code_changed") {
+                row.insert("type".into(), Value::String("code_changed".into()));
+                if let Some(session_ref) = session_ref {
                     row.insert("sessionId".into(), session_ref);
-                }
-                None => {
-                    row.insert("type".into(), Value::String("step_finish".into()));
+                } else {
                     rename(row, "session_id", "sessionId");
-                    rename(row, "id", "stepId");
-                    rename(row, "provider_id", "provider");
-                    rename(row, "model_id", "model");
-                    rename(row, "input_tokens", "inputTokens");
-                    rename(row, "output_tokens", "outputTokens");
-                    rename(row, "computed_total_tokens", "totalTokens");
-                    rename(row, "tool_call_count", "toolCount");
+                }
+                rename(row, "summary_additions", "addedLines");
+                rename(row, "summary_deletions", "removedLines");
+                rename(row, "summary_files", "fileCount");
+            } else {
+                match session_ref {
+                    Some(session_ref) => {
+                        row.insert("type".into(), Value::String("session".into()));
+                        row.insert("sessionId".into(), session_ref);
+                    }
+                    None => {
+                        row.insert("type".into(), Value::String("step_finish".into()));
+                        rename(row, "session_id", "sessionId");
+                        rename(row, "id", "stepId");
+                        rename(row, "provider_id", "provider");
+                        rename(row, "model_id", "model");
+                        rename(row, "input_tokens", "inputTokens");
+                        rename(row, "output_tokens", "outputTokens");
+                        rename(row, "computed_total_tokens", "totalTokens");
+                        rename(row, "tool_call_count", "toolCount");
+                    }
                 }
             }
             if let Some(tokens) = timestamp.as_ref().and_then(Value::as_i64) {

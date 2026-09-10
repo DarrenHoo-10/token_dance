@@ -15,6 +15,7 @@ acquisition = { path = "../../../crates/acquisition" }
 adapter-sdk = { path = "../../../crates/adapter-sdk" }
 collector-core = { path = "../../../crates/collector-core" }
 collector-service = { path = "../../service" }
+adapter-grok-build = { path = "../../../adapters/grok-build" }
 config-executor = { path = "../../../crates/config-executor" }
 protocol = { path = "../../../crates/protocol" }
 wal-spool = { path = "../../../crates/wal-spool" }

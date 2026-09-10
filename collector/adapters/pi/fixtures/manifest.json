@@ -14,5 +14,5 @@
     "commands": [],
     "networkDomains": []
   },
-  "capabilities": ["tokens", "sessions", "turns", "tools"]
+  "capabilities": ["tokens", "sessions", "turns", "tools", "code"]
 }

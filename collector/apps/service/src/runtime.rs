@@ -5,10 +5,14 @@ use std::time::Duration;
 
 use wal_spool::{KeyProvider, OsKeyProvider, WalStore};
 
+use acquisition::DriverBatch;
+use adapter_grok_build::{hook_auth_token, write_session_end_hook, HOOK_SOURCE_ID};
+
 use crate::detect::{
     default_jsonl_limit, detect_local, detected_adapter_ids, grok_history_limit,
     list_grok_history_files, list_jsonl_files,
 };
+use crate::grok_hook::{grok_sessions_root, grok_user_home, start_listener, take_hook_frames};
 use crate::upload::UploadPipeline;
 use crate::{adapter_id, DecodedSourceBatch, DetectionSnapshot, ProductionService};
 
@@ -105,6 +109,27 @@ pub async fn collect_tick(
             }
         }
     }
+    if let Some(sessions_root) = grok_sessions_root() {
+        let frames = take_hook_frames(
+            service.collector.installation_id(),
+            &service.grok_hooks,
+            &sessions_root,
+        );
+        for frame in frames {
+            let batch = DriverBatch {
+                frames: vec![frame],
+                cursor: String::new(),
+                driver_checkpoint: None,
+            };
+            match service
+                .ingest_driver_batch(adapter_grok_build::ADAPTER_ID, HOOK_SOURCE_ID, batch, false)
+                .await
+            {
+                Ok(count) => report.accepted_events += count,
+                Err(error) => report.errors.push(format!("grok-hook: {error}")),
+            }
+        }
+    }
     report
 }
 
@@ -195,6 +220,10 @@ pub async fn assemble_local_service(
     )
     .await
     .map_err(|error| error.to_string())?;
+    if let Some(home) = grok_user_home() {
+        let _ = write_session_end_hook(&home, &key);
+        let _ = start_listener(hook_auth_token(&key), service.grok_hooks.clone());
+    }
     Ok((snapshot, service))
 }
 

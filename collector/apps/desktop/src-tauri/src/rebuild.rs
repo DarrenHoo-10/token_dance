@@ -1,6 +1,6 @@
 use collector_service::{
-    enumerate_all_source_files, DecodedSourceBatch, DetectionSnapshot, EnumeratedSourceKind,
-    ProductionService,
+    decode_pending_session_ends, enumerate_all_source_files, grok_sessions_root, DecodedSourceBatch,
+    DetectionSnapshot, EnumeratedSourceKind, ProductionService,
 };
 
 use crate::local_store::{DiscoveredSource, LocalStore, RebuildFileProgress, ScanWorkItem};
@@ -99,6 +99,12 @@ pub async fn decode_tick(service: &mut ProductionService, prepared: PreparedTick
                 item.path.display()
             )),
         }
+    }
+    if let Some(sessions_root) = grok_sessions_root() {
+        let extra =
+            decode_pending_session_ends(service, &service.grok_hooks, &sessions_root).await;
+        report.accepted_events += extra.len();
+        events.extend(extra);
     }
     DecodedTick {
         events,

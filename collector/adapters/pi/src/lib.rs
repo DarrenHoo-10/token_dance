@@ -17,7 +17,8 @@ use adapter_sdk::{
 };
 use async_trait::async_trait;
 use protocol::{
-    ModelUsageRecordedPayload, SessionStartedPayload, ToolInvokedPayload, TurnCompletedPayload,
+    CodeChangedPayload, ModelUsageRecordedPayload, SessionStartedPayload, ToolInvokedPayload,
+    TurnCompletedPayload,
 };
 use serde_json::{Map, Value};
 
@@ -287,6 +288,35 @@ pub fn decode_jsonl(
                                 }),
                             ));
                         }
+                        if let Some(content) = message.get("content").and_then(Value::as_array) {
+                            for item in content {
+                                let Some(tool) = item.as_object() else {
+                                    continue;
+                                };
+                                let Some(changed) = code_changed_from_tool_call(tool) else {
+                                    continue;
+                                };
+                                let tool_id = tool.get("id").and_then(Value::as_str).unwrap_or("");
+                                events.push(envelope(
+                                    EnvelopeInput {
+                                        manifest,
+                                        agent_version,
+                                        hmac_key,
+                                        frame,
+                                        cursor: &cursor,
+                                        raw_line: line.as_bytes(),
+                                        occurred_at: occurred_at.clone(),
+                                        session_hash: Some(session_hash.clone()),
+                                        turn_hash: turn_hash.clone(),
+                                        tool_call_hash: Some(hash(hmac_key, &[tool_id])),
+                                        kind: "code_changed",
+                                        sequence: tool_id,
+                                        accuracy: Accuracy::Derived,
+                                    },
+                                    EventPayload::CodeChanged(changed),
+                                ));
+                            }
+                        }
                         let Some(stop_reason) = message.get("stopReason").and_then(Value::as_str)
                         else {
                             continue;
@@ -447,4 +477,60 @@ fn string(object: &Map<String, Value>, key: &str) -> Option<String> {
 
 fn number(object: &Map<String, Value>, key: &str) -> Option<String> {
     object.get(key)?.as_number().map(|value| value.to_string())
+}
+
+fn code_changed_from_tool_call(tool: &Map<String, Value>) -> Option<CodeChangedPayload> {
+    if tool.get("type").and_then(Value::as_str) != Some("toolCall") {
+        return None;
+    }
+    let name = tool.get("name").and_then(Value::as_str).unwrap_or("");
+    if !matches!(name, "edit" | "write") {
+        return None;
+    }
+    let arguments = tool.get("arguments").and_then(Value::as_object)?;
+    let mut added = 0_u64;
+    let mut removed = 0_u64;
+    if let Some(edits) = arguments.get("edits").and_then(Value::as_array) {
+        for edit in edits {
+            let Some(edit) = edit.as_object() else {
+                continue;
+            };
+            added += line_count(json_string(edit, &["newText", "new_string", "newString"]));
+            removed += line_count(json_string(edit, &["oldText", "old_string", "oldString"]));
+        }
+    } else {
+        added = line_count(json_string(
+            arguments,
+            &["content", "contents", "newText", "new_string"],
+        ));
+        removed = line_count(json_string(
+            arguments,
+            &["oldText", "old_string", "oldString"],
+        ));
+    }
+    if added == 0 && removed == 0 {
+        return None;
+    }
+    Some(CodeChangedPayload {
+        added_lines: added.to_string(),
+        removed_lines: removed.to_string(),
+        generated_lines: Some(added.to_string()),
+        accepted_lines: None,
+        file_count: 1,
+        language: None,
+    })
+}
+
+fn json_string<'a>(value: &'a Map<String, Value>, keys: &[&str]) -> &'a str {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_str))
+        .unwrap_or("")
+}
+
+fn line_count(text: &str) -> u64 {
+    if text.is_empty() {
+        0
+    } else {
+        u64::try_from(text.lines().count()).unwrap_or(0)
+    }
 }

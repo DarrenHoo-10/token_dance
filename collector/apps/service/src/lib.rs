@@ -1,12 +1,17 @@
 #![forbid(unsafe_code)]
 
 pub mod detect;
+pub mod grok_hook;
 pub mod runtime;
 pub mod upload;
 
 pub use detect::{
     detect_from_home, detect_local, enumerate_all_source_files, EnumeratedSourceFile,
     EnumeratedSourceKind,
+};
+pub use grok_hook::{
+    decode_pending_session_ends, grok_sessions_root, grok_user_home, start_listener, take_hook_frames,
+    GrokHookInbox,
 };
 pub use runtime::{collect_decoded, collect_tick, CollectReport, LocalCollectOutcome};
 
@@ -398,6 +403,7 @@ pub struct ProductionService {
     pub driver_registry: DriverRegistry,
     pub wal: WalStore,
     pub secret_resolver: Arc<dyn SecretResolver>,
+    pub grok_hooks: GrokHookInbox,
 }
 
 impl ProductionService {
@@ -443,6 +449,7 @@ impl ProductionService {
             driver_registry,
             wal,
             secret_resolver,
+            grok_hooks: GrokHookInbox::default(),
         })
     }
 

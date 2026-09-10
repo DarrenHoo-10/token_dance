@@ -73,7 +73,6 @@ function PodiumCard({ entry }: { entry: LeaderboardEntry }) {
     <div className="podium-avatar-wrap"><PersonAvatar entry={entry} className="podium-avatar" />{winner && <span className="crown">♛</span>}</div>
     <div className="podium-id">
       <strong>{publicLeaderboardName(entry)}</strong>
-      {entry.displayName?.trim() && <span className="podium-handle">@{entry.handle}</span>}
     </div>
     <div className="podium-score-row"><span>{formatTokens(entry.metricValue)}</span><small><RankChange value={entry.rankDelta} isNew={entry.isNew} /></small></div>
   </article>;
@@ -170,7 +169,7 @@ export const LeaderboardPage: React.FC = () => {
 
   const podium = entries.length >= 3 ? [entries[1], entries[0], entries[2]] : entries.slice(0, entries.length);
   const rankValue = summary?.ranking?.rank ?? null;
-  const todayTokens = summary?.metrics?.totalTokens?.value ?? null;
+  const todayTokens = summary?.ranking?.entry?.metricValue ?? summary?.metrics?.totalTokens?.value ?? null;
   const allTimeTokens = allTimeSummary?.metrics.totalTokens.supported
     ? allTimeSummary.metrics.totalTokens.value : null;
   const monthLabel = calendarDays.length

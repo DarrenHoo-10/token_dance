@@ -10,6 +10,7 @@ use adapter_sdk::{
 const HISTORY: &str = include_str!("../fixtures/contract/history.jsonl");
 const HMAC_KEY: &[u8] = b"tokenshow-adapter-fixture-hmac-key-v1";
 const OTLP: &str = include_str!("../fixtures/contract/otlp.jsonl");
+const SESSION: &str = include_str!("../fixtures/contract/session.jsonl");
 
 fn otlp_frame(payload: &str) -> RawFrame {
     RawFrame {
@@ -158,6 +159,67 @@ async fn history_fallback_ignores_unknown_event_types() {
         .await
         .unwrap();
     assert_eq!(events.len(), 3);
+}
+
+#[tokio::test]
+async fn native_session_history_emits_usage_and_edit_line_counts() {
+    let adapter = ClaudeAdapter::new(HMAC_KEY);
+    let events = adapter
+        .decode(RawFrame::jsonl(
+            "ins_00000000000000000000000000",
+            HISTORY_SOURCE_ID,
+            "0",
+            SESSION.as_bytes(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 4);
+    let usage = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            EventPayload::ModelUsageRecorded(payload) => Some((
+                payload.model_id.as_str(),
+                payload.tokens.input_tokens.as_deref(),
+                payload.tokens.output_tokens.as_deref(),
+            )),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        usage,
+        vec![
+            ("grok-4.6-build", Some("10"), Some("20")),
+            ("grok-4.6-build", Some("3"), Some("4")),
+        ]
+    );
+    let lines = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            EventPayload::CodeChanged(payload) => Some((
+                payload.added_lines.as_str(),
+                payload.removed_lines.as_str(),
+                payload.generated_lines.as_deref(),
+            )),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lines,
+        vec![
+            ("2", "0", Some("2")),
+            ("2", "1", Some("2")),
+        ]
+    );
+    let json = serde_json::to_string(&events).unwrap();
+    for secret in [
+        "TOKSHOW_TEST_PROMPT_SECRET",
+        "TOKSHOW_TEST_SOURCE_CODE_SECRET",
+        "TOKSHOW_TEST_ABSOLUTE_PATH_SECRET",
+        "session-secret",
+        "marker.txt",
+    ] {
+        assert!(!json.contains(secret), "privacy canary escaped: {secret}");
+    }
 }
 
 #[tokio::test]

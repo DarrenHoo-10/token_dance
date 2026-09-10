@@ -62,6 +62,7 @@ async fn known_session_decodes_metrics_without_leaking_content() {
             EventPayload::ModelUsageRecorded(_) => "model_usage_recorded",
             EventPayload::TurnCompleted(_) => "turn_completed",
             EventPayload::ToolInvoked(_) => "tool_invoked",
+            EventPayload::CodeChanged(_) => "code_changed",
             _ => "other",
         })
         .collect();
@@ -107,6 +108,32 @@ async fn known_session_decodes_metrics_without_leaking_content() {
     for event in events {
         PrivacyFilter.filter(event).unwrap();
     }
+}
+
+#[test]
+fn native_edit_tool_call_counts_lines_without_leaking_text() {
+    let payload = concat!(
+        r#"{"type":"session","id":"sess","timestamp":"2026-09-10T00:00:00.000Z","cwd":"/tmp"}"#,
+        "\n",
+        r#"{"type":"message","id":"m1","timestamp":"2026-09-10T00:00:01.000Z","message":{"role":"assistant","content":[{"type":"toolCall","id":"call-edit-1","name":"edit","arguments":{"path":"PI_ARGS_CANARY","edits":[{"oldText":"base-line\n","newText":"base-line\nPI_LINE_PROBE_0910\n"}]}}],"provider":"nexorai-cpa","model":"grok-4.6","usage":{"input":1,"output":2,"totalTokens":3},"stopReason":"toolUse"}}"#,
+        "\n",
+    );
+    let events = decode(frame("unix:111:222:1:0", payload)).unwrap();
+    let lines = events
+        .iter()
+        .filter_map(|event| match &event.payload {
+            EventPayload::CodeChanged(payload) => Some((
+                payload.added_lines.as_str(),
+                payload.removed_lines.as_str(),
+                payload.generated_lines.as_deref(),
+            )),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(lines, vec![("2", "1", Some("2"))]);
+    let json = serde_json::to_string(&events).unwrap();
+    assert!(!json.contains("PI_ARGS_CANARY"));
+    assert!(!json.contains("PI_LINE_PROBE_0910"));
 }
 
 #[tokio::test]
