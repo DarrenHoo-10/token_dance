@@ -261,7 +261,9 @@ pub fn apply_file_progress(tx: &Transaction, item: &RebuildFileProgress) -> Resu
 fn is_sqlite_path(path: &str) -> bool {
     path.rsplit('.')
         .next()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("sqlite") || ext.eq_ignore_ascii_case("vscdb"))
+        .is_some_and(|ext| {
+        ext.eq_ignore_ascii_case("sqlite") || ext.eq_ignore_ascii_case("vscdb") || ext.eq_ignore_ascii_case("db")
+    })
 }
 
 fn job_id(adapter_id: &str, source_id: &str) -> String {

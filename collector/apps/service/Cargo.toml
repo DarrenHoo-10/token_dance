@@ -20,6 +20,9 @@ adapter-deepseek-harness = { path = "../../adapters/deepseek-harness" }
 adapter-grok-build = { path = "../../adapters/grok-build" }
 adapter-pi = { path = "../../adapters/pi" }
 adapter-zcode = { path = "../../adapters/zcode" }
+adapter-opencode = { path = "../../adapters/opencode" }
+adapter-workbuddy = { path = "../../adapters/workbuddy" }
+adapter-doubao-work = { path = "../../adapters/doubao-work" }
 collector-core = { path = "../../crates/collector-core" }
 config-executor = { path = "../../crates/config-executor" }
 protocol = { path = "../../crates/protocol" }

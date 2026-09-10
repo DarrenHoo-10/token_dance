@@ -1079,7 +1079,7 @@ fn load_control(root: &Path) -> Result<Option<PersistedControl>, String> {
         .map_err(|error| error.to_string())
 }
 
-fn agent_metadata() -> [(&'static str, &'static str, &'static str); 7] {
+fn agent_metadata() -> [(&'static str, &'static str, &'static str); 10] {
     [
         ("codex", "Codex", "dev.tokenshow.adapter.codex"),
         ("claude-code", "Claude Code", "dev.tokenshow.adapter.claude"),
@@ -1095,6 +1095,13 @@ fn agent_metadata() -> [(&'static str, &'static str, &'static str); 7] {
             "deepseek-harness",
             "DeepSeek Harness",
             "dev.tokenshow.adapter.deepseek-harness",
+        ),
+        ("opencode", "OpenCode", "dev.tokenshow.adapter.opencode"),
+        ("workbuddy", "WorkBuddy", "dev.tokenshow.adapter.workbuddy"),
+        (
+            "doubao-work",
+            "Doubao Work",
+            "dev.tokenshow.adapter.doubao-work",
         ),
     ]
 }

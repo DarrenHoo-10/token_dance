@@ -1,0 +1,8 @@
+[
+  {
+    "versionRange": ">=1.0.0 <3.0.0",
+    "source_kind": "jsonl_tail",
+    "schema_fingerprint": "doubao-work session JSONL type=session|step_finish with token fields",
+    "result": "supported"
+  }
+]

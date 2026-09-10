@@ -31,6 +31,12 @@ func agentDisplayName(id string) string {
 		return "Cursor"
 	case "codex":
 		return "Codex CLI"
+	case "opencode":
+		return "OpenCode"
+	case "workbuddy":
+		return "WorkBuddy"
+	case "doubao-work":
+		return "Doubao Work"
 	default:
 		parts := strings.Split(id, "-")
 		for i, p := range parts {

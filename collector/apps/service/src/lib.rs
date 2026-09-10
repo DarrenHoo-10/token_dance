@@ -45,10 +45,13 @@ pub enum OfficialAgent {
     Zcode,
     DeepseekHarness,
     Pi,
+    OpenCode,
+    WorkBuddy,
+    DoubaoWork,
 }
 
 impl OfficialAgent {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 10] = [
         Self::Codex,
         Self::ClaudeCode,
         Self::GrokBuild,
@@ -56,6 +59,9 @@ impl OfficialAgent {
         Self::Zcode,
         Self::DeepseekHarness,
         Self::Pi,
+        Self::OpenCode,
+        Self::WorkBuddy,
+        Self::DoubaoWork,
     ];
 }
 
@@ -162,6 +168,9 @@ pub struct OfficialAdapters {
     pub zcode: Arc<dyn AgentAdapter>,
     pub deepseek_harness: Arc<dyn AgentAdapter>,
     pub pi: Arc<dyn AgentAdapter>,
+    pub opencode: Arc<dyn AgentAdapter>,
+    pub workbuddy: Arc<dyn AgentAdapter>,
+    pub doubao_work: Arc<dyn AgentAdapter>,
 }
 
 impl OfficialAdapters {
@@ -177,6 +186,9 @@ impl OfficialAdapters {
                 hmac_key,
             ),
             pi: pi_adapter(snapshot.get(OfficialAgent::Pi), hmac_key),
+            opencode: opencode_adapter(snapshot.get(OfficialAgent::OpenCode), hmac_key),
+            workbuddy: workbuddy_adapter(snapshot.get(OfficialAgent::WorkBuddy), hmac_key),
+            doubao_work: doubao_work_adapter(snapshot.get(OfficialAgent::DoubaoWork), hmac_key),
         })
     }
 
@@ -189,6 +201,9 @@ impl OfficialAdapters {
             self.zcode,
             self.deepseek_harness,
             self.pi,
+            self.opencode,
+            self.workbuddy,
+            self.doubao_work,
         ]
     }
 }
@@ -308,6 +323,45 @@ fn pi_adapter(detection: Option<&AgentDetection>, key: &[u8]) -> Arc<dyn AgentAd
             key.to_vec(),
         )),
         None => Arc::new(adapter_pi::PiAdapter::undetected(key.to_vec())),
+    }
+}
+
+fn opencode_adapter(detection: Option<&AgentDetection>, key: &[u8]) -> Arc<dyn AgentAdapter> {
+    let installed = detection.is_some();
+    let detection = detection
+        .cloned()
+        .unwrap_or_else(|| AgentDetection::installed("0"));
+    installation_guard(
+        Arc::new(adapter_opencode::OpenCodeAdapter::new(
+            detection.version,
+            detection
+                .sqlite_fingerprint
+                .unwrap_or_else(|| "unverified".into()),
+            key.to_vec(),
+        )),
+        installed,
+    )
+}
+
+fn workbuddy_adapter(detection: Option<&AgentDetection>, key: &[u8]) -> Arc<dyn AgentAdapter> {
+    match detection {
+        Some(item) => Arc::new(adapter_workbuddy::WorkBuddyAdapter::for_version(
+            item.version.clone(),
+            key.to_vec(),
+        )),
+        None => Arc::new(adapter_workbuddy::WorkBuddyAdapter::undetected(key.to_vec())),
+    }
+}
+
+fn doubao_work_adapter(detection: Option<&AgentDetection>, key: &[u8]) -> Arc<dyn AgentAdapter> {
+    match detection {
+        Some(item) => Arc::new(adapter_doubao_work::DoubaoWorkAdapter::for_version(
+            item.version.clone(),
+            key.to_vec(),
+        )),
+        None => Arc::new(adapter_doubao_work::DoubaoWorkAdapter::undetected(
+            key.to_vec(),
+        )),
     }
 }
 
@@ -976,6 +1030,7 @@ fn build_driver(
                 "zcode-sqlite-v1-uv7" => SqliteAdapterPlan::ZcodeV1,
                 "zcode-sqlite-v2-uv9" => SqliteAdapterPlan::ZcodeV2,
                 "zcode-sqlite-v3-uv0" => SqliteAdapterPlan::ZcodeV3,
+                "opencode-sqlite-v1-uv0" => SqliteAdapterPlan::OpenCodeV1,
                 _ => {
                     return Err(acquisition::AcquisitionError::Other(
                         "untrusted_sqlite_schema_fingerprint".into(),
@@ -1103,6 +1158,9 @@ pub fn adapter_id(agent: OfficialAgent) -> &'static str {
         OfficialAgent::Zcode => adapter_zcode::ADAPTER_ID,
         OfficialAgent::DeepseekHarness => adapter_deepseek_harness::ADAPTER_ID,
         OfficialAgent::Pi => adapter_pi::ADAPTER_ID,
+        OfficialAgent::OpenCode => adapter_opencode::ADAPTER_ID,
+        OfficialAgent::WorkBuddy => adapter_workbuddy::ADAPTER_ID,
+        OfficialAgent::DoubaoWork => adapter_doubao_work::ADAPTER_ID,
     }
 }
 
@@ -1199,7 +1257,7 @@ mod tests {
         )
         .unwrap();
         collector.probe_all().await;
-        assert_eq!(collector.runtimes().len(), 7);
+        assert_eq!(collector.runtimes().len(), 10);
         assert!(collector.runtimes().into_iter().all(|runtime| {
             !runtime.detected
                 && runtime.agent_version.is_none()
@@ -1208,7 +1266,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn seven_official_adapters_map_discovered_sources_to_drivers() {
+    async fn official_adapters_map_discovered_sources_to_drivers() {
         let mut snapshot = DetectionSnapshot::default()
             .with(
                 OfficialAgent::Codex,
@@ -1243,7 +1301,16 @@ mod tests {
                 OfficialAgent::DeepseekHarness,
                 AgentDetection::installed("1.0.0"),
             )
-            .with(OfficialAgent::Pi, AgentDetection::installed("0.3.0"));
+            .with(OfficialAgent::Pi, AgentDetection::installed("0.3.0"))
+            .with(
+                OfficialAgent::OpenCode,
+                AgentDetection {
+                    sqlite_fingerprint: Some("opencode-sqlite-v1-uv0".into()),
+                    ..AgentDetection::installed("1.18.18")
+                },
+            )
+            .with(OfficialAgent::WorkBuddy, AgentDetection::installed("1.0.0"))
+            .with(OfficialAgent::DoubaoWork, AgentDetection::installed("1.0.0"));
         snapshot.configure_source(
             OfficialAgent::Cursor,
             "cursor-personal-local",
@@ -1265,6 +1332,30 @@ mod tests {
             adapter_pi::HISTORY_SOURCE_ID,
             DetectedSourceConfig {
                 path: Some(PathBuf::from("pi-session.jsonl")),
+                ..DetectedSourceConfig::default()
+            },
+        );
+        snapshot.configure_source(
+            OfficialAgent::OpenCode,
+            adapter_opencode::SQLITE_SOURCE_ID,
+            DetectedSourceConfig {
+                path: Some(PathBuf::from("opencode.db")),
+                ..DetectedSourceConfig::default()
+            },
+        );
+        snapshot.configure_source(
+            OfficialAgent::WorkBuddy,
+            adapter_workbuddy::HISTORY_SOURCE_ID,
+            DetectedSourceConfig {
+                path: Some(PathBuf::from("workbuddy-session.jsonl")),
+                ..DetectedSourceConfig::default()
+            },
+        );
+        snapshot.configure_source(
+            OfficialAgent::DoubaoWork,
+            adapter_doubao_work::HISTORY_SOURCE_ID,
+            DetectedSourceConfig {
+                path: Some(PathBuf::from("doubao-work-session.jsonl")),
                 ..DetectedSourceConfig::default()
             },
         );
