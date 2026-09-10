@@ -3,7 +3,7 @@
 //! Local commit is the success criterion for collection. Upload ACK is independent
 //! and must not be mixed into these totals. Old `usage-ledger.json` is never imported.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -25,8 +25,8 @@ pub use sync::{DeliveryRecord, LeasedBatch};
 
 use crate::pricing::{Catalog, CostCoverage, CostLedger};
 use crate::usage_ledger::{
-    accuracy_name, accuracy_rank, cost_units, event_tokens, local_date, AgentUsageSnapshot,
-    DayUsage, DISPLAY_DAYS,
+    accuracy_name, accuracy_rank, cost_units, event_tokens, local_date, local_hour,
+    AgentUsageSnapshot, DayUsage, HourUsage, DISPLAY_DAYS,
 };
 
 const DB_FILE: &str = "tokendance.sqlite3";
@@ -434,6 +434,68 @@ impl LocalStore {
             pricing,
             history_start,
         })
+    }
+
+    pub fn today_hourly(&self, today: NaiveDate) -> HashMap<String, Vec<HourUsage>> {
+        let lower = today
+            .and_hms_opt(0, 0, 0)
+            .and_then(|naive| {
+                naive
+                    .and_local_timezone(Local)
+                    .single()
+                    .or_else(|| naive.and_local_timezone(Local).earliest())
+            })
+            .map(|start| (start - chrono::Duration::hours(14)).to_rfc3339())
+            .unwrap_or_default();
+        let Ok(mut stmt) = self.conn.prepare(
+            "SELECT agent_id, occurred_at, envelope_json
+             FROM events
+             WHERE event_type = 'model_usage_recorded' AND occurred_at >= ?1",
+        ) else {
+            return HashMap::new();
+        };
+        let Ok(rows) = stmt.query_map(params![lower], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        }) else {
+            return HashMap::new();
+        };
+        let mut buckets: HashMap<String, [u64; 24]> = HashMap::new();
+        for (agent_id, occurred_at, envelope_json) in rows.flatten() {
+            let Some((date, hour)) = local_hour(&occurred_at) else {
+                continue;
+            };
+            if date != today || hour > 23 {
+                continue;
+            }
+            let Ok(event) = serde_json::from_str::<EventEnvelope>(&envelope_json) else {
+                continue;
+            };
+            let Some(tokens) = event_tokens(&event) else {
+                continue;
+            };
+            let slot = buckets.entry(agent_id).or_insert([0; 24]);
+            slot[hour as usize] = slot[hour as usize].saturating_add(tokens);
+        }
+        buckets
+            .into_iter()
+            .map(|(agent_id, hours)| {
+                (
+                    agent_id,
+                    hours
+                        .into_iter()
+                        .enumerate()
+                        .map(|(hour, tokens)| HourUsage {
+                            hour: hour as u8,
+                            tokens,
+                        })
+                        .collect(),
+                )
+            })
+            .collect()
     }
 
     pub fn apply_prices(&mut self, catalog: Catalog) -> Result<(), String> {
@@ -1165,6 +1227,16 @@ mod tests {
             .to_rfc3339()
     }
 
+    fn today_local_at(hour: u32) -> String {
+        Local::now()
+            .date_naive()
+            .and_hms_opt(hour, 0, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .unwrap()
+            .to_rfc3339()
+    }
+
     fn open_store() -> (tempfile::TempDir, LocalStore) {
         let dir = tempfile::tempdir().unwrap();
         let store = LocalStore::open(dir.path()).unwrap();
@@ -1207,6 +1279,24 @@ mod tests {
         assert_eq!(snapshot.today_tokens, 100);
         assert_eq!(snapshot.total_tokens, 100);
         assert_eq!(snapshot.accuracy, "exact");
+    }
+
+    #[test]
+    fn today_hourly_buckets_local_hours() {
+        let (_dir, mut store) = open_store();
+        let morning = envelope("codex", &today_local_at(9), 40, Accuracy::Exact);
+        let afternoon = envelope("codex", &today_local_at(15), 70, Accuracy::Exact);
+        let other = envelope("claude-code", &today_local_at(9), 11, Accuracy::Exact);
+        assert!(store
+            .commit_batch(&[morning, afternoon, other], &[])
+            .unwrap());
+        let hourly = store.today_hourly(Local::now().date_naive());
+        let codex = hourly.get("codex").expect("codex hours");
+        assert_eq!(codex.len(), 24);
+        assert_eq!(codex[9].tokens, 40);
+        assert_eq!(codex[15].tokens, 70);
+        assert_eq!(codex.iter().map(|hour| hour.tokens).sum::<u64>(), 110);
+        assert_eq!(hourly.get("claude-code").unwrap()[9].tokens, 11);
     }
 
     #[test]

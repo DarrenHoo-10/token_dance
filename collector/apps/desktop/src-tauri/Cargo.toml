@@ -5,7 +5,7 @@ name = "tokendance-desktop"
 version = "0.1.17"
 edition = "2021"
 authors = ["TokenDance Team"]
-description = "TokenDance Desktop Collector Settings Shell"
+description = "TokenDance Desktop"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

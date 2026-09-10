@@ -19,7 +19,7 @@ use wal_spool::{AckPayload, KeyProvider, OsKeyProvider, WalStore};
 
 use crate::autostart::{AutostartProvider, SystemAutostartManager};
 use crate::local_store::{LeasedBatch, LocalStore};
-use crate::usage_ledger::DayUsage;
+use crate::usage_ledger::{DayUsage, HourUsage};
 
 const COLLECTOR_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -69,6 +69,8 @@ pub struct AgentConfig {
     pub total_tokens: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub daily_usage: Vec<DayUsage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub hourly_usage: Vec<HourUsage>,
     pub total_costs: std::collections::BTreeMap<String, u64>,
     pub pricing: crate::pricing::CostCoverage,
     pub history_start: Option<String>,
@@ -324,7 +326,7 @@ impl AppState {
         Self::build(
             root,
             key_provider,
-            Arc::new(SystemAutostartManager::new("TokenDanceCollector")),
+            Arc::new(SystemAutostartManager::new("TokenDance")),
         )
         .await
     }
@@ -617,6 +619,7 @@ impl AppState {
         let service = self.service.lock().await;
         let store = self.local_store.lock().expect("local store poisoned");
         let today = Local::now().date_naive();
+        let hourly = store.today_hourly(today);
         agent_metadata()
             .into_iter()
             .filter_map(|(id, name, adapter_id)| {
@@ -657,6 +660,7 @@ impl AppState {
                     today_tokens,
                     total_tokens,
                     daily_usage,
+                    hourly_usage: hourly.get(id).cloned().unwrap_or_default(),
                     total_costs: usage
                         .as_ref()
                         .map(|item| item.total_costs.clone())

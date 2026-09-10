@@ -52,8 +52,8 @@ export const AutostartLifecycleCard: React.FC<AutostartLifecycleCardProps> = ({
 
           <p className="feature-desc">
             {isZh
-              ? "在登录用户会话启动时以最小化/后台守护模式启动 TokenDance 采集器，无需管理员 UAC 提权。"
-              : "Starts TokenDance Collector silently on user login in minimized mode. Requires no administrator UAC elevation."}
+              ? "在登录用户会话启动时以最小化/后台守护模式启动 TokenDance，无需管理员 UAC 提权。"
+              : "Starts TokenDance silently on user login in minimized mode. Requires no administrator UAC elevation."}
           </p>
 
           <div className="config-box">
