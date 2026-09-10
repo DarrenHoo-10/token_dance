@@ -1524,9 +1524,9 @@ func TestMySQL_NonUTCBoundaryCorrectionAsiaShanghai(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Metrics.TotalTokens.Value == nil || *summary.Metrics.TotalTokens.Value != "330" {
-		t.Fatalf("expected boundary-corrected total 330 without full-day double count, got %+v", summary.Metrics.TotalTokens)
-	}
+		if summary.Metrics.TotalTokens.Value == nil || *summary.Metrics.TotalTokens.Value != "330" {
+			t.Fatalf("expected Beijing metric_date total 330 without live event SUM, got %+v", summary.Metrics.TotalTokens)
+		}
 	breakdown, err := st.Analytics().GetAgentBreakdown(context.Background(), userID, r)
 	if err != nil {
 		t.Fatal(err)
@@ -1548,31 +1548,46 @@ func TestMySQL_NonUTCBoundaryCorrectionAsiaShanghai(t *testing.T) {
 	}
 }
 
-func TestMySQL_TodayIncludesBeijingMorningBeforeUTCMidnight(t *testing.T) {
-	st, db, cleanup := getTestStore(t)
-	defer cleanup()
-	now := time.Date(2026, 9, 10, 1, 51, 0, 0, time.UTC)
-	userID := "usr_boundary_beijing_morning"
-	seedBoundaryAnalyticsFixture(t, db, st, userID, now, nil, nil,
-		[]struct {
-			at     time.Time
-			tokens uint64
-			agent  string
-		}{
-			{time.Date(2026, 9, 9, 18, 0, 0, 0, time.UTC), 159100000, "codex"},
-		})
-	r := domain.TimeRange{
-		Key:      domain.TimeRangeToday,
-		From:     time.Date(2026, 9, 9, 16, 0, 0, 0, time.UTC),
-		To:       now,
-		Timezone: domain.DayTZName,
-	}
+	func TestMySQL_TodayUsesBeijingMetricDateNotLiveEvents(t *testing.T) {
+		st, db, cleanup := getTestStore(t)
+		defer cleanup()
+		now := time.Date(2026, 9, 10, 1, 51, 0, 0, time.UTC)
+		userID := "usr_boundary_beijing_morning"
+		seedBoundaryAnalyticsFixture(t, db, st, userID, now,
+			[]string{"2026-09-10"}, []uint64{218700000},
+			[]struct {
+				at     time.Time
+				tokens uint64
+				agent  string
+			}{
+				{time.Date(2026, 9, 9, 18, 0, 0, 0, time.UTC), 159100000, "codex"},
+			})
+		r := domain.TimeRange{
+			Key:      domain.TimeRangeToday,
+			From:     time.Date(2026, 9, 9, 16, 0, 0, 0, time.UTC),
+			To:       now,
+			Timezone: domain.DayTZName,
+		}
 
-	summary, err := st.Analytics().GetPersonalSummary(context.Background(), userID, r)
-	if err != nil {
-		t.Fatal(err)
+		summary, err := st.Analytics().GetPersonalSummary(context.Background(), userID, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if summary.Metrics.TotalTokens.Value == nil || *summary.Metrics.TotalTokens.Value != "218700000" {
+			t.Fatalf("expected Beijing metric_date total 218700000 without live event SUM, got %+v", summary.Metrics.TotalTokens)
+		}
+		trend, err := st.Analytics().GetTokenTrend(context.Background(), userID, r, "total", nil, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var trendTotal uint64
+		for _, point := range trend.Points {
+			if point.TokenTotal != nil {
+				value, _ := strconv.ParseUint(*point.TokenTotal, 10, 64)
+				trendTotal += value
+			}
+		}
+		if trendTotal != 218700000 {
+			t.Fatalf("expected Beijing metric_date trend 218700000, got %d (%+v)", trendTotal, trend.Points)
+		}
 	}
-	if summary.Metrics.TotalTokens.Value == nil || *summary.Metrics.TotalTokens.Value != "159100000" {
-		t.Fatalf("expected Beijing-morning tokens on today, got %+v", summary.Metrics.TotalTokens)
-	}
-}

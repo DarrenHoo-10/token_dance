@@ -23,33 +23,19 @@ type utcAggregatePlan struct {
 }
 
 func planUTCAggregates(r domain.TimeRange) utcAggregatePlan {
-	loc := domain.DayTZ
-	from := r.From
-	end := r.To.Add(time.Nanosecond)
-	fromLocal := from.In(loc)
-	endLocal := end.In(loc)
-	startDay := time.Date(fromLocal.Year(), fromLocal.Month(), fromLocal.Day(), 0, 0, 0, 0, loc)
-	endDay := time.Date(endLocal.Year(), endLocal.Month(), endLocal.Day(), 0, 0, 0, 0, loc)
-	firstFull := startDay
-	if from.After(startDay) {
-		firstFull = startDay.AddDate(0, 0, 1)
+	// daily_user_agent_metrics.metric_date is the product statistics day
+	// (UTC+8). Personal summary, trends and breakdowns must use the same
+	// buckets as the public board. In-progress days are read from those
+	// precomputed rows; the request path does not SUM usage_events.
+	from := r.From.In(domain.DayTZ)
+	to := r.To.In(domain.DayTZ)
+	plan := utcAggregatePlan{fromDate: "9999-12-31", toDate: "1000-01-01", loc: domain.DayTZ}
+	if to.Before(from) {
+		return plan
 	}
-	lastFullEnd := endDay
-
-	plan := utcAggregatePlan{fromDate: "9999-12-31", toDate: "1000-01-01", loc: loc}
-	if firstFull.Before(lastFullEnd) {
-		plan.hasFull = true
-		plan.fromDate = firstFull.Format("2006-01-02")
-		plan.toDate = lastFullEnd.AddDate(0, 0, -1).Format("2006-01-02")
-		if from.Before(firstFull) {
-			plan.raw = append(plan.raw, rawInterval{from: from, to: firstFull})
-		}
-		if lastFullEnd.Before(end) {
-			plan.raw = append(plan.raw, rawInterval{from: lastFullEnd, to: end})
-		}
-	} else if from.Before(end) {
-		plan.raw = append(plan.raw, rawInterval{from: from, to: end})
-	}
+	plan.hasFull = true
+	plan.fromDate = from.Format("2006-01-02")
+	plan.toDate = to.Format("2006-01-02")
 	return plan
 }
 
