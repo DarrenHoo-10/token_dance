@@ -132,7 +132,7 @@ func TestGetCommunityStatsWithoutPrecomputedRowsStaysEmpty(t *testing.T) {
 	if res.Tokens != nil || res.Developers != nil || res.Deltas != nil {
 		t.Fatalf("cold day must not fabricate zeros: %+v", res)
 	}
-	if res.MetricDate != "2026-09-09" || res.Timezone != "UTC" {
+	if res.MetricDate != "2026-09-09" || res.Timezone != domain.DayTZName {
 		t.Fatalf("unexpected envelope: %+v", res)
 	}
 }

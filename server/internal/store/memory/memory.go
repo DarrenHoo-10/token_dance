@@ -1456,10 +1456,7 @@ func (m *MemoryStore) GetSkillRanking(ctx context.Context, userID string, r doma
 }
 
 func (m *MemoryStore) GetActivityCalendar(ctx context.Context, userID string, r domain.TimeRange) (*domain.CalendarResponse, error) {
-	loc, err := time.LoadLocation(r.Timezone)
-	if err != nil {
-		loc = time.UTC
-	}
+	loc := domain.DayTZ
 	from, to := r.From.In(loc), r.To.In(loc)
 	start := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, loc)
 	end := time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, loc)
@@ -2263,7 +2260,7 @@ func (m *MemoryStore) liveMemoryLeaderboardLocked(window string, cursor *string,
 		BoardKey:          "global",
 		Window:            window,
 		Metric:            "tokens",
-		Timezone:          "UTC",
+		Timezone:          domain.DayTZName,
 		Generation:        generation,
 		Entries:           entries,
 		TotalEntries:      &count,

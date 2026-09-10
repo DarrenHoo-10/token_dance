@@ -20,12 +20,19 @@ const ranges: Range[] = ['Today', '7 Days', '30 Days', 'All Time'];
 const windowByRange: Record<Range, string> = { Today: 'today', '7 Days': '7d', '30 Days': '30d', 'All Time': 'all' };
 
 function formatTokens(raw: string | null | undefined): string {
-  const value = Number(raw ?? 0);
-  if (!Number.isFinite(value) || value <= 0) return '—';
+  if (raw == null || raw === '') return '—';
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) return '—';
+  if (value === 0) return '0';
   if (value >= 1e9) return `${(value / 1e9).toFixed(1)}B`;
   if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
   if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
   return String(Math.round(value));
+}
+
+function beijingWeekdayMonday0(date: string): number {
+  const [year, month, day] = date.split('-').map(Number);
+  return (new Date(Date.UTC(year, month - 1, day)).getUTCDay() + 6) % 7;
 }
 
 function DeltaChip({ value, suffix }: { value?: number | null; suffix?: string }) {
@@ -167,8 +174,9 @@ export const LeaderboardPage: React.FC = () => {
   const allTimeTokens = allTimeSummary?.metrics.totalTokens.supported
     ? allTimeSummary.metrics.totalTokens.value : null;
   const monthLabel = calendarDays.length
-    ? new Date(calendarDays[calendarDays.length - 1].date).toLocaleDateString(zh ? 'zh-CN' : 'en-US', { month: 'short', year: 'numeric' })
+    ? new Date(`${calendarDays[calendarDays.length - 1].date}T00:00:00+08:00`).toLocaleDateString(zh ? 'zh-CN' : 'en-US', { month: 'short', year: 'numeric', timeZone: 'Asia/Shanghai' })
     : '';
+  const heatmapLead = calendarDays.length ? beijingWeekdayMonday0(calendarDays[0].date) : 0;
 
   const connectionError = (
     <div className={entries.length ? 'leaderboard-refresh-status' : 'leaderboard-empty'} role="alert">
@@ -205,7 +213,7 @@ export const LeaderboardPage: React.FC = () => {
           <div className="hero-today">
             <div className="hero-today-main">
               <span className="hero-today-label">{zh ? '今日 Token' : 'Today’s tokens'}</span>
-              <strong className="hero-today-value">{community?.tokens ? formatTokens(community.tokens) : '—'}</strong>
+              <strong className="hero-today-value">{community?.tokens != null ? formatTokens(community.tokens) : '—'}</strong>
               <DeltaChip value={community?.deltas?.tokens} suffix={zh ? 'vs 昨日' : 'vs yesterday'} />
             </div>
             <div className="hero-mini-grid">
@@ -237,7 +245,7 @@ export const LeaderboardPage: React.FC = () => {
       <section className="side-card stats-card"><div className="card-heading"><h2>{zh ? '你的数据' : 'Your Stats'}</h2><button type="button" onClick={() => navigate('/me')} aria-label={zh ? '打开个人数据' : 'Open analytics'}><BarChart3 /></button></div>
         {authenticated ? <>
           <div className="stat-block"><span>{zh ? '今日排名 · 北京时间' : 'Today’s rank · Beijing'}</span><div className="stat-line"><strong>{rankValue ?? '—'}</strong><TrendBadge value={summary?.ranking?.delta ?? null} />{summary?.ranking?.percentile != null && <em>{zh ? `前 ${summary.ranking.percentile}%` : `Top ${summary.ranking.percentile}%`}</em>}</div></div>
-          <div className="stat-block"><span>{zh ? '今日 Token' : 'Today’s Tokens'}</span><div className="stat-line"><strong>{formatTokens(todayTokens)}</strong></div></div>
+          <div className="stat-block"><span>{zh ? '今日 Token · 北京时间' : 'Today’s Tokens · Beijing'}</span><div className="stat-line"><strong>{formatTokens(todayTokens)}</strong></div></div>
           <div className="stat-block"><span>{zh ? '累计 Token · All time' : 'All time Tokens'}</span><div className="stat-line"><strong>{allTimeTokens === '0' ? '0' : formatTokens(allTimeTokens)}</strong></div></div>
           <div className="streak-line"><span>{zh ? '连续活跃' : 'Streak'}</span><div><Flame /><strong>{streak || 0}</strong>{zh ? '天' : 'days'}</div></div>
         </> : <p className="side-card-empty">{zh ? '登录后查看你的排名与统计。' : 'Sign in to see your rank and stats.'}</p>}
@@ -246,7 +254,7 @@ export const LeaderboardPage: React.FC = () => {
         {authenticated ? <>
           <div className="month-row"><span>{monthLabel || (zh ? '暂无数据' : 'No data')}</span><div><button type="button" aria-label="Previous month"><ChevronLeft /></button><button type="button" aria-label="Next month"><ChevronRight /></button></div></div>
           <div className="week-labels">{['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}</div>
-          <div className="home-heatmap">{calendarDays.map((day) => <span key={day.date} data-level={day.level} title={day.date} />)}</div>
+          <div className="home-heatmap">{Array.from({ length: heatmapLead }, (_, index) => <span key={`pad-${index}`} data-level={0} />)}{calendarDays.map((day) => <span key={day.date} data-level={day.level} title={day.date} />)}</div>
           <div className="heat-legend"><span>{zh ? '少' : 'Less'}</span>{[0, 1, 2, 3, 4, 5].map((level) => <i key={level} data-level={level} />)}<span>{zh ? '多' : 'More'}</span></div>
         </> : <p className="side-card-empty">{zh ? '登录后查看你的活跃度热力图。' : 'Sign in to see your activity heatmap.'}</p>}
       </section>

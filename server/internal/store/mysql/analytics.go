@@ -19,10 +19,7 @@ type analyticsStore struct {
 }
 
 func rangeDateStrings(r domain.TimeRange) (string, string, *time.Location) {
-	loc, err := time.LoadLocation(r.Timezone)
-	if err != nil {
-		loc = time.UTC
-	}
+	loc := domain.DayTZ
 	return r.From.In(loc).Format("2006-01-02"), r.To.In(loc).Format("2006-01-02"), loc
 }
 
@@ -921,7 +918,12 @@ func (s *analyticsStore) GetActivityCalendar(ctx context.Context, userID string,
 	}
 
 	currentStreak := 0
-	for i := len(days) - 1; i >= 0; i-- {
+	i := len(days) - 1
+	if i >= 0 && !days[i].Active {
+		// Today is still in progress; an empty current day does not reset the streak.
+		i--
+	}
+	for ; i >= 0; i-- {
 		if days[i].Active {
 			currentStreak++
 		} else {
