@@ -64,11 +64,13 @@ func TestLeaderboardTop1000MySQL(t *testing.T) {
 	}
 }
 
-func TestLeaderboardUTCDates(t *testing.T) {
+func TestLeaderboardStatisticsDays(t *testing.T) {
+	// Statistics days follow the product calendar (UTC+8): 01:00 Beijing is
+	// already 2026-01-01 even though UTC is still 2025-12-31.
 	now := time.Date(2026, 1, 1, 1, 0, 0, 0, time.FixedZone("UTC+8", 8*3600))
-	for window, want := range map[string]string{"today": "2025-12-31", "7d": "2025-12-25", "30d": "2025-12-02", "all": "1000-01-01"} {
+	for window, want := range map[string]string{"today": "2026-01-01", "7d": "2025-12-26", "30d": "2025-12-03", "all": "1000-01-01"} {
 		from, to, err := leaderboardDates(window, now)
-		if err != nil || from != want || to != "2025-12-31" {
+		if err != nil || from != want || to != "2026-01-01" {
 			t.Fatalf("%s: %s..%s %v", window, from, to, err)
 		}
 	}

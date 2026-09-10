@@ -411,6 +411,21 @@ impl LocalStore {
         .transpose()
     }
 
+    /// Mark every day at or before `through` as fully synced: the server
+    /// watermark proves those days are stored, so they never re-enter the
+    /// aggregate queue even after a local ledger replay bumps revisions.
+    pub fn ack_aggregates_through(&mut self, owner: &str, through: &str) -> Result<(), String> {
+        if through.is_empty() {
+            return Ok(());
+        }
+        self.conn.execute(
+            "UPDATE aggregate_days SET acked_revision=revision WHERE owner=?1 AND day<=?2 AND revision>acked_revision",
+            params![owner, through],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     pub fn ack_aggregate(&mut self, pending: &PendingAggregate) -> Result<(), String> {
         if self.active_target_id().as_deref() != Some(&pending.owner) {
             return Err("STALE_ACCOUNT".into());

@@ -1755,6 +1755,26 @@ func (m *MemoryStore) GetIngestInstallation(ctx context.Context, installationID 
 	return &copy, nil
 }
 
+func (m *MemoryStore) GetIngestCursor(ctx context.Context, installationID string) (domain.TelemetryCursor, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	cursor := domain.TelemetryCursor{InstallationID: installationID}
+	for key, batch := range m.ingestBatches {
+		if key[:len(installationID)] != installationID {
+			continue
+		}
+		cursor.MaxEventPk++
+		received := batch.CommittedAt
+		if cursor.LastOccurredAt == nil || received.After(*cursor.LastOccurredAt) {
+			cursor.LastOccurredAt = &received
+		}
+	}
+	if cursor.LastOccurredAt != nil {
+		cursor.Day = domain.DayDate(*cursor.LastOccurredAt)
+	}
+	return cursor, nil
+}
+
 func (m *MemoryStore) CommitIngest(ctx context.Context, batch domain.IngestBatch) (*domain.IngestResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

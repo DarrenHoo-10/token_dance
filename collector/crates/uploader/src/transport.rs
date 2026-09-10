@@ -250,6 +250,68 @@ impl HttpTransport {
 
     /// Aggregate snapshots have a separate signed route and never fall back to
     /// event uploads: counting both would duplicate already synchronized usage.
+    /// Fetch the per-device event watermark: statistics days at or before
+    /// `ackThroughDay` are already stored server-side and must never be
+    /// re-submitted.
+    pub async fn fetch_cursor(&self) -> Result<Value, TransportError> {
+        const PATH: &str = "/v1/telemetry/cursor";
+        if !self.claimed_protocol {
+            return Err(TransportError::Decode(
+                "AGGREGATE_UNSUPPORTED_OR_TOO_LARGE".into(),
+            ));
+        }
+        let timestamp = OffsetDateTime::now_utc()
+            .format(&Rfc3339)
+            .map_err(|e| TransportError::Signing(e.to_string()))?;
+        let mut bytes = [0u8; 24];
+        OsRng.fill_bytes(&mut bytes);
+        let nonce = URL_SAFE_NO_PAD.encode(bytes);
+        let digest = Sha256::digest([])
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>();
+        let canonical = format!("GET
+{PATH}
+{timestamp}
+{nonce}
+{digest}");
+        let signature = self
+            .signer
+            .sign(canonical.as_bytes())
+            .map_err(|e| TransportError::Signing(e.to_string()))?;
+        let response = self
+            .client
+            .get(format!("{}{PATH}", self.base_url.trim_end_matches('/')))
+            .header(
+                "authorization",
+                format!(
+                    "Device {}:{}",
+                    self.installation_id,
+                    URL_SAFE_NO_PAD.encode(signature)
+                ),
+            )
+            .header("x-timestamp", timestamp)
+            .header("x-nonce", nonce)
+            .header("x-body-sha256", digest)
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+        let status = response.status().as_u16();
+        let body = response
+            .text()
+            .await
+            .map_err(|e| TransportError::Decode(e.to_string()))?;
+        match status {
+            200 => serde_json::from_str(&body).map_err(|e| TransportError::Decode(e.to_string())),
+            401 | 403 => Err(TransportError::Auth),
+            _ => Err(TransportError::Http {
+                status,
+                retry_after: None,
+                body,
+            }),
+        }
+    }
+
     pub async fn upload_aggregate(&self, body: Vec<u8>) -> Result<Value, TransportError> {
         const PATH: &str = "/v1/telemetry/aggregates";
         if !self.claimed_protocol || body.len() > 2 * 1024 * 1024 {

@@ -311,6 +311,18 @@ impl Connection {
                 .await?;
         }
         let transport = self.transport.as_ref().ok_or("DEVICE_UNAVAILABLE")?;
+        // The server watermark marks statistics days already stored: ack them
+        // locally so a ledger replay can never re-submit stored history.
+        match transport.fetch_cursor().await {
+            Ok(cursor) => {
+                if let Some(through) = cursor.get("ackThroughDay").and_then(Value::as_str) {
+                    app.lock_store()
+                        .ack_aggregates_through(&target_id, through)?;
+                }
+            }
+            Err(uploader::TransportError::Http { status: 404, .. }) => {} // older server
+            Err(_) => {} // watermark is an optimization; the queue still works
+        }
         let pending = app.lock_store().pending_aggregate()?;
         let Some(pending) = pending else {
             return Ok(if app.pending_sync_count() == 0 {
@@ -999,6 +1011,11 @@ mod tests {
                 r#"{"installationId":"ins_fixture","status":"active"}"#,
             ),
             session_response(),
+            response(
+                "200 OK",
+                "",
+                r#"{"installationId":"ins_fixture","maxEventPk":0,"day":"","ackThroughDay":""}"#,
+            ),
             response("200 OK", "", r#"$AGGREGATE"#),
         ]);
         let origin = origin.join("token-dance/").unwrap();
@@ -1022,11 +1039,12 @@ mod tests {
         assert!(requests[0].starts_with("POST /token-dance/api/v1/me/device-grants "));
         assert!(requests[1].starts_with("POST /token-dance/v1/installations/register "));
         assert!(requests[2].starts_with("GET /token-dance/api/v1/auth/session "));
-        assert!(requests[3].starts_with("POST /token-dance/v1/telemetry/aggregates "));
+        assert!(requests[3].starts_with("GET /token-dance/v1/telemetry/cursor "));
+        assert!(requests[4].starts_with("POST /token-dance/v1/telemetry/aggregates "));
         assert!(requests[0].contains("x-csrf-token: fixture-csrf"));
         assert!(requests[1].contains("authorization: Bearer dgt_fixture"));
-        assert!(requests[3].contains("authorization: Device ins_fixture:"));
-        assert!(!requests[3].contains("fixture-session"));
+        assert!(requests[4].contains("authorization: Device ins_fixture:"));
+        assert!(!requests[4].contains("fixture-session"));
         *account.0.lock().await = None;
         account.auto_sync_tick(&app).await;
         assert_eq!(app.sync_status.read().await.as_str(), "LOGIN_REQUIRED");
@@ -1037,8 +1055,18 @@ mod tests {
         let (_root, app) = crate::auto_sync::tests::seeded_app().await;
         let (origin, server) = mock_server(vec![
             session_response(),
+            response(
+                "200 OK",
+                "",
+                r#"{"installationId":"ins_fixture","maxEventPk":0,"day":"","ackThroughDay":""}"#,
+            ),
             response("503 Service Unavailable", "", "{}"),
             session_response(),
+            response(
+                "200 OK",
+                "",
+                r#"{"installationId":"ins_fixture","maxEventPk":0,"day":"","ackThroughDay":""}"#,
+            ),
             response("200 OK", "", r#"$AGGREGATE"#),
         ]);
         let mut client = Connection::new(origin.clone()).unwrap();
@@ -1061,7 +1089,7 @@ mod tests {
         account.0.lock().await.as_mut().unwrap().retry_at = None;
         account.auto_sync_tick(&app).await;
         assert_eq!(app.get_daemon_status().await.events_pending, 0);
-        assert_eq!(server.join().unwrap().len(), 4);
+        assert_eq!(server.join().unwrap().len(), 6);
     }
 
     #[tokio::test]

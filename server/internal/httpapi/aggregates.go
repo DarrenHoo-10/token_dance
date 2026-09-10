@@ -11,6 +11,41 @@ import (
 	"tokendance/internal/domain"
 )
 
+// GetTelemetryCursor returns the signed per-device event watermark: events up
+// to this point are stored, so the device only syncs past the cursor day and
+// never re-submits stored history.
+func (h *Handlers) GetTelemetryCursor(w http.ResponseWriter, r *http.Request) {
+	id, signature, err := parseDeviceAuthorization(r.Header.Get("Authorization"))
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	timestamp, nonce := strings.TrimSpace(r.Header.Get("X-Timestamp")), strings.TrimSpace(r.Header.Get("X-Nonce"))
+	now := time.Now().UTC()
+	emptyBodyHash := sha256.Sum256(nil)
+	bodyHash := hex.EncodeToString(emptyBodyHash[:])
+	if _, err = validateTelemetryHeaders(timestamp, nonce, bodyHash, now); err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	inst, err := h.device.GetIngestInstallation(r.Context(), id)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	canonical := telemetryCanonicalRequest(r.Method, r.URL.EscapedPath(), timestamp, nonce, bodyHash)
+	if !ed25519.Verify(ed25519.PublicKey(inst.DevicePublicKey[:]), []byte(canonical), signature) {
+		WriteError(w, r, domain.NewAppError(401, "DEVICE_SIGNATURE_INVALID", "device.invalidSignature", "invalid signature", nil, domain.ErrUnauthorized))
+		return
+	}
+	cursor, err := h.device.GetIngestCursor(r.Context(), id)
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, cursor)
+}
+
 func (h *Handlers) IngestAggregate(w http.ResponseWriter, r *http.Request) {
 	id, signature, err := parseDeviceAuthorization(r.Header.Get("Authorization"))
 	if err != nil {
