@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use adapter_grok_build::{load_manifest, GrokBuildAdapter, HISTORY_SOURCE_ID, OTLP_SOURCE_ID};
+use adapter_grok_build::{
+    load_manifest, GrokBuildAdapter, HISTORY_SOURCE_ID, HOOK_SOURCE_ID, OTLP_SOURCE_ID,
+};
 use adapter_host::AdapterHost;
 use adapter_sdk::{
     validate_manifest, Accuracy, AgentAdapter, Capability, ConfigMutation, EventPayload,
@@ -56,14 +58,29 @@ async fn contract_probe_sources_setup_and_decode() {
             .iter()
             .map(|source| source.kind())
             .collect::<Vec<_>>(),
-        vec![SourceKind::Otlp, SourceKind::JsonlTail]
+        vec![
+            SourceKind::Otlp,
+            SourceKind::RuntimeStream,
+            SourceKind::JsonlTail
+        ]
     );
     let plan = host
         .setup_plan(adapter_grok_build::ADAPTER_ID, SetupContext::default())
         .await
         .unwrap();
-    let ConfigMutation::JsonMergePatch { patch, .. } = &plan.mutations[0] else {
-        panic!("expected JSON patch")
+    assert!(matches!(
+        plan.mutations[0],
+        ConfigMutation::DirectoryCreate { .. }
+    ));
+    let ConfigMutation::JsonMergePatch { patch, .. } = &plan.mutations[1] else {
+        panic!("expected hook JSON patch")
+    };
+    let hook = patch.to_string();
+    assert!(hook.contains("SessionEnd"));
+    assert!(hook.contains("127.0.0.1"));
+    assert!(!hook.contains("PostToolUse"));
+    let ConfigMutation::JsonMergePatch { patch, .. } = &plan.mutations[2] else {
+        panic!("expected settings JSON patch")
     };
     let serialized = patch.to_string();
     assert!(serialized.contains("GROK_OTEL_LOG_PROMPTS\":\"0"));
@@ -80,6 +97,142 @@ async fn contract_probe_sources_setup_and_decode() {
         .iter()
         .all(|event| event.adapter_id == load_manifest().id));
     assert_eq!(events[2].accuracy, Accuracy::Derived);
+    let EventPayload::CodeChanged(code) = &events[2].payload else {
+        panic!("expected code changed");
+    };
+    assert_eq!(code.generated_lines.as_deref(), Some("3"));
+}
+
+#[tokio::test]
+async fn session_end_hook_payload_emits_derived_code_lines() {
+    let adapter = GrokBuildAdapter::new(HMAC_KEY);
+    let payload = serde_json::json!({
+        "type": "code_changed",
+        "occurredAt": "2026-09-10T00:00:00Z",
+        "sessionId": "sess",
+        "added": 12,
+        "removed": 3,
+        "generated": 12,
+        "fileCount": 2,
+        "semanticEventId": "grok-signals:sess"
+    });
+    let frame = RawFrame {
+        installation_id: "ins_00000000000000000000000000".into(),
+        source_kind: SourceKind::RuntimeStream,
+        source_id: HOOK_SOURCE_ID.into(),
+        cursor: "hook:sess".into(),
+        payload: serde_json::to_vec(&payload).unwrap(),
+    };
+    let events = adapter.decode(frame).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].accuracy, Accuracy::Derived);
+    let EventPayload::CodeChanged(code) = &events[0].payload else {
+        panic!("expected code changed");
+    };
+    assert_eq!(code.generated_lines.as_deref(), Some("12"));
+}
+
+#[tokio::test]
+async fn search_replace_completion_counts_lines_without_keeping_patch_text() {
+    let adapter = GrokBuildAdapter::new(HMAC_KEY);
+    let line = serde_json::json!({
+        "method": "session/update",
+        "timestamp": "2026-09-10T05:32:20Z",
+        "params": {
+            "sessionId": "sess-probe",
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call-probe-1",
+                "status": "completed",
+                "kind": "edit",
+                "_meta": {"x.ai/tool": {"name": "search_replace"}},
+                "rawInput": {
+                    "file_path": "C:/private/secret.rs",
+                    "old_string": "GROK_OLD_CANARY\n",
+                    "new_string": "GROK_OLD_CANARY\nGROK_NEW_CANARY\n"
+                },
+                "rawOutput": {
+                    "type": "SearchReplace",
+                    "EditsApplied": {
+                        "old_string": "GROK_OLD_CANARY\n",
+                        "new_string": "GROK_OLD_CANARY\nGROK_NEW_CANARY\n",
+                        "absolute_path": "C:/private/secret.rs"
+                    }
+                }
+            }
+        }
+    });
+    let events = adapter
+        .decode(RawFrame::jsonl(
+            "ins_00000000000000000000000000",
+            HISTORY_SOURCE_ID,
+            "0",
+            format!("{line}\n").as_bytes(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].accuracy, Accuracy::Derived);
+    let EventPayload::CodeChanged(code) = &events[0].payload else {
+        panic!("expected code changed");
+    };
+    assert_eq!(code.generated_lines.as_deref(), Some("2"));
+    assert_eq!(code.removed_lines, "1");
+    let encoded = serde_json::to_string(&events).unwrap();
+    assert!(!encoded.contains("GROK_OLD_CANARY"));
+    assert!(!encoded.contains("GROK_NEW_CANARY"));
+    assert!(!encoded.contains("secret.rs"));
+}
+
+#[tokio::test]
+async fn completed_search_replace_without_tool_meta_still_counts() {
+    let adapter = GrokBuildAdapter::new(HMAC_KEY);
+    let line = serde_json::json!({
+        "method": "session/update",
+        "timestamp": "2026-09-10T05:37:10Z",
+        "params": {
+            "sessionId": "sess-live",
+            "update": {
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "call-live-1",
+                "status": "completed",
+                "rawOutput": {
+                    "type": "SearchReplace",
+                    "EditsApplied": {
+                        "old_string": "base-line\n",
+                        "new_string": "base-line\nGROK_LINE_PROBE_0910\n"
+                    }
+                }
+            }
+        }
+    });
+    let events = adapter
+        .decode(RawFrame::jsonl(
+            "ins_00000000000000000000000000",
+            HISTORY_SOURCE_ID,
+            "0",
+            format!("{line}\n").as_bytes(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    let EventPayload::CodeChanged(code) = &events[0].payload else {
+        panic!("expected code changed");
+    };
+    assert_eq!(code.generated_lines.as_deref(), Some("2"));
+}
+
+#[tokio::test]
+async fn loc_count_without_generated_field_still_counts_added_lines() {
+    let adapter = GrokBuildAdapter::new(HMAC_KEY);
+    let payload = r#"{"name":"grok_code.lines_of_code.count","timestamp":"2026-08-30T10:01:02.000Z","attributes":{"session.id":"otlp-session","value":9}}"#;
+    let events = adapter.decode(otlp_frame(payload)).await.unwrap();
+    assert_eq!(events.len(), 1);
+    let EventPayload::CodeChanged(code) = &events[0].payload else {
+        panic!("expected code changed");
+    };
+    assert_eq!(code.generated_lines.as_deref(), Some("9"));
+    assert_eq!(code.added_lines, "9");
 }
 
 #[tokio::test]

@@ -294,6 +294,17 @@ fn detect_cursor(home: &Path, snapshot: &mut DetectionSnapshot) {
         let mut detection = AgentDetection::installed("0");
         detection.cursor_mode = Some(crate::DetectedCursorMode::PersonalLocal);
         snapshot.insert(OfficialAgent::Cursor, detection);
+        let transcripts = local.join("projects");
+        if transcripts.is_dir() {
+            snapshot.configure_source(
+                OfficialAgent::Cursor,
+                adapter_cursor::TRANSCRIPT_SOURCE_ID,
+                DetectedSourceConfig {
+                    path: Some(transcripts),
+                    ..DetectedSourceConfig::default()
+                },
+            );
+        }
     }
 }
 

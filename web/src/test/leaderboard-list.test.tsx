@@ -14,7 +14,7 @@ describe('Leaderboard list',()=>{
     showList();const table=await screen.findByRole('table',{name:'排行榜列表'});
     expect(within(table).getAllByRole('row')).toHaveLength(2);
     expect(within(table).getByRole('link',{name:/Only User/})).toHaveAttribute('href','/u/only_user');
-    expect(within(table).getByText('@only_user')).toBeInTheDocument();
+    expect(within(table).queryByText('@only_user')).not.toBeInTheDocument();
     expect(within(table).queryByText('only_user')).not.toBeInTheDocument();
     expect(screen.getByRole('button',{name:'下一页'})).toBeDisabled();
     expect(screen.getByRole('heading',{name:'排行榜'})).toBeInTheDocument();

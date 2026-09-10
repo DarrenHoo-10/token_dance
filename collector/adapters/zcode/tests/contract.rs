@@ -6,8 +6,8 @@ use adapter_sdk::{
 };
 use adapter_zcode::{
     compatibility_supported, fingerprint_supported, load_manifest, verified_query_plan,
-    ZCodeAdapter, COMPATIBILITY_JSON, FINGERPRINT_V1, FINGERPRINT_V2, KNOWN_JSON, RUNTIME_JSON,
-    UNKNOWN_JSON,
+    ZCodeAdapter, COMPATIBILITY_JSON, FINGERPRINT_V1, FINGERPRINT_V2, FINGERPRINT_V3, KNOWN_JSON,
+    RUNTIME_JSON, UNKNOWN_JSON,
 };
 use privacy::PrivacyFilter;
 
@@ -121,6 +121,31 @@ async fn version_and_fingerprint_must_match_the_verified_matrix() {
         .await
         .unwrap();
     assert!(sources.iter().all(|source| source.id() != "zcode-sqlite"));
+}
+
+#[tokio::test]
+async fn v3_session_summaries_emit_derived_generated_lines() {
+    let adapter = ZCodeAdapter::new("0.8.0", FINGERPRINT_V3, KEY);
+    let payload = r#"{"fingerprint":"zcode-sqlite-v3-uv0","records":[{"type":"code_changed","timestamp":"2026-09-10T01:00:00Z","sessionId":"zcode-session-secret","addedLines":12,"removedLines":3,"fileCount":2,"summary_diffs":"ZCODE_DIFF_CANARY","path":"C:/secret.rs"}]}"#;
+    let events = adapter
+        .decode(frame(
+            SourceKind::SqliteSnapshot,
+            "zcode-sqlite",
+            payload,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].accuracy, adapter_sdk::Accuracy::Derived);
+    let EventPayload::CodeChanged(code) = &events[0].payload else {
+        panic!("expected code changed");
+    };
+    assert_eq!(code.generated_lines.as_deref(), Some("12"));
+    assert_eq!(code.added_lines, "12");
+    assert_eq!(code.removed_lines, "3");
+    let json = serde_json::to_string(&events).unwrap();
+    assert!(!json.contains("ZCODE_DIFF_CANARY"));
+    assert!(!json.contains("secret.rs"));
 }
 
 #[tokio::test]

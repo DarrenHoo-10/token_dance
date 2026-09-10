@@ -22,7 +22,7 @@ describe('LeaderboardTable names', () => {
     const table = screen.getByRole('table', { name: '排行榜列表' });
     expect(within(table).getByRole('link', { name: /桂林仔/ })).toHaveAttribute('href', '/u/dancer_uss9');
     expect(within(table).getByRole('link', { name: 'empty_handle' })).toHaveAttribute('href', '/u/empty_handle');
-    expect(within(table).getByText('@dancer_uss9')).toBeInTheDocument();
+    expect(within(table).queryByText('@dancer_uss9')).not.toBeInTheDocument();
     expect(within(table).queryByText('dancer_uss9')).not.toBeInTheDocument();
     expect(within(table).queryByText('@empty_handle')).not.toBeInTheDocument();
   });

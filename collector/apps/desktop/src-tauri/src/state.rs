@@ -7,7 +7,10 @@ use std::time::Instant;
 use acquisition::SecretResolver;
 use adapter_sdk::{ConfigMutation, SetupPlan};
 use chrono::{Local, Utc};
-use collector_service::{detect_local, DetectionSnapshot, ProductionService};
+use adapter_grok_build::{hook_auth_token, write_session_end_hook};
+use collector_service::{
+    detect_local, grok_user_home, start_listener, DetectionSnapshot, ProductionService,
+};
 use config_executor::{EncryptedBackupStore, SemanticVerifier, SetupPlanExecutor};
 use protocol::EventEnvelope;
 use serde::{Deserialize, Serialize};
@@ -368,6 +371,10 @@ impl AppState {
         )
         .await
         .map_err(|error| error.to_string())?;
+        if let Some(home) = grok_user_home() {
+            let _ = write_session_end_hook(&home, &key);
+            let _ = start_listener(hook_auth_token(&key), service.grok_hooks.clone());
+        }
         let autostart_enabled = autostart.is_enabled()?;
         let control = load_control(&root)?
             .unwrap_or_else(|| PersistedControl::initial(&installation_id, autostart_enabled));

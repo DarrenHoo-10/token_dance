@@ -7,10 +7,14 @@
   "protocolVersion": "1.0",
   "agent": { "id": "grok-build", "versionRange": ">=1.0.0 <2.0.0" },
   "platforms": ["windows-x64", "windows-arm64", "macos-x64", "macos-arm64"],
-  "sources": ["otlp", "jsonl_tail"],
+  "sources": ["otlp", "jsonl_tail", "runtime_stream"],
   "permissions": {
     "readPaths": [{ "template": "USER_HOME", "relativeGlob": ".grok/sessions/**", "access": "read" }],
-    "writePaths": [{ "template": "USER_HOME", "relativeGlob": ".grok/settings.json", "access": "write" }],
+    "writePaths": [
+      { "template": "USER_HOME", "relativeGlob": ".grok/settings.json", "access": "write" },
+      { "template": "USER_HOME", "relativeGlob": ".grok/hooks", "access": "write" },
+      { "template": "USER_HOME", "relativeGlob": ".grok/hooks/**", "access": "write" }
+    ],
     "commands": [],
     "networkDomains": []
   },

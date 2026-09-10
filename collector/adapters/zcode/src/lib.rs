@@ -7,10 +7,10 @@ use adapter_sdk::{
     SetupContext, SetupPlan, SourceContext, SourceKind, SourceSpec, TokenUsage,
 };
 use async_trait::async_trait;
-use protocol::{
-    ModelUsageRecordedPayload, SessionStartedPayload, SkillInvokeType, SkillInvokedPayload,
-    ToolInvokedPayload, TurnCompletedPayload,
-};
+	use protocol::{
+	    CodeChangedPayload, ModelUsageRecordedPayload, SessionStartedPayload, SkillInvokeType,
+	    SkillInvokedPayload, ToolInvokedPayload, TurnCompletedPayload,
+	};
 use serde_json::{Map, Value};
 
 pub const ADAPTER_ID: &str = "dev.tokenshow.adapter.zcode";
@@ -24,7 +24,12 @@ pub const FINGERPRINT_V2: &str = "zcode-sqlite-v2-uv9";
 pub const FINGERPRINT_V3: &str = "zcode-sqlite-v3-uv0";
 const V1_QUERIES: &[&str] = &["SELECT id, created_at, model FROM sessions WHERE id > ? ORDER BY id", "SELECT id, session_id, finished_at, input_tokens, output_tokens, tool_count FROM steps WHERE id > ? ORDER BY id"];
 const V2_QUERIES: &[&str] = &["SELECT id, created_at, model FROM sessions WHERE id > ? ORDER BY id", "SELECT id, session_id, finished_at, input_tokens, output_tokens, total_tokens, tool_count, skill_name FROM step_metrics WHERE id > ? ORDER BY id"];
-const V3_QUERIES: &[&str] = &["SELECT rowid AS id, id AS session_ref, time_created FROM session WHERE rowid > ? ORDER BY rowid", "SELECT rowid AS id, session_id, provider_id, model_id, input_tokens, output_tokens, computed_total_tokens, tool_call_count, completed_at FROM model_usage WHERE rowid > ? AND status = 'completed' ORDER BY rowid"];
+	const V3_QUERIES: &[&str] = &[
+	    "SELECT rowid AS id, id AS session_ref, time_created FROM session WHERE rowid > ? ORDER BY rowid",
+	    "SELECT rowid AS id, session_id, provider_id, model_id, input_tokens, output_tokens, computed_total_tokens, tool_call_count, completed_at FROM model_usage WHERE rowid > ? AND status = 'completed' ORDER BY rowid",
+	    "SELECT COALESCE(time_updated, time_created) AS id, id AS session_ref, time_created, summary_additions, summary_deletions, summary_files, 'code_changed' AS event_type FROM session WHERE COALESCE(time_updated, time_created) > ? AND (IFNULL(summary_additions,0) > 0 OR IFNULL(summary_deletions,0) > 0) ORDER BY COALESCE(time_updated, time_created), rowid",
+	    "SELECT time_updated AS id, session_id, time_updated AS time_created, json_extract(data, '$.callID') AS callId, CASE json_extract(data, '$.tool') WHEN 'Write' THEN CASE WHEN IFNULL(json_extract(data, '$.state.input.content'), '') = '' THEN 0 ELSE 1 + LENGTH(json_extract(data, '$.state.input.content')) - LENGTH(REPLACE(json_extract(data, '$.state.input.content'), CHAR(10), '')) END ELSE CASE WHEN IFNULL(json_extract(data, '$.state.input.new_string'), '') = '' THEN 0 ELSE 1 + LENGTH(json_extract(data, '$.state.input.new_string')) - LENGTH(REPLACE(json_extract(data, '$.state.input.new_string'), CHAR(10), '')) END END AS addedLines, CASE json_extract(data, '$.tool') WHEN 'Edit' THEN CASE WHEN IFNULL(json_extract(data, '$.state.input.old_string'), '') = '' THEN 0 ELSE 1 + LENGTH(json_extract(data, '$.state.input.old_string')) - LENGTH(REPLACE(json_extract(data, '$.state.input.old_string'), CHAR(10), '')) END ELSE 0 END AS removedLines, 1 AS fileCount, 'code_changed' AS event_type FROM part WHERE time_updated > ? AND json_extract(data, '$.type') = 'tool' AND json_extract(data, '$.tool') IN ('Edit', 'Write') AND json_extract(data, '$.state.status') = 'completed' ORDER BY time_updated, rowid",
+	];
 
 pub fn load_manifest() -> AdapterManifest {
     serde_json::from_str(MANIFEST_JSON).expect("ZCode manifest")
@@ -308,9 +313,41 @@ fn decode_record(
                 Accuracy::Exact,
             )
         }
+        "code_changed" => {
+            let added = number(o, "addedLines").unwrap_or_else(|| "0".into());
+            let removed = number(o, "removedLines").unwrap_or_else(|| "0".into());
+            if added == "0" && removed == "0" {
+                return Ok(None);
+            }
+            let files = o
+                .get("fileCount")
+                .and_then(Value::as_u64)
+                .or_else(|| number(o, "fileCount")?.parse().ok())
+                .unwrap_or(1)
+                .max(1) as u32;
+            (
+                EventPayload::CodeChanged(CodeChangedPayload {
+                    added_lines: added.clone(),
+                    removed_lines: removed,
+                    generated_lines: Some(added),
+                    accepted_lines: None,
+                    file_count: files,
+                    language: None,
+                }),
+                Accuracy::Derived,
+            )
+        }
         _ => return Ok(None),
     };
     let cursor = format!("{}:{sequence}", frame.cursor);
+    let identity = if kind == "code_changed" {
+        string(o, "callId")
+            .or_else(|| string(o, "call_id"))
+            .or_else(|| session.as_deref().map(|id| format!("code:{id}")))
+            .unwrap_or_else(|| sequence.to_string())
+    } else {
+        sequence.to_string()
+    };
     let raw = serde_json::to_vec(value).map_err(|e| AdapterError::decode_failed(e.to_string()))?;
     Ok(Some(EventEnvelope {
         schema_version: "1.0".into(),
@@ -321,7 +358,7 @@ fn decode_record(
             &frame.source_id,
             &cursor,
             kind,
-            &sequence.to_string(),
+            &identity,
         ),
         adapter_id: manifest.id.clone(),
         adapter_version: manifest.version.clone(),

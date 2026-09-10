@@ -483,6 +483,7 @@ fn zcode_v3_snapshot_maps_sessions_and_model_usage() {
             "PRAGMA user_version = 0;
              CREATE TABLE session(id TEXT PRIMARY KEY, project_id TEXT, workspace_id TEXT, parent_id TEXT, slug TEXT, directory TEXT, path TEXT, title TEXT, version TEXT, share_url TEXT, summary_additions INTEGER, summary_deletions INTEGER, summary_files INTEGER, summary_diffs TEXT, revert TEXT, permission TEXT, time_created INTEGER, time_updated INTEGER, time_compacting INTEGER, time_archived INTEGER, task_type TEXT, title_source TEXT, title_message_id TEXT, time_title_updated INTEGER, trace_id TEXT);
              CREATE TABLE model_usage(id TEXT PRIMARY KEY, logical_request_id TEXT, attempt_index INTEGER, session_id TEXT, turn_id TEXT, trace_id TEXT, span_id TEXT, assistant_message_id TEXT, parent_user_message_id TEXT, query_source TEXT, provider_id TEXT, model_id TEXT, variant TEXT, agent TEXT, mode TEXT, task_type TEXT, status TEXT, started_at INTEGER, first_token_at INTEGER, completed_at INTEGER, duration_ms INTEGER, time_to_first_token_ms INTEGER, finish_reason TEXT, tool_call_count INTEGER, input_tokens INTEGER, output_tokens INTEGER, reasoning_tokens INTEGER, cache_creation_input_tokens INTEGER, cache_read_input_tokens INTEGER, provider_total_tokens INTEGER, computed_total_tokens INTEGER, retry_count INTEGER, retryable INTEGER, cancelled_by_user INTEGER, context_exceeded INTEGER, error_type TEXT, error_code TEXT, error_message TEXT, raw_usage_json TEXT, provider_metadata_json TEXT);
+             CREATE TABLE part(id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT, sequence INTEGER);
              INSERT INTO session(id, time_created) VALUES('sess_a', 1788594825649);
              INSERT INTO model_usage(id, session_id, provider_id, model_id, status, completed_at, tool_call_count, input_tokens, output_tokens, computed_total_tokens) VALUES('mu_1', 'sess_a', 'builtin:zai', 'glm-5.3', 'completed', 1788606721923, 2, 100, 20, 120);
              INSERT INTO model_usage(id, session_id, provider_id, model_id, status, completed_at) VALUES('mu_failed', 'sess_a', 'builtin:zai', 'glm-5.3', 'error', 1788606721000);",
@@ -547,6 +548,92 @@ fn zcode_v3_snapshot_maps_sessions_and_model_usage() {
         0,
         "cursors must advance past polled rows"
     );
+}
+
+#[test]
+fn zcode_v3_snapshot_emits_session_code_summaries_without_diffs() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db.sqlite");
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            "PRAGMA user_version = 0;
+             CREATE TABLE session(id TEXT PRIMARY KEY, project_id TEXT, workspace_id TEXT, parent_id TEXT, slug TEXT, directory TEXT, path TEXT, title TEXT, version TEXT, share_url TEXT, summary_additions INTEGER, summary_deletions INTEGER, summary_files INTEGER, summary_diffs TEXT, revert TEXT, permission TEXT, time_created INTEGER, time_updated INTEGER, time_compacting INTEGER, time_archived INTEGER, task_type TEXT, title_source TEXT, title_message_id TEXT, time_title_updated INTEGER, trace_id TEXT);
+             CREATE TABLE model_usage(id TEXT PRIMARY KEY, logical_request_id TEXT, attempt_index INTEGER, session_id TEXT, turn_id TEXT, trace_id TEXT, span_id TEXT, assistant_message_id TEXT, parent_user_message_id TEXT, query_source TEXT, provider_id TEXT, model_id TEXT, variant TEXT, agent TEXT, mode TEXT, task_type TEXT, status TEXT, started_at INTEGER, first_token_at INTEGER, completed_at INTEGER, duration_ms INTEGER, time_to_first_token_ms INTEGER, finish_reason TEXT, tool_call_count INTEGER, input_tokens INTEGER, output_tokens INTEGER, reasoning_tokens INTEGER, cache_creation_input_tokens INTEGER, cache_read_input_tokens INTEGER, provider_total_tokens INTEGER, computed_total_tokens INTEGER, retry_count INTEGER, retryable INTEGER, cancelled_by_user INTEGER, context_exceeded INTEGER, error_type TEXT, error_code TEXT, error_message TEXT, raw_usage_json TEXT, provider_metadata_json TEXT);
+             CREATE TABLE part(id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT, sequence INTEGER);
+             INSERT INTO session(id, time_created, time_updated, summary_additions, summary_deletions, summary_files, summary_diffs, path) VALUES('sess_a', 1788594825649, 1788594825649, 12, 3, 2, '*** Begin Patch secret', 'C:/private/secret.rs');",
+        )
+        .unwrap();
+    drop(connection);
+
+    let mut driver = SqliteSnapshotDriver::new(
+        INSTALL,
+        "zcode-sqlite",
+        &path,
+        SqliteAdapterPlan::ZcodeV3,
+        "zcode-sqlite-v3-uv0",
+    )
+    .unwrap();
+    let batch = driver.poll().unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&batch.frames[0].payload).unwrap();
+    let records = payload["records"].as_array().unwrap();
+    let code = records
+        .iter()
+        .find(|record| record["type"] == "code_changed")
+        .unwrap();
+    assert_eq!(code["sessionId"], "sess_a");
+    assert_eq!(code["addedLines"], 12);
+    assert_eq!(code["removedLines"], 3);
+    assert_eq!(code["fileCount"], 2);
+    let encoded = payload.to_string();
+    assert!(!encoded.contains("Begin Patch"));
+    assert!(!encoded.contains("secret.rs"));
+    assert!(!encoded.contains("summary_diffs"));
+}
+
+#[test]
+fn zcode_v3_snapshot_counts_edit_write_lines_without_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("db.sqlite");
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    connection
+        .execute_batch(
+            r#"PRAGMA user_version = 0;
+             CREATE TABLE session(id TEXT PRIMARY KEY, project_id TEXT, workspace_id TEXT, parent_id TEXT, slug TEXT, directory TEXT, path TEXT, title TEXT, version TEXT, share_url TEXT, summary_additions INTEGER, summary_deletions INTEGER, summary_files INTEGER, summary_diffs TEXT, revert TEXT, permission TEXT, time_created INTEGER, time_updated INTEGER, time_compacting INTEGER, time_archived INTEGER, task_type TEXT, title_source TEXT, title_message_id TEXT, time_title_updated INTEGER, trace_id TEXT);
+             CREATE TABLE model_usage(id TEXT PRIMARY KEY, logical_request_id TEXT, attempt_index INTEGER, session_id TEXT, turn_id TEXT, trace_id TEXT, span_id TEXT, assistant_message_id TEXT, parent_user_message_id TEXT, query_source TEXT, provider_id TEXT, model_id TEXT, variant TEXT, agent TEXT, mode TEXT, task_type TEXT, status TEXT, started_at INTEGER, first_token_at INTEGER, completed_at INTEGER, duration_ms INTEGER, time_to_first_token_ms INTEGER, finish_reason TEXT, tool_call_count INTEGER, input_tokens INTEGER, output_tokens INTEGER, reasoning_tokens INTEGER, cache_creation_input_tokens INTEGER, cache_read_input_tokens INTEGER, provider_total_tokens INTEGER, computed_total_tokens INTEGER, retry_count INTEGER, retryable INTEGER, cancelled_by_user INTEGER, context_exceeded INTEGER, error_type TEXT, error_code TEXT, error_message TEXT, raw_usage_json TEXT, provider_metadata_json TEXT);
+             CREATE TABLE part(id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT, sequence INTEGER);
+             INSERT INTO session(id, time_created) VALUES('sess_a', 1788594825649);
+             INSERT INTO part(id, session_id, time_created, time_updated, data) VALUES('p1', 'sess_a', 1788594825649, 1788594825649, '{"type":"tool","tool":"Edit","callID":"c-edit","state":{"status":"completed","input":{"file_path":"C:/private/secret.rs","old_string":"a\nb","new_string":"a\nb\nc\nd"}}}');
+             INSERT INTO part(id, session_id, time_created, time_updated, data) VALUES('p2', 'sess_a', 1788594825650, 1788594825650, '{"type":"tool","tool":"Write","callID":"c-write","state":{"status":"completed","input":{"file_path":"C:/private/new.rs","content":"one\ntwo\nthree"}}}');
+             INSERT INTO part(id, session_id, time_created, time_updated, data) VALUES('p3', 'sess_a', 1788594825651, 1788594825651, '{"type":"tool","tool":"Edit","callID":"c-err","state":{"status":"error","input":{"file_path":"C:/private/secret.rs","old_string":"x","new_string":"y"}}}');"#,
+        )
+        .unwrap();
+    drop(connection);
+
+    let mut driver = SqliteSnapshotDriver::new(
+        INSTALL,
+        "zcode-sqlite",
+        &path,
+        SqliteAdapterPlan::ZcodeV3,
+        "zcode-sqlite-v3-uv0",
+    )
+    .unwrap();
+    let batch = driver.poll().unwrap();
+    let payload: serde_json::Value = serde_json::from_slice(&batch.frames[0].payload).unwrap();
+    let records = payload["records"].as_array().unwrap();
+    let codes: Vec<_> = records
+        .iter()
+        .filter(|record| record["type"] == "code_changed" && record.get("callId").is_some())
+        .collect();
+    assert_eq!(codes.len(), 2);
+    let edit = codes.iter().find(|record| record["callId"] == "c-edit").unwrap();
+    assert_eq!(edit["addedLines"], 4);
+    assert_eq!(edit["removedLines"], 2);
+    let write = codes.iter().find(|record| record["callId"] == "c-write").unwrap();
+    assert_eq!(write["addedLines"], 3);
+    let encoded = payload.to_string();
+    assert!(!encoded.contains("secret.rs"));
+    assert!(!encoded.contains("private"));
 }
 
 #[test]
