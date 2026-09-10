@@ -340,13 +340,27 @@ fn decode_record(
         _ => return Ok(None),
     };
     let cursor = format!("{}:{sequence}", frame.cursor);
-    let identity = if kind == "code_changed" {
-        string(o, "callId")
+    let identity = match kind {
+        "session" => session
+            .clone()
+            .unwrap_or_else(|| sequence.to_string()),
+        "step_finish" | "turn_finish" | "skill" | "tool" => turn
+            .clone()
+            .or_else(|| string(o, "id"))
+            .or_else(|| string(o, "toolCallId"))
+            .unwrap_or_else(|| sequence.to_string()),
+        "code_changed" => string(o, "callId")
             .or_else(|| string(o, "call_id"))
-            .or_else(|| session.as_deref().map(|id| format!("code:{id}")))
-            .unwrap_or_else(|| sequence.to_string())
-    } else {
-        sequence.to_string()
+            .or_else(|| {
+                session.as_deref().map(|id| {
+                    format!(
+                        "code:{id}:{}",
+                        string(o, "timestamp").unwrap_or_default()
+                    )
+                })
+            })
+            .unwrap_or_else(|| sequence.to_string()),
+        _ => sequence.to_string(),
     };
     let raw = serde_json::to_vec(value).map_err(|e| AdapterError::decode_failed(e.to_string()))?;
     Ok(Some(EventEnvelope {
@@ -355,10 +369,10 @@ fn decode_record(
             hmac_key,
             &frame.installation_id,
             &manifest.id,
-            &frame.source_id,
-            &cursor,
-            kind,
+            "zcode-row",
             &identity,
+            kind,
+            "1",
         ),
         adapter_id: manifest.id.clone(),
         adapter_version: manifest.version.clone(),

@@ -207,6 +207,20 @@ async fn injected_key_changes_identity_and_sensitive_fields_do_not_escape() {
     }
 }
 
+#[tokio::test]
+async fn sqlite_usage_identity_does_not_depend_on_poll_cursor() {
+    let adapter = ZCodeAdapter::new("0.8.0", FINGERPRINT_V3, KEY);
+    let payload = r#"{"fingerprint":"zcode-sqlite-v3-uv0","records":[{"type":"step_finish","timestamp":"2026-09-10T01:00:00Z","sessionId":"zcode-session-secret","stepId":"usage-row-42","provider":"zai","model":"glm","inputTokens":10,"outputTokens":2,"totalTokens":12}]}"#;
+    let mut first = frame(SourceKind::SqliteSnapshot, "zcode-sqlite", payload);
+    first.cursor = "0:10:1:1".into();
+    let mut second = frame(SourceKind::SqliteSnapshot, "zcode-sqlite", payload);
+    second.cursor = "0:999:9:9".into();
+    let left = adapter.decode(first).await.unwrap();
+    let right = adapter.decode(second).await.unwrap();
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].event_id, right[0].event_id);
+}
+
 #[test]
 fn manifest_compatibility_and_golden_summary_are_stable() {
     adapter_sdk::validate_manifest(&load_manifest()).unwrap();
