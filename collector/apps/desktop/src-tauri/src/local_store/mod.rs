@@ -30,7 +30,7 @@ use crate::usage_ledger::{
 };
 
 const DB_FILE: &str = "tokendance.sqlite3";
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 const AGGREGATION_VERSION: i64 = 1;
 const PARSE_VERSION: &str = "1";
 const BUSY_TIMEOUT_MS: u64 = 5_000;
@@ -609,6 +609,24 @@ fn migrate(conn: &mut Connection) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
         retention::migrate_data(&tx)?;
     }
+    if current < 5 {
+        // ZCode sqlite usage previously hashed poll cursors into event_id, so
+        // each rebuild minted new rows for the same model_usage.id.
+        tx.execute_batch(
+            "DELETE FROM events WHERE agent_id = 'zcode';
+             DELETE FROM source_checkpoints WHERE source_id = 'zcode-sqlite';
+             DELETE FROM source_files WHERE source_id = 'zcode-sqlite';
+             UPDATE rebuild_job_files SET status = 'pending'
+              WHERE job_id LIKE '%:zcode-sqlite';
+             UPDATE rebuild_jobs SET status = 'running', processed_files = 0
+              WHERE source_id = 'zcode-sqlite';
+             DELETE FROM daily_agent_metrics;
+             DELETE FROM daily_model_metrics;
+             DELETE FROM daily_skill_metrics;",
+        )
+        .map_err(|error| error.to_string())?;
+        rebuild_daily_metrics_from_events(&tx)?;
+    }
     if current != 0 && current < SCHEMA_VERSION {
         tx.execute(
             "UPDATE schema_meta SET schema_version = ?1 WHERE id = 1",
@@ -752,6 +770,32 @@ fn maybe_enrich_unknown_model(tx: &Transaction, event: &EventEnvelope) -> Result
         params![envelope_json, event.event_id],
     )
     .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn rebuild_daily_metrics_from_events(tx: &Transaction) -> Result<(), String> {
+    let envelopes = {
+        let mut stmt = tx
+            .prepare("SELECT envelope_json FROM events ORDER BY local_seq")
+            .map_err(|error| error.to_string())?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?
+    };
+    for raw in envelopes {
+        let event: EventEnvelope =
+            serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+        let Some(date) = local_date(&event.occurred_at) else {
+            continue;
+        };
+        let date_key = date.format("%Y-%m-%d").to_string();
+        let tokens = event_tokens(&event).unwrap_or(0);
+        bump_agent_metrics(tx, &event, &date_key, tokens)?;
+        bump_model_metrics(tx, &event, &date_key, tokens)?;
+        bump_skill_metrics(tx, &event, &date_key)?;
+    }
     Ok(())
 }
 
