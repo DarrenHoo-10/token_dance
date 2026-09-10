@@ -30,7 +30,7 @@ use crate::usage_ledger::{
 };
 
 const DB_FILE: &str = "tokendance.sqlite3";
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 const AGGREGATION_VERSION: i64 = 1;
 const PARSE_VERSION: &str = "1";
 const BUSY_TIMEOUT_MS: u64 = 5_000;
@@ -534,6 +534,17 @@ fn migrate(conn: &mut Connection) -> Result<(), String> {
     if current < 3 {
         tx.execute_batch(retention::SCHEMA)
             .map_err(|error| error.to_string())?;
+        retention::migrate_data(&tx)?;
+    }
+    if current < 4 {
+        // Day buckets moved to the product calendar (UTC+8): drop the derived
+        // aggregates and replay the retained events under the new day keys.
+        tx.execute_batch(
+            "DELETE FROM aggregate_days;
+             DELETE FROM aggregate_pricing;
+             DELETE FROM aggregate_activity;",
+        )
+        .map_err(|error| error.to_string())?;
         retention::migrate_data(&tx)?;
     }
     if current != 0 && current < SCHEMA_VERSION {

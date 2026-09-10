@@ -1,6 +1,5 @@
 //! Seven UTC days of detail; durable, account-partitioned aggregate snapshots.
 use super::*;
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -178,9 +177,11 @@ pub(super) fn record(
     owner: &str,
     catalog: &Catalog,
 ) -> Result<(), String> {
+    // Bucket by the product statistics calendar (UTC+8), matching the server
+    // side occurred_date convention and the local panel for GMT+8 users.
     let day = chrono::DateTime::parse_from_rfc3339(&e.occurred_at)
         .map_err(|_| "INVALID_EVENT_TIME")?
-        .with_timezone(&Utc)
+        .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).expect("valid offset"))
         .format("%Y-%m-%d")
         .to_string();
     let mut prices = load_bucket_prices(tx, owner, &day)?;
