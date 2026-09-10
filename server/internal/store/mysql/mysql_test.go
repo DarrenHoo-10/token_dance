@@ -1507,7 +1507,7 @@ func TestMySQL_NonUTCBoundaryCorrectionAsiaShanghai(t *testing.T) {
 	now := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
 	userID := "usr_boundary_shanghai"
 	seedBoundaryAnalyticsFixture(t, db, st, userID, now,
-		[]string{"2026-08-30", "2026-08-31"}, []uint64{100, 200},
+		[]string{"2026-08-30", "2026-08-31", "2026-09-01"}, []uint64{110, 200, 20},
 		[]struct {
 			at     time.Time
 			tokens uint64
@@ -1531,8 +1531,8 @@ func TestMySQL_NonUTCBoundaryCorrectionAsiaShanghai(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(breakdown.Items) != 3 || breakdown.Items[0].TokenTotal != "300" {
-		t.Fatalf("unexpected boundary-corrected breakdown: %+v", breakdown.Items)
+	if len(breakdown.Items) != 1 || breakdown.Items[0].TokenTotal != "330" {
+		t.Fatalf("unexpected Beijing-day breakdown: %+v", breakdown.Items)
 	}
 	calendar, err := st.Analytics().GetActivityCalendar(context.Background(), userID, r)
 	if err != nil {
@@ -1548,44 +1548,31 @@ func TestMySQL_NonUTCBoundaryCorrectionAsiaShanghai(t *testing.T) {
 	}
 }
 
-func TestMySQL_NonUTCBoundaryCorrectionDSTFallback(t *testing.T) {
+func TestMySQL_TodayIncludesBeijingMorningBeforeUTCMidnight(t *testing.T) {
 	st, db, cleanup := getTestStore(t)
 	defer cleanup()
-	now := time.Date(2026, 11, 4, 0, 0, 0, 0, time.UTC)
-	userID := "usr_boundary_dst"
-	seedBoundaryAnalyticsFixture(t, db, st, userID, now,
-		[]string{"2026-11-01", "2026-11-02"}, []uint64{500, 600},
+	now := time.Date(2026, 9, 10, 1, 51, 0, 0, time.UTC)
+	userID := "usr_boundary_beijing_morning"
+	seedBoundaryAnalyticsFixture(t, db, st, userID, now, nil, nil,
 		[]struct {
 			at     time.Time
 			tokens uint64
 			agent  string
 		}{
-			{time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC), 50, "codex"},
-			{time.Date(2026, 11, 1, 6, 30, 0, 0, time.UTC), 500, "claude-code"},
-			{time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC), 600, "claude-code"},
-			{time.Date(2026, 11, 3, 3, 0, 0, 0, time.UTC), 70, "cursor"},
+			{time.Date(2026, 9, 9, 18, 0, 0, 0, time.UTC), 159100000, "codex"},
 		})
-	r := domain.TimeRange{Key: domain.TimeRangeCustom, From: time.Date(2026, 10, 31, 4, 0, 0, 0, time.UTC), To: time.Date(2026, 11, 3, 4, 59, 59, 999999999, time.UTC), Timezone: "America/New_York"}
+	r := domain.TimeRange{
+		Key:      domain.TimeRangeToday,
+		From:     time.Date(2026, 9, 9, 16, 0, 0, 0, time.UTC),
+		To:       now,
+		Timezone: domain.DayTZName,
+	}
 
 	summary, err := st.Analytics().GetPersonalSummary(context.Background(), userID, r)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Metrics.TotalTokens.Value == nil || *summary.Metrics.TotalTokens.Value != "1220" {
-		t.Fatalf("expected DST boundary-corrected total 1220, got %+v", summary.Metrics.TotalTokens)
-	}
-	trend, err := st.Analytics().GetTokenTrend(context.Background(), userID, r, "total", nil, nil, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var trendTotal uint64
-	for _, point := range trend.Points {
-		if point.TokenTotal != nil {
-			value, _ := strconv.ParseUint(*point.TokenTotal, 10, 64)
-			trendTotal += value
-		}
-	}
-	if trendTotal != 1220 {
-		t.Fatalf("expected DST trend total 1220, got %d (%+v)", trendTotal, trend.Points)
+	if summary.Metrics.TotalTokens.Value == nil || *summary.Metrics.TotalTokens.Value != "159100000" {
+		t.Fatalf("expected Beijing-morning tokens on today, got %+v", summary.Metrics.TotalTokens)
 	}
 }

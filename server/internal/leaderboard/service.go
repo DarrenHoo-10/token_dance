@@ -70,11 +70,11 @@ func (s *Service) GetCommunityStats(ctx context.Context, now time.Time) (*domain
 		return nil, err
 	}
 	if current == nil {
-		return &domain.CommunityStatsResponse{MetricDate: today, Timezone: "UTC"}, nil
+		return &domain.CommunityStatsResponse{MetricDate: today, Timezone: domain.DayTZName}, nil
 	}
 	response := &domain.CommunityStatsResponse{
 		MetricDate:   current.MetricDate,
-		Timezone:     "UTC",
+		Timezone:     domain.DayTZName,
 		Tokens:       uint64String(current.TokensTotal),
 		Developers:   &current.Developers,
 		CodeLines:    uint64String(current.CodeLines),
@@ -82,7 +82,7 @@ func (s *Service) GetCommunityStats(ctx context.Context, now time.Time) (*domain
 		CostAmount:   roundedCost(current.CostAmount),
 		ComputedAt:   &current.ComputedAt,
 	}
-	previous, err := s.community.GetCommunityDailyStats(ctx, domain.DayDate(now.AddDate(0, 0, -1)))
+	previous, err := s.community.GetCommunityDailyStats(ctx, domain.PreviousDayDate(now))
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +120,7 @@ func deltaPct(current, previous uint64) *float64 {
 	if previous == 0 {
 		return nil
 	}
-	pct := math.Round((float64(current) - float64(previous)) / float64(previous) * 1000) / 10
+	pct := math.Round((float64(current)-float64(previous))/float64(previous)*1000) / 10
 	return &pct
 }
 

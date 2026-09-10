@@ -26,7 +26,7 @@ func WindowGeneration(now time.Time) string {
 }
 
 func previousWindowGeneration(now time.Time) string {
-	return domain.DayDate(now.AddDate(0, 0, -1))
+	return domain.PreviousDayDate(now)
 }
 
 func newRankingOutboxID() (string, error) {

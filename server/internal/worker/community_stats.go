@@ -277,7 +277,7 @@ func (w *Worker) retryCommunityStatsTask(ctx context.Context, task communityStat
 	}
 }
 
-// ProcessCommunityStatsFinalize closes yesterday's row once per UTC day,
+// ProcessCommunityStatsFinalize closes yesterday's row once per statistics day,
 // backfills any missing rows from the last 30 days, and prunes applied
 // outbox events. Recomputes here are batch precompute, not request work.
 func (w *Worker) ProcessCommunityStatsFinalize(ctx context.Context) error {
@@ -290,7 +290,7 @@ func (w *Worker) ProcessCommunityStatsFinalize(ctx context.Context) error {
 	}
 	w.lastStatsFinalized = now
 
-	yesterday := domain.DayDate(now.AddDate(0, 0, -1))
+	yesterday := domain.PreviousDayDate(now)
 	if err := w.finalizeCommunityDay(ctx, yesterday, now); err != nil {
 		return err
 	}
@@ -311,7 +311,7 @@ func (w *Worker) backfillCommunityDays(ctx context.Context, now time.Time, days 
 	rows, err := w.db.QueryContext(ctx, `
 		SELECT metric_date FROM community_daily_stats
 		WHERE metric_date >= ? AND metric_date < ?`,
-		domain.DayDate(now.AddDate(0, 0, -days)), domain.DayDate(now))
+		domain.StartOfDay(now).AddDate(0, 0, -days).Format("2006-01-02"), domain.DayDate(now))
 	if err != nil {
 		return fmt.Errorf("list community stats backfill gaps: %w", err)
 	}

@@ -10,8 +10,9 @@ import (
 	"tokendance/internal/domain"
 )
 
-// All participants share UTC calendar boundaries. Read committed aggregates so
-// first publication, new uploads and privacy changes do not need a snapshot job.
+// All participants share the product statistics calendar (UTC+8). Read
+// committed aggregates so first publication, new uploads and privacy changes
+// do not need a snapshot job.
 func leaderboardDates(window string, now time.Time) (string, string, error) {
 	end := now.In(domain.DayTZ)
 	start := end
@@ -84,7 +85,7 @@ func liveTokenComparisonSQL(previousSQL string) string {
 }
 
 func (s *leaderboardStore) previousTotalsQuery(ctx context.Context, window string, now time.Time) (string, []interface{}, error) {
-	prevNow := now.UTC().AddDate(0, 0, -1)
+	prevNow := domain.StartOfDay(now).AddDate(0, 0, -1)
 	prevGen := WindowGeneration(prevNow)
 	hasSaved, err := savedPreviousWindowExists(ctx, s.db, window, prevGen)
 	if err != nil {
@@ -139,7 +140,7 @@ func (s *leaderboardStore) getLiveTokenLeaderboard(ctx context.Context, window s
 		BoardKey:          "global",
 		Window:            window,
 		Metric:            "tokens",
-		Timezone:          "UTC",
+		Timezone:          domain.DayTZName,
 		Generation:        generation,
 		Entries:           []domain.LeaderboardEntry{},
 		TotalEntries:      &count,

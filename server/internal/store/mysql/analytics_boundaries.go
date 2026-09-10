@@ -23,24 +23,24 @@ type utcAggregatePlan struct {
 }
 
 func planUTCAggregates(r domain.TimeRange) utcAggregatePlan {
-	loc, err := time.LoadLocation(r.Timezone)
-	if err != nil {
-		loc = time.UTC
+	loc := domain.DayTZ
+	from := r.From
+	end := r.To.Add(time.Nanosecond)
+	fromLocal := from.In(loc)
+	endLocal := end.In(loc)
+	startDay := time.Date(fromLocal.Year(), fromLocal.Month(), fromLocal.Day(), 0, 0, 0, 0, loc)
+	endDay := time.Date(endLocal.Year(), endLocal.Month(), endLocal.Day(), 0, 0, 0, 0, loc)
+	firstFull := startDay
+	if from.After(startDay) {
+		firstFull = startDay.AddDate(0, 0, 1)
 	}
-	from := r.From.UTC()
-	end := r.To.UTC().Add(time.Nanosecond)
-	fromDay := from.Truncate(24 * time.Hour)
-	firstFull := fromDay
-	if !from.Equal(fromDay) {
-		firstFull = fromDay.Add(24 * time.Hour)
-	}
-	lastFullEnd := end.Truncate(24 * time.Hour)
+	lastFullEnd := endDay
 
 	plan := utcAggregatePlan{fromDate: "9999-12-31", toDate: "1000-01-01", loc: loc}
 	if firstFull.Before(lastFullEnd) {
 		plan.hasFull = true
 		plan.fromDate = firstFull.Format("2006-01-02")
-		plan.toDate = lastFullEnd.Add(-24 * time.Hour).Format("2006-01-02")
+		plan.toDate = lastFullEnd.AddDate(0, 0, -1).Format("2006-01-02")
 		if from.Before(firstFull) {
 			plan.raw = append(plan.raw, rawInterval{from: from, to: firstFull})
 		}
@@ -148,7 +148,7 @@ type rawTokenPoint struct {
 func (s *analyticsStore) queryRawTokenPoints(ctx context.Context, userID, timezone string, intervals []rawInterval, agentID, providerID, modelID *string) ([]rawTokenPoint, error) {
 	points := make(map[string]*rawTokenPoint)
 	for _, interval := range intervals {
-		query := `SELECT DATE_FORMAT(CONVERT_TZ(occurred_at, '+00:00', ?), '%Y-%m-%d'),
+		query := `SELECT DATE_FORMAT(CONVERT_TZ(occurred_at, '+00:00', '` + domain.DayTZOffset + `'), '%Y-%m-%d'),
 			COALESCE(SUM(COALESCE(token_total, COALESCE(token_input, 0) + COALESCE(token_output, 0) + COALESCE(token_cache_read, 0) + COALESCE(token_cache_write, 0) + COALESCE(token_reasoning, 0))), 0),
 			COALESCE(SUM(COALESCE(token_input, 0)), 0),
 			COALESCE(SUM(COALESCE(token_output, 0)), 0),
@@ -157,7 +157,7 @@ func (s *analyticsStore) queryRawTokenPoints(ctx context.Context, userID, timezo
 			COALESCE(SUM(COALESCE(token_reasoning, 0)), 0), MAX(received_at)
 			FROM usage_events WHERE user_id = ? AND occurred_at >= ? AND occurred_at < ?
 			AND accuracy IN ('exact', 'derived')`
-		args := []interface{}{timezone, userID, interval.from, interval.to}
+		args := []interface{}{userID, interval.from, interval.to}
 		if agentID != nil && *agentID != "" && *agentID != "all" {
 			query += " AND agent_id = ?"
 			args = append(args, *agentID)
@@ -170,8 +170,7 @@ func (s *analyticsStore) queryRawTokenPoints(ctx context.Context, userID, timezo
 			query += " AND model_id = ?"
 			args = append(args, *modelID)
 		}
-		query += " GROUP BY DATE_FORMAT(CONVERT_TZ(occurred_at, '+00:00', ?), '%Y-%m-%d')"
-		args = append(args, timezone)
+		query += " GROUP BY DATE_FORMAT(CONVERT_TZ(occurred_at, '+00:00', '" + domain.DayTZOffset + "'), '%Y-%m-%d')"
 		rows, err := s.db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query usage event boundary trend: %w", err)

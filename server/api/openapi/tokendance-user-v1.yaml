@@ -2687,7 +2687,7 @@ components:
           type: string
         generation:
           type: string
-          description: UTC calendar generation for the current window scores
+          description: Beijing (UTC+8) calendar generation for the current window scores
         timezone:
           type: string
         totalEntries:
