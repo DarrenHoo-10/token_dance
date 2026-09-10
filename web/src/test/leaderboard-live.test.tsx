@@ -70,12 +70,14 @@ describe('Live leaderboard', () => {
     expect(screen.getByText('社区今日 Token 占比 · 按 harness')).toBeInTheDocument();
   });
   it('shows personal today tokens from the live board entry, not an empty event sum', async () => {
-    vi.mocked(api.getActivityCalendar).mockResolvedValue({ days: [], currentStreak: 1 });
+    vi.mocked(api.getActivityCalendar).mockResolvedValue({ days: [], currentStreak: 1, longestStreak: 1, totalActiveDays: 0 });
     vi.mocked(api.getPersonalSummary).mockImplementation(async (range) => {
+      const unsupported = { value: null, supported: false };
+      const unsupportedCost = { amount: null, currency: 'USD', supported: false };
       if (range === 'all') {
-        return { range: { key: 'all', from: '', to: '', timezone: 'Asia/Shanghai' }, metrics: { estimatedCost: { supported: false }, totalTokens: { value: '4600000000', supported: true }, generatedCodeLines: { supported: false }, tokensPerCodeLine: { supported: false }, inputContextTokens: { supported: false }, outputTokens: { supported: false }, cacheHitRate: { supported: false }, activeDurationMs: { supported: false }, messageCount: { supported: false }, userMessageCount: { supported: false } }, ranking: { rank: 2, percentile: 100 }, sync: { lastCommittedAt: null, pendingLocalCount: null }, aggregationVersion: 2 };
+        return { range: { key: 'all', from: '', to: '', timezone: 'Asia/Shanghai' }, metrics: { estimatedCost: unsupportedCost, totalTokens: { value: '4600000000', supported: true }, generatedCodeLines: unsupported, tokensPerCodeLine: unsupported, inputContextTokens: unsupported, outputTokens: unsupported, cacheHitRate: unsupported, activeDurationMs: unsupported, messageCount: unsupported, userMessageCount: unsupported }, ranking: { rank: 2, percentile: 100 }, sync: { lastCommittedAt: null, pendingLocalCount: null }, aggregationVersion: 2 };
       }
-      return { range: { key: 'today', from: '', to: '', timezone: 'Asia/Shanghai' }, metrics: { estimatedCost: { supported: false }, totalTokens: { value: '0', supported: true }, generatedCodeLines: { supported: false }, tokensPerCodeLine: { supported: false }, inputContextTokens: { supported: false }, outputTokens: { supported: false }, cacheHitRate: { supported: false }, activeDurationMs: { supported: false }, messageCount: { supported: false }, userMessageCount: { supported: false } }, ranking: { rank: 1, percentile: 100, entry: { rankNo: 1, handle: 'darrenhoomessi', displayName: 'darrenhoo', avatarUrl: null, metricValue: '218700000', rankDelta: 0 } }, sync: { lastCommittedAt: null, pendingLocalCount: null }, aggregationVersion: 2 };
+      return { range: { key: 'today', from: '', to: '', timezone: 'Asia/Shanghai' }, metrics: { estimatedCost: unsupportedCost, totalTokens: { value: '0', supported: true }, generatedCodeLines: unsupported, tokensPerCodeLine: unsupported, inputContextTokens: unsupported, outputTokens: unsupported, cacheHitRate: unsupported, activeDurationMs: unsupported, messageCount: unsupported, userMessageCount: unsupported }, ranking: { rank: 1, percentile: 100, entry: { rankNo: 1, handle: 'darrenhoomessi', displayName: 'darrenhoo', avatarUrl: null, metricValue: '218700000', rankDelta: 0 } }, sync: { lastCommittedAt: null, pendingLocalCount: null }, aggregationVersion: 2 };
     });
     showPage();
     expect(await screen.findByText('218.7M')).toBeInTheDocument();
