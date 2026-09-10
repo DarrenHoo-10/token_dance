@@ -155,7 +155,7 @@ func (w *Worker) recomputeCommunityDay(ctx context.Context, date string, now tim
 			CAST(COALESCE(SUM(exact_token_total + derived_token_total + estimated_token_total), 0) AS UNSIGNED),
 			COUNT(DISTINCT CASE WHEN exact_token_total + derived_token_total + estimated_token_total > 0 THEN user_id END),
 			CAST(COALESCE(SUM(code_generated_lines), 0) AS UNSIGNED),
-			CAST(COALESCE(SUM(interaction_turn_count), 0) AS UNSIGNED),
+			CAST(COALESCE(SUM(model_request_count), 0) AS UNSIGNED),
 			COALESCE(SUM(cost_amount), 0)
 		FROM daily_user_agent_metrics
 		WHERE metric_date = ?`, date).Scan(

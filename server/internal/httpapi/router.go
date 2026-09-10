@@ -88,6 +88,7 @@ func NewRouterWithReadiness(
 		cr.Post("/telemetry/batches", handlers.IngestTelemetry)
 		cr.Post("/telemetry/ingest", handlers.IngestTelemetry)
 		cr.Post("/telemetry/aggregates", handlers.IngestAggregate)
+		cr.Get("/telemetry/cursor", handlers.GetTelemetryCursor)
 	})
 
 	// User Web API /api/v1

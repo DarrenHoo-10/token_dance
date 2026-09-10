@@ -8,6 +8,7 @@ import (
 
 type aggregateWriter interface {
 	CommitAggregate(context.Context, domain.AggregateCommit) (*domain.AggregateAck, error)
+	GetIngestCursor(context.Context, string) (domain.TelemetryCursor, error)
 }
 
 func (s *Service) CommitAggregate(ctx context.Context, in domain.AggregateCommit) (*domain.AggregateAck, error) {
@@ -29,4 +30,12 @@ func (s *Service) CommitAggregate(ctx context.Context, in domain.AggregateCommit
 		return nil, domain.NewAppError(403, "DEVICE_UNAVAILABLE", "device.unavailable", "device unavailable", nil, err)
 	}
 	return ack, err
+}
+
+// GetIngestCursor exposes the per-device event watermark.
+func (s *Service) GetIngestCursor(ctx context.Context, installationID string) (domain.TelemetryCursor, error) {
+	if _, _, err := s.AuthorizeIngest(ctx, installationID); err != nil {
+		return domain.TelemetryCursor{}, err
+	}
+	return s.ingestStore.GetIngestCursor(ctx, installationID)
 }

@@ -10,6 +10,38 @@ import (
 	"tokendance/internal/domain"
 )
 
+// GetIngestCursor returns the device's event watermark. Days at or before the
+// cursor day are already stored; a device only syncs past this point.
+func (s *ingestStore) GetIngestCursor(ctx context.Context, installationID string) (domain.TelemetryCursor, error) {
+	cursor := domain.TelemetryCursor{InstallationID: installationID}
+	var lastOccurred sql.NullTime
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(event_pk), 0), MAX(occurred_at) FROM usage_events WHERE installation_id = ?`,
+		installationID).Scan(&cursor.MaxEventPk, &lastOccurred)
+	if err != nil {
+		return cursor, err
+	}
+	if lastOccurred.Valid {
+		occurred := lastOccurred.Time.UTC()
+		cursor.LastOccurredAt = &occurred
+		cursor.Day = domain.DayDate(occurred)
+		cursor.AckThroughDay = ackThroughDay(cursor.Day, domain.DayDate(time.Now()))
+	}
+	return cursor, nil
+}
+
+// ackThroughDay excludes the in-progress current day from local acks.
+func ackThroughDay(watermarkDay, today string) string {
+	if watermarkDay >= today {
+		day, err := time.Parse("2006-01-02", today)
+		if err != nil {
+			return ""
+		}
+		return day.AddDate(0, 0, -1).Format("2006-01-02")
+	}
+	return watermarkDay
+}
+
 func (s *ingestStore) CommitAggregate(ctx context.Context, in domain.AggregateCommit) (*domain.AggregateAck, error) {
 	if err := in.Snapshot.Validate(in.ReceivedAt); err != nil {
 		return nil, err
@@ -51,8 +83,11 @@ func (s *ingestStore) CommitAggregate(ctx context.Context, in domain.AggregateCo
 	if err == nil && revision == in.Snapshot.Revision && hex.EncodeToString(hash) != hex.EncodeToString(in.Digest[:]) {
 		return nil, domain.NewAppError(409, "AGGREGATE_REVISION_CONFLICT", "sync.revisionConflict", "revision content differs", nil, domain.ErrInvalidArgument)
 	}
-	if errors.Is(err, sql.ErrNoRows) {
-		// A partially rebuilt day must not erase previously ingested usage. Further
+	if errors.Is(err, sql.ErrNoRows) && in.Snapshot.Day == domain.DayDate(in.ReceivedAt) {
+		// A partially rebuilt day must not erase previously ingested usage. The
+		// guard applies to the current statistics day only: historical device
+		// ledgers may have been compacted between uploads, so a rebuilt
+		// snapshot can legitimately trail the stored event stream. Further
 		// corrections are allowed only after the day has a published aggregate base.
 		rows, e := tx.QueryContext(ctx, `SELECT agent_id,COALESCE(SUM(CASE WHEN accuracy IN ('exact','derived') THEN COALESCE(token_total, COALESCE(token_input,0)+COALESCE(token_output,0)+COALESCE(token_cache_read,0)+COALESCE(token_cache_write,0)+COALESCE(token_reasoning,0)) ELSE 0 END),0) FROM usage_events WHERE installation_id=? AND occurred_date=? GROUP BY agent_id`, in.InstallationID, in.Snapshot.Day)
 		if e != nil {

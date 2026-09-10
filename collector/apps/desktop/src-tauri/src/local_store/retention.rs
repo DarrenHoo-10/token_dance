@@ -1,6 +1,5 @@
 //! Seven UTC days of detail; durable, account-partitioned aggregate snapshots.
 use super::*;
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -178,9 +177,11 @@ pub(super) fn record(
     owner: &str,
     catalog: &Catalog,
 ) -> Result<(), String> {
+    // Bucket by the product statistics calendar (UTC+8), matching the server
+    // side occurred_date convention and the local panel for GMT+8 users.
     let day = chrono::DateTime::parse_from_rfc3339(&e.occurred_at)
         .map_err(|_| "INVALID_EVENT_TIME")?
-        .with_timezone(&Utc)
+        .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).expect("valid offset"))
         .format("%Y-%m-%d")
         .to_string();
     let mut prices = load_bucket_prices(tx, owner, &day)?;
@@ -409,6 +410,21 @@ impl LocalStore {
             })
         })
         .transpose()
+    }
+
+    /// Mark every day at or before `through` as fully synced: the server
+    /// watermark proves those days are stored, so they never re-enter the
+    /// aggregate queue even after a local ledger replay bumps revisions.
+    pub fn ack_aggregates_through(&mut self, owner: &str, through: &str) -> Result<(), String> {
+        if through.is_empty() {
+            return Ok(());
+        }
+        self.conn.execute(
+            "UPDATE aggregate_days SET acked_revision=revision WHERE owner=?1 AND day<=?2 AND revision>acked_revision",
+            params![owner, through],
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     pub fn ack_aggregate(&mut self, pending: &PendingAggregate) -> Result<(), String> {

@@ -96,6 +96,7 @@ type DeviceStore interface {
 type IngestStore interface {
 	GetIngestInstallation(ctx context.Context, installationID string) (*domain.Installation, error)
 	CommitIngest(ctx context.Context, batch domain.IngestBatch) (*domain.IngestResult, error)
+	GetIngestCursor(ctx context.Context, installationID string) (domain.TelemetryCursor, error)
 }
 
 type ExportStore interface {
