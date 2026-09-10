@@ -610,7 +610,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       });
 
       vi.spyOn(api, 'getPersonalSummary').mockResolvedValue({
-        range: { key: '30d', from: '2026-08-01', to: '2026-08-30', timezone: 'UTC' },
+        range: { key: 'today', from: '2026-08-30', to: '2026-08-30', timezone: 'UTC' },
         metrics: {
           estimatedCost: { amount: '120.50', currency: 'USD', supported: true },
           totalTokens: { value: '50000000', supported: true },

@@ -31,7 +31,7 @@ export const PersonalDashboardPage: React.FC = () => {
   const { showToast } = useNotification();
   const navigate = useNavigate();
 
-  const [range, setRange] = useState('30d');
+  const [range, setRange] = useState('today');
   const [selectedAgent, setSelectedAgent] = useState('all');
   const [selectedModel, setSelectedModel] = useState('all');
 
