@@ -30,7 +30,7 @@ use crate::usage_ledger::{
 };
 
 const DB_FILE: &str = "tokendance.sqlite3";
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 const AGGREGATION_VERSION: i64 = 1;
 const PARSE_VERSION: &str = "1";
 const BUSY_TIMEOUT_MS: u64 = 5_000;
@@ -626,6 +626,17 @@ fn migrate(conn: &mut Connection) -> Result<(), String> {
         )
         .map_err(|error| error.to_string())?;
         rebuild_daily_metrics_from_events(&tx)?;
+    }
+    if current < 6 {
+        // v5 rebuilt daily_* from events but left inflated aggregate_days
+        // snapshots in place; those are what get uploaded to the server.
+        tx.execute_batch(
+            "DELETE FROM aggregate_days;
+             DELETE FROM aggregate_pricing;
+             DELETE FROM aggregate_activity;",
+        )
+        .map_err(|error| error.to_string())?;
+        retention::migrate_data(&tx)?;
     }
     if current != 0 && current < SCHEMA_VERSION {
         tx.execute(
