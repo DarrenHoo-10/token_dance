@@ -203,7 +203,10 @@ fn decode_record(
     };
     let kind = object.get("type").and_then(Value::as_str).unwrap_or("");
     let session = string(object, "sessionId");
-    let turn = string(object, "stepId");
+    // Row ids from the sqlite snapshot arrive as JSON numbers; identity must
+    // accept them or it degrades to the batch sequence and dedupe eats every
+    // incremental poll after the initial rescan.
+    let turn = id_string(object, "stepId").or_else(|| id_string(object, "id"));
     let (provider, model) = model_parts(
         string(object, "provider").unwrap_or_else(|| "opencode".into()),
         string(object, "model").unwrap_or_else(|| "unknown".into()),
@@ -286,11 +289,10 @@ fn decode_record(
                 .unwrap_or_else(|| sequence.to_string()),
             "step_finish" | "turn_finish" | "skill" | "tool" => turn
                 .clone()
-                .or_else(|| string(object, "id"))
-                .or_else(|| string(object, "toolCallId"))
+                .or_else(|| id_string(object, "toolCallId"))
                 .unwrap_or_else(|| sequence.to_string()),
-            "code_changed" => string(object, "callId")
-                .or_else(|| string(object, "call_id"))
+            "code_changed" => id_string(object, "callId")
+                .or_else(|| id_string(object, "call_id"))
                 .or_else(|| {
                     session.as_deref().map(|id| {
                         format!(
@@ -376,6 +378,16 @@ fn hash(hmac_key: &[u8], value: &str) -> String {
 
 fn string(object: &Map<String, Value>, key: &str) -> Option<String> {
     object.get(key).and_then(Value::as_str).map(str::to_owned)
+}
+
+/// Reads an id that may be stored as a JSON string or number; sqlite row ids
+/// arrive as numbers and must still yield a stable identity string.
+fn id_string(object: &Map<String, Value>, key: &str) -> Option<String> {
+    match object.get(key) {
+        Some(Value::String(value)) => Some(value.clone()),
+        Some(Value::Number(number)) => Some(number.to_string()),
+        _ => None,
+    }
 }
 
 fn number(object: &Map<String, Value>, key: &str) -> Option<String> {

@@ -248,7 +248,10 @@ fn decode_record(
     };
     let kind = o.get("type").and_then(Value::as_str).unwrap_or("");
     let session = string(o, "sessionId");
-    let turn = string(o, "stepId");
+    // Row ids from the sqlite snapshot arrive as JSON numbers; identity must
+    // accept them or it degrades to the batch sequence and dedupe eats every
+    // incremental poll after the initial rescan.
+    let turn = id_string(o, "stepId").or_else(|| id_string(o, "id"));
     let (payload, accuracy) = match kind {
         "session" => (
             EventPayload::SessionStarted(SessionStartedPayload {
@@ -346,11 +349,10 @@ fn decode_record(
             .unwrap_or_else(|| sequence.to_string()),
         "step_finish" | "turn_finish" | "skill" | "tool" => turn
             .clone()
-            .or_else(|| string(o, "id"))
-            .or_else(|| string(o, "toolCallId"))
+            .or_else(|| id_string(o, "toolCallId"))
             .unwrap_or_else(|| sequence.to_string()),
-        "code_changed" => string(o, "callId")
-            .or_else(|| string(o, "call_id"))
+        "code_changed" => id_string(o, "callId")
+            .or_else(|| id_string(o, "call_id"))
             .or_else(|| {
                 session.as_deref().map(|id| {
                     format!(
@@ -417,6 +419,16 @@ fn hash(hmac_key: &[u8], value: &str) -> String {
 }
 fn string(o: &Map<String, Value>, key: &str) -> Option<String> {
     o.get(key).and_then(Value::as_str).map(str::to_owned)
+}
+
+/// Reads an id that may be stored as a JSON string or number; sqlite row ids
+/// arrive as numbers and must still yield a stable identity string.
+fn id_string(o: &Map<String, Value>, key: &str) -> Option<String> {
+    match o.get(key) {
+        Some(Value::String(value)) => Some(value.clone()),
+        Some(Value::Number(number)) => Some(number.to_string()),
+        _ => None,
+    }
 }
 fn number(o: &Map<String, Value>, key: &str) -> Option<String> {
     match o.get(key)? {

@@ -30,7 +30,7 @@ use crate::usage_ledger::{
 };
 
 const DB_FILE: &str = "tokendance.sqlite3";
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 7;
 const AGGREGATION_VERSION: i64 = 1;
 const PARSE_VERSION: &str = "1";
 const BUSY_TIMEOUT_MS: u64 = 5_000;
@@ -636,6 +636,32 @@ fn migrate(conn: &mut Connection) -> Result<(), String> {
              DELETE FROM aggregate_activity;",
         )
         .map_err(|error| error.to_string())?;
+        retention::migrate_data(&tx)?;
+    }
+    if current < 7 {
+        // Usage rows whose stable id degraded to the batch sequence (numeric
+        // sqlite row ids read as strings) were dropped by fingerprint
+        // collisions after the first rescan. Delete the affected usage
+        // events, reset the sqlite checkpoints, and let the rescan re-ingest
+        // every row under its stable row id. Code lines keep callId-based
+        // identities and are untouched.
+        tx.execute_batch(
+            "DELETE FROM events WHERE agent_id IN ('zcode','opencode') AND event_type = 'model_usage_recorded';
+             DELETE FROM source_checkpoints WHERE source_id IN ('zcode-sqlite','opencode-sqlite');
+             DELETE FROM source_files WHERE source_id IN ('zcode-sqlite','opencode-sqlite');
+             UPDATE rebuild_job_files SET status = 'pending'
+              WHERE job_id LIKE '%:zcode-sqlite' OR job_id LIKE '%:opencode-sqlite';
+             UPDATE rebuild_jobs SET status = 'running', processed_files = 0
+              WHERE source_id IN ('zcode-sqlite','opencode-sqlite');
+             DELETE FROM daily_agent_metrics;
+             DELETE FROM daily_model_metrics;
+             DELETE FROM daily_skill_metrics;
+             DELETE FROM aggregate_days;
+             DELETE FROM aggregate_pricing;
+             DELETE FROM aggregate_activity;",
+        )
+        .map_err(|error| error.to_string())?;
+        rebuild_daily_metrics_from_events(&tx)?;
         retention::migrate_data(&tx)?;
     }
     if current != 0 && current < SCHEMA_VERSION {
