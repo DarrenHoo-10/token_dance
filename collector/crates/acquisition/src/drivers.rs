@@ -113,6 +113,30 @@ impl DriverRegistry {
             .map(|entry| entry.driver.kind())
     }
 
+    /// Rewinds every driver for `source_id` back to the start of its source
+    /// so the next poll re-reads all rows. Stable event ids dedupe the re-read;
+    /// used after migrations that invalidate stored checkpoints.
+    pub fn reset_source(&mut self, source_id: &str) -> usize {
+        let keys: Vec<(String, String)> = self
+            .sources
+            .keys()
+            .filter(|(_, sid)| sid == source_id)
+            .cloned()
+            .collect();
+        let mut reset = 0;
+        for key in keys {
+            if let Some(entry) = self.sources.get_mut(&key) {
+                match &mut entry.driver {
+                    DriverInstance::SqliteSnapshot(driver) => driver.reset_to_start(),
+                    DriverInstance::JsonlTail(driver) => driver.reset_for_rescan(),
+                    _ => {}
+                }
+                reset += 1;
+            }
+        }
+        reset
+    }
+
     pub fn len(&self) -> usize {
         self.sources.len()
     }
@@ -560,6 +584,12 @@ impl SqliteSnapshotDriver {
         for (current, restored) in self.query_cursors.iter_mut().zip(cursors) {
             *current = (*restored).max(0);
         }
+    }
+
+    /// Re-read every row: all query cursors restart from zero, so the next
+    /// poll re-emits the full table and stable event ids dedupe the rest.
+    pub fn reset_to_start(&mut self) {
+        self.query_cursors = vec![0; self.plan.queries().len()];
     }
 
     pub fn query_cursors(&self) -> &[i64] {
