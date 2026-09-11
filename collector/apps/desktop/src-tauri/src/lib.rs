@@ -10,6 +10,7 @@ mod single_instance;
 pub mod state;
 pub mod tray_state;
 pub mod updates;
+pub mod upload_pipeline;
 pub mod usage_ledger;
 
 use std::fs;

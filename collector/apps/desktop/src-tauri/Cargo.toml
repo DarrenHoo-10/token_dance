@@ -11,6 +11,7 @@ description = "TokenDance Desktop"
 custom-protocol = ["tauri/custom-protocol"]
 
 [dependencies]
+async-trait = "0.1"
 acquisition = { path = "../../../crates/acquisition" }
 adapter-sdk = { path = "../../../crates/adapter-sdk" }
 collector-core = { path = "../../../crates/collector-core" }

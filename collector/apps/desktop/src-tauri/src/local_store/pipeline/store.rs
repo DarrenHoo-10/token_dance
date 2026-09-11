@@ -10,8 +10,9 @@ use uuid::Uuid;
 use super::schema::{self, BUSINESS_TABLES};
 use super::types::{
     Consumer, ConsumerStatus, CursorKind, EventCandidate, LeasedTask, PipelineError,
-    RegisterSource, SourceCheckpointSnapshot, SourceCommitBatch, SourceCommitResult, SourceKind,
-    TaskComplete, TaskRetry, MAX_BATCH_BYTES, MAX_BATCH_EVENTS, DB_FILE,
+    RegisterSource, RenewLease, SourceCheckpointSnapshot, SourceCommitBatch, SourceCommitResult,
+    SourceKind, TaskComplete, TaskRetry, UploadWireEvent, MAX_BATCH_BYTES, MAX_BATCH_EVENTS,
+    DB_FILE,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -777,6 +778,161 @@ impl PipelineStore {
         Ok(deleted)
     }
 
+    // ── upload (P7) ─────────────────────────────────────────────────────────
+
+    /// Extend an active lease with the same token (long HTTP / renew every 10s).
+    pub fn renew_task_lease(&mut self, renew: RenewLease) -> Result<i64, PipelineError> {
+        schema::assert_ready(&self.conn)?;
+        let now = self.now_ms();
+        let lease_until = now + renew.lease_ms.max(1);
+        let tx = self.conn.transaction()?;
+        verify_task_lease(
+            &tx,
+            renew.task_id,
+            renew.event_row_id,
+            renew.consumer,
+            &renew.lease_token,
+            now,
+        )?;
+        tx.execute(
+            "UPDATE processing_tasks
+             SET lease_until=?1, updated_at=?2
+             WHERE id=?3",
+            params![lease_until, now, renew.task_id],
+        )?;
+        tx.commit()?;
+        Ok(lease_until)
+    }
+
+    /// Load wire fields for claimed upload tasks (joins model/skill dimensions).
+    pub fn load_upload_events(
+        &self,
+        event_row_ids: &[i64],
+    ) -> Result<Vec<UploadWireEvent>, PipelineError> {
+        schema::assert_ready(&self.conn)?;
+        let mut out = Vec::with_capacity(event_row_ids.len());
+        for &event_row_id in event_row_ids {
+            let row = self
+                .conn
+                .query_row(
+                    "SELECT e.event_id, e.fact_key, e.fact_revision, e.schema_version,
+                            e.metric_semantics_version, e.harness_id, e.event_type, e.occurred_at,
+                            e.content_hash, e.session_key, e.turn_key, e.cost_scope_key,
+                            e.payload_json, e.model_key, e.skill_id,
+                            m.provider_id, m.model_id,
+                            s.skill_key, s.public_name
+                     FROM events e
+                     JOIN model_dimensions m ON m.id = e.model_key
+                     LEFT JOIN skill_dimensions s ON s.id = e.skill_id
+                     WHERE e.id=?1 AND e.delete_at IS NULL AND e.expire_at > ?2",
+                    params![event_row_id, self.now_ms()],
+                    |row| {
+                        let event_id: Vec<u8> = row.get(0)?;
+                        let fact_key: Vec<u8> = row.get(1)?;
+                        let content_hash: Vec<u8> = row.get(8)?;
+                        let session_key: Option<Vec<u8>> = row.get(9)?;
+                        let turn_key: Option<Vec<u8>> = row.get(10)?;
+                        let cost_scope_key: Option<Vec<u8>> = row.get(11)?;
+                        let model_key: i64 = row.get(13)?;
+                        let skill_id: Option<i64> = row.get(14)?;
+                        let provider_id: String = row.get(15)?;
+                        let model_id: String = row.get(16)?;
+                        let skill_key: Option<Vec<u8>> = row.get(17)?;
+                        let skill_public_name: Option<String> = row.get(18)?;
+                        Ok((
+                            event_id,
+                            fact_key,
+                            row.get::<_, i64>(2)?,
+                            row.get::<_, i64>(3)?,
+                            row.get::<_, i64>(4)?,
+                            row.get::<_, String>(5)?,
+                            row.get::<_, String>(6)?,
+                            row.get::<_, i64>(7)?,
+                            content_hash,
+                            session_key,
+                            turn_key,
+                            cost_scope_key,
+                            row.get::<_, String>(12)?,
+                            model_key,
+                            skill_id,
+                            provider_id,
+                            model_id,
+                            skill_key,
+                            skill_public_name,
+                        ))
+                    },
+                )
+                .optional()?
+                .ok_or(PipelineError::EventExpiredOrDeleted)?;
+
+            let (
+                event_id,
+                fact_key,
+                fact_revision,
+                schema_version,
+                metric_semantics_version,
+                harness_id,
+                event_type,
+                occurred_at,
+                content_hash,
+                session_key,
+                turn_key,
+                cost_scope_key,
+                payload_json,
+                model_key,
+                skill_id,
+                provider_id,
+                model_id,
+                skill_key,
+                skill_public_name,
+            ) = row;
+
+            out.push(UploadWireEvent {
+                event_row_id,
+                event_id: blob32(&event_id)?,
+                fact_key: blob32(&fact_key)?,
+                fact_revision,
+                schema_version,
+                metric_semantics_version,
+                harness_id,
+                event_type,
+                occurred_at,
+                content_hash: blob32(&content_hash)?,
+                model: if model_key == 0 {
+                    None
+                } else {
+                    Some((provider_id, model_id))
+                },
+                skill_key: match (skill_id, skill_key) {
+                    (Some(_), Some(bytes)) => Some(blob32(&bytes)?),
+                    _ => None,
+                },
+                skill_public_name,
+                session_key: session_key.as_deref().map(blob32).transpose()?,
+                turn_key: turn_key.as_deref().map(blob32).transpose()?,
+                cost_scope_key: cost_scope_key.as_deref().map(blob32).transpose()?,
+                payload_json,
+            });
+        }
+        Ok(out)
+    }
+
+    pub fn pending_upload_count(&self) -> Result<i64, PipelineError> {
+        schema::assert_ready(&self.conn)?;
+        let now = self.now_ms();
+        Ok(self.conn.query_row(
+            "SELECT COUNT(*) FROM processing_tasks t
+             JOIN events e ON e.id = t.event_row_id
+             WHERE t.consumer='upload'
+               AND t.delete_at IS NULL
+               AND e.delete_at IS NULL
+               AND e.expire_at > ?1
+               AND CAST(json_extract(e.status_json, '$.upload') AS INTEGER) IN (0, 1, 2)",
+            params![now],
+            |r| r.get(0),
+        )?)
+    }
+
     // ── test / inspection helpers ───────────────────────────────────────────
 
     pub fn event_count(&self) -> Result<i64, PipelineError> {
@@ -868,6 +1024,12 @@ fn system_now_ms() -> i64 {
 
 fn new_lease_token() -> String {
     Uuid::new_v4().to_string()
+}
+
+fn blob32(bytes: &[u8]) -> Result<[u8; 32], PipelineError> {
+    bytes
+        .try_into()
+        .map_err(|_| PipelineError::InvalidArgument("expected 32-byte blob".into()))
 }
 
 fn validate_json_object(raw: &str, field: &str) -> Result<(), PipelineError> {

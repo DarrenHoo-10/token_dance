@@ -1,9 +1,6 @@
 //! Client event-pipeline v3 store: 10-table SQLite schema, single writer,
-<<<<<<< HEAD
-//! task leases, and 14-day hard TTL (P1), plus public acquisition runner (P2).
-=======
-//! task leases, 14-day hard TTL (P1), and local metrics/query (P4).
->>>>>>> origin/cursor/p4-local-metrics-query-e84a
+//! task leases, 14-day hard TTL (P1), public acquisition runner (P2),
+//! harness adapters (P3), and local metrics/query (P4).
 
 mod apply;
 mod buckets;

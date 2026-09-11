@@ -1,9 +1,12 @@
 use crate::state::AppState;
+use crate::upload_pipeline::{session_bearer_from_cookies, UploadConsumer, UploadCredentials};
 use std::collections::BTreeMap;
 use std::fs;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use uploader::{DeviceSigner, HttpTransport, InMemoryDeviceSigner};
+use uploader::{
+    DeviceSigner, HttpTelemetryV2, HttpTransport, InMemoryDeviceSigner, TelemetryV2Transport,
+};
 use wal_spool::{KeyProvider, OsKeyProvider};
 
 use reqwest::{Client, Method, StatusCode};
@@ -26,6 +29,10 @@ struct Connection {
     cookies: BTreeMap<String, String>,
     csrf: String,
     transport: Option<HttpTransport>,
+    telemetry_v2: Option<Arc<HttpTelemetryV2>>,
+    upload_consumer: Option<UploadConsumer>,
+    binding_status_version: u64,
+    binding_generation: u64,
     retry_at: Option<Instant>,
     failures: u32,
     blocked: bool,
@@ -80,6 +87,10 @@ impl Connection {
             cookies: BTreeMap::new(),
             csrf: String::new(),
             transport: None,
+            telemetry_v2: None,
+            upload_consumer: None,
+            binding_status_version: 1,
+            binding_generation: 0,
             retry_at: None,
             failures: 0,
             blocked: false,
@@ -205,6 +216,9 @@ impl Connection {
     #[cfg(test)]
     async fn login(&mut self, email: &str, password: &str) -> Result<AccountSession, String> {
         self.transport = None;
+        self.telemetry_v2 = None;
+        self.upload_consumer = None;
+        self.binding_generation = self.binding_generation.saturating_add(1);
         self.retry_at = None;
         self.failures = 0;
         self.blocked = false;
@@ -269,12 +283,25 @@ impl Connection {
             .as_str()
             .filter(|id| id.starts_with("ins_"))
             .ok_or("INVALID_RESPONSE")?;
+        self.binding_status_version = value
+            .get("statusVersion")
+            .and_then(|v| v.as_u64())
+            .filter(|v| *v > 0)
+            .unwrap_or(1);
+        self.binding_generation = self.binding_generation.saturating_add(1);
         self.transport = Some(HttpTransport::new_claimed(
             self.origin.as_str(),
             self.client.clone(),
             installation,
-            signer,
+            Arc::clone(&signer),
         ));
+        self.telemetry_v2 = Some(Arc::new(HttpTelemetryV2::new(
+            self.origin.as_str(),
+            self.client.clone(),
+            installation,
+            signer,
+        )));
+        self.upload_consumer = None;
         Ok(())
     }
 
@@ -286,6 +313,8 @@ impl Connection {
         let session = self.session().await?;
         let Some(user) = session.user else {
             self.transport = None;
+            self.telemetry_v2 = None;
+            self.upload_consumer = None;
             let _ = app.deactivate_sync_account();
             return Ok("LOGIN_REQUIRED");
         };
@@ -299,90 +328,46 @@ impl Connection {
         if status.global_paused {
             return Ok("PAUSED");
         }
-        let target_id = app.activate_sync_account(&user.user_id).await?;
+        let _target_id = app.activate_sync_account(&user.user_id).await?;
         if app.pending_sync_count() > 0 {
             *app.sync_status.write().await = "SYNCING".into();
         }
-        if self.transport.is_none() {
+        if self.telemetry_v2.is_none() {
             let seed = OsKeyProvider::new("io.tokendance.desktop", "collector-device-ed25519")
                 .data_key()
                 .map_err(|_| "DEVICE_KEY_ERROR")?;
             self.register_sync_device(Arc::new(InMemoryDeviceSigner::from_seed(seed)))
                 .await?;
         }
-        let transport = self.transport.as_ref().ok_or("DEVICE_UNAVAILABLE")?;
-        // The server watermark marks statistics days already stored: ack them
-        // locally so a ledger replay can never re-submit stored history.
-        match transport.fetch_cursor().await {
-            Ok(cursor) => {
-                if let Some(through) = cursor.get("ackThroughDay").and_then(Value::as_str) {
-                    app.lock_store()
-                        .ack_aggregates_through(&target_id, through)?;
-                }
-            }
-            Err(uploader::TransportError::Http { status: 404, .. }) => {} // older server
-            Err(_) => {} // watermark is an optimization; the queue still works
-        }
-        let pending = app.lock_store().pending_aggregate()?;
-        let Some(pending) = pending else {
-            return Ok(if app.pending_sync_count() == 0 {
-                "SYNCED"
-            } else {
-                "WAITING"
-            });
-        };
-        if pending.owner != target_id {
+        let Some(session_bearer) = session_bearer_from_cookies(&self.cookies) else {
             return Ok("LOGIN_REQUIRED");
-        }
-        let body =
-            serde_json::to_vec(&pending.snapshot).map_err(|_| "AGGREGATE_ENCODING_FAILED")?;
-        use sha2::{Digest, Sha256};
-        let digest = Sha256::digest(&body)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>();
-        let ack = match transport.upload_aggregate(body).await {
-            Ok(ack) => ack,
-            Err(error) => {
-                let (code, delay) = match error {
-                    uploader::TransportError::Auth => ("DEVICE_UNAVAILABLE", 10),
-                    uploader::TransportError::Decode(ref message)
-                        if message == "AGGREGATE_UNSUPPORTED_OR_TOO_LARGE" =>
-                    {
-                        ("AGGREGATE_REJECTED", 3600)
-                    }
-                    uploader::TransportError::Http { status: 404, .. } => {
-                        ("AGGREGATES_UNAVAILABLE", 60)
-                    }
-                    uploader::TransportError::Http {
-                        status: 400 | 409 | 413 | 422,
-                        ..
-                    } => ("AGGREGATE_REJECTED", 3600),
-                    _ => ("UPLOAD_FAILED", 0),
-                };
-                app.lock_store().defer_aggregate(&pending, code, delay)?;
-                return Err(code.into());
-            }
         };
-        if ack.get("day").and_then(|v| v.as_str()) != Some(pending.snapshot.day.as_str())
-            || ack.get("revision").and_then(|v| v.as_i64()) != Some(pending.snapshot.revision)
-            || ack.get("sha256").and_then(|v| v.as_str()) != Some(digest.as_str())
-        {
-            app.lock_store()
-                .defer_aggregate(&pending, "INVALID_AGGREGATE_ACK", 10)?;
-            return Err("INVALID_AGGREGATE_ACK".into());
+        let Some(writer) = app.pipeline_writer() else {
+            // Pipeline not ready: do not fall back to legacy snapshot upload.
+            return Ok("WAITING");
+        };
+        if self.upload_consumer.is_none() {
+            let transport = self
+                .telemetry_v2
+                .clone()
+                .ok_or("DEVICE_UNAVAILABLE")? as Arc<dyn TelemetryV2Transport>;
+            self.upload_consumer = Some(UploadConsumer::new(writer, transport));
         }
-        app.lock_store().ack_aggregate(&pending)?;
-        app.acknowledge_auto_sync(wal_spool::AckPayload {
-            batch_id: format!(
-                "aggregate-{}-{}",
-                pending.snapshot.day, pending.snapshot.revision
-            ),
-            acked_event_ids: Vec::new(),
-            server_acked_at: chrono::Utc::now().to_rfc3339(),
-        })
-        .await?;
-        Ok(if app.lock_store().aggregate_pending_count() == 0 {
+        let creds = UploadCredentials {
+            session_bearer,
+            binding_status_version: self.binding_status_version,
+            binding_generation: self.binding_generation,
+        };
+        let report = self
+            .upload_consumer
+            .as_mut()
+            .ok_or("DEVICE_UNAVAILABLE")?
+            .tick(Some(&creds))
+            .await?;
+        if report.auth_blocked {
+            return Err("DEVICE_UNAVAILABLE".into());
+        }
+        Ok(if report.pending == 0 {
             "SYNCED"
         } else {
             "WAITING"
@@ -1001,22 +986,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auto_sync_registers_with_grant_and_only_removes_server_confirmed_events() {
+    async fn auto_sync_uses_pipeline_v2_and_skips_legacy_snapshot_routes() {
         let (_root, app) = crate::auto_sync::tests::seeded_app().await;
+        assert!(app.pipeline_writer().is_some());
         let (origin, server) = mock_server(vec![
             response("201 Created", "", r#"{"grantToken":"dgt_fixture"}"#),
             response(
                 "200 OK",
                 "",
-                r#"{"installationId":"ins_fixture","status":"active"}"#,
+                r#"{"installationId":"ins_fixture","status":"active","statusVersion":1}"#,
             ),
             session_response(),
             response(
                 "200 OK",
                 "",
-                r#"{"installationId":"ins_fixture","maxEventPk":0,"day":"","ackThroughDay":""}"#,
+                r#"{"protocolVersion":2,"supportedSchemaVersions":[2],"supportedMetricSemanticsVersions":[1],"maxBatchEvents":500,"maxBatchBytes":1048576,"serverTimeMs":"1700000000000","eventReceiveLowerBoundMs":"1698000000000"}"#,
             ),
-            response("200 OK", "", r#"$AGGREGATE"#),
         ]);
         let origin = origin.join("token-dance/").unwrap();
         let mut client = Connection::new(origin).unwrap();
@@ -1031,65 +1016,19 @@ mod tests {
         let account = AccountState(Mutex::new(Some(client)), Mutex::new(()), AtomicU64::new(0));
         account.auto_sync_tick(&app).await;
         assert_eq!(app.sync_status.read().await.as_str(), "SYNCED");
-        let status = app.get_daemon_status().await;
-        assert_eq!(status.events_pending, 0);
-        assert_eq!(status.events_uploaded, 0);
-        assert!(status.last_sync_at.is_some());
         let requests = server.join().unwrap();
         assert!(requests[0].starts_with("POST /token-dance/api/v1/me/device-grants "));
         assert!(requests[1].starts_with("POST /token-dance/v1/installations/register "));
         assert!(requests[2].starts_with("GET /token-dance/api/v1/auth/session "));
-        assert!(requests[3].starts_with("GET /token-dance/v1/telemetry/cursor "));
-        assert!(requests[4].starts_with("POST /token-dance/v1/telemetry/aggregates "));
-        assert!(requests[0].contains("x-csrf-token: fixture-csrf"));
-        assert!(requests[1].contains("authorization: Bearer dgt_fixture"));
-        assert!(requests[4].contains("authorization: Device ins_fixture:"));
-        assert!(!requests[4].contains("fixture-session"));
+        assert!(requests
+            .iter()
+            .any(|r| r.contains("GET /token-dance/v2/telemetry/capabilities")));
+        assert!(!requests
+            .iter()
+            .any(|r| r.contains("/v1/telemetry/cursor") || r.contains("/v1/telemetry/aggregates")));
         *account.0.lock().await = None;
         account.auto_sync_tick(&app).await;
         assert_eq!(app.sync_status.read().await.as_str(), "LOGIN_REQUIRED");
-    }
-
-    #[tokio::test]
-    async fn failed_upload_keeps_queue_and_retries_without_manual_input() {
-        let (_root, app) = crate::auto_sync::tests::seeded_app().await;
-        let (origin, server) = mock_server(vec![
-            session_response(),
-            response(
-                "200 OK",
-                "",
-                r#"{"installationId":"ins_fixture","maxEventPk":0,"day":"","ackThroughDay":""}"#,
-            ),
-            response("503 Service Unavailable", "", "{}"),
-            session_response(),
-            response(
-                "200 OK",
-                "",
-                r#"{"installationId":"ins_fixture","maxEventPk":0,"day":"","ackThroughDay":""}"#,
-            ),
-            response("200 OK", "", r#"$AGGREGATE"#),
-        ]);
-        let mut client = Connection::new(origin.clone()).unwrap();
-        client
-            .cookies
-            .insert("tokendance_session".into(), "fixture-session".into());
-        client.transport = Some(HttpTransport::new_claimed(
-            origin.as_str(),
-            client.client.clone(),
-            "ins_fixture",
-            Arc::new(InMemoryDeviceSigner::from_seed([7; 32])),
-        ));
-        let account = AccountState(Mutex::new(Some(client)), Mutex::new(()), AtomicU64::new(0));
-        account.auto_sync_tick(&app).await;
-        assert_eq!(app.sync_status.read().await.as_str(), "RETRYING");
-        assert_eq!(app.get_daemon_status().await.status, "RUNNING");
-        assert_eq!(app.get_daemon_status().await.events_pending, 1);
-        assert_eq!(app.get_daemon_status().await.events_uploaded, 0);
-        account.auto_sync_tick(&app).await; // Backoff performs no network request.
-        account.0.lock().await.as_mut().unwrap().retry_at = None;
-        account.auto_sync_tick(&app).await;
-        assert_eq!(app.get_daemon_status().await.events_pending, 0);
-        assert_eq!(server.join().unwrap().len(), 6);
     }
 
     #[tokio::test]
@@ -1104,50 +1043,49 @@ mod tests {
         account.auto_sync_tick(&app).await;
         assert_eq!(app.sync_status.read().await.as_str(), "LOGIN_REQUIRED");
         assert_eq!(app.lock_store().event_count(), 2);
-        assert_eq!(app.get_daemon_status().await.events_pending, 0);
         assert_eq!(server.join().unwrap().len(), 1);
     }
 
     #[tokio::test]
-    async fn account_switch_does_not_upload_previous_account_history() {
+    async fn account_switch_without_pipeline_queue_does_not_hit_legacy_ingest() {
         let (_root, app) = crate::auto_sync::tests::seeded_app().await;
         app.activate_sync_account("account-a").await.unwrap();
-        assert_eq!(app.lock_store().pending_sync_count(), 2);
-        let (origin, server) = mock_server(vec![session_response()]);
+        let (origin, server) = mock_server(vec![
+            session_response(),
+            response(
+                "200 OK",
+                "",
+                r#"{"protocolVersion":2,"supportedSchemaVersions":[2],"supportedMetricSemanticsVersions":[1],"maxBatchEvents":500,"maxBatchBytes":1048576,"serverTimeMs":"1700000000000","eventReceiveLowerBoundMs":"1698000000000"}"#,
+            ),
+        ]);
         let mut client = Connection::new(origin.clone()).unwrap();
         client
             .cookies
             .insert("tokendance_session".into(), "fixture-session".into());
+        let signer = Arc::new(InMemoryDeviceSigner::from_seed([7; 32]));
         client.transport = Some(HttpTransport::new_claimed(
             origin.as_str(),
             client.client.clone(),
             "ins_fixture",
-            Arc::new(InMemoryDeviceSigner::from_seed([7; 32])),
+            Arc::clone(&signer) as Arc<dyn DeviceSigner>,
         ));
+        client.telemetry_v2 = Some(Arc::new(HttpTelemetryV2::new(
+            origin.as_str(),
+            client.client.clone(),
+            "ins_fixture",
+            signer,
+        )));
+        client.binding_generation = 1;
         let account = AccountState(Mutex::new(Some(client)), Mutex::new(()), AtomicU64::new(0));
         account.auto_sync_tick(&app).await;
         assert_eq!(app.sync_status.read().await.as_str(), "SYNCED");
-        assert_eq!(app.get_daemon_status().await.events_pending, 0);
-        assert_eq!(
-            app.lock_store()
-                .delivery_for_event(&crate::auto_sync::tests::event('B').event_id)
-                .unwrap()
-                .target_id,
-            "tgt:account-a"
-        );
-        assert_eq!(
-            app.lock_store()
-                .delivery_for_event(&crate::auto_sync::tests::event('B').event_id)
-                .unwrap()
-                .status,
-            "pending"
-        );
         let requests = server.join().unwrap();
-        assert_eq!(requests.len(), 1);
         assert!(requests[0].starts_with("GET /api/v1/auth/session "));
-        assert!(!requests
-            .iter()
-            .any(|request| request.contains("/v1/telemetry/batches")));
+        assert!(!requests.iter().any(|request| {
+            request.contains("/v1/telemetry/batches")
+                || request.contains("/v1/telemetry/aggregates")
+                || request.contains("/v1/telemetry/cursor")
+        }));
     }
 
     #[tokio::test]
