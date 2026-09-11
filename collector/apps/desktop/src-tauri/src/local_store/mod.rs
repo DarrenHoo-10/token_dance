@@ -30,7 +30,7 @@ use crate::usage_ledger::{
 };
 
 const DB_FILE: &str = "tokendance.sqlite3";
-const SCHEMA_VERSION: i64 = 7;
+const SCHEMA_VERSION: i64 = 8;
 const AGGREGATION_VERSION: i64 = 1;
 const PARSE_VERSION: &str = "1";
 const BUSY_TIMEOUT_MS: u64 = 5_000;
@@ -676,9 +676,7 @@ fn migrate(conn: &mut Connection) -> Result<(), String> {
         // every row under its stable row id. Code lines keep callId-based
         // identities and are untouched.
         tx.execute_batch(
-            "CREATE TABLE IF NOT EXISTS rescan_markers (source_id TEXT PRIMARY KEY);
-             INSERT OR IGNORE INTO rescan_markers (source_id) VALUES ('zcode-sqlite'), ('opencode-sqlite');
-             DELETE FROM events WHERE agent_id IN ('zcode','opencode') AND event_type = 'model_usage_recorded';
+            "DELETE FROM events WHERE agent_id IN ('zcode','opencode') AND event_type = 'model_usage_recorded';
              DELETE FROM source_checkpoints WHERE source_id IN ('zcode-sqlite','opencode-sqlite');
              DELETE FROM source_files WHERE source_id IN ('zcode-sqlite','opencode-sqlite');
              UPDATE rebuild_job_files SET status = 'pending'
@@ -695,6 +693,19 @@ fn migrate(conn: &mut Connection) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
         rebuild_daily_metrics_from_events(&tx)?;
         retention::migrate_data(&tx)?;
+    }
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS rescan_markers (source_id TEXT PRIMARY KEY);",
+    )
+    .map_err(|error| error.to_string())?;
+    if current < 8 {
+        // Databases that already ran v7 before the markers existed still need
+        // their drivers rewound once; fresh databases drain these at first
+        // assembly as a harmless no-op.
+        tx.execute_batch(
+            "INSERT OR IGNORE INTO rescan_markers (source_id) VALUES ('zcode-sqlite'), ('opencode-sqlite');",
+        )
+        .map_err(|error| error.to_string())?;
     }
     if current != 0 && current < SCHEMA_VERSION {
         tx.execute(
