@@ -9,7 +9,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -404,7 +403,7 @@ func TestHTTP_MaxBodySize(t *testing.T) {
 	}
 }
 
-// USR-023: active, paused, resumed, and revoked devices are enforced by the signed HTTP ingest path.
+// USR-023: legacy v1 ingest is closed; clients must upgrade to protocol v2.
 func TestUSR023_HTTPIngestPauseResumeRevokeLifecycle(t *testing.T) {
 	ctx := context.Background()
 	authSvc, deviceSvc, profileSvc, st, router := setupSecurityTestApp(t, false)
@@ -434,76 +433,31 @@ func TestUSR023_HTTPIngestPauseResumeRevokeLifecycle(t *testing.T) {
 		t.Fatalf("failed to register installation: %v", err)
 	}
 
-	postBatch := func(sequence int) *httptest.ResponseRecorder {
-		timestamp := time.Now().UTC().Format(time.RFC3339Nano)
-		batchID := fmt.Sprintf("bat_usr023_%02d", sequence)
-		eventID := sha256.Sum256([]byte(fmt.Sprintf("evt_usr023_%02d", sequence)))
-		batchJSON := fmt.Sprintf(`{"batchId":%q,"events":[{"eventId":"%s","schemaVersion":1,"adapterId":"test-adapter","adapterVersion":"1.0.0","agentId":"test-agent","eventType":"model_usage_recorded","accuracy":"exact","sourceKind":"runtime_stream","occurredAt":%q,"tokenTotal":100,"privacyPolicyVersion":1}]}`, batchID, hex.EncodeToString(eventID[:]), timestamp)
-		nonce := fmt.Sprintf("nonce-usr023-%04d", sequence)
-		bodyHash := sha256.Sum256([]byte(batchJSON))
-		bodyHashHex := hex.EncodeToString(bodyHash[:])
-		canonical := telemetryCanonicalRequest(http.MethodPost, "/v1/telemetry/batches", timestamp, nonce, bodyHashHex)
-		signature := base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, []byte(canonical)))
-		request := httptest.NewRequest(http.MethodPost, "/v1/telemetry/batches", strings.NewReader(batchJSON))
-		request.Header.Set("Content-Type", "application/json")
-		request.Header.Set("Authorization", "Device "+inst.InstallationID+":"+signature)
-		request.Header.Set("X-Timestamp", timestamp)
-		request.Header.Set("X-Nonce", nonce)
-		request.Header.Set("X-Body-SHA256", bodyHashHex)
-		request.Header.Set("Idempotency-Key", batchID)
-		response := httptest.NewRecorder()
-		router.ServeHTTP(response, request)
-		return response
+	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
+	batchJSON := `{"batchId":"bat_usr023_01","events":[{"eventId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","schemaVersion":1,"adapterId":"test-adapter","adapterVersion":"1.0.0","agentId":"test-agent","eventType":"model_usage_recorded","accuracy":"exact","sourceKind":"runtime_stream","occurredAt":"` + timestamp + `","tokenTotal":100,"privacyPolicyVersion":1}]}`
+	nonce := "nonce-usr023-upgrade"
+	bodyHash := sha256.Sum256([]byte(batchJSON))
+	bodyHashHex := hex.EncodeToString(bodyHash[:])
+	canonical := telemetryCanonicalRequest(http.MethodPost, "/v1/telemetry/batches", timestamp, nonce, bodyHashHex)
+	signature := base64.RawURLEncoding.EncodeToString(ed25519.Sign(privateKey, []byte(canonical)))
+	request := httptest.NewRequest(http.MethodPost, "/v1/telemetry/batches", strings.NewReader(batchJSON))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Authorization", "Device "+inst.InstallationID+":"+signature)
+	request.Header.Set("X-Timestamp", timestamp)
+	request.Header.Set("X-Nonce", nonce)
+	request.Header.Set("X-Body-SHA256", bodyHashHex)
+	request.Header.Set("Idempotency-Key", "bat_usr023_01")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUpgradeRequired {
+		t.Fatalf("expected 426 upgrade required, got %d %s", response.Code, response.Body.String())
 	}
-	assertIngestError := func(response *httptest.ResponseRecorder, code string) {
-		if response.Code != http.StatusForbidden {
-			t.Fatalf("expected 403 %s, got %d: %s", code, response.Code, response.Body.String())
-		}
-		var envelope ErrorWrapper
-		if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
-			t.Fatal(err)
-		}
-		if envelope.Error.Code != code {
-			t.Fatalf("expected %s, got %+v", code, envelope.Error)
-		}
-	}
-
-	active := postBatch(1)
-	if active.Code != http.StatusOK {
-		t.Fatalf("active device ingest failed: %d %s", active.Code, active.Body.String())
-	}
-	var activePayload map[string]interface{}
-	if err := json.NewDecoder(active.Body).Decode(&activePayload); err != nil {
+	var envelope ErrorWrapper
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
 		t.Fatal(err)
 	}
-	if activePayload["accepted"] != float64(1) {
-		t.Fatalf("active batch was not committed: %+v", activePayload)
-	}
-
-	if _, err := deviceSvc.PauseDevice(ctx, inst.InstallationID, res.User.UserID); err != nil {
-		t.Fatal(err)
-	}
-	assertIngestError(postBatch(2), "DEVICE_DISABLED")
-
-	if _, err := deviceSvc.ResumeDevice(ctx, inst.InstallationID, res.User.UserID); err != nil {
-		t.Fatal(err)
-	}
-	resumed := postBatch(3)
-	if resumed.Code != http.StatusOK {
-		t.Fatalf("resumed device ingest failed: %d %s", resumed.Code, resumed.Body.String())
-	}
-
-	if _, err := deviceSvc.RevokeDevice(ctx, inst.InstallationID, res.User.UserID); err != nil {
-		t.Fatal(err)
-	}
-	assertIngestError(postBatch(4), "DEVICE_REVOKED")
-	if _, err := deviceSvc.ResumeDevice(ctx, inst.InstallationID, res.User.UserID); err == nil {
-		t.Fatal("revoked device must not resume")
-	} else {
-		var appErr *domain.AppError
-		if !errors.As(err, &appErr) || appErr.Code != "DEVICE_REVOKED" {
-			t.Fatalf("expected stable DEVICE_REVOKED resume error, got %v", err)
-		}
+	if envelope.Error.Code != "CLIENT_UPGRADE_REQUIRED" {
+		t.Fatalf("expected CLIENT_UPGRADE_REQUIRED, got %+v", envelope.Error)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"tokendance/internal/domain"
+	v2 "tokendance/internal/protocol/v2"
 	"tokendance/internal/store"
 )
 
@@ -1580,7 +1581,27 @@ func (m *MemoryStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 
 	for _, existing := range m.installations {
 		if existing.DevicePublicKey == inst.DevicePublicKey {
-			if existing.UserID == challenge.UserID && existing.InstallationStatus == domain.InstallationStatusActive {
+			if existing.InstallationStatus == domain.InstallationStatusActive {
+				if existing.UserID != challenge.UserID {
+					existing.UserID = challenge.UserID
+					existing.StatusVersion++
+					existing.UpdatedAt = now
+					if inst.DeviceName != nil {
+						existing.DeviceName = inst.DeviceName
+					}
+					if inst.OSVersion != nil {
+						existing.OSVersion = inst.OSVersion
+					}
+					if inst.OSType != "" {
+						existing.OSType = inst.OSType
+					}
+					if inst.Architecture != "" {
+						existing.Architecture = inst.Architecture
+					}
+					if inst.CollectorVersion != "" {
+						existing.CollectorVersion = inst.CollectorVersion
+					}
+				}
 				challenge.ChallengeStatus = domain.ChallengeStatusConsumed
 				challenge.ConsumedInstallationID = &existing.InstallationID
 				challenge.ConsumedAt = &now
@@ -1615,7 +1636,27 @@ func (m *MemoryStore) RegisterInstallationTx(ctx context.Context, inst domain.In
 
 	for _, existing := range m.installations {
 		if existing.DevicePublicKey == inst.DevicePublicKey {
-			if existing.UserID == inst.UserID && existing.InstallationStatus == domain.InstallationStatusActive {
+			if existing.InstallationStatus == domain.InstallationStatusActive {
+				if existing.UserID != inst.UserID {
+					existing.UserID = inst.UserID
+					existing.StatusVersion++
+					existing.UpdatedAt = now
+					if inst.DeviceName != nil {
+						existing.DeviceName = inst.DeviceName
+					}
+					if inst.OSVersion != nil {
+						existing.OSVersion = inst.OSVersion
+					}
+					if inst.OSType != "" {
+						existing.OSType = inst.OSType
+					}
+					if inst.Architecture != "" {
+						existing.Architecture = inst.Architecture
+					}
+					if inst.CollectorVersion != "" {
+						existing.CollectorVersion = inst.CollectorVersion
+					}
+				}
 				eCopy := *existing
 				return &eCopy, nil
 			}
@@ -1626,6 +1667,33 @@ func (m *MemoryStore) RegisterInstallationTx(ctx context.Context, inst domain.In
 	instCopy := inst
 	m.installations[inst.InstallationID] = &instCopy
 	return &instCopy, nil
+}
+
+func (m *MemoryStore) RebindInstallationTx(ctx context.Context, installationID, newUserID string, now time.Time) (*domain.Installation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	u, ok := m.users[newUserID]
+	if !ok || u.AccountStatus != domain.AccountStatusActive {
+		return nil, domain.ErrForbidden
+	}
+	inst, ok := m.installations[installationID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	if inst.InstallationStatus == domain.InstallationStatusRevoked {
+		return nil, domain.ErrDeviceRevoked
+	}
+	if inst.InstallationStatus == domain.InstallationStatusDisabled {
+		return nil, domain.ErrDeviceDisabled
+	}
+	if inst.UserID != newUserID {
+		inst.UserID = newUserID
+		inst.StatusVersion++
+		inst.UpdatedAt = now
+	}
+	copy := *inst
+	return &copy, nil
 }
 
 func (m *MemoryStore) UpdateInstallationName(ctx context.Context, installationID, userID string, name string, now time.Time) (*domain.Installation, error) {
@@ -1829,6 +1897,52 @@ func (m *MemoryStore) CommitIngest(ctx context.Context, batch domain.IngestBatch
 	inst.LastSeenAt = &batch.ReceivedAt
 	copy := *result
 	return &copy, nil
+}
+
+func (m *MemoryStore) CommitTelemetryEventsV2(ctx context.Context, in domain.TelemetryEventsV2Input) (*domain.TelemetryEventsV2Result, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	user, ok := m.users[in.UserID]
+	if !ok || user.AccountStatus != domain.AccountStatusActive {
+		return nil, domain.ErrAccountSuspended
+	}
+	inst, ok := m.installations[in.InstallationID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	if inst.InstallationStatus == domain.InstallationStatusRevoked {
+		return nil, domain.ErrDeviceRevoked
+	}
+	if inst.InstallationStatus == domain.InstallationStatusDisabled {
+		return nil, domain.ErrDeviceDisabled
+	}
+	if inst.UserID != in.UserID {
+		return nil, domain.ErrInstallationUserMismatch
+	}
+	if inst.StatusVersion != in.BindingStatusVersion {
+		return nil, domain.ErrBindingVersionMismatch
+	}
+
+	nonceKey := in.InstallationID + ":" + string(in.NonceHash[:])
+	if _, exists := m.ingestNonces[nonceKey]; exists {
+		return nil, domain.ErrNonceReplay
+	}
+	m.ingestNonces[nonceKey] = in.NonceExpiresAt
+
+	acks := make([]v2.EventAck, 0, len(in.Events))
+	for _, event := range in.Events {
+		acks = append(acks, v2.EventAck{
+			EventID:     event.EventID,
+			ContentHash: event.ContentHash,
+			Result:      v2.AckResultAccepted,
+		})
+	}
+	return &domain.TelemetryEventsV2Result{
+		RequestID:    in.RequestID,
+		ServerTimeMs: uint64(in.ReceivedAt.UnixMilli()),
+		Acks:         acks,
+	}, nil
 }
 
 // --- ExportStore Implementation ---

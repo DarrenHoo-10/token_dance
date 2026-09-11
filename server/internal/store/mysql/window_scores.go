@@ -77,16 +77,18 @@ func MarkAggregateDirtyDayTx(ctx context.Context, tx *sql.Tx, userID, metricDate
 	if userID == "" || metricDate == "" {
 		return nil
 	}
+	nowMs := now.UnixMilli()
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO aggregate_dirty_days (
-			user_id, metric_date, dirty_version, applied_version, next_attempt_at, created_at, updated_at
-		) VALUES (?, ?, 1, 0, ?, ?, ?)
+			user_id, metric_date, dirty_version, applied_version, next_attempt_at,
+			created_at, updated_at, extra
+		) VALUES (?, ?, 1, 0, ?, ?, ?, JSON_OBJECT())
 		ON DUPLICATE KEY UPDATE
 			dirty_version = dirty_version + 1,
-			next_attempt_at = LEAST(next_attempt_at, VALUES(next_attempt_at)),
+			next_attempt_at = IF(claim_token IS NOT NULL, NULL, LEAST(COALESCE(next_attempt_at, VALUES(next_attempt_at)), VALUES(next_attempt_at))),
 			last_error_code = NULL,
 			updated_at = VALUES(updated_at)`,
-		userID, metricDate, now, now, now,
+		userID, metricDate, nowMs, nowMs, nowMs,
 	); err != nil {
 		return fmt.Errorf("mark aggregate dirty day: %w", err)
 	}
@@ -97,9 +99,9 @@ func ClearAggregateDirtyDaysTx(ctx context.Context, tx *sql.Tx, userID string, d
 	if userID == "" || len(dates) == 0 {
 		return nil
 	}
-	query := "UPDATE aggregate_dirty_days SET applied_version = dirty_version, claim_token = NULL, locked_by = NULL, lease_expires_at = NULL, last_error_code = NULL, updated_at = ? WHERE user_id = ? AND metric_date IN (" + placeholders(len(dates)) + ")"
+	query := "UPDATE aggregate_dirty_days SET applied_version = dirty_version, claim_token = NULL, lease_expires_at = NULL, next_attempt_at = NULL, last_error_code = NULL, updated_at = ? WHERE user_id = ? AND metric_date IN (" + placeholders(len(dates)) + ")"
 	args := make([]interface{}, 0, 2+len(dates))
-	args = append(args, now, userID)
+	args = append(args, now.UnixMilli(), userID)
 	for _, date := range dates {
 		args = append(args, date)
 	}
@@ -116,9 +118,12 @@ func ListPendingDirtyDaysTx(ctx context.Context, tx *sql.Tx, now time.Time, limi
 	rows, err := tx.QueryContext(ctx, `
 		SELECT user_id, DATE_FORMAT(metric_date, '%Y-%m-%d') AS metric_date
 		FROM aggregate_dirty_days
-		WHERE applied_version < dirty_version AND next_attempt_at <= ?
+		WHERE delete_at IS NULL
+		  AND applied_version < dirty_version
+		  AND next_attempt_at IS NOT NULL
+		  AND next_attempt_at <= ?
 		ORDER BY user_id, metric_date
-		LIMIT ?`, now, limit)
+		LIMIT ?`, now.UnixMilli(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("list pending dirty days: %w", err)
 	}
