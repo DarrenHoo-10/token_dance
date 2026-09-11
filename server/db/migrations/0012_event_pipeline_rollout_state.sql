@@ -18,4 +18,5 @@ CREATE TABLE event_pipeline_rollout_state (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 INSERT INTO event_pipeline_rollout_state (id, generation, phase, notes_json)
-VALUES (1, 0, 'pending', JSON_OBJECT());
+VALUES (1, 0, 'pending', JSON_OBJECT())
+ON DUPLICATE KEY UPDATE id = id;
