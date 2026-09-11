@@ -181,6 +181,36 @@ pub struct LocalStore {
 }
 
 impl LocalStore {
+    /// Sources whose checkpoints were reset by a migration and whose drivers
+    /// must be rewound to the start of their source at next assembly.
+    pub fn pending_rescan_sources(&self) -> Vec<String> {
+        let Ok(mut statement) = self
+            .conn
+            .prepare("SELECT source_id FROM rescan_markers ORDER BY source_id")
+        else {
+            return vec![];
+        };
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string());
+        match rows {
+            Ok(rows) => rows.filter_map(Result::ok).collect(),
+            Err(_) => vec![],
+        }
+    }
+
+    pub fn clear_rescan_markers(&mut self, sources: &[String]) -> Result<(), String> {
+        for source_id in sources {
+            self.conn
+                .execute(
+                    "DELETE FROM rescan_markers WHERE source_id = ?1",
+                    params![source_id],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     pub fn open(dir: &Path) -> Result<Self, String> {
         std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
         let path = dir.join(DB_FILE);
@@ -646,7 +676,9 @@ fn migrate(conn: &mut Connection) -> Result<(), String> {
         // every row under its stable row id. Code lines keep callId-based
         // identities and are untouched.
         tx.execute_batch(
-            "DELETE FROM events WHERE agent_id IN ('zcode','opencode') AND event_type = 'model_usage_recorded';
+            "CREATE TABLE IF NOT EXISTS rescan_markers (source_id TEXT PRIMARY KEY);
+             INSERT OR IGNORE INTO rescan_markers (source_id) VALUES ('zcode-sqlite'), ('opencode-sqlite');
+             DELETE FROM events WHERE agent_id IN ('zcode','opencode') AND event_type = 'model_usage_recorded';
              DELETE FROM source_checkpoints WHERE source_id IN ('zcode-sqlite','opencode-sqlite');
              DELETE FROM source_files WHERE source_id IN ('zcode-sqlite','opencode-sqlite');
              UPDATE rebuild_job_files SET status = 'pending'

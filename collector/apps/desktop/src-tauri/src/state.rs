@@ -357,12 +357,17 @@ impl AppState {
         let wal =
             WalStore::open(root.join("spool"), key_provider).map_err(|error| error.to_string())?;
         let installation_id = load_or_create_installation_id(&root)?;
+        // Open the local store before assembly: schema migrations (which can
+        // request source rescans) run here, and the markers must be drained
+        // after the drivers are built but before the first poll.
+        let mut local_store = LocalStore::open(&root)?;
+        let rescan_sources = local_store.pending_rescan_sources();
         let detection = if cfg!(test) {
             DetectionSnapshot::default()
         } else {
             detect_local()
         };
-        let service = ProductionService::assemble(
+        let mut service = ProductionService::assemble(
             installation_id.clone(),
             &key,
             &detection,
@@ -371,6 +376,13 @@ impl AppState {
         )
         .await
         .map_err(|error| error.to_string())?;
+        // Migrations that reset checkpoints must also rewind the assembled
+        // drivers: the WAL still holds the old cursors and would otherwise
+        // resume past the rows the rescan is meant to re-read.
+        for source_id in &rescan_sources {
+            service.driver_registry.reset_source(source_id);
+        }
+        local_store.clear_rescan_markers(&rescan_sources)?;
         if let Some(home) = grok_user_home() {
             let _ = write_session_end_hook(&home, &key);
             let _ = start_listener(hook_auth_token(&key), service.grok_hooks.clone());
@@ -387,7 +399,7 @@ impl AppState {
             start_time: Instant::now(),
             autostart,
             shutting_down: Arc::new(StdMutex::new(false)),
-            local_store: Arc::new(StdMutex::new(LocalStore::open(&root)?)),
+            local_store: Arc::new(StdMutex::new(local_store)),
             storage_error: Arc::new(StdMutex::new(None)),
             rebuilding: Arc::new(StdMutex::new(false)),
         };
