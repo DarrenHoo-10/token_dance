@@ -282,18 +282,10 @@ func writeUserWindowScoresTx(ctx context.Context, tx *sql.Tx, userID string, now
 		if err != nil {
 			return err
 		}
-		var computedRaw sql.NullInt64
-		if err := tx.QueryRowContext(ctx, `
-			SELECT COALESCE(SUM(exact_token_total + derived_token_total), 0)
-			FROM daily_user_agent_metrics
-			WHERE user_id = ? AND metric_date >= ? AND metric_date <= ?`,
-			userID, from, to,
-		).Scan(&computedRaw); err != nil {
+		var computed uint64
+		computed, err = SumTrustedTokensForWindow(ctx, tx, userID, from, to)
+		if err != nil {
 			return fmt.Errorf("sum window tokens for %s: %w", window, err)
-		}
-		computed := uint64(0)
-		if computedRaw.Valid && computedRaw.Int64 > 0 {
-			computed = uint64(computedRaw.Int64)
 		}
 		var existingTokens, existingRevision uint64
 		var existingEligible bool

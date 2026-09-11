@@ -287,6 +287,10 @@ func (w *Worker) deletionDeleteEvents(ctx context.Context, claim *deletionClaim)
 			if _, err := tx.ExecContext(ctx, "DELETE FROM usage_events WHERE user_id = ?", claim.userID.String); err != nil {
 				return fmt.Errorf("delete user usage events: %w", err)
 			}
+			// P6: delete by historical event user_id (not current installation bind).
+			if _, err := tx.ExecContext(ctx, "DELETE FROM telemetry_events WHERE user_id = ?", claim.userID.String); err != nil {
+				return fmt.Errorf("delete user telemetry events: %w", err)
+			}
 		case "installation":
 			installationID, err := claimInstallationID(claim)
 			if err != nil {
@@ -313,6 +317,20 @@ func (w *Worker) deletionDeleteEvents(ctx context.Context, claim *deletionClaim)
 			}
 			if _, err := tx.ExecContext(ctx, "DELETE FROM device_daily_aggregates WHERE user_id=? AND installation_id=?", claim.userID.String, installationID); err != nil {
 				return err
+			}
+			// Historical telemetry contribution for this user×installation only.
+			if _, err := tx.ExecContext(ctx, `
+				DELETE FROM telemetry_events WHERE user_id = ? AND installation_id = ?`,
+				claim.userID.String, installationID); err != nil {
+				return fmt.Errorf("delete installation telemetry events: %w", err)
+			}
+			for _, table := range []string{
+				"telemetry_harness_metrics", "telemetry_model_metrics", "telemetry_skill_metrics",
+				"telemetry_cost_metrics", "telemetry_bucket_entities",
+			} {
+				if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE user_id = ? AND installation_id = ?", claim.userID.String, installationID); err != nil {
+					return fmt.Errorf("delete installation %s: %w", table, err)
+				}
 			}
 			if err := rebuildUserAggregates(ctx, tx, claim.userID.String, affectedDates); err != nil {
 				return err
@@ -359,8 +377,26 @@ func (w *Worker) deletionDeleteAggregates(ctx context.Context, claim *deletionCl
 					return fmt.Errorf("delete %s time range: %w", table, err)
 				}
 			}
+			fromMs := from.UnixMilli()
+			toMs := to.UnixMilli()
+			for _, table := range []string{
+				"telemetry_harness_metrics", "telemetry_model_metrics", "telemetry_skill_metrics",
+				"telemetry_cost_metrics", "telemetry_bucket_entities",
+			} {
+				if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE user_id = ? AND bucket_start >= ? AND bucket_start < ?", userID, fromMs, toMs); err != nil {
+					return fmt.Errorf("delete %s time range: %w", table, err)
+				}
+			}
 		default:
 			for _, table := range []string{"device_daily_aggregates", "daily_user_agent_metrics", "daily_user_agent_model_metrics", "daily_skill_metrics"} {
+				if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE user_id = ?", userID); err != nil {
+					return fmt.Errorf("delete %s: %w", table, err)
+				}
+			}
+			for _, table := range []string{
+				"telemetry_harness_metrics", "telemetry_model_metrics", "telemetry_skill_metrics",
+				"telemetry_cost_metrics", "telemetry_bucket_entities",
+			} {
 				if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE user_id = ?", userID); err != nil {
 					return fmt.Errorf("delete %s: %w", table, err)
 				}
@@ -590,6 +626,8 @@ func reconcileDeletionResiduals(ctx context.Context, tx *sql.Tx, claim *deletion
 			"user_password_credentials", "user_sessions", "email_challenges", "email_outbox",
 			"device_binding_challenges", "installations", "usage_events",
 			"daily_user_agent_metrics", "daily_user_agent_model_metrics", "daily_skill_metrics",
+			"telemetry_events", "telemetry_harness_metrics", "telemetry_model_metrics",
+			"telemetry_skill_metrics", "telemetry_cost_metrics", "telemetry_bucket_entities",
 			"data_export_jobs", "user_upload_objects", "public_user_profiles",
 			"user_privacy_settings", "user_handle_history",
 		} {
@@ -617,7 +655,11 @@ func reconcileDeletionResiduals(ctx context.Context, tx *sql.Tx, claim *deletion
 			}{"user PII", "SELECT COUNT(*) FROM users WHERE user_id = ? AND (account_status <> 'deleted' OR email_lookup_hash IS NOT NULL OR email_ciphertext IS NOT NULL OR handle IS NOT NULL OR avatar_url IS NOT NULL OR avatar_object_id IS NOT NULL OR bio IS NOT NULL OR display_name <> 'Deleted User')", []interface{}{userID}},
 		)
 	case "all_usage":
-		for _, table := range []string{"usage_events", "daily_user_agent_metrics", "daily_user_agent_model_metrics", "daily_skill_metrics"} {
+		for _, table := range []string{
+			"usage_events", "daily_user_agent_metrics", "daily_user_agent_model_metrics", "daily_skill_metrics",
+			"telemetry_events", "telemetry_harness_metrics", "telemetry_model_metrics",
+			"telemetry_skill_metrics", "telemetry_cost_metrics", "telemetry_bucket_entities",
+		} {
 			checks = append(checks, struct {
 				name  string
 				query string
@@ -635,6 +677,8 @@ func reconcileDeletionResiduals(ctx context.Context, tx *sql.Tx, claim *deletion
 			args  []interface{}
 		}{
 			{"usage events", "SELECT COUNT(*) FROM usage_events WHERE user_id = ? AND installation_id = ?", []interface{}{userID, installationID}},
+			{"telemetry events", "SELECT COUNT(*) FROM telemetry_events WHERE user_id = ? AND installation_id = ?", []interface{}{userID, installationID}},
+			{"telemetry harness metrics", "SELECT COUNT(*) FROM telemetry_harness_metrics WHERE user_id = ? AND installation_id = ?", []interface{}{userID, installationID}},
 			{"installation", "SELECT COUNT(*) FROM installations WHERE user_id = ? AND installation_id = ?", []interface{}{userID, installationID}},
 			{"ingest batches", "SELECT COUNT(*) FROM ingest_batches WHERE installation_id = ?", []interface{}{installationID}},
 			{"ingest nonces", "SELECT COUNT(*) FROM ingest_nonces WHERE installation_id = ?", []interface{}{installationID}},
