@@ -324,6 +324,10 @@ impl Connection {
         if !app.sync_enabled() {
             return Ok("SYNC_OFF");
         }
+        if !crate::local_store::pipeline::event_pipeline_v2_client_enabled() {
+            // P8 rollback: pause upload without reopening legacy snapshot routes.
+            return Ok("PIPELINE_PAUSED");
+        }
         let status = app.get_daemon_status().await;
         if status.global_paused {
             return Ok("PAUSED");

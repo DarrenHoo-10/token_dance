@@ -280,6 +280,10 @@ func (w *Worker) ProcessAggregates(ctx context.Context) (int, error) {
 	if w.db == nil {
 		return 0, nil
 	}
+	if !w.eventPipelineV2Workers {
+		// P8 rollback: pause new aggregation without falling back to legacy usage_events.
+		return 0, nil
+	}
 	// P6: new event pipeline uses SKIP LOCKED task consumers + dirty version confirm.
 	// No global GET_LOCK for telemetry projection.
 	nTasks, err := w.ProcessTelemetryAggregation(ctx)

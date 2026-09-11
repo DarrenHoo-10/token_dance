@@ -393,7 +393,21 @@ impl AppState {
         let control = load_control(&root)?
             .unwrap_or_else(|| PersistedControl::initial(&installation_id, autostart_enabled));
         let pipeline_writer = match PipelineStore::open(&root) {
-            Ok(store) => Some(Arc::new(PipelineWriter::start(store))),
+            Ok(store) => {
+                match store.workers_allowed() {
+                    Ok(true) => Some(Arc::new(PipelineWriter::start(store))),
+                    Ok(false) => {
+                        eprintln!(
+                            "event pipeline workers paused (flag off or init incomplete); store kept"
+                        );
+                        None
+                    }
+                    Err(error) => {
+                        eprintln!("event pipeline worker gate error: {error}");
+                        None
+                    }
+                }
+            }
             Err(error) => {
                 eprintln!("event pipeline store unavailable: {error}");
                 None

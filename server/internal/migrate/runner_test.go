@@ -23,11 +23,11 @@ func TestMigrationEmbedLoading(t *testing.T) {
 	}
 
 	migs := runner.GetMigrations()
-	if len(migs) != 10 {
-		t.Fatalf("expected 10 migrations, got %d", len(migs))
+	if len(migs) != 11 {
+		t.Fatalf("expected 11 migrations, got %d", len(migs))
 	}
 
-	expected := []string{"0001", "0002", "0003", "0004", "0006", "0007", "0008", "0009", "0010", "0011"}
+	expected := []string{"0001", "0002", "0003", "0004", "0006", "0007", "0008", "0009", "0010", "0011", "0012"}
 	for i, m := range migs {
 		if m.Version != expected[i] {
 			t.Errorf("migration %d: expected version %s, got %s", i, expected[i], m.Version)

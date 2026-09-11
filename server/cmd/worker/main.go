@@ -76,7 +76,8 @@ func main() {
 
 		wrk = worker.NewWorkerWithFull(db, clk, cipher, emailProvider, storage)
 		wrk.SetPricing(pricing.NewClient())
-		log.Printf("Worker registered with durable lease ID: %s", wrk.WorkerID())
+		wrk.SetEventPipelineV2Workers(cfg.EventPipelineV2Workers)
+		log.Printf("Worker registered with durable lease ID: %s (v2_workers=%v)", wrk.WorkerID(), cfg.EventPipelineV2Workers)
 	} else {
 		if cfg.Environment == "production" {
 			log.Fatalf("Fatal configuration error: TOKENDANCE_MYSQL_DSN_FILE or TOKENDANCE_MYSQL_DSN is required in production environment")

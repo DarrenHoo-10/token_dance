@@ -39,6 +39,17 @@ func (h *Handlers) TelemetryUpgradeRequired(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *Handlers) GetTelemetryCapabilities(w http.ResponseWriter, r *http.Request) {
+	if cfg := h.auth.Config(); cfg != nil && !cfg.EventPipelineV2Ingest {
+		WriteError(w, r, domain.NewAppError(
+			http.StatusServiceUnavailable,
+			"EVENT_PIPELINE_V2_PAUSED",
+			"ingest.pipelinePaused",
+			"event pipeline v2 ingest is paused; sync is suspended without reopening legacy upload",
+			nil,
+			nil,
+		))
+		return
+	}
 	now := time.Now().UTC()
 	lower := domain.StartOfDay(now).AddDate(0, 0, -14).UnixMilli()
 	WriteJSON(w, http.StatusOK, v2.TelemetryCapabilities{
@@ -53,6 +64,17 @@ func (h *Handlers) GetTelemetryCapabilities(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *Handlers) IngestTelemetryEventsV2(w http.ResponseWriter, r *http.Request) {
+	if cfg := h.auth.Config(); cfg != nil && !cfg.EventPipelineV2Ingest {
+		WriteError(w, r, domain.NewAppError(
+			http.StatusServiceUnavailable,
+			"EVENT_PIPELINE_V2_PAUSED",
+			"ingest.pipelinePaused",
+			"event pipeline v2 ingest is paused; sync is suspended without reopening legacy upload",
+			nil,
+			nil,
+		))
+		return
+	}
 	user := GetUserFromContext(r.Context())
 	if user == nil {
 		WriteError(w, r, domain.NewAppError(401, "AUTH_REQUIRED", "auth.required", "authentication required", nil, domain.ErrUnauthorized))

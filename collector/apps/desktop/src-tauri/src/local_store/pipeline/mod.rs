@@ -1,10 +1,12 @@
 //! Client event-pipeline v3 store: 10-table SQLite schema, single writer,
 //! task leases, 14-day hard TTL (P1), public acquisition runner (P2),
-//! harness adapters (P3), and local metrics/query (P4).
+//! harness adapters (P3), local metrics/query (P4), and upload support (P7).
 
 mod apply;
 mod buckets;
+mod flags;
 mod query;
+mod rollout;
 mod schema;
 mod store;
 mod types;
@@ -18,10 +20,12 @@ mod tests;
 mod metrics_tests;
 
 pub use buckets::{bucket_start, beijing_day_start, Grain};
+pub use flags::event_pipeline_v2_client_enabled;
 pub use query::{
     query_consumer_backlog, query_skill_ranks, query_usage_summary, ConsumerBacklog, CostByCurrency,
     CoverageLevel, CoveredValue, RatioValue, SkillRankRow, UsageSummary,
 };
+pub use rollout::{ensure_rollout, workers_allowed, RolloutPhase, RolloutStatus, CLOSED_BETA_GENERATION};
 pub use store::{DrainStats, PipelineStore};
 pub use types::*;
 pub use writer::{CompensationStats, PipelineWriter};

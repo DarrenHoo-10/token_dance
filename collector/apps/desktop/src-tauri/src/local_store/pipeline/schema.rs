@@ -8,9 +8,9 @@ use super::types::{PipelineError, PIPELINE_SCHEMA_VERSION};
 const BUSINESS_DDL: &str = include_str!("../../../sql/event-pipeline-schema-v3.sqlite.sql");
 
 const META_DDL: &str = r#"
-CREATE TABLE schema_meta (
+CREATE TABLE IF NOT EXISTS schema_meta (
   id INTEGER PRIMARY KEY CHECK (id = 1),
-  schema_version INTEGER NOT NULL,
+  schema_version INTEGER NOT NULL DEFAULT 0,
   event_pipeline_v3 INTEGER NOT NULL DEFAULT 0 CHECK(event_pipeline_v3 IN (0,1)),
   event_pipeline_initialized_at INTEGER,
   extra TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(extra)) CHECK(json_type(extra)='object')
@@ -66,6 +66,7 @@ pub fn is_pipeline_ready(conn: &Connection) -> Result<bool, PipelineError> {
 
 /// Initialize the 10 business tables on an empty database and mark schema_meta.
 /// Re-running after a successful init is a no-op and must not wipe events.
+/// Tolerates a pre-existing `schema_meta` shell written by the P8 rollout state machine.
 pub fn initialize_empty(conn: &mut Connection, now_ms: i64) -> Result<bool, PipelineError> {
     if is_pipeline_ready(conn)? {
         return Ok(false);
@@ -89,6 +90,15 @@ pub fn initialize_empty(conn: &mut Connection, now_ms: i64) -> Result<bool, Pipe
 
     let tx = conn.transaction()?;
     tx.execute_batch(META_DDL)?;
+    // Preserve any rollout stamp already stored in schema_meta.extra.
+    let prior_extra: String = tx
+        .query_row(
+            "SELECT extra FROM schema_meta WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?
+        .unwrap_or_else(|| "{}".into());
     // Strip leading PRAGMA from the mirrored DDL; connection already configured.
     let ddl = BUSINESS_DDL
         .lines()
@@ -98,7 +108,24 @@ pub fn initialize_empty(conn: &mut Connection, now_ms: i64) -> Result<bool, Pipe
     tx.execute_batch(&ddl)?;
     tx.execute(
         "INSERT INTO schema_meta (id, schema_version, event_pipeline_v3, event_pipeline_initialized_at, extra)
-         VALUES (1, ?1, 1, ?2, '{}')",
+         VALUES (1, ?1, 1, ?2, ?3)
+         ON CONFLICT(id) DO UPDATE SET
+           schema_version = excluded.schema_version,
+           event_pipeline_v3 = 1,
+           event_pipeline_initialized_at = COALESCE(schema_meta.event_pipeline_initialized_at, excluded.event_pipeline_initialized_at),
+           extra = CASE
+             WHEN schema_meta.extra IS NULL OR schema_meta.extra = '{}' THEN excluded.extra
+             ELSE schema_meta.extra
+           END",
+        params![PIPELINE_SCHEMA_VERSION, now_ms, prior_extra],
+    )?;
+    // If row was freshly inserted with empty extra from conflict path, ensure initialized_at.
+    tx.execute(
+        "UPDATE schema_meta
+         SET event_pipeline_v3 = 1,
+             schema_version = ?1,
+             event_pipeline_initialized_at = COALESCE(event_pipeline_initialized_at, ?2)
+         WHERE id = 1",
         params![PIPELINE_SCHEMA_VERSION, now_ms],
     )?;
     tx.commit()?;
@@ -153,5 +180,26 @@ mod tests {
             )
             .unwrap();
         assert_eq!(init_at, 1_000);
+    }
+
+    #[test]
+    fn recovers_from_existing_meta_shell() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("shell.sqlite3");
+        let mut conn = Connection::open(&path).unwrap();
+        configure_connection(&conn).unwrap();
+        conn.execute_batch(META_DDL).unwrap();
+        conn.execute(
+            "INSERT INTO schema_meta (id, schema_version, event_pipeline_v3, extra)
+             VALUES (1, 0, 0, '{\"rollout_phase\":\"initializing\"}')",
+            [],
+        )
+        .unwrap();
+        assert!(initialize_empty(&mut conn, 3_000).unwrap());
+        assert!(is_pipeline_ready(&conn).unwrap());
+        let extra: String = conn
+            .query_row("SELECT extra FROM schema_meta WHERE id=1", [], |r| r.get(0))
+            .unwrap();
+        assert!(extra.contains("initializing"));
     }
 }

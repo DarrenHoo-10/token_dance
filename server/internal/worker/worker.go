@@ -33,6 +33,8 @@ type Worker struct {
 	ranking            *ranking.Index
 	lastHotPublish     time.Time
 	lastStatsFinalized time.Time
+	// eventPipelineV2Workers gates telemetry aggregation (P8 rollback switch).
+	eventPipelineV2Workers bool
 }
 
 func NewWorker(db *sql.DB, clk clock.Clock) *Worker {
@@ -58,13 +60,18 @@ func NewWorkerWithFull(db *sql.DB, clk clock.Clock, cipher *crypto.AEADCipher, e
 	workerID := fmt.Sprintf("wrk_%s_%d_%s", hostname, os.Getpid(), randSuffix)
 
 	return &Worker{
-		db:            db,
-		workerID:      workerID,
-		clk:           clk,
-		cipher:        cipher,
-		emailProvider: emailProvider,
-		storage:       storage,
+		db:                     db,
+		workerID:               workerID,
+		clk:                    clk,
+		cipher:                 cipher,
+		emailProvider:          emailProvider,
+		storage:                storage,
+		eventPipelineV2Workers: true,
 	}
+}
+
+func (w *Worker) SetEventPipelineV2Workers(enabled bool) {
+	w.eventPipelineV2Workers = enabled
 }
 
 func (w *Worker) SetStorage(s provider.ObjectStorage) {

@@ -74,7 +74,46 @@ impl PipelineStore {
 
     pub fn ensure_initialized(&mut self) -> Result<bool, PipelineError> {
         let now = self.now_ms();
-        schema::initialize_empty(&mut self.conn, now)
+        let before = schema::is_pipeline_ready(&self.conn)?;
+        let status = super::rollout::ensure_rollout(&mut self.conn, now)?;
+        if status.phase == super::rollout::RolloutPhase::Failed {
+            return Err(PipelineError::NotInitialized);
+        }
+        // Match prior semantics: true when this call completed empty-DB init.
+        Ok(!before && status.pipeline_ready && status.phase == super::rollout::RolloutPhase::Ready)
+    }
+
+    /// P8: whether acquisition / metrics / upload workers may run.
+    pub fn workers_allowed(&self) -> Result<bool, PipelineError> {
+        super::rollout::workers_allowed(&self.conn)
+    }
+
+    pub fn rollout_status(&self) -> Result<super::rollout::RolloutStatus, PipelineError> {
+        let client_enabled = super::flags::event_pipeline_v2_client_enabled();
+        let ready = schema::is_pipeline_ready(&self.conn)?;
+        let allowed = super::rollout::workers_allowed(&self.conn)?;
+        Ok(super::rollout::RolloutStatus {
+            generation: super::rollout::CLOSED_BETA_GENERATION,
+            phase: if !client_enabled {
+                super::rollout::RolloutPhase::Paused
+            } else if allowed {
+                super::rollout::RolloutPhase::Ready
+            } else if ready {
+                super::rollout::RolloutPhase::Ready
+            } else {
+                super::rollout::RolloutPhase::Pending
+            },
+            client_flag_enabled: client_enabled,
+            pipeline_ready: ready,
+            workers_may_start: allowed,
+            message: if allowed {
+                "event pipeline v3 empty-DB ready".into()
+            } else if !client_enabled {
+                "event_pipeline_v2_client disabled".into()
+            } else {
+                "event pipeline not ready".into()
+            },
+        })
     }
 
     pub fn business_table_count(&self) -> Result<usize, PipelineError> {
