@@ -97,12 +97,32 @@ pub async fn decode_tick(service: &mut ProductionService, prepared: PreparedTick
                 }
                 events.extend(batch.events);
             }
-            Err(error) => report.errors.push(format!(
-                "{}/{} {}: {error}",
-                item.adapter_id,
-                item.source_id,
-                item.path.display()
-            )),
+            Err(error) => {
+                if item.kind == "sqlite" {
+                    // A persistently failing snapshot (schema drift, busy file)
+                    // must not hold the aggregate queue hostage: leaving the
+                    // file pending keeps its job running forever. Mark it
+                    // skipped; discovery re-queues it when the file changes.
+                    progress.push(RebuildFileProgress {
+                        job_id: item.job_id,
+                        file_path: item.path.to_string_lossy().into_owned(),
+                        file_identity: item
+                            .checkpoint
+                            .as_ref()
+                            .map(|checkpoint| checkpoint.file_identity.clone())
+                            .unwrap_or_default(),
+                        mtime_unix: item.mtime_unix,
+                        file_len: item.file_len,
+                        status: "skipped".into(),
+                    });
+                }
+                report.errors.push(format!(
+                    "{}/{} {}: {error}",
+                    item.adapter_id,
+                    item.source_id,
+                    item.path.display()
+                ))
+            }
         }
     }
     if let Some(sessions_root) = grok_sessions_root() {
