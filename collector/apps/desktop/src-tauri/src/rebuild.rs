@@ -81,7 +81,12 @@ pub async fn decode_tick(service: &mut ProductionService, prepared: PreparedTick
                     file_len: batch.next.file_len as i64,
                     status: if !item.path.exists() {
                         "skipped".into()
-                    } else if caught_up {
+                    } else if caught_up || item.kind == "sqlite" {
+                        // SQLite snapshot sources are cursor-incremental, not a
+                        // bounded scan: a poll that moved the checkpoint is
+                        // caught up. Counting frames keeps the job "running"
+                        // forever while the agent's own database is hot and
+                        // blocks aggregate upload the whole time.
                         "caught_up".into()
                     } else {
                         "in_progress".into()
