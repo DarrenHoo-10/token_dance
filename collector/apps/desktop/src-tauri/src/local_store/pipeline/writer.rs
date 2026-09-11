@@ -4,7 +4,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TryS
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use super::store::PipelineStore;
+use super::store::{DrainStats, PipelineStore};
 use super::types::{
     PipelineError, SourceCheckpointSnapshot, SourceCommitBatch, SourceCommitResult, TaskComplete,
     TaskRetry, LeasedTask, Consumer, WRITER_QUEUE_BATCHES, WRITER_QUEUE_BYTES,
@@ -34,6 +34,16 @@ enum WriterCommand {
     CompleteTask {
         complete: TaskComplete,
         reply: Sender<Result<(), PipelineError>>,
+    },
+    ApplyMetricsTask {
+        task: LeasedTask,
+        reply: Sender<Result<(), PipelineError>>,
+    },
+    DrainMetrics {
+        consumer: Consumer,
+        limit: usize,
+        lease_ms: i64,
+        reply: Sender<Result<DrainStats, PipelineError>>,
     },
     RetryTask {
         retry: TaskRetry,
@@ -159,8 +169,26 @@ impl PipelineWriter {
         self.request(0, |reply| WriterCommand::CompleteTask { complete, reply })
     }
 
+    pub fn apply_metrics_task(&self, task: LeasedTask) -> Result<(), PipelineError> {
+        self.request(0, |reply| WriterCommand::ApplyMetricsTask { task, reply })
+    }
+
+    pub fn drain_metrics_consumer(
+        &self,
+        consumer: Consumer,
+        limit: usize,
+        lease_ms: i64,
+    ) -> Result<DrainStats, PipelineError> {
+        self.request(0, |reply| WriterCommand::DrainMetrics {
+            consumer,
+            limit,
+            lease_ms,
+            reply,
+        })
+    }
+
     pub fn retry_task(&self, retry: TaskRetry) -> Result<(), PipelineError> {
-        self.request(0, |reply| WriterCommand::RetryTask { retry, reply })
+        self.request(0, |reply| WriterCommand::RetryTask { reply, retry })
     }
 
     pub fn reclaim_leases(&self) -> Result<usize, PipelineError> {
@@ -260,6 +288,19 @@ fn writer_loop(store: &mut PipelineStore, rx: Receiver<QueuedBatch>) {
             }
             WriterCommand::CompleteTask { complete, reply } => {
                 let _ = reply.send(store.complete_task(complete));
+                false
+            }
+            WriterCommand::ApplyMetricsTask { task, reply } => {
+                let _ = reply.send(store.apply_and_complete_metrics(&task));
+                false
+            }
+            WriterCommand::DrainMetrics {
+                consumer,
+                limit,
+                lease_ms,
+                reply,
+            } => {
+                let _ = reply.send(store.drain_metrics_consumer(consumer, limit, lease_ms));
                 false
             }
             WriterCommand::RetryTask { retry, reply } => {
