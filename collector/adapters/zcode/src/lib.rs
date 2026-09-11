@@ -222,17 +222,18 @@ fn decode_records(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    records
+    let events: Vec<NormalizedEvent> = records
         .iter()
         .enumerate()
-        .filter_map(
-            |(i, r)| match decode_record(manifest, version, hmac_key, frame, r, i + 1) {
-                Ok(Some(e)) => Some(Ok(e)),
-                Ok(None) => None,
-                Err(e) => Some(Err(e)),
-            },
-        )
-        .collect()
+        // One malformed record must not void its whole frame: skip it and
+        // keep decoding, or a single bad row silently loses every other row
+        // in the batch (the cursor still advances).
+        .filter_map(|(i, r)| match decode_record(manifest, version, hmac_key, frame, r, i + 1) {
+            Ok(Some(e)) => Some(e),
+            Ok(None) | Err(_) => None,
+        })
+        .collect();
+    Ok(events)
 }
 
 fn decode_record(
