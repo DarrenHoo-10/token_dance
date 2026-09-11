@@ -35,9 +35,10 @@ function beijingWeekdayMonday0(date: string): number {
   return (new Date(Date.UTC(year, month - 1, day)).getUTCDay() + 6) % 7;
 }
 
-function formatPercentile(value: number): string {
-  if (!Number.isFinite(value)) return '—';
-  return (Math.ceil(value * 100) / 100).toFixed(2);
+function formatPercentile(value: number | string): string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return '—';
+  return (Math.ceil(n * 100) / 100).toFixed(2);
 }
 
 function DeltaChip({ value, suffix }: { value?: number | null; suffix?: string }) {

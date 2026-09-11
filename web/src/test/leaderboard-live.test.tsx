@@ -119,7 +119,7 @@ describe('Percentile formatting', () => {
       sync: { lastCommittedAt: null, pendingLocalCount: null },
       aggregationVersion: 2,
     } as never);
-    vi.spyOn(api,'getActivityCalendar').mockResolvedValue({ days: [], currentStreak: 0 });
+    vi.spyOn(api,'getActivityCalendar').mockResolvedValue({ days: [], currentStreak: 0, longestStreak: 0, totalActiveDays: 0 });
     showPage();
     expect(await screen.findByText('前 77.78%')).toBeInTheDocument();
     expect(screen.queryByText(/77\.7778?7?%/)).not.toBeInTheDocument();
