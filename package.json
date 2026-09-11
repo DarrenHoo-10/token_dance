@@ -4,7 +4,9 @@
   "type": "module",
   "scripts": {
     "generate:protocol": "node tools/generate-protocol.mjs",
-    "check:protocol": "node tools/generate-protocol.mjs --check && node tools/test-protocol.mjs"
+    "check:protocol": "node tools/generate-protocol.mjs --check && node tools/test-protocol.mjs",
+    "check:protocol:v2": "node tools/generate-protocol.mjs --check && node tools/test-protocol-v2.mjs",
+    "check:protocol:all": "npm run check:protocol && npm run check:protocol:v2"
   },
   "devDependencies": {
     "ajv": "^8.17.1",

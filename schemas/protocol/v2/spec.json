@@ -1,0 +1,194 @@
+{
+  "version": "2.0",
+  "protocolVersion": 2,
+  "schemaVersion": 2,
+  "metricSemanticsVersion": 1,
+  "defaults": {
+    "maxBatchEvents": 500,
+    "maxBatchBytes": 1048576
+  },
+  "enums": {
+    "EventType": [
+      "model_usage_recorded",
+      "cost_recorded",
+      "session_started",
+      "session_ended",
+      "turn_started",
+      "turn_completed",
+      "tool_invoked",
+      "skill_invoked",
+      "code_changed"
+    ],
+    "AckResult": [
+      "accepted",
+      "duplicate",
+      "discarded",
+      "retry",
+      "blocked",
+      "conflict",
+      "invalid"
+    ],
+    "Accuracy": ["exact", "derived", "correlated", "estimated"],
+    "TimeSource": ["source_record", "prior_record", "file_mtime", "unknown"],
+    "CostSource": ["provider_reported", "calculated_price"],
+    "TurnTrigger": ["user", "system", "scheduled", "subagent"],
+    "SessionEndReason": ["completed", "cancelled", "error", "timeout", "unknown"],
+    "AckErrorCode": [
+      "outside_window",
+      "deleted",
+      "future_event_time",
+      "unsupported_version",
+      "schema_invalid",
+      "hash_mismatch",
+      "negative_count",
+      "unknown_field",
+      "duplicate_key",
+      "dependency_expired",
+      "internal_retryable"
+    ]
+  },
+  "objects": {
+    "ModelRef": {
+      "providerId": "identifier",
+      "modelId": "identifier"
+    },
+    "SkillRef": {
+      "skillKey": "base64url32",
+      "publicName?": "shortString"
+    },
+    "UsagePayload": {
+      "token_total?": "uint64String",
+      "input_context_tokens?": "uint64String",
+      "output_tokens?": "uint64String",
+      "cache_read_tokens?": "uint64String",
+      "cache_write_tokens?": "uint64String",
+      "reasoning_tokens?": "uint64String",
+      "request_count?": "uint64String"
+    },
+    "CostPayload": {
+      "units": "uint64String",
+      "currency": "currency",
+      "source": "CostSource",
+      "price_basis_id?": "identifier",
+      "coverage?": "shortString"
+    },
+    "CodePayload": {
+      "generated?": "uint64String",
+      "accepted?": "uint64String",
+      "added?": "uint64String",
+      "removed?": "uint64String",
+      "file_touch_count?": "uint64String"
+    },
+    "ActivityPayload": {
+      "duration_ms?": "uint64String",
+      "success?": "boolean",
+      "trigger?": "TurnTrigger",
+      "reason?": "SessionEndReason",
+      "tool_category?": "identifier"
+    },
+    "ContextPayload": {
+      "parent_session_key?": "base64url32",
+      "tool_call_key?": "base64url32",
+      "scope_started_at?": "uint64String",
+      "coverage?": "shortString"
+    },
+    "MetaPayload": {
+      "accuracy": "Accuracy",
+      "time_source": "TimeSource",
+      "safe_tags?": "shortString[]"
+    },
+    "EventPayload": {
+      "usage?": "UsagePayload",
+      "cost?": "CostPayload",
+      "code?": "CodePayload",
+      "activity?": "ActivityPayload",
+      "context?": "ContextPayload",
+      "meta?": "MetaPayload"
+    },
+    "EventEnvelope": {
+      "eventId": "base64url32",
+      "factKey": "base64url32",
+      "factRevision": "uint64String",
+      "schemaVersion": "uint32",
+      "metricSemanticsVersion": "uint32",
+      "harnessId": "identifier",
+      "eventType": "EventType",
+      "occurredAt": "uint64String",
+      "model?": "ModelRef",
+      "skill?": "SkillRef",
+      "sessionKey?": "base64url32",
+      "turnKey?": "base64url32",
+      "costScopeKey?": "base64url32",
+      "payload": "EventPayload",
+      "contentHash": "base64url32"
+    },
+    "TelemetryEventsRequest": {
+      "protocolVersion": "uint32",
+      "requestId": "shortString",
+      "events": "EventEnvelope[]"
+    },
+    "EventAck": {
+      "eventId": "base64url32",
+      "contentHash": "base64url32",
+      "result": "AckResult",
+      "code?": "AckErrorCode"
+    },
+    "TelemetryEventsResponse": {
+      "requestId": "shortString",
+      "serverTimeMs": "uint64String",
+      "acks": "EventAck[]"
+    },
+    "TelemetryCapabilities": {
+      "protocolVersion": "uint32",
+      "supportedSchemaVersions": "uint32[]",
+      "supportedMetricSemanticsVersions": "uint32[]",
+      "maxBatchEvents": "uint32",
+      "maxBatchBytes": "uint32",
+      "serverTimeMs": "uint64String",
+      "eventReceiveLowerBoundMs": "uint64String"
+    }
+  },
+  "unions": {},
+  "roots": [
+    "EventEnvelope",
+    "TelemetryEventsRequest",
+    "TelemetryEventsResponse",
+    "TelemetryCapabilities",
+    "EventAck"
+  ],
+  "hashWhitelist": {
+    "EventEnvelope": [
+      "eventId",
+      "factKey",
+      "factRevision",
+      "schemaVersion",
+      "metricSemanticsVersion",
+      "harnessId",
+      "eventType",
+      "occurredAt",
+      "model",
+      "skill",
+      "sessionKey",
+      "turnKey",
+      "costScopeKey",
+      "payload"
+    ],
+    "SkillRef": ["skillKey"],
+    "ModelRef": ["providerId", "modelId"],
+    "EventPayload": ["usage", "cost", "code", "activity", "context", "meta"],
+    "MetaPayload": ["accuracy", "time_source", "safe_tags"]
+  },
+  "hashExcluded": {
+    "SkillRef": ["publicName"],
+    "EventEnvelope": ["contentHash"]
+  },
+  "ackUploadMapping": {
+    "accepted": { "upload": 3, "action": "delete_upload_task" },
+    "duplicate": { "upload": 3, "action": "delete_upload_task" },
+    "discarded": { "upload": 4, "action": "finish_upload_task_not_applicable" },
+    "retry": { "upload": 1, "action": "reschedule_runnable_at" },
+    "blocked": { "upload": 5, "action": "wait_for_compat" },
+    "conflict": { "upload": 6, "action": "quarantine_stop_retry" },
+    "invalid": { "upload": 6, "action": "quarantine_stop_retry" }
+  }
+}
