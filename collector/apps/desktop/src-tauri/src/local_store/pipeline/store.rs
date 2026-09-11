@@ -9,9 +9,9 @@ use uuid::Uuid;
 
 use super::schema::{self, BUSINESS_TABLES};
 use super::types::{
-    Consumer, ConsumerStatus, EventCandidate, LeasedTask, PipelineError, RegisterSource,
-    SourceCommitBatch, SourceCommitResult, TaskComplete, TaskRetry, MAX_BATCH_BYTES,
-    MAX_BATCH_EVENTS, DB_FILE,
+    Consumer, ConsumerStatus, CursorKind, EventCandidate, LeasedTask, PipelineError,
+    RegisterSource, SourceCheckpointSnapshot, SourceCommitBatch, SourceCommitResult, SourceKind,
+    TaskComplete, TaskRetry, MAX_BATCH_BYTES, MAX_BATCH_EVENTS, DB_FILE,
 };
 
 pub struct PipelineStore {
@@ -264,6 +264,83 @@ impl PipelineStore {
             )
             .optional()?
             .ok_or(PipelineError::SourceNotFound(source_id))
+    }
+
+    /// Load a durable checkpoint snapshot for out-of-transaction read/decode.
+    pub fn load_source_checkpoint(
+        &self,
+        source_id: i64,
+    ) -> Result<SourceCheckpointSnapshot, PipelineError> {
+        schema::assert_ready(&self.conn)?;
+        let row = self
+            .conn
+            .query_row(
+                "SELECT harness_id, source_kind, locator_ref, stream_key, cursor_kind,
+                        cursor_json, decoder_state_version, decoder_state_json,
+                        observed_boundary_json, commit_seq, lease_token, lease_until,
+                        ignored_record_count, last_ignored_code, next_poll_at, enabled
+                 FROM collection_sources WHERE id=?1 AND delete_at IS NULL",
+                params![source_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, i64>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, String>(8)?,
+                        row.get::<_, i64>(9)?,
+                        row.get::<_, Option<String>>(10)?,
+                        row.get::<_, Option<i64>>(11)?,
+                        row.get::<_, i64>(12)?,
+                        row.get::<_, Option<String>>(13)?,
+                        row.get::<_, Option<i64>>(14)?,
+                        row.get::<_, i64>(15)?,
+                    ))
+                },
+            )
+            .optional()?
+            .ok_or(PipelineError::SourceNotFound(source_id))?;
+        Ok(SourceCheckpointSnapshot {
+            source_id,
+            harness_id: row.0,
+            source_kind: parse_source_kind(&row.1)?,
+            locator_ref: row.2,
+            stream_key: row.3,
+            cursor_kind: parse_cursor_kind(&row.4)?,
+            cursor_json: row.5,
+            decoder_state_version: row.6,
+            decoder_state_json: row.7,
+            observed_boundary_json: row.8,
+            commit_seq: row.9,
+            lease_token: row.10,
+            lease_until: row.11,
+            ignored_record_count: row.12,
+            last_ignored_code: row.13,
+            next_poll_at: row.14,
+            enabled: row.15 != 0,
+        })
+    }
+
+    /// List due enabled sources for fair scheduling (no lease held).
+    pub fn list_due_sources(&self, now_ms: i64, limit: usize) -> Result<Vec<i64>, PipelineError> {
+        schema::assert_ready(&self.conn)?;
+        let limit = limit.clamp(1, 256);
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM collection_sources
+             WHERE delete_at IS NULL AND enabled = 1
+               AND (next_poll_at IS NULL OR next_poll_at <= ?1)
+               AND (lease_token IS NULL OR lease_until IS NULL OR lease_until <= ?1)
+             ORDER BY COALESCE(next_poll_at, 0) ASC, id ASC
+             LIMIT ?2",
+        )?;
+        let rows = stmt
+            .query_map(params![now_ms, limit as i64], |row| row.get::<_, i64>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     // ── atomic source commit ────────────────────────────────────────────────
@@ -732,6 +809,28 @@ fn validate_json_object(raw: &str, field: &str) -> Result<(), PipelineError> {
         )));
     }
     Ok(())
+}
+
+fn parse_source_kind(raw: &str) -> Result<SourceKind, PipelineError> {
+    match raw {
+        "jsonl" => Ok(SourceKind::Jsonl),
+        "sqlite" => Ok(SourceKind::Sqlite),
+        "other" => Ok(SourceKind::Other),
+        other => Err(PipelineError::InvalidArgument(format!(
+            "unknown source_kind {other}"
+        ))),
+    }
+}
+
+fn parse_cursor_kind(raw: &str) -> Result<CursorKind, PipelineError> {
+    match raw {
+        "byte_offset" => Ok(CursorKind::ByteOffset),
+        "sqlite_change" => Ok(CursorKind::SqliteChange),
+        "opaque" => Ok(CursorKind::Opaque),
+        other => Err(PipelineError::InvalidArgument(format!(
+            "unknown cursor_kind {other}"
+        ))),
+    }
 }
 
 fn validate_batch_limits(batch: &SourceCommitBatch) -> Result<(), PipelineError> {

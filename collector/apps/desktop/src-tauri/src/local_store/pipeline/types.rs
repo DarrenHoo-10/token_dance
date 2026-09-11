@@ -126,6 +126,28 @@ pub struct RegisterSource {
     pub next_poll_at: Option<i64>,
 }
 
+/// Committed source checkpoint copied under lease for out-of-transaction I/O.
+#[derive(Debug, Clone)]
+pub struct SourceCheckpointSnapshot {
+    pub source_id: i64,
+    pub harness_id: String,
+    pub source_kind: SourceKind,
+    pub locator_ref: String,
+    pub stream_key: String,
+    pub cursor_kind: CursorKind,
+    pub cursor_json: String,
+    pub decoder_state_version: i64,
+    pub decoder_state_json: String,
+    pub observed_boundary_json: String,
+    pub commit_seq: i64,
+    pub lease_token: Option<String>,
+    pub lease_until: Option<i64>,
+    pub ignored_record_count: i64,
+    pub last_ignored_code: Option<String>,
+    pub next_poll_at: Option<i64>,
+    pub enabled: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct EventCandidate {
     pub event_id: [u8; 32],

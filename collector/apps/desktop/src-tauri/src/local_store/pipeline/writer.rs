@@ -6,11 +6,21 @@ use std::time::{Duration, Instant};
 
 use super::store::PipelineStore;
 use super::types::{
-    PipelineError, SourceCommitBatch, SourceCommitResult, TaskComplete, TaskRetry, LeasedTask,
-    Consumer, WRITER_QUEUE_BATCHES, WRITER_QUEUE_BYTES, COMPENSATION_INTERVAL_MS,
+    PipelineError, SourceCheckpointSnapshot, SourceCommitBatch, SourceCommitResult, TaskComplete,
+    TaskRetry, LeasedTask, Consumer, WRITER_QUEUE_BATCHES, WRITER_QUEUE_BYTES,
+    COMPENSATION_INTERVAL_MS,
 };
 
 enum WriterCommand {
+    LeaseSource {
+        source_id: i64,
+        lease_ms: i64,
+        reply: Sender<Result<(String, i64, i64), PipelineError>>,
+    },
+    LoadSourceCheckpoint {
+        source_id: i64,
+        reply: Sender<Result<SourceCheckpointSnapshot, PipelineError>>,
+    },
     CommitSource {
         batch: SourceCommitBatch,
         reply: Sender<Result<SourceCommitResult, PipelineError>>,
@@ -109,6 +119,28 @@ impl PipelineWriter {
         self.request(bytes, |reply| WriterCommand::CommitSource { batch, reply })
     }
 
+    pub fn lease_source(
+        &self,
+        source_id: i64,
+        lease_ms: i64,
+    ) -> Result<(String, i64, i64), PipelineError> {
+        self.request(0, |reply| WriterCommand::LeaseSource {
+            source_id,
+            lease_ms,
+            reply,
+        })
+    }
+
+    pub fn load_source_checkpoint(
+        &self,
+        source_id: i64,
+    ) -> Result<SourceCheckpointSnapshot, PipelineError> {
+        self.request(0, |reply| WriterCommand::LoadSourceCheckpoint {
+            source_id,
+            reply,
+        })
+    }
+
     pub fn claim_tasks(
         &self,
         consumer: Consumer,
@@ -201,6 +233,18 @@ fn writer_loop(store: &mut PipelineStore, rx: Receiver<QueuedBatch>) {
 
         pending_bytes = pending_bytes.saturating_add(queued.approx_bytes);
         let done = match queued.cmd {
+            WriterCommand::LeaseSource {
+                source_id,
+                lease_ms,
+                reply,
+            } => {
+                let _ = reply.send(store.lease_source(source_id, lease_ms));
+                false
+            }
+            WriterCommand::LoadSourceCheckpoint { source_id, reply } => {
+                let _ = reply.send(store.load_source_checkpoint(source_id));
+                false
+            }
             WriterCommand::CommitSource { batch, reply } => {
                 let _ = reply.send(store.commit_source(batch));
                 false
