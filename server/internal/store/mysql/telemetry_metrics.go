@@ -349,11 +349,3 @@ func FailTelemetryTaskTx(ctx context.Context, tx *sql.Tx, taskID uint64, leaseTo
 	)
 	return err
 }
-
-func uintPtrFromNull(n sql.NullInt64) *uint64 {
-	if !n.Valid {
-		return nil
-	}
-	v := uint64(n.Int64)
-	return &v
-}
