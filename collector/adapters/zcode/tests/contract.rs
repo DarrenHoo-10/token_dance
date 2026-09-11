@@ -210,7 +210,10 @@ async fn injected_key_changes_identity_and_sensitive_fields_do_not_escape() {
 #[tokio::test]
 async fn sqlite_usage_identity_does_not_depend_on_poll_cursor() {
     let adapter = ZCodeAdapter::new("0.8.0", FINGERPRINT_V3, KEY);
-    let payload = r#"{"fingerprint":"zcode-sqlite-v3-uv0","records":[{"type":"step_finish","timestamp":"2026-09-10T01:00:00Z","sessionId":"zcode-session-secret","stepId":"usage-row-42","provider":"zai","model":"glm","inputTokens":10,"outputTokens":2,"totalTokens":12}]}"#;
+    // Real model_usage rows carry a NUMERIC rowid as stepId; identity must
+    // accept numbers or it falls back to the batch sequence and every
+    // incremental poll after the first rescan collides with old fingerprints.
+    let payload = r#"{"fingerprint":"zcode-sqlite-v3-uv0","records":[{"type":"step_finish","timestamp":"2026-09-10T01:00:00Z","sessionId":"zcode-session-secret","stepId":42,"provider":"zai","model":"glm","inputTokens":10,"outputTokens":2,"totalTokens":12}]}"#;
     let mut first = frame(SourceKind::SqliteSnapshot, "zcode-sqlite", payload);
     first.cursor = "0:10:1:1".into();
     let mut second = frame(SourceKind::SqliteSnapshot, "zcode-sqlite", payload);
@@ -219,6 +222,37 @@ async fn sqlite_usage_identity_does_not_depend_on_poll_cursor() {
     let right = adapter.decode(second).await.unwrap();
     assert_eq!(left.len(), 1);
     assert_eq!(left[0].event_id, right[0].event_id);
+}
+
+#[tokio::test]
+async fn numeric_usage_rows_in_separate_polls_keep_distinct_identities() {
+    let adapter = ZCodeAdapter::new("0.8.0", FINGERPRINT_V3, KEY);
+    let record = |step_id: i64, tokens: i64| {
+        format!(
+            r#"{{"type":"step_finish","timestamp":"2026-09-11T01:00:0{tokens}.000Z","sessionId":"s","stepId":{step_id},"provider":"zai","model":"glm","inputTokens":{tokens},"outputTokens":0,"totalTokens":{tokens}}}"#
+        )
+    };
+    // A big rescan places a row at batch position 1; a later incremental poll
+    // places a DIFFERENT row at position 1 too. Their identities must differ.
+    let rescan = format!(
+        r#"{{"fingerprint":"zcode-sqlite-v3-uv0","records":[{},{}]}}"#,
+        record(100, 10),
+        record(101, 20),
+    );
+    let incremental = format!(
+        r#"{{"fingerprint":"zcode-sqlite-v3-uv0","records":[{}]}}"#,
+        record(102, 30),
+    );
+    let mut big = frame(SourceKind::SqliteSnapshot, "zcode-sqlite", &rescan);
+    big.cursor = "0:1:1:1".into();
+    let mut small = frame(SourceKind::SqliteSnapshot, "zcode-sqlite", &incremental);
+    small.cursor = "0:1:99:99".into();
+    let big_events = adapter.decode(big).await.unwrap();
+    let small_events = adapter.decode(small).await.unwrap();
+    assert_eq!(big_events.len(), 2);
+    assert_eq!(small_events.len(), 1);
+    let big_ids: Vec<_> = big_events.iter().map(|e| e.event_id.clone()).collect();
+    assert!(!big_ids.contains(&small_events[0].event_id));
 }
 
 #[test]

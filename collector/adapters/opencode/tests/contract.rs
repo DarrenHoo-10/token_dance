@@ -87,6 +87,9 @@ async fn unknown_fingerprint_never_guesses_sql() {
 #[tokio::test]
 async fn usage_identity_does_not_depend_on_poll_cursor() {
     let adapter = OpenCodeAdapter::new("1.18.18", FINGERPRINT_V1, KEY);
+    // Real part rows carry a NUMERIC rowid as stepId; identity must accept
+    // numbers or it falls back to the batch sequence and incremental polls
+    // collide with fingerprints from the initial rescan.
     let left = adapter
         .decode(frame_with_cursor("3:3892:0:1786885842651", KNOWN_JSON))
         .await
@@ -99,4 +102,14 @@ async fn usage_identity_does_not_depend_on_poll_cursor() {
     for (l, r) in left.iter().zip(right.iter()) {
         assert_eq!(l.event_id, r.event_id, "kind must share one identity");
     }
+    let incremental = r#"{"fingerprint":"opencode-sqlite-v1-uv0","records":[{"type":"step_finish","timestamp":"2026-09-11T01:00:05Z","sessionId":"opencode-session-secret","stepId":777,"inputTokens":5,"outputTokens":1,"reasoningTokens":0,"cacheReadTokens":0,"cacheWriteTokens":0}]}"#;
+    let small = adapter
+        .decode(frame_with_cursor("3:3892:500:999", incremental))
+        .await
+        .unwrap();
+    // step_finish emits both a usage and a turn event for the same row id.
+    assert_eq!(small.len(), 2);
+    let left_ids: Vec<_> = left.iter().map(|e| e.event_id.clone()).collect();
+    assert!(!left_ids.contains(&small[0].event_id));
+    assert!(!left_ids.contains(&small[1].event_id));
 }
