@@ -2,6 +2,7 @@ package device
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"testing"
@@ -121,5 +122,85 @@ func TestUSR023_DevicePauseResumeRevokeLifecycle(t *testing.T) {
 	}
 	if _, err := svc.ResumeDevice(ctx, inst.InstallationID, userID); err == nil {
 		t.Fatal("revoked device must not be resumable")
+	}
+}
+
+func TestAggregateRejectsCollectorsOlderThanFloor(t *testing.T) {
+	ctx := context.Background()
+	st := memory.NewMemoryStore()
+	cfg := config.DefaultConfig()
+	now := time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC)
+	svc := NewService(st, cfg, clock.NewMockClock(now))
+
+	userID := "usr_aggversion"
+	_, sess, _ := st.SeedUserForTest(userID, "aggver", "aggver@tokendance.dev", now)
+
+	claim := func(version string) *domain.Installation {
+		t.Helper()
+		res, err := svc.CreateBindingChallenge(ctx, userID, sess.SessionID)
+		if err != nil {
+			t.Fatalf("binding challenge: %v", err)
+		}
+		inst, err := svc.ClaimInstallation(ctx, ClaimInput{
+			Code: res.Code,
+			PublicKey: func() string {
+				sum := sha256.Sum256([]byte("aggregate-version-probe:" + version))
+				return hex.EncodeToString(sum[:])
+			}(),
+			OSType:           "windows",
+			Architecture:     "x86_64",
+			CollectorVersion: version,
+		})
+		if err != nil {
+			t.Fatalf("claim %q: %v", version, err)
+		}
+		return inst
+	}
+
+	commit := func(inst *domain.Installation) *domain.AppError {
+		t.Helper()
+		_, err := svc.CommitAggregate(ctx, domain.AggregateCommit{
+			Snapshot: domain.AggregateSnapshot{
+				SchemaVersion: 1,
+				Revision:      1,
+				Day:           "2026-09-11",
+				Rows: []domain.AggregateRow{{
+					Kind:    "agent",
+					AgentID: "codex",
+					Metrics: map[string]string{"exact_token_total": "1"},
+				}},
+			},
+			InstallationID: inst.InstallationID,
+			ReceivedAt:     now,
+		})
+		var appErr *domain.AppError
+		if !errors.As(err, &appErr) {
+			t.Fatalf("expected AppError, got %v", err)
+		}
+		return appErr
+	}
+
+	for _, version := range []string{"0.1.21", "0.1.7", "v0.1.21", "", "1.0.0-rc", "abc"} {
+		if appErr := commit(claim(version)); appErr.Code != "CLIENT_VERSION_UNSUPPORTED" {
+			t.Fatalf("version %q: expected CLIENT_VERSION_UNSUPPORTED, got %v", version, appErr.Code)
+		}
+	}
+	for _, version := range []string{"0.1.22", "0.1.24", "1.0.0"} {
+		appErr := commit(claim(version))
+		if appErr.Code == "CLIENT_VERSION_UNSUPPORTED" {
+			t.Fatalf("version %q should pass the version gate, got %v", version, appErr)
+		}
+	}
+}
+
+func TestAggregateCollectorVersionSupportedTable(t *testing.T) {
+	cases := map[string]bool{
+		"0.1.21": false, "0.1.7": false, "v0.1.21": false, "": false,
+		"abc": false, "1.0.0-rc": false, "0.1.22": true, "0.1.24": true, "1.0.0": true,
+	}
+	for version, want := range cases {
+		if got := aggregateCollectorVersionSupported(version); got != want {
+			t.Errorf("%q: want %v got %v", version, want, got)
+		}
 	}
 }

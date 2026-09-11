@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"time"
 
@@ -419,4 +420,33 @@ func (s *Service) AuthorizeIngest(ctx context.Context, installationID string) (*
 		return nil, nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to authorize ingest", nil, err)
 	}
 	return inst, user, nil
+}
+
+// minimumAggregateCollectorVersion is the oldest desktop build whose daily
+// aggregate uploads are still accepted. Older builds double-counted ZCode
+// usage (fixed in 0.1.22) and must not keep feeding the leaderboard.
+var minimumAggregateCollectorVersion = [3]int{0, 1, 22}
+
+func aggregateCollectorVersionSupported(version string) bool {
+	parts := strings.Split(strings.TrimPrefix(strings.TrimSpace(version), "v"), ".")
+	if len(parts) != len(minimumAggregateCollectorVersion) {
+		return false
+	}
+	parsed := make([]int, len(parts))
+	for index, part := range parts {
+		if part == "" || len(part) > 9 {
+			return false
+		}
+		value, err := strconv.Atoi(part)
+		if err != nil || value < 0 {
+			return false
+		}
+		parsed[index] = value
+	}
+	for index := range parsed {
+		if parsed[index] != minimumAggregateCollectorVersion[index] {
+			return parsed[index] > minimumAggregateCollectorVersion[index]
+		}
+	}
+	return true
 }
