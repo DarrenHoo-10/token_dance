@@ -13,12 +13,14 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use wal_spool::SourceCheckpoint;
 
 mod aggregate_activity;
+pub mod pipeline;
 mod rebuild;
 mod retention;
 #[cfg(test)]
 mod retention_tests;
 mod sync;
 pub use retention::{AggregateSnapshot, PendingAggregate};
+pub use pipeline::{PipelineStore, PipelineWriter};
 
 pub use rebuild::{DiscoveredSource, RebuildFileProgress, ScanWorkItem};
 pub use sync::{DeliveryRecord, LeasedBatch};
