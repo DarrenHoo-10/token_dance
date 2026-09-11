@@ -109,3 +109,19 @@ describe('Live leaderboard', () => {
     expect(screen.getAllByText('Ada')).toHaveLength(2);
   });
 });
+
+describe('Percentile formatting', () => {
+  it('renders the rank percentile with two decimals rounded up', async () => {
+    vi.spyOn(api,'getPersonalSummary').mockResolvedValue({
+      range: { key: 'today', from: '', to: '', timezone: 'Asia/Shanghai' },
+      metrics: { estimatedCost: { supported: false }, totalTokens: { value: '0', supported: true }, generatedCodeLines: { supported: false }, tokensPerCodeLine: { supported: false }, inputContextTokens: { supported: false }, outputTokens: { supported: false }, cacheHitRate: { supported: false }, activeDurationMs: { supported: false }, messageCount: { supported: false }, userMessageCount: { supported: false } },
+      ranking: { rank: 3, percentile: 77.77777777777779 },
+      sync: { lastCommittedAt: null, pendingLocalCount: null },
+      aggregationVersion: 2,
+    } as never);
+    vi.spyOn(api,'getActivityCalendar').mockResolvedValue({ days: [], currentStreak: 0 });
+    showPage();
+    expect(await screen.findByText('前 77.78%')).toBeInTheDocument();
+    expect(screen.queryByText(/77\.7778?7?%/)).not.toBeInTheDocument();
+  });
+});
