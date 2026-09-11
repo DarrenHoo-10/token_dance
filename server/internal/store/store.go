@@ -86,6 +86,7 @@ type DeviceStore interface {
 	CancelBindingChallenge(ctx context.Context, challengeID, userID string) error
 	ClaimInstallationTx(ctx context.Context, codeHash [32]byte, inst domain.Installation, now time.Time) (*domain.Installation, error)
 	RegisterInstallationTx(ctx context.Context, inst domain.Installation, now time.Time) (*domain.Installation, error)
+	RebindInstallationTx(ctx context.Context, installationID, newUserID string, now time.Time) (*domain.Installation, error)
 	UpdateInstallationName(ctx context.Context, installationID, userID string, name string, now time.Time) (*domain.Installation, error)
 	PauseInstallation(ctx context.Context, installationID, userID string, reason string, now time.Time) (*domain.Installation, error)
 	ResumeInstallation(ctx context.Context, installationID, userID string, now time.Time) (*domain.Installation, error)
@@ -96,6 +97,7 @@ type DeviceStore interface {
 type IngestStore interface {
 	GetIngestInstallation(ctx context.Context, installationID string) (*domain.Installation, error)
 	CommitIngest(ctx context.Context, batch domain.IngestBatch) (*domain.IngestResult, error)
+	CommitTelemetryEventsV2(ctx context.Context, in domain.TelemetryEventsV2Input) (*domain.TelemetryEventsV2Result, error)
 	GetIngestCursor(ctx context.Context, installationID string) (domain.TelemetryCursor, error)
 }
 

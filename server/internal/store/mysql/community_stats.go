@@ -7,18 +7,21 @@ import (
 	"time"
 
 	"tokendance/internal/crypto"
+	"tokendance/internal/domain"
 	"tokendance/internal/store"
 )
 
 const communityDaySumSQL = `
 	SELECT
-		CAST(COALESCE(SUM(exact_token_total + derived_token_total + estimated_token_total), 0) AS UNSIGNED),
-		COUNT(DISTINCT CASE WHEN exact_token_total + derived_token_total + estimated_token_total > 0 THEN user_id END),
-		CAST(COALESCE(SUM(code_generated_lines), 0) AS UNSIGNED),
+		CAST(COALESCE(SUM(exact_token_total + derived_token_total), 0) AS UNSIGNED),
+		COUNT(DISTINCT CASE WHEN exact_token_total + derived_token_total > 0 THEN user_id END),
+		0,
 		CAST(COALESCE(SUM(model_request_count), 0) AS UNSIGNED),
-		COALESCE(SUM(cost_amount), 0)
-	FROM daily_user_agent_metrics
-	WHERE metric_date = ?`
+		0
+	FROM telemetry_model_metrics
+	WHERE grain = 'day'
+	  AND delete_at IS NULL
+	  AND bucket_start = ?`
 
 // EnqueueCommunityStatsOutboxTx marks metric days as dirty inside the same
 // transaction that rebuilt their daily aggregates. Events carry only the date;
@@ -59,8 +62,12 @@ type communityStatsStore struct {
 
 func (s *communityStatsStore) SumCommunityDay(ctx context.Context, date string) (store.CommunityDailyTotals, error) {
 	totals := store.CommunityDailyTotals{MetricDate: date}
+	bucketStart, err := domain.DayBucketStartMs(date)
+	if err != nil {
+		return store.CommunityDailyTotals{}, err
+	}
 	var cost sql.NullFloat64
-	if err := s.db.QueryRowContext(ctx, communityDaySumSQL, date).Scan(
+	if err := s.db.QueryRowContext(ctx, communityDaySumSQL, bucketStart).Scan(
 		&totals.TokensTotal,
 		&totals.Developers,
 		&totals.CodeLines,
@@ -69,7 +76,29 @@ func (s *communityStatsStore) SumCommunityDay(ctx context.Context, date string) 
 	); err != nil {
 		return store.CommunityDailyTotals{}, fmt.Errorf("sum community day %s: %w", date, err)
 	}
-	totals.CostAmount = cost.Float64
+	// Trusted code lines + cost from companion tables for the same day bucket.
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT CAST(COALESCE(SUM(code_generated_lines), 0) AS UNSIGNED)
+		FROM telemetry_harness_metrics
+		WHERE grain = 'day' AND delete_at IS NULL AND bucket_start = ?`, bucketStart,
+	).Scan(&totals.CodeLines); err != nil {
+		return store.CommunityDailyTotals{}, fmt.Errorf("sum community code lines %s: %w", date, err)
+	}
+	var costUnits sql.NullString
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT CAST(COALESCE(SUM(reported_cost_units + estimated_cost_units), 0) AS CHAR)
+		FROM telemetry_cost_metrics
+		WHERE grain = 'day' AND delete_at IS NULL AND bucket_start = ?`, bucketStart,
+	).Scan(&costUnits); err != nil {
+		return store.CommunityDailyTotals{}, fmt.Errorf("sum community cost %s: %w", date, err)
+	}
+	if costUnits.Valid && costUnits.String != "" && costUnits.String != "0" {
+		var units float64
+		if _, err := fmt.Sscanf(costUnits.String, "%f", &units); err == nil {
+			totals.CostAmount = units / 1e8
+		}
+	}
+	_ = cost
 	totals.ComputedAt = time.Now().UTC()
 	return totals, nil
 }

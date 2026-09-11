@@ -85,10 +85,18 @@ func NewRouterWithReadiness(
 		cr.Use(mw.RateLimit(120, time.Minute))
 		cr.Post("/installations/claim", handlers.ClaimInstallation)
 		cr.Post("/installations/register", handlers.RegisterInstallation)
-		cr.Post("/telemetry/batches", handlers.IngestTelemetry)
-		cr.Post("/telemetry/ingest", handlers.IngestTelemetry)
-		cr.Post("/telemetry/aggregates", handlers.IngestAggregate)
-		cr.Get("/telemetry/cursor", handlers.GetTelemetryCursor)
+		cr.Post("/installations/rebind", handlers.RebindInstallation)
+		cr.Post("/telemetry/batches", handlers.TelemetryUpgradeRequired)
+		cr.Post("/telemetry/ingest", handlers.TelemetryUpgradeRequired)
+		cr.Post("/telemetry/aggregates", handlers.TelemetryUpgradeRequired)
+		cr.Get("/telemetry/cursor", handlers.TelemetryUpgradeRequired)
+	})
+
+	// Collector /v2 endpoints
+	r.Route("/v2", func(cr chi.Router) {
+		cr.Use(mw.RateLimit(120, time.Minute))
+		cr.Get("/telemetry/capabilities", handlers.GetTelemetryCapabilities)
+		cr.Post("/telemetry/events", handlers.IngestTelemetryEventsV2)
 	})
 
 	// User Web API /api/v1

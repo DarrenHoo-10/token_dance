@@ -675,7 +675,7 @@ func TestDeletionInstallationTwoInstallationGoldenMetricsAndLeaderboardMySQL8034
 	insertEvent(survivorID, "session-end", "session_ended", "exact", "turn:session-end", "", 1000, nil, nil, nil, "")
 
 	worker := NewWorkerWithFull(db, clock.RealClock{}, nil, email.DefaultSink, provider.NewMemoryObjectStorage(""))
-	if processed, err := worker.ProcessAggregates(ctx); err != nil || processed != 1 {
+	if processed, err := worker.ProcessLegacyUsageAggregates(ctx); err != nil || processed != 1 {
 		t.Fatalf("normal canonical aggregation: processed=%d err=%v", processed, err)
 	}
 
