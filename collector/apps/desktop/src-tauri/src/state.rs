@@ -21,7 +21,7 @@ use wal_spool::InjectedKeyProvider;
 use wal_spool::{AckPayload, KeyProvider, OsKeyProvider, WalStore};
 
 use crate::autostart::{AutostartProvider, SystemAutostartManager};
-use crate::local_store::{LeasedBatch, LocalStore};
+use crate::local_store::{LeasedBatch, LocalStore, PipelineStore, PipelineWriter};
 use crate::usage_ledger::{DayUsage, HourUsage};
 
 const COLLECTOR_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -315,6 +315,8 @@ pub struct AppState {
     autostart: Arc<dyn AutostartProvider>,
     shutting_down: Arc<StdMutex<bool>>,
     local_store: Arc<StdMutex<LocalStore>>,
+    /// Event-pipeline v3 writer (P1/P7). Independent of legacy LocalStore aggregates.
+    pipeline_writer: Arc<StdMutex<Option<Arc<PipelineWriter>>>>,
     storage_error: Arc<StdMutex<Option<String>>>,
     rebuilding: Arc<StdMutex<bool>>,
 }
@@ -390,6 +392,13 @@ impl AppState {
         let autostart_enabled = autostart.is_enabled()?;
         let control = load_control(&root)?
             .unwrap_or_else(|| PersistedControl::initial(&installation_id, autostart_enabled));
+        let pipeline_writer = match PipelineStore::open(&root) {
+            Ok(store) => Some(Arc::new(PipelineWriter::start(store))),
+            Err(error) => {
+                eprintln!("event pipeline store unavailable: {error}");
+                None
+            }
+        };
         let state = Self {
             service: Arc::new(Mutex::new(service)),
             detection: Arc::new(detection),
@@ -400,6 +409,7 @@ impl AppState {
             autostart,
             shutting_down: Arc::new(StdMutex::new(false)),
             local_store: Arc::new(StdMutex::new(local_store)),
+            pipeline_writer: Arc::new(StdMutex::new(pipeline_writer)),
             storage_error: Arc::new(StdMutex::new(None)),
             rebuilding: Arc::new(StdMutex::new(false)),
         };
@@ -416,6 +426,13 @@ impl AppState {
         self.local_store.lock().expect("local store poisoned")
     }
 
+    pub fn pipeline_writer(&self) -> Option<Arc<PipelineWriter>> {
+        self.pipeline_writer
+            .lock()
+            .expect("pipeline writer poisoned")
+            .clone()
+    }
+
     pub fn set_storage_error(&self, error: &str) {
         *self.storage_error.lock().expect("storage error poisoned") = Some(error.to_string());
     }
@@ -429,6 +446,9 @@ impl AppState {
     }
 
     pub fn pending_sync_count(&self) -> usize {
+        if let Some(writer) = self.pipeline_writer() {
+            return writer.pending_upload_count().unwrap_or(0).max(0) as usize;
+        }
         self.lock_store().aggregate_pending_count()
     }
 

@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 use super::store::PipelineStore;
 use super::types::{
     PipelineError, SourceCommitBatch, SourceCommitResult, TaskComplete, TaskRetry, LeasedTask,
-    Consumer, WRITER_QUEUE_BATCHES, WRITER_QUEUE_BYTES, COMPENSATION_INTERVAL_MS,
+    Consumer, RenewLease, UploadWireEvent, WRITER_QUEUE_BATCHES, WRITER_QUEUE_BYTES,
+    COMPENSATION_INTERVAL_MS,
 };
 
 enum WriterCommand {
@@ -28,6 +29,17 @@ enum WriterCommand {
     RetryTask {
         retry: TaskRetry,
         reply: Sender<Result<(), PipelineError>>,
+    },
+    RenewLease {
+        renew: RenewLease,
+        reply: Sender<Result<i64, PipelineError>>,
+    },
+    LoadUploadEvents {
+        event_row_ids: Vec<i64>,
+        reply: Sender<Result<Vec<UploadWireEvent>, PipelineError>>,
+    },
+    PendingUploadCount {
+        reply: Sender<Result<i64, PipelineError>>,
     },
     ReclaimLeases {
         reply: Sender<Result<usize, PipelineError>>,
@@ -131,6 +143,24 @@ impl PipelineWriter {
         self.request(0, |reply| WriterCommand::RetryTask { retry, reply })
     }
 
+    pub fn renew_task_lease(&self, renew: RenewLease) -> Result<i64, PipelineError> {
+        self.request(0, |reply| WriterCommand::RenewLease { renew, reply })
+    }
+
+    pub fn load_upload_events(
+        &self,
+        event_row_ids: Vec<i64>,
+    ) -> Result<Vec<UploadWireEvent>, PipelineError> {
+        self.request(0, |reply| WriterCommand::LoadUploadEvents {
+            event_row_ids,
+            reply,
+        })
+    }
+
+    pub fn pending_upload_count(&self) -> Result<i64, PipelineError> {
+        self.request(0, |reply| WriterCommand::PendingUploadCount { reply })
+    }
+
     pub fn reclaim_leases(&self) -> Result<usize, PipelineError> {
         self.request(0, |reply| WriterCommand::ReclaimLeases { reply })
     }
@@ -220,6 +250,21 @@ fn writer_loop(store: &mut PipelineStore, rx: Receiver<QueuedBatch>) {
             }
             WriterCommand::RetryTask { retry, reply } => {
                 let _ = reply.send(store.retry_task(retry));
+                false
+            }
+            WriterCommand::RenewLease { renew, reply } => {
+                let _ = reply.send(store.renew_task_lease(renew));
+                false
+            }
+            WriterCommand::LoadUploadEvents {
+                event_row_ids,
+                reply,
+            } => {
+                let _ = reply.send(store.load_upload_events(&event_row_ids));
+                false
+            }
+            WriterCommand::PendingUploadCount { reply } => {
+                let _ = reply.send(store.pending_upload_count());
                 false
             }
             WriterCommand::ReclaimLeases { reply } => {

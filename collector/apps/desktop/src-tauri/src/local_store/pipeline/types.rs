@@ -286,3 +286,35 @@ pub const COMPENSATION_INTERVAL_MS: i64 = 5_000;
 pub const EVENT_TTL_MS: i64 = 1_209_600_000; // 14 days
 pub const DB_FILE: &str = "tokendance-events.sqlite3";
 pub const PIPELINE_SCHEMA_VERSION: i64 = 3;
+
+/// Local event row projected into protocol-v2 wire fields (P7 upload).
+#[derive(Debug, Clone)]
+pub struct UploadWireEvent {
+    pub event_row_id: i64,
+    pub event_id: [u8; 32],
+    pub fact_key: [u8; 32],
+    pub fact_revision: i64,
+    pub schema_version: i64,
+    pub metric_semantics_version: i64,
+    pub harness_id: String,
+    pub event_type: String,
+    pub occurred_at: i64,
+    pub content_hash: [u8; 32],
+    pub model: Option<(String, String)>,
+    pub skill_key: Option<[u8; 32]>,
+    pub skill_public_name: Option<String>,
+    pub session_key: Option<[u8; 32]>,
+    pub turn_key: Option<[u8; 32]>,
+    pub cost_scope_key: Option<[u8; 32]>,
+    /// Local SQLite payload_json (integer counts); converted to wire strings at encode.
+    pub payload_json: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RenewLease {
+    pub task_id: i64,
+    pub event_row_id: i64,
+    pub consumer: Consumer,
+    pub lease_token: String,
+    pub lease_ms: i64,
+}

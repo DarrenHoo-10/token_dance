@@ -20,7 +20,7 @@ mod retention;
 mod retention_tests;
 mod sync;
 pub use retention::{AggregateSnapshot, PendingAggregate};
-pub use pipeline::{PipelineStore, PipelineWriter};
+pub use pipeline::{PipelineStore, PipelineWriter, RenewLease, UploadWireEvent};
 
 pub use rebuild::{DiscoveredSource, RebuildFileProgress, ScanWorkItem};
 pub use sync::{DeliveryRecord, LeasedBatch};
