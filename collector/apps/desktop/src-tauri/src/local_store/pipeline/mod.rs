@@ -6,6 +6,7 @@ mod store;
 mod types;
 mod writer;
 pub mod runner;
+pub mod adapters;
 
 #[cfg(test)]
 mod tests;
@@ -16,3 +17,4 @@ pub use writer::{CompensationStats, PipelineWriter};
 pub use runner::{
     AcquisitionRunner, DecodeOutcome, HarnessStrategy, ReadBudget, RunOutcome, DEFAULT_READ_BUDGET,
 };
+pub use adapters::{HarnessRegistry, SkillBook};
