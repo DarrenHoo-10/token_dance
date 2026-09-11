@@ -14,6 +14,13 @@ use super::types::{
     MAX_BATCH_EVENTS, DB_FILE,
 };
 
+#[derive(Debug, Clone, Default)]
+pub struct DrainStats {
+    pub claimed: usize,
+    pub applied: usize,
+    pub failed: usize,
+}
+
 pub struct PipelineStore {
     conn: Connection,
     path: PathBuf,
@@ -480,6 +487,69 @@ impl PipelineStore {
         )?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Apply hour/day/month metrics and mark the lane applied in one transaction.
+    /// Upload must use `complete_task` (P7).
+    pub fn apply_and_complete_metrics(
+        &mut self,
+        task: &LeasedTask,
+    ) -> Result<(), PipelineError> {
+        schema::assert_ready(&self.conn)?;
+        if matches!(task.consumer, Consumer::Upload) {
+            return Err(PipelineError::InvalidArgument(
+                "apply_and_complete_metrics does not handle upload".into(),
+            ));
+        }
+        let now = self.now_ms();
+        let tx = self.conn.transaction()?;
+        super::apply::apply_and_complete_in_tx(
+            &tx,
+            task.task_id,
+            task.event_row_id,
+            task.consumer,
+            &task.lease_token,
+            now,
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Claim due tasks for a metrics consumer and apply each in its own txn.
+    pub fn drain_metrics_consumer(
+        &mut self,
+        consumer: Consumer,
+        limit: usize,
+        lease_ms: i64,
+    ) -> Result<DrainStats, PipelineError> {
+        if matches!(consumer, Consumer::Upload) {
+            return Err(PipelineError::InvalidArgument(
+                "drain_metrics_consumer does not handle upload".into(),
+            ));
+        }
+        let leased = self.claim_tasks(consumer, limit, lease_ms)?;
+        let mut stats = DrainStats {
+            claimed: leased.len(),
+            applied: 0,
+            failed: 0,
+        };
+        for task in leased {
+            match self.apply_and_complete_metrics(&task) {
+                Ok(()) => stats.applied += 1,
+                Err(_) => {
+                    stats.failed += 1;
+                    let _ = self.retry_task(TaskRetry {
+                        task_id: task.task_id,
+                        event_row_id: task.event_row_id,
+                        consumer: task.consumer,
+                        lease_token: task.lease_token.clone(),
+                        runnable_at: self.now_ms() + 5_000,
+                        error_code: Some("metrics_apply_failed".into()),
+                    });
+                }
+            }
+        }
+        Ok(stats)
     }
 
     pub fn retry_task(&mut self, retry: TaskRetry) -> Result<(), PipelineError> {
