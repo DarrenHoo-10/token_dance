@@ -2,7 +2,7 @@
 
 [package]
 name = "tokendance-desktop"
-version = "0.1.27"
+version = "0.1.28"
 edition = "2021"
 authors = ["TokenDance Team"]
 description = "TokenDance Desktop"
