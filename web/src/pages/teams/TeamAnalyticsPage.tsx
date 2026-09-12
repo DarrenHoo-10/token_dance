@@ -80,7 +80,7 @@ export const TeamAnalyticsPage: React.FC = () => {
   }
 
   const tokens = metricDisplay(analysis.summary.tokens, formatTokenCompact);
-  const trends: TokenTrendItem[] = analysis.trend
+  const trends: TokenTrendItem[] = (analysis.trend || [])
     .filter((point) => point.tokens.state === 'available' && point.tokens.value)
     .map((point) => ({ date: point.date, tokenTotal: point.tokens.value as string }));
   const agentItems = analysis.agents.items.map((item) => ({

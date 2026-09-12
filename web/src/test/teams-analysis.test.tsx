@@ -207,4 +207,19 @@ describe('Team analysis updating state', () => {
       );
     });
   });
+
+  it('renders empty analytics when an older server omits the empty trend array', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    vi.spyOn(teamsApi, 'getExports').mockResolvedValue({ exports: [] });
+    vi.spyOn(teamsApi, 'getFilterOptions').mockResolvedValue({ agents: [], providers: [], models: [] });
+    const empty = readyAnalysis('1', '0');
+    empty.summary.tokens = { value: '0', state: 'empty' };
+    Reflect.deleteProperty(empty, 'trend');
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(empty);
+    renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop/analytics');
+    expect(await screen.findByText('团队 Token')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '自定义' })).toBeInTheDocument();
+    expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();
+  });
 });

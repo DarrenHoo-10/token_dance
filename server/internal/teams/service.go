@@ -380,7 +380,7 @@ type AnalysisDTO struct {
 	Filters      domain.TeamAnalysisFilters `json:"filters,omitempty"`
 	Summary      *domain.TeamAnalysisSummary `json:"summary,omitempty"`
 	Costs        *domain.TeamAnalysisCosts  `json:"costs,omitempty"`
-	Trend        []domain.TeamTrendPoint    `json:"trend,omitempty"`
+	Trend        []domain.TeamTrendPoint    `json:"trend"`
 	Agents       *domain.TeamPagedItems     `json:"agents,omitempty"`
 	Models       *domain.TeamPagedItems     `json:"models,omitempty"`
 	Contributions *domain.TeamPagedItems    `json:"contributions,omitempty"`
