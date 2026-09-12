@@ -12,6 +12,9 @@ WINDOWS_SIGN = (ROOT / "collector/packaging/windows/Sign-Authenticode.ps1").read
 WINDOWS_VERIFY = (ROOT / "collector/packaging/windows/Verify-Authenticode.ps1").read_text(encoding="utf-8")
 MAC_BUILD = (ROOT / "collector/apps/desktop/scripts/build-macos.mjs").read_text(encoding="utf-8")
 WINDOWS_BUILD = (ROOT / "collector/apps/desktop/scripts/build-windows.ps1").read_text(encoding="utf-8")
+DESKTOP_MAIN = (ROOT / "collector/apps/desktop/src-tauri/src/main.rs").read_text(encoding="utf-8")
+PE_GUI = (ROOT / "collector/packaging/windows/check_pe_gui.py").read_text(encoding="utf-8")
+PUBLISH = (ROOT / "tools/releases/publish_manifest.py").read_text(encoding="utf-8")
 
 
 class ReleaseWiringTests(unittest.TestCase):
@@ -38,6 +41,19 @@ class ReleaseWiringTests(unittest.TestCase):
         self.assertIn("Sign-Authenticode.ps1 -Path $artifact", WORKFLOW)
         self.assertIn("Verify-Authenticode.ps1 -Path $artifact", WORKFLOW)
         self.assertRegex(WORKFLOW, rf"path:\s*\|\s*{re.escape(artifact)}")
+        self.assertNotIn("target/debug/tokendance-desktop.exe", WORKFLOW)
+
+    def test_windows_portable_is_forced_gui_and_rejected_if_console(self):
+        self.assertIn('#![windows_subsystem = "windows"]', DESKTOP_MAIN)
+        self.assertNotIn("cfg_attr(not(debug_assertions), windows_subsystem", DESKTOP_MAIN)
+        self.assertIn("check_pe_gui.py", WORKFLOW)
+        self.assertIn("collector/packaging/tests/test_pe_gui.py", WORKFLOW)
+        self.assertIn("Reject non-GUI Windows portable", WORKFLOW)
+        self.assertIn("BLOCKED: TokenDance.exe must use the Windows GUI subsystem", PE_GUI)
+        self.assertIn("BLOCKED: TokenDance.exe must use the Windows GUI subsystem", WINDOWS_BUILD)
+        self.assertIn("Assert-WindowsGuiSubsystem", WINDOWS_BUILD)
+        self.assertIn("check_pe_gui.py", PUBLISH)
+        self.assertIn("IMAGE_SUBSYSTEM_WINDOWS_GUI", PE_GUI)
 
     def test_windows_signing_is_fail_closed_and_requires_timestamp_evidence(self):
         for secret in (

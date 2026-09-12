@@ -32,7 +32,7 @@ jobs:
   windows:
     runs-on: windows-latest
     env:
-      BUILD_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.sign_release && 'release' || 'debug' }}
+      BUILD_PROFILE: release
     steps:
       - uses: actions/checkout@v4
         with:
@@ -57,6 +57,7 @@ jobs:
         run: |
           python collector/packaging/tests/test_release_wiring.py
           python collector/packaging/tests/test_macos_keychain_signing.py
+          python collector/packaging/tests/test_pe_gui.py
           node --test collector/apps/desktop/scripts/build-source.test.mjs
       - name: Build desktop frontend before embedded-resource checks
         shell: bash
@@ -111,17 +112,18 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          if ($env:BUILD_PROFILE -eq 'release') {
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch' -and '${{ inputs.sign_release }}' -eq 'true') {
             node collector/apps/desktop/scripts/build-source.mjs "$env:RUNNER_TEMP/release-source.json"
-            cargo build --locked --release --manifest-path collector/apps/desktop/src-tauri/Cargo.toml --features custom-protocol
             Get-Content "$env:RUNNER_TEMP/release-source.json" | Add-Content $env:GITHUB_STEP_SUMMARY
-          } else {
-            cargo build --locked --manifest-path collector/apps/desktop/src-tauri/Cargo.toml --features custom-protocol
           }
+          cargo build --locked --release --manifest-path collector/apps/desktop/src-tauri/Cargo.toml --features custom-protocol
           $artifact = "collector/apps/desktop/src-tauri/target/$env:BUILD_PROFILE/tokendance-desktop.exe"
           if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
             throw "BLOCKED: Windows release executable was not produced: $artifact"
           }
+      - name: Reject non-GUI Windows portable
+        shell: bash
+        run: python collector/packaging/windows/check_pe_gui.py "collector/apps/desktop/src-tauri/target/$BUILD_PROFILE/tokendance-desktop.exe"
       - name: Sign and verify Windows release executable
         if: github.event_name == 'workflow_dispatch' && inputs.sign_release
         shell: pwsh
@@ -177,7 +179,7 @@ jobs:
         if: github.event_name != 'workflow_dispatch' || !inputs.sign_release
         with:
           name: tokendance-desktop-windows-unsigned
-          path: collector/apps/desktop/src-tauri/target/debug/tokendance-desktop.exe
+          path: collector/apps/desktop/src-tauri/target/release/tokendance-desktop.exe
           if-no-files-found: error
 
   macos:
@@ -234,6 +236,7 @@ jobs:
         run: |
           python3 collector/packaging/tests/test_release_wiring.py
           python3 collector/packaging/tests/test_macos_keychain_signing.py
+          python3 collector/packaging/tests/test_pe_gui.py
           python3 collector/packaging/tests/test_dmg.py
           python3 collector/packaging/tests/test_unnotarized.py
           node --test collector/apps/desktop/scripts/build-source.test.mjs

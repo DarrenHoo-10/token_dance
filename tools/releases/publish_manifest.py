@@ -169,16 +169,12 @@ def check_dmg(path):
 
 
 def check_windows_exe(path):
-    with path.open('rb') as stream:
-        header = stream.read(64)
-        if len(header) != 64 or header[:2] != b'MZ':
-            raise ValueError('Expected a Windows executable')
-        offset = int.from_bytes(header[60:64], 'little')
-        if offset < 64 or offset > MAX_DOWNLOAD - 6:
-            raise ValueError('Invalid PE header')
-        stream.seek(offset)
-        if stream.read(6) != b'PE\0\0\x64\x86':
-            raise ValueError('Expected a Windows x64 executable')
+    import importlib.util
+    helper = Path(__file__).resolve().parents[2] / 'collector/packaging/windows/check_pe_gui.py'
+    spec = importlib.util.spec_from_file_location('check_pe_gui', helper)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.check_windows_gui_exe(path)
 
 
 def check_zip(path, executable):
