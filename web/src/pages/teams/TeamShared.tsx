@@ -1,4 +1,5 @@
 import React from 'react';
+import { ArrowRight, CalendarDays } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ApiError } from '@/api/client';
 import type { SharingFlags, Team, TeamRole } from '@/api/teams';
@@ -102,6 +103,7 @@ export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) =
   const range = params.get('range') || 'today';
   const from = params.get('from') || '';
   const to = params.get('to') || '';
+  const hintId = React.useId();
   const spanError = range === 'custom' && from && to && inclusiveDaySpan(from, to) > TEAM_RANGE_MAX_DAYS;
   const dateParts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
   const today = ['year', 'month', 'day'].map((key) => dateParts.find((part) => part.type === key)?.value).join('-');
@@ -124,8 +126,8 @@ export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) =
   };
 
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', justifyContent: 'space-between' }}>
-      <div className="segmented-control" role="tablist" aria-label={t('dashboard.timeRangeSelector')}>
+    <div className={`team-date-toolbar${range === 'custom' ? ' is-custom' : ''}`}>
+      <div className="segmented-control team-date-presets" role="tablist" aria-label={t('dashboard.timeRangeSelector')}>
         {[
           { key: 'today', label: t('common.today') },
           { key: '7d', label: t('common.days7') },
@@ -145,13 +147,18 @@ export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) =
         ))}
       </div>
       {range === 'custom' && (
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <Input type="date" label={t('teams.range.from')} max={today} value={from} onChange={(e) => setDate('from', e.target.value)} />
-          <Input type="date" label={t('teams.range.to')} min={from || undefined} max={today} value={to} onChange={(e) => setDate('to', e.target.value)} />
+        <div className="team-date-custom">
+          <div className="team-date-fields">
+            <CalendarDays className="team-date-icon" size={18} aria-hidden="true" />
+            <Input type="date" label={t('teams.range.from')} max={today} value={from} aria-describedby={hintId} aria-invalid={Boolean(spanError)} onChange={(e) => setDate('from', e.target.value)} />
+            <ArrowRight className="team-date-arrow" size={16} aria-hidden="true" />
+            <Input type="date" label={t('teams.range.to')} min={from || undefined} max={today} value={to} aria-describedby={hintId} aria-invalid={Boolean(spanError)} onChange={(e) => setDate('to', e.target.value)} />
+          </div>
+          <p id={hintId} className={`team-date-hint${spanError ? ' is-error' : ''}`} role={spanError ? 'alert' : 'status'}>
+            {spanError ? t('teams.range.tooLong') : <>{(!from || !to) && <span>{t('teams.range.chooseDates')}<span aria-hidden="true"> · </span></span>}{t('teams.range.customHint')}</>}
+          </p>
         </div>
       )}
-      {spanError && <p className="form-error">{t('teams.range.tooLong')}</p>}
-      {range === 'custom' && !spanError && <p className="text-muted" style={{ fontSize: 12, width: '100%', margin: 0 }}>{t('teams.range.customHint')}</p>}
     </div>
   );
 };

@@ -35,7 +35,7 @@ export const TeamOverviewPage: React.FC = () => {
   if (!scope) return null;
 
   if (waitingForDates) {
-    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><p role="status" className="text-muted">{t('teams.range.chooseDates')}</p></div>;
+    return <div><TeamDateRangeBar timezone={scope.team.timezone} /></div>;
   }
 
   if ((updating && !analysis) || (!analysis && !error)) {
