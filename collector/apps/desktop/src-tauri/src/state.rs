@@ -21,7 +21,7 @@ use wal_spool::InjectedKeyProvider;
 use wal_spool::{AckPayload, KeyProvider, OsKeyProvider, WalStore};
 
 use crate::autostart::{AutostartProvider, SystemAutostartManager};
-use crate::local_store::{LeasedBatch, LocalStore, PipelineStore, PipelineWriter};
+use crate::local_store::{LeasedBatch, LocalStore, PipelineRuntime, PipelineStore, PipelineWriter};
 use crate::usage_ledger::{DayUsage, HourUsage};
 
 const COLLECTOR_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -317,6 +317,8 @@ pub struct AppState {
     local_store: Arc<StdMutex<LocalStore>>,
     /// Event-pipeline v3 writer (P1/P7). Independent of legacy LocalStore aggregates.
     pipeline_writer: Arc<StdMutex<Option<Arc<PipelineWriter>>>>,
+    /// Discovery + acquisition + metrics drain when workers are allowed.
+    pipeline_runtime: Arc<StdMutex<Option<Arc<PipelineRuntime>>>>,
     storage_error: Arc<StdMutex<Option<String>>>,
     rebuilding: Arc<StdMutex<bool>>,
 }
@@ -413,6 +415,13 @@ impl AppState {
                 None
             }
         };
+        let pipeline_runtime = pipeline_writer.as_ref().map(|writer| {
+            Arc::new(PipelineRuntime::start(
+                Arc::clone(writer),
+                key.to_vec(),
+                &detection,
+            ))
+        });
         let state = Self {
             service: Arc::new(Mutex::new(service)),
             detection: Arc::new(detection),
@@ -424,6 +433,7 @@ impl AppState {
             shutting_down: Arc::new(StdMutex::new(false)),
             local_store: Arc::new(StdMutex::new(local_store)),
             pipeline_writer: Arc::new(StdMutex::new(pipeline_writer)),
+            pipeline_runtime: Arc::new(StdMutex::new(pipeline_runtime)),
             storage_error: Arc::new(StdMutex::new(None)),
             rebuilding: Arc::new(StdMutex::new(false)),
         };
@@ -444,6 +454,13 @@ impl AppState {
         self.pipeline_writer
             .lock()
             .expect("pipeline writer poisoned")
+            .clone()
+    }
+
+    pub fn pipeline_runtime(&self) -> Option<Arc<PipelineRuntime>> {
+        self.pipeline_runtime
+            .lock()
+            .expect("pipeline runtime poisoned")
             .clone()
     }
 

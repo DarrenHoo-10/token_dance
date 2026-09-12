@@ -554,3 +554,45 @@ fn writer_channel_commits_and_runs_compensation() {
     assert_eq!(stats.reclaimed_leases, 0);
     writer.shutdown();
 }
+
+#[test]
+fn review_writer_compensation_runs_while_channel_stays_busy() {
+    // Absolute deadline: continuous writer traffic must not postpone reclaim.
+    let store = PipelineStore::open_in_memory().expect("open");
+    let mut store = store;
+    let source_id = register_jsonl(&mut store);
+    let (token, _, seq) = store.lease_source(source_id, DEFAULT_LEASE_MS).unwrap();
+    let writer = PipelineWriter::start_with_compensation_ms(store, 40);
+    writer
+        .commit_source(SourceCommitBatch {
+            source_id,
+            expected_commit_seq: seq,
+            lease_token: token,
+            cursor_json: r#"{"offset":1}"#.into(),
+            decoder_state_version: 1,
+            decoder_state_json: "{}".into(),
+            observed_boundary_json: "{}".into(),
+            ignored_record_count_delta: 0,
+            last_ignored_code: None,
+            next_poll_at: Some(1),
+            events: vec![candidate(77, None)],
+            created_at_override: None,
+        })
+        .unwrap();
+    let leased = writer.claim_tasks(Consumer::Day, 1, 30).unwrap();
+    assert_eq!(leased.len(), 1);
+
+    let started = std::time::Instant::now();
+    while started.elapsed() < std::time::Duration::from_millis(180) {
+        let _ = writer.pending_upload_count();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+
+    let again = writer.claim_tasks(Consumer::Day, 1, DEFAULT_LEASE_MS).unwrap();
+    assert_eq!(
+        again.len(),
+        1,
+        "expired lease must be reclaimed despite continuous traffic"
+    );
+    writer.shutdown();
+}

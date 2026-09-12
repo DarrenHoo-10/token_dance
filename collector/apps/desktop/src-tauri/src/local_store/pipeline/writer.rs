@@ -70,6 +70,20 @@ enum WriterCommand {
     RunCompensation {
         reply: Sender<Result<CompensationStats, PipelineError>>,
     },
+    RegisterSource {
+        source: crate::local_store::pipeline::types::RegisterSource,
+        reply: Sender<Result<i64, PipelineError>>,
+    },
+    RegisterSkill {
+        skill_key: [u8; 32],
+        public_name: Option<String>,
+        reply: Sender<Result<i64, PipelineError>>,
+    },
+    ListDueSources {
+        now_ms: i64,
+        limit: usize,
+        reply: Sender<Result<Vec<i64>, PipelineError>>,
+    },
     Shutdown {
         reply: Sender<()>,
     },
@@ -93,9 +107,13 @@ pub struct PipelineWriter {
 }
 
 impl PipelineWriter {
-    pub fn start(mut store: PipelineStore) -> Self {
+    pub fn start(store: PipelineStore) -> Self {
+        Self::start_with_compensation_ms(store, COMPENSATION_INTERVAL_MS as u64)
+    }
+
+    pub fn start_with_compensation_ms(mut store: PipelineStore, compensation_ms: u64) -> Self {
         let (tx, rx) = mpsc::sync_channel::<QueuedBatch>(WRITER_QUEUE_BATCHES);
-        let join = thread::spawn(move || writer_loop(&mut store, rx));
+        let join = thread::spawn(move || writer_loop(&mut store, rx, compensation_ms));
         Self {
             tx,
             join: Some(join),
@@ -232,6 +250,33 @@ impl PipelineWriter {
         self.request(0, |reply| WriterCommand::RunCompensation { reply })
     }
 
+    pub fn register_source(
+        &self,
+        source: crate::local_store::pipeline::types::RegisterSource,
+    ) -> Result<i64, PipelineError> {
+        self.request(0, |reply| WriterCommand::RegisterSource { source, reply })
+    }
+
+    pub fn register_skill(
+        &self,
+        skill_key: [u8; 32],
+        public_name: Option<&str>,
+    ) -> Result<i64, PipelineError> {
+        self.request(0, |reply| WriterCommand::RegisterSkill {
+            skill_key,
+            public_name: public_name.map(|s| s.to_string()),
+            reply,
+        })
+    }
+
+    pub fn list_due_sources(&self, now_ms: i64, limit: usize) -> Result<Vec<i64>, PipelineError> {
+        self.request(0, |reply| WriterCommand::ListDueSources {
+            now_ms,
+            limit,
+            reply,
+        })
+    }
+
     pub fn shutdown(mut self) {
         let (reply_tx, reply_rx) = mpsc::channel();
         let _ = self.enqueue(
@@ -272,20 +317,28 @@ fn estimate_batch_bytes(batch: &SourceCommitBatch) -> usize {
         + batch.observed_boundary_json.len()
 }
 
-fn writer_loop(store: &mut PipelineStore, rx: Receiver<QueuedBatch>) {
+fn writer_loop(store: &mut PipelineStore, rx: Receiver<QueuedBatch>, compensation_ms: u64) {
     let mut pending_bytes: usize = 0;
-    let mut last_compensation = Instant::now();
+    let interval = Duration::from_millis(compensation_ms.max(1));
+    let mut next_compensation = Instant::now() + interval;
     loop {
-        let wait = Duration::from_millis(COMPENSATION_INTERVAL_MS as u64);
+        let now = Instant::now();
+        let wait = next_compensation.saturating_duration_since(now);
         let queued = match rx.recv_timeout(wait) {
-            Ok(item) => item,
-            Err(RecvTimeoutError::Timeout) => {
-                let _ = store.reclaim_expired_leases();
-                let _ = store.expire_due_events(64);
-                last_compensation = Instant::now();
-                continue;
-            }
+            Ok(item) => Some(item),
+            Err(RecvTimeoutError::Timeout) => None,
             Err(RecvTimeoutError::Disconnected) => break,
+        };
+
+        // Absolute monotonic deadline: run even when the channel stays busy.
+        if Instant::now() >= next_compensation {
+            let _ = store.reclaim_expired_leases();
+            let _ = store.expire_due_events(64);
+            next_compensation = Instant::now() + interval;
+        }
+
+        let Some(queued) = queued else {
+            continue;
         };
 
         pending_bytes = pending_bytes.saturating_add(queued.approx_bytes);
@@ -366,7 +419,27 @@ fn writer_loop(store: &mut PipelineStore, rx: Receiver<QueuedBatch>) {
                     reclaimed_leases: reclaimed,
                     expired_events: expired,
                 }));
-                last_compensation = Instant::now();
+                next_compensation = Instant::now() + interval;
+                false
+            }
+            WriterCommand::RegisterSource { source, reply } => {
+                let _ = reply.send(store.register_source(&source));
+                false
+            }
+            WriterCommand::RegisterSkill {
+                skill_key,
+                public_name,
+                reply,
+            } => {
+                let _ = reply.send(store.register_skill(&skill_key, public_name.as_deref()));
+                false
+            }
+            WriterCommand::ListDueSources {
+                now_ms,
+                limit,
+                reply,
+            } => {
+                let _ = reply.send(store.list_due_sources(now_ms, limit));
                 false
             }
             WriterCommand::Shutdown { reply } => {
@@ -376,7 +449,6 @@ fn writer_loop(store: &mut PipelineStore, rx: Receiver<QueuedBatch>) {
         };
         pending_bytes = pending_bytes.saturating_sub(queued.approx_bytes);
         let _ = pending_bytes;
-        let _ = last_compensation;
         if done {
             break;
         }

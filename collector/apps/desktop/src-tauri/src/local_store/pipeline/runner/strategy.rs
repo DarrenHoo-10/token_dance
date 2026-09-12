@@ -129,47 +129,74 @@ pub struct FactDraft {
     pub event_type: String,
     pub schema_version: i64,
     pub metric_semantics_version: i64,
-    pub content_hash: [u8; 32],
     pub occurred_at: i64,
     pub time_source: super::admission::TimeSource,
     pub model_key: i64,
     pub skill_id: Option<i64>,
+    /// Wire skill identity (anonymous key). Required when skill_id is set for P0 hash.
+    pub skill_key: Option<[u8; 32]>,
     pub session_key: Option<[u8; 32]>,
     pub turn_key: Option<[u8; 32]>,
     pub cost_scope_key: Option<[u8; 32]>,
     pub accuracy: TokenAccuracy,
-    pub usage_json: Value,
+    /// Business payload sections excluding meta (`usage` / `cost` / `code` / `activity` / `context`).
+    pub payload_sections: Value,
 }
 
 impl FactDraft {
+    /// Build a local event candidate and freeze `content_hash` with the P0 full-business SHA-256
+    /// (wire decimal strings / camelCase). Upload must pass this hash through unchanged.
     pub fn into_event_candidate(
-        self,
+        mut self,
+        harness_id: &str,
         applicable_consumers: Vec<crate::local_store::pipeline::types::Consumer>,
-    ) -> EventCandidate {
-        let payload = serde_json::json!({
-            "meta": {
+    ) -> Result<EventCandidate, String> {
+        let sections = std::mem::replace(&mut self.payload_sections, Value::Null);
+        let mut local_payload = match sections {
+            Value::Object(map) => Value::Object(map),
+            other if other.is_null() => Value::Object(Default::default()),
+            other => {
+                return Err(format!(
+                    "payload_sections must be object, got {}",
+                    other
+                ))
+            }
+        };
+        let obj = local_payload
+            .as_object_mut()
+            .expect("payload object");
+        obj.insert(
+            "meta".into(),
+            serde_json::json!({
                 "accuracy": self.accuracy.as_str(),
                 "time_source": self.time_source.as_str(),
-            },
-            "usage": self.usage_json,
-        });
-        EventCandidate {
+            }),
+        );
+
+        let content_hash =
+            crate::local_store::pipeline::content_hash::compute_p0_content_hash(
+                harness_id,
+                &self,
+                &local_payload,
+            )?;
+
+        Ok(EventCandidate {
             event_id: self.event_id,
             fact_key: self.fact_key,
             fact_revision: self.fact_revision,
             event_type: self.event_type,
             schema_version: self.schema_version,
             metric_semantics_version: self.metric_semantics_version,
-            content_hash: self.content_hash,
+            content_hash,
             occurred_at: self.occurred_at,
             model_key: self.model_key,
             skill_id: self.skill_id,
             session_key: self.session_key,
             turn_key: self.turn_key,
             cost_scope_key: self.cost_scope_key,
-            payload_json: payload.to_string(),
+            payload_json: local_payload.to_string(),
             applicable_consumers,
-        }
+        })
     }
 }
 
@@ -204,6 +231,8 @@ pub trait HarnessStrategy: Send + Sync {
         &self,
         record: &RawRecord,
         state: &mut DecoderState,
+        // Stable logical source identity (locator path / DB path); must participate in fact_key.
+        logical_scope: &str,
     ) -> Result<DecodeOutcome, RunnerError>;
 
     fn native_identity(&self, record: &RawRecord, fact: &FactDraft) -> NativeFactKey;

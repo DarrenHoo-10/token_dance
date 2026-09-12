@@ -255,7 +255,7 @@ pub fn run_source_once(
     let admission_now = sink.now_ms();
 
     for record in &batch.records {
-        let outcome = match strategy.decode(record, &mut decoder) {
+        let outcome = match strategy.decode(record, &mut decoder, &snapshot.locator_ref) {
             Ok(o) => o,
             Err(RunnerError::DecodeBlocked(msg)) => {
                 let _ = try_release_lease_unchanged(
@@ -309,7 +309,35 @@ pub fn run_source_once(
                                     Some(IgnoreCode::InvalidEventTime.as_str().to_string());
                                 continue;
                             }
-                            events.push(fact.into_event_candidate(applicable_consumers.to_vec()));
+                            match fact.into_event_candidate(
+                                strategy.harness_id(),
+                                applicable_consumers.to_vec(),
+                            ) {
+                                Ok(candidate) => events.push(candidate),
+                                Err(msg) => {
+                                    let _ = try_release_lease_unchanged(
+                                        sink,
+                                        &snapshot,
+                                        &lease_token,
+                                        commit_seq,
+                                        admission_now,
+                                    );
+                                    return Ok(RunOutcome::StreamStopped {
+                                        reason: RunnerError::DecodeBlocked(msg),
+                                        stats: RunStats {
+                                            records_read: batch.records.len(),
+                                            bytes_read: batch.bytes_read,
+                                            emitted: events.len(),
+                                            ignored,
+                                            context_only,
+                                            has_more: batch.has_more,
+                                            commit_seq: None,
+                                            last_ignored_code: last_ignored,
+                                            checkpoint_delay_ms: 0,
+                                        },
+                                    });
+                                }
+                            }
                         }
                         AdmissionDecision::IgnoreOutsideDay => {
                             ignored += 1;

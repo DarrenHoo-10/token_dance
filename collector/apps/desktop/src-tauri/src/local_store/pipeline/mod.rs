@@ -4,6 +4,7 @@
 
 mod apply;
 mod buckets;
+mod content_hash;
 mod flags;
 mod query;
 mod rollout;
@@ -13,6 +14,7 @@ mod types;
 mod writer;
 pub mod runner;
 pub mod adapters;
+pub mod runtime;
 
 #[cfg(test)]
 mod tests;
@@ -26,6 +28,7 @@ pub use query::{
     CoverageLevel, CoveredValue, RatioValue, SkillRankRow, UsageSummary,
 };
 pub use rollout::{ensure_rollout, workers_allowed, RolloutPhase, RolloutStatus, CLOSED_BETA_GENERATION};
+pub use runtime::{PipelineRuntime, PipelineTickStats};
 pub use store::{DrainStats, PipelineStore};
 pub use types::*;
 pub use writer::{CompensationStats, PipelineWriter};

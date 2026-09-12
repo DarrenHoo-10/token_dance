@@ -212,6 +212,7 @@ impl HarnessStrategy for JsonlHarnessStrategy {
         &self,
         record: &RawRecord,
         state: &mut DecoderState,
+        logical_scope: &str,
     ) -> Result<DecodeOutcome, RunnerError> {
         let value = match parse_json_record(record) {
             Ok(v) => v,
@@ -243,7 +244,7 @@ impl HarnessStrategy for JsonlHarnessStrategy {
             return Ok(DecodeOutcome::Emit(vec![emit_skill_fact(
                 &self.identity_secret,
                 self.profile.harness_id,
-                self.profile.stream_key,
+                logical_scope,
                 native,
                 occurred_at,
                 time_source,
@@ -274,7 +275,7 @@ impl HarnessStrategy for JsonlHarnessStrategy {
             return Ok(DecodeOutcome::Emit(vec![emit_usage_fact(UsageFactArgs {
                 secret: &self.identity_secret,
                 harness: self.profile.harness_id,
-                scope: self.profile.stream_key,
+                scope: logical_scope,
                 native,
                 fact_kind: "model_usage_recorded",
                 occurred_at,
@@ -286,8 +287,10 @@ impl HarnessStrategy for JsonlHarnessStrategy {
                 session_id: session.as_deref(),
                 turn_id: turn.as_deref(),
                 skill_id: None,
+                skill_key: None,
                 model_key: 0,
-                extra_usage: json!({}),
+                cache_read_tokens: None,
+                reasoning_tokens: None,
             })]));
         }
         Ok(DecodeOutcome::Ignore(IgnoreCode::UnsupportedStructure))

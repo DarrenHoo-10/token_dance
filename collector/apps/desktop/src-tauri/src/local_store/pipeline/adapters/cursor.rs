@@ -100,6 +100,7 @@ impl HarnessStrategy for CursorStrategy {
         &self,
         record: &RawRecord,
         state: &mut DecoderState,
+        logical_scope: &str,
     ) -> Result<DecodeOutcome, RunnerError> {
         let value = match parse_json_record(record) {
             Ok(v) => v,
@@ -144,7 +145,7 @@ impl HarnessStrategy for CursorStrategy {
         Ok(DecodeOutcome::Emit(vec![emit_usage_fact(UsageFactArgs {
             secret: &self.identity_secret,
             harness: HARNESS_ID,
-            scope: STREAM_TRANSCRIPT,
+            scope: logical_scope,
             native,
             fact_kind: "model_usage_recorded",
             occurred_at,
@@ -156,8 +157,10 @@ impl HarnessStrategy for CursorStrategy {
             session_id: session.as_deref(),
             turn_id: None,
             skill_id: None,
+            skill_key: None,
             model_key: 0,
-            extra_usage: json!({}),
+            cache_read_tokens: None,
+            reasoning_tokens: None,
         })]))
     }
 

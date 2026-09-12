@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 use serde_json::{json, Map, Value};
 
 use super::identity::{
-    content_hash, event_id, fact_key, session_key as sess_hmac, skill_key, turn_key, TypedNativeKey,
+    event_id, fact_key, session_key as sess_hmac, skill_key, turn_key, TypedNativeKey,
 };
 use crate::local_store::pipeline::runner::{
     resolve_event_time, DecodeOutcome, DecoderState, FactDraft, IgnoreCode, RawRecord,
@@ -149,28 +149,29 @@ pub fn remember_source_time(state: &mut DecoderState, occurred_at: i64, is_nativ
     }
 }
 
-/// Cumulative usage baseline: emit only positive deltas; no evidence → Ignore.
+/// Cumulative usage baseline: emit only positive deltas after the first observation.
 pub fn cumulative_delta(
     state: &mut DecoderState,
     series_id: &str,
     cumulative: u64,
 ) -> Result<u64, IgnoreCode> {
     let key = format!("cum::{series_id}");
+    let had_prev = state.json.get(&key).and_then(|v| v.as_u64()).is_some();
     let prev = state
         .json
         .get(&key)
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
     state.json[key] = json!(cumulative);
+    if !had_prev {
+        // First observation of a cumulative series: baseline only.
+        return Err(IgnoreCode::Other("cumulative_baseline_only".into()));
+    }
     if cumulative < prev {
         // Reset / new series without proof — do not invent a request.
         return Err(IgnoreCode::EstimatedOnly);
     }
     let delta = cumulative - prev;
-    if delta == 0 && prev == 0 {
-        // First observation of a historical cumulative total: baseline only.
-        return Err(IgnoreCode::Other("cumulative_baseline_only".into()));
-    }
     if delta == 0 {
         return Err(IgnoreCode::Other("cumulative_unchanged".into()));
     }
@@ -180,6 +181,7 @@ pub fn cumulative_delta(
 pub struct UsageFactArgs<'a> {
     pub secret: &'a [u8],
     pub harness: &'a str,
+    /// Stable logical source identity (file path / DB path), not a stream-kind constant.
     pub scope: &'a str,
     pub native: TypedNativeKey,
     pub fact_kind: &'a str,
@@ -192,8 +194,10 @@ pub struct UsageFactArgs<'a> {
     pub session_id: Option<&'a str>,
     pub turn_id: Option<&'a str>,
     pub skill_id: Option<i64>,
+    pub skill_key: Option<[u8; 32]>,
     pub model_key: i64,
-    pub extra_usage: Value,
+    pub cache_read_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
 }
 
 pub fn emit_usage_fact(args: UsageFactArgs<'_>) -> FactDraft {
@@ -205,26 +209,16 @@ pub fn emit_usage_fact(args: UsageFactArgs<'_>) -> FactDraft {
         args.fact_kind,
     );
     let eid = event_id(args.secret, &fk, 1);
-    let mut usage = args.extra_usage;
-    if usage.is_null() || !usage.is_object() {
-        usage = json!({});
+    let mut usage = serde_json::Map::new();
+    usage.insert("token_total".into(), json!(args.token_total));
+    usage.insert("input_context_tokens".into(), json!(args.input_tokens));
+    usage.insert("output_tokens".into(), json!(args.output_tokens));
+    if let Some(v) = args.cache_read_tokens {
+        usage.insert("cache_read_tokens".into(), json!(v));
     }
-    let obj = usage.as_object_mut().unwrap();
-    obj.insert("token_total".into(), json!(args.token_total));
-    obj.insert("input_context_tokens".into(), json!(args.input_tokens));
-    obj.insert("output_tokens".into(), json!(args.output_tokens));
-
-    let occurred_bytes = args.occurred_at.to_le_bytes();
-    let token_bytes = args.token_total.to_le_bytes();
-    let ch = content_hash(
-        args.secret,
-        &[
-            fk.as_slice(),
-            args.fact_kind.as_bytes(),
-            &occurred_bytes,
-            &token_bytes,
-        ],
-    );
+    if let Some(v) = args.reasoning_tokens {
+        usage.insert("reasoning_tokens".into(), json!(v));
+    }
 
     FactDraft {
         event_id: eid,
@@ -233,11 +227,11 @@ pub fn emit_usage_fact(args: UsageFactArgs<'_>) -> FactDraft {
         event_type: args.fact_kind.into(),
         schema_version: 2,
         metric_semantics_version: 1,
-        content_hash: ch,
         occurred_at: args.occurred_at,
         time_source: args.time_source,
         model_key: args.model_key,
         skill_id: args.skill_id,
+        skill_key: args.skill_key,
         session_key: args
             .session_id
             .map(|s| sess_hmac(args.secret, args.harness, s)),
@@ -247,7 +241,7 @@ pub fn emit_usage_fact(args: UsageFactArgs<'_>) -> FactDraft {
         },
         cost_scope_key: None,
         accuracy: args.accuracy,
-        usage_json: usage,
+        payload_sections: json!({ "usage": usage }),
     }
 }
 
@@ -265,22 +259,67 @@ pub fn emit_skill_fact(
 ) -> FactDraft {
     let sk = skill_key(secret, skill_name);
     let skill_id = skill_book.ensure(sk, || allocate_skill(sk, skill_name));
-    emit_usage_fact(UsageFactArgs {
-        secret,
-        harness,
-        scope,
-        native,
-        fact_kind: "skill_invoked",
+    let fk = fact_key(secret, harness, scope, &native, "skill_invoked");
+    let eid = event_id(secret, &fk, 1);
+    FactDraft {
+        event_id: eid,
+        fact_key: fk,
+        fact_revision: 1,
+        event_type: "skill_invoked".into(),
+        schema_version: 2,
+        metric_semantics_version: 1,
         occurred_at,
         time_source,
-        token_total: 0,
-        input_tokens: 0,
-        output_tokens: 0,
-        accuracy: TokenAccuracy::Exact,
-        session_id,
-        turn_id: None,
-        skill_id: Some(skill_id),
         model_key: 0,
-        extra_usage: json!({ "skill_key_registered": true }),
-    })
+        skill_id: Some(skill_id),
+        skill_key: Some(sk),
+        session_key: session_id.map(|s| sess_hmac(secret, harness, s)),
+        turn_key: None,
+        cost_scope_key: None,
+        accuracy: TokenAccuracy::Exact,
+        payload_sections: json!({
+            "activity": {
+                "success": true,
+                "duration_ms": 0
+            }
+        }),
+    }
+}
+
+pub fn emit_code_fact(
+    secret: &[u8],
+    harness: &str,
+    scope: &str,
+    native: TypedNativeKey,
+    occurred_at: i64,
+    time_source: TimeSource,
+    session_id: Option<&str>,
+    added: u64,
+    removed: u64,
+) -> FactDraft {
+    let fk = fact_key(secret, harness, scope, &native, "code_changed");
+    let eid = event_id(secret, &fk, 1);
+    FactDraft {
+        event_id: eid,
+        fact_key: fk,
+        fact_revision: 1,
+        event_type: "code_changed".into(),
+        schema_version: 2,
+        metric_semantics_version: 1,
+        occurred_at,
+        time_source,
+        model_key: 0,
+        skill_id: None,
+        skill_key: None,
+        session_key: session_id.map(|s| sess_hmac(secret, harness, s)),
+        turn_key: None,
+        cost_scope_key: None,
+        accuracy: TokenAccuracy::Derived,
+        payload_sections: json!({
+            "code": {
+                "added": added,
+                "removed": removed
+            }
+        }),
+    }
 }

@@ -16,12 +16,12 @@ use super::registry::{AdapterRoots, HarnessRegistry};
 use super::zcode::{ZcodeStrategy, STREAM_USAGE};
 use super::{capability, for_harness, should_throttle};
 use crate::local_store::pipeline::runner::{
-    beijing_wall_to_utc_ms, run_source_once, CheckpointView, DecodeOutcome, DecoderState,
-    DiscoveryBudget, HarnessStrategy, IgnoreCode, RawRecord, ReadBudget, RunOutcome, StoreSinkMut,
-    TimeSource, DEFAULT_READ_BUDGET,
+    beijing_wall_to_utc_ms, run_source_once, AcquisitionRunner, CheckpointView, DecodeOutcome,
+    DecoderState, DiscoveryBudget, HarnessStrategy, IgnoreCode, RawRecord, ReadBudget, RunOutcome,
+    StoreSinkMut, TimeSource, DEFAULT_READ_BUDGET,
 };
 use crate::local_store::pipeline::types::{
-    CursorKind, RegisterSource, SourceKind, DEFAULT_LEASE_MS,
+    Consumer, CursorKind, RegisterSource, SourceKind, DEFAULT_LEASE_MS,
 };
 use crate::local_store::pipeline::PipelineStore;
 
@@ -63,11 +63,11 @@ fn register_source(
     store
         .register_source(&RegisterSource {
             harness_id: harness.into(),
-            source_key: {
-                let mut b = [0u8; 32];
-                b[..harness.len().min(32)].copy_from_slice(&harness.as_bytes()[..harness.len().min(32)]);
-                b
-            },
+            source_key: crate::local_store::pipeline::adapters::source_key(
+                &secret(),
+                harness,
+                locator,
+            ),
             source_kind: kind,
             locator_ref: locator.into(),
             stream_key: stream.into(),
@@ -480,7 +480,7 @@ fn cursor_missing_timestamp_uses_previous_or_mtime() {
         payload: json!({"api_aggregate":true,"totalTokens":999}).to_string().into_bytes(),
         file_mtime_ms: Some(now),
     };
-    let out = strategy.decode(&agg, &mut state).unwrap();
+    let out = strategy.decode(&agg, &mut state, path.to_str().unwrap()).unwrap();
     assert!(matches!(out, DecodeOutcome::Ignore(IgnoreCode::EstimatedOnly)));
 }
 
@@ -529,7 +529,7 @@ fn skill_same_key_shared_across_harnesses() {
         .into_bytes(),
         file_mtime_ms: None,
     };
-    let a = claude.decode(&rec, &mut state).unwrap();
+    let a = claude.decode(&rec, &mut state, "claude-fixture").unwrap();
     let DecodeOutcome::Emit(facts_a) = a else {
         panic!("expected emit");
     };
@@ -558,7 +558,7 @@ fn skill_same_key_shared_across_harnesses() {
         .into_bytes(),
         file_mtime_ms: None,
     };
-    let b = zcode.decode(&rec2, &mut state2).unwrap();
+    let b = zcode.decode(&rec2, &mut state2, "zcode-fixture").unwrap();
     let DecodeOutcome::Emit(facts_b) = b else {
         panic!("expected emit");
     };
@@ -714,4 +714,363 @@ fn _touch() {
         observed_boundary_json: json!({}),
         commit_seq: 0,
     };
+}
+
+#[test]
+fn review_content_hash_is_p0_sha256_not_hmac() {
+    use crate::local_store::pipeline::adapters::identity::content_hash as hmac_content_hash;
+    use crate::upload_pipeline::encode_wire_event;
+
+    let now = beijing_wall_to_utc_ms(2026, 9, 11, 15, 0, 0);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.jsonl");
+    std::fs::write(
+        &path,
+        format!(
+            "{}\n",
+            json!({"type":"token.usage","timestamp":now-1_000,"thread_id":"t1","turn_id":"u1","input_tokens":10,"output_tokens":5,"total_tokens":15}),
+        ),
+    )
+    .unwrap();
+    let store_arc = Arc::new(std::sync::Mutex::new(open_store(now)));
+    let book = SkillBook::new();
+    let alloc = skill_allocator(&book, store_arc.clone());
+    let strategy = CodexStrategy::new(secret(), dir.path(), book, alloc);
+    let mut store = store_arc.lock().unwrap();
+    let source_id = register_source(
+        &mut store,
+        "codex",
+        path.to_str().unwrap(),
+        "sessions-jsonl",
+        SourceKind::Jsonl,
+        r#"{"offset":0}"#,
+        r#"{"last_source_time":null}"#,
+        now,
+    );
+    let sink = StoreSinkMut::new(&mut store);
+    let outcome = run_source_once(
+        &sink,
+        &strategy,
+        source_id,
+        DEFAULT_READ_BUDGET,
+        DEFAULT_LEASE_MS,
+        &Consumer::ALL,
+        None,
+    )
+    .unwrap();
+    assert!(matches!(outcome, RunOutcome::Committed(_)));
+
+    let row_id: i64 = store
+        .with_connection(|conn| {
+            conn.query_row("SELECT id FROM events LIMIT 1", [], |r| r.get(0))
+                .map_err(|e| crate::local_store::pipeline::PipelineError::Sqlite(e.to_string()))
+        })
+        .unwrap();
+    let rows = store.load_upload_events(&[row_id]).unwrap();
+    assert_eq!(rows.len(), 1);
+    let envelope = encode_wire_event(&rows[0]).unwrap();
+    let mut wire = serde_json::to_value(&envelope).unwrap();
+    wire.as_object_mut().unwrap().remove("contentHash");
+    let recomputed = protocol::v2::compute_content_hash(&wire).unwrap();
+    assert_eq!(
+        recomputed, envelope.content_hash,
+        "upload must pass through the same P0 hash frozen at ingest"
+    );
+
+    let hmac = hmac_content_hash(&secret(), &[b"not", b"p0"]);
+    assert_ne!(
+        rows[0].content_hash, hmac,
+        "stored hash must not be adapter HMAC"
+    );
+}
+
+#[test]
+fn review_dual_jsonl_same_offset_distinct_event_ids() {
+    let now = beijing_wall_to_utc_ms(2026, 9, 11, 15, 0, 0);
+    let dir = tempfile::tempdir().unwrap();
+    let line = json!({"type":"token.usage","timestamp":now-1_000,"thread_id":"t","turn_id":"same","input_tokens":3,"output_tokens":4,"total_tokens":7}).to_string();
+    let a = dir.path().join("a.jsonl");
+    let b = dir.path().join("b.jsonl");
+    std::fs::write(&a, format!("{line}\n")).unwrap();
+    std::fs::write(&b, format!("{line}\n")).unwrap();
+
+    let store_arc = Arc::new(std::sync::Mutex::new(open_store(now)));
+    let book = SkillBook::new();
+    let alloc = skill_allocator(&book, store_arc.clone());
+    let strategy = CodexStrategy::new(secret(), dir.path(), book, alloc);
+    let mut store = store_arc.lock().unwrap();
+    let id_a = register_source(
+        &mut store,
+        "codex",
+        a.to_str().unwrap(),
+        "sessions-jsonl",
+        SourceKind::Jsonl,
+        r#"{"offset":0}"#,
+        r#"{"last_source_time":null}"#,
+        now,
+    );
+    let id_b = register_source(
+        &mut store,
+        "codex",
+        b.to_str().unwrap(),
+        "sessions-jsonl",
+        SourceKind::Jsonl,
+        r#"{"offset":0}"#,
+        r#"{"last_source_time":null}"#,
+        now,
+    );
+    for sid in [id_a, id_b] {
+        let sink = StoreSinkMut::new(&mut store);
+        let out = run_source_once(
+            &sink,
+            &strategy,
+            sid,
+            DEFAULT_READ_BUDGET,
+            DEFAULT_LEASE_MS,
+            &[],
+            None,
+        )
+        .unwrap();
+        assert!(matches!(out, RunOutcome::Committed(ref s) if s.emitted == 1));
+    }
+    let ids = event_ids(&mut store);
+    assert_eq!(ids.len(), 2);
+    assert_ne!(ids[0], ids[1], "same offset across files must not collide");
+}
+
+#[test]
+fn review_dual_sqlite_same_rowid_distinct_event_ids() {
+    let now = beijing_wall_to_utc_ms(2026, 9, 11, 16, 0, 0);
+    let dir = tempfile::tempdir().unwrap();
+    let ts = now - 20_000;
+    let mk_db = |name: &str| {
+        let path = dir.path().join(name);
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(&format!(
+            "CREATE TABLE session(id TEXT PRIMARY KEY, agent TEXT, model TEXT, time_created INTEGER);
+             CREATE TABLE part(rowid INTEGER PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT);
+             INSERT INTO session VALUES ('s1','a','m',{ts});
+             INSERT INTO part(rowid,session_id,time_created,time_updated,data) VALUES
+               (42,'s1',{ts},{ts},'{{\"type\":\"step-finish\",\"tokens\":{{\"input\":3,\"output\":4}}}}');"
+        ))
+        .unwrap();
+        path
+    };
+    let db_a = mk_db("a.sqlite");
+    let db_b = mk_db("b.sqlite");
+
+    let store_arc = Arc::new(std::sync::Mutex::new(open_store(now)));
+    let book = SkillBook::new();
+    let alloc = skill_allocator(&book, store_arc.clone());
+    for path in [db_a, db_b] {
+        let strategy = OpenCodeStrategy::new(secret(), &path, book.clone(), alloc.clone());
+        let mut store = store_arc.lock().unwrap();
+        let specs = strategy.discover(DiscoveryBudget::new(8, 200)).unwrap();
+        let step = specs
+            .iter()
+            .find(|s| s.stream_key == "sqlite/step_finish")
+            .unwrap();
+        let source_id = register_source(
+            &mut store,
+            "opencode",
+            path.to_str().unwrap(),
+            "sqlite/step_finish",
+            SourceKind::Sqlite,
+            &step.initial_cursor_json.to_string(),
+            r#"{"last_source_time":null}"#,
+            now,
+        );
+        let sink = StoreSinkMut::new(&mut store);
+        let out = run_source_once(
+            &sink,
+            &strategy,
+            source_id,
+            DEFAULT_READ_BUDGET,
+            DEFAULT_LEASE_MS,
+            &[],
+            None,
+        )
+        .unwrap();
+        assert!(matches!(out, RunOutcome::Committed(ref s) if s.emitted == 1));
+    }
+    let mut store = store_arc.lock().unwrap();
+    let ids = event_ids(&mut store);
+    assert_eq!(ids.len(), 2);
+    assert_ne!(ids[0], ids[1], "same rowid across sqlite files must not collide");
+}
+
+#[test]
+fn review_codex_native_token_count_last_and_total_semantics() {
+    let now = beijing_wall_to_utc_ms(2026, 9, 11, 12, 0, 0);
+    let strategy = CodexStrategy::new(
+        secret(),
+        PathBuf::from("/tmp"),
+        SkillBook::new(),
+        Arc::new(|_, _| 1),
+    );
+    let mut state = DecoderState {
+        version: 1,
+        json: json!({}),
+    };
+
+    // First total_token_usage only: baseline, no request.
+    let baseline = RawRecord {
+        ordinal: 0,
+        byte_start: Some(0),
+        byte_end: Some(10),
+        native_rowid: None,
+        payload: json!({
+            "type":"event_msg",
+            "timestamp": now - 5_000,
+            "payload":{"type":"token_count","info":{
+                "total_token_usage":{"input_tokens":100,"output_tokens":20,"total_tokens":120}
+            }}
+        })
+        .to_string()
+        .into_bytes(),
+        file_mtime_ms: None,
+    };
+    let out = strategy.decode(&baseline, &mut state, "/tmp/a.jsonl").unwrap();
+    assert!(
+        matches!(out, DecodeOutcome::ContextOnly | DecodeOutcome::Ignore(_)),
+        "first cumulative total must baseline without inventing a request: {out:?}"
+    );
+
+    // last_token_usage emits exact request usage.
+    let last = RawRecord {
+        ordinal: 1,
+        byte_start: Some(100),
+        byte_end: Some(200),
+        native_rowid: None,
+        payload: json!({
+            "type":"event_msg",
+            "timestamp": now - 4_000,
+            "thread_id":"t1",
+            "payload":{"type":"token_count","info":{
+                "last_token_usage":{"input_tokens":10,"cached_input_tokens":2,"output_tokens":5,"total_tokens":15},
+                "total_token_usage":{"input_tokens":110,"output_tokens":25,"total_tokens":135}
+            }}
+        })
+        .to_string()
+        .into_bytes(),
+        file_mtime_ms: None,
+    };
+    let out = strategy.decode(&last, &mut state, "/tmp/a.jsonl").unwrap();
+    let DecodeOutcome::Emit(facts) = out else {
+        panic!("expected emit from last_token_usage, got {out:?}");
+    };
+    assert_eq!(facts.len(), 1);
+    assert_eq!(facts[0].event_type, "model_usage_recorded");
+    let usage = &facts[0].payload_sections["usage"];
+    assert_eq!(usage["token_total"], 15);
+    assert_eq!(usage["input_context_tokens"], 10);
+    assert_eq!(usage["output_tokens"], 5);
+    assert_eq!(usage["cache_read_tokens"], 2);
+
+    // total-only positive delta after baseline emits derived delta when last is absent.
+    let delta_only = RawRecord {
+        ordinal: 2,
+        byte_start: Some(300),
+        byte_end: Some(400),
+        native_rowid: None,
+        payload: json!({
+            "type":"event_msg",
+            "timestamp": now - 3_000,
+            "thread_id":"t1",
+            "payload":{"type":"token_count","info":{
+                "total_token_usage":{"input_tokens":150,"output_tokens":30,"total_tokens":180}
+            }}
+        })
+        .to_string()
+        .into_bytes(),
+        file_mtime_ms: None,
+    };
+    let out = strategy.decode(&delta_only, &mut state, "/tmp/a.jsonl").unwrap();
+    let DecodeOutcome::Emit(facts) = out else {
+        panic!("expected cumulative delta emit, got {out:?}");
+    };
+    assert_eq!(facts[0].payload_sections["usage"]["token_total"], 45);
+}
+
+#[test]
+fn review_pipeline_runtime_raw_to_metrics_to_upload_pending() {
+    use crate::local_store::pipeline::runtime::{adapter_roots_for_fixture, PipelineRuntime};
+    use crate::local_store::pipeline::adapters::HarnessRegistry;
+    use crate::local_store::pipeline::{Consumer, PipelineWriter};
+
+    // Writer sink uses wall-clock admission; keep fixture on "today" (Beijing).
+    let now = beijing_wall_to_utc_ms(2026, 9, 12, 15, 30, 0);
+    let dir = tempfile::tempdir().unwrap();
+    let codex_dir = dir.path().join("codex");
+    std::fs::create_dir_all(&codex_dir).unwrap();
+    std::fs::write(
+        codex_dir.join("s.jsonl"),
+        format!(
+            "{}\n",
+            json!({
+                "type":"event_msg",
+                "timestamp": now - 2_000,
+                "thread_id":"rt1",
+                "payload":{"type":"token_count","info":{
+                    "last_token_usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}
+                }}
+            }),
+        ),
+    )
+    .unwrap();
+
+    let store = open_store(now);
+    let writer = Arc::new(PipelineWriter::start(store));
+    let roots = adapter_roots_for_fixture(secret(), dir.path());
+    let writer_skills = Arc::clone(&writer);
+    let book = SkillBook::new();
+    let book2 = book.clone();
+    let alloc = Arc::new(move |key, name: &str| {
+        if let Some(id) = book2.get(&key) {
+            return id;
+        }
+        let id = writer_skills.register_skill(key, Some(name)).unwrap_or(0);
+        book2.upsert(key, id);
+        id
+    });
+    let registry = HarnessRegistry::from_roots(roots, alloc);
+    let strategy = registry.get("codex").expect("codex");
+    let specs = strategy.discover(DiscoveryBudget::new(8, 200)).unwrap();
+    assert!(!specs.is_empty());
+    let spec = &specs[0];
+    let source_id = writer
+        .register_source(crate::local_store::pipeline::types::RegisterSource {
+            harness_id: spec.harness_id.clone(),
+            source_key: spec.source_key,
+            source_kind: spec.source_kind,
+            locator_ref: spec.locator_ref.clone(),
+            stream_key: spec.stream_key.clone(),
+            cursor_kind: spec.cursor_kind,
+            cursor_json: spec.initial_cursor_json.to_string(),
+            decoder_state_version: 1,
+            decoder_state_json: spec.initial_decoder_state_json.to_string(),
+            observed_boundary_json: spec.observed_boundary_json.to_string(),
+            next_poll_at: Some(now),
+        })
+        .unwrap();
+
+    let runner = AcquisitionRunner::default();
+    let outcome = runner
+        .run_once(writer.as_ref(), strategy, source_id, DEFAULT_READ_BUDGET)
+        .unwrap();
+    assert!(
+        matches!(outcome, RunOutcome::Committed(ref s) if s.emitted >= 1),
+        "unexpected outcome: {outcome:?}"
+    );
+
+    for consumer in [Consumer::Hour, Consumer::Day, Consumer::Month] {
+        let drained = writer
+            .drain_metrics_consumer(consumer, 16, DEFAULT_LEASE_MS)
+            .unwrap();
+        assert!(drained.applied >= 1, "{consumer:?} should apply");
+    }
+    let pending = writer.pending_upload_count().unwrap();
+    assert!(pending >= 1, "upload lane should have pending work");
+    let _ = PipelineRuntime::start;
+    drop(writer);
 }

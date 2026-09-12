@@ -110,6 +110,7 @@ impl HarnessStrategy for FixtureJsonlStrategy {
         &self,
         record: &RawRecord,
         state: &mut DecoderState,
+        _logical_scope: &str,
     ) -> Result<DecodeOutcome, RunnerError> {
         let text = std::str::from_utf8(&record.payload)
             .map_err(|_| RunnerError::DecodeBlocked("utf8".into()))?;
@@ -165,6 +166,7 @@ impl HarnessStrategy for FixtureJsonlStrategy {
         let event_id = blob_from(&format!("evt:{id}:{}", resolved.occurred_at));
         let content_hash = blob_from(&format!("hash:{id}:{tokens}"));
 
+        let _ = content_hash;
         Ok(DecodeOutcome::Emit(vec![FactDraft {
             event_id,
             fact_key,
@@ -172,19 +174,21 @@ impl HarnessStrategy for FixtureJsonlStrategy {
             event_type: "model_usage_recorded".into(),
             schema_version: 2,
             metric_semantics_version: 1,
-            content_hash,
             occurred_at: resolved.occurred_at,
             time_source: resolved.time_source,
             model_key: 0,
             skill_id: None,
+            skill_key: None,
             session_key: None,
             turn_key: None,
             cost_scope_key: None,
             accuracy: TokenAccuracy::Exact,
-            usage_json: json!({
-                "token_total": tokens,
-                "input_context_tokens": tokens,
-                "output_tokens": 0
+            payload_sections: json!({
+                "usage": {
+                    "token_total": tokens,
+                    "input_context_tokens": tokens,
+                    "output_tokens": 0
+                }
             }),
         }]))
     }

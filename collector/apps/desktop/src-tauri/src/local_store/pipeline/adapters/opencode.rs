@@ -6,7 +6,7 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use super::common::{
-    emit_usage_fact, i64_field, json_obj, remember_source_time, resolve_record_time, str_field,
+    emit_code_fact, emit_usage_fact, i64_field, json_obj, remember_source_time, resolve_record_time, str_field,
     u64_field, SkillBook, UsageFactArgs,
 };
 use super::identity::{source_key, TypedNativeKey};
@@ -159,6 +159,7 @@ impl HarnessStrategy for OpenCodeStrategy {
         &self,
         record: &RawRecord,
         state: &mut DecoderState,
+        logical_scope: &str,
     ) -> Result<DecodeOutcome, RunnerError> {
         let value: Value = match serde_json::from_slice(&record.payload) {
             Ok(v) => v,
@@ -194,7 +195,7 @@ impl HarnessStrategy for OpenCodeStrategy {
                 Ok(DecodeOutcome::Emit(vec![emit_usage_fact(UsageFactArgs {
                     secret: &self.identity_secret,
                     harness: HARNESS_ID,
-                    scope: STREAM_STEP,
+                    scope: logical_scope,
                     native,
                     fact_kind: "model_usage_recorded",
                     occurred_at,
@@ -206,28 +207,23 @@ impl HarnessStrategy for OpenCodeStrategy {
                     session_id: session.as_deref(),
                     turn_id: Some(&turn),
                     skill_id: None,
+                    skill_key: None,
                     model_key: 0,
-                    extra_usage: json!({}),
+                    cache_read_tokens: None,
+                    reasoning_tokens: None,
                 })]))
             }
-            "code_changed" => Ok(DecodeOutcome::Emit(vec![emit_usage_fact(UsageFactArgs {
-                secret: &self.identity_secret,
-                harness: HARNESS_ID,
-                scope: STREAM_CODE,
+            "code_changed" => Ok(DecodeOutcome::Emit(vec![emit_code_fact(
+                &self.identity_secret,
+                HARNESS_ID,
+                logical_scope,
                 native,
-                fact_kind: "code_changed",
                 occurred_at,
                 time_source,
-                token_total: 0,
-                input_tokens: 0,
-                output_tokens: 0,
-                accuracy: TokenAccuracy::Derived,
-                session_id: session.as_deref(),
-                turn_id: None,
-                skill_id: None,
-                model_key: 0,
-                extra_usage: json!({}),
-            })])),
+                session.as_deref(),
+                0,
+                0,
+            )])),
             _ => Ok(DecodeOutcome::Ignore(IgnoreCode::UnsupportedStructure)),
         }
     }
