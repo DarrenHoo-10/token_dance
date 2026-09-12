@@ -65,6 +65,7 @@ struct Release {
     platform: String,
     notes: String,
     published_at: String,
+    #[serde(default)]
     exe: Asset,
     zip: Option<Asset>,
 }
@@ -616,6 +617,19 @@ mod tests {
         for bytes in [b"MZextra".as_slice(), b"ZZ", b"M"] {
             assert!(!verify(bytes, &candidate));
         }
+    }
+
+    #[test]
+    fn mac_dmg_entries_do_not_break_windows_release_selection() {
+        let input = include_str!("../../../../../schemas/fixtures/desktop-release-manifest.json");
+        let mut value: serde_json::Value = serde_json::from_str(input).unwrap();
+        value["releases"].as_array_mut().unwrap().push(serde_json::json!({
+            "version":"9.0.0", "platform":"macos-arm64", "notes":"Mac release",
+            "publishedAt":"2026-09-12T00:00:00Z", "minimumSystemVersion":"13.0",
+            "dmg":{"url":"https://downloads.example.com/mac.dmg","sha256":"a".repeat(64),"size":512}
+        }));
+        let manifest = serde_json::from_value(value).unwrap();
+        assert_eq!(select_release(manifest, "0.1.0").unwrap().unwrap().version, "0.2.0");
     }
     #[tokio::test]
     async fn concurrent_operations_do_not_queue_a_second_install() {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { localTestBuild } from "./brand";
 import { accountWebsite, getAccountSession, loginAccount, logoutAccount, openAccountWebsite } from "./account-bridge";
 import { websiteAvatarUrl } from "./website";
 import type { AccountUser } from "./account-bridge";
@@ -13,6 +14,7 @@ export function DesktopAccountCard({ zh }: { zh: boolean }) {
   const working = useRef(false);
   const t = (cn: string, en: string) => zh ? cn : en;
   const errorText = (code: string) => {
+    if (code.includes("LOCAL_TEST_MODE")) return t("本地测试版使用独立数据，暂不登录或上传。", "Local test uses isolated data; sign-in and upload are disabled.");
     if (code.includes("BROWSER_OPEN_FAILED")) return t("无法打开浏览器，请检查默认浏览器后重试。", "Could not open your default browser. Check it and retry.");
     if (code.includes("LOGIN_TIMEOUT")) return t("等待已超过 10 分钟，请重试。", "Sign-in timed out after 10 minutes. Please retry.");
     if (code.includes("LOGIN_IN_PROGRESS")) return t("请先完成已打开的网页登录。", "Complete the sign-in already open in your browser.");
@@ -54,6 +56,8 @@ export function DesktopAccountCard({ zh }: { zh: boolean }) {
     finally { working.current = false; setBusy(false); }
   };
   const go = (path: "/register" | "/forgot-password" | "/onboarding") => { void openAccountWebsite(path).catch(err => setError(String(err))); };
+
+  if (localTestBuild) return <section className="settings-account"><h2>{t("本地测试版", "Local test build")}</h2><p>{t("独立数据目录 · 可测试界面、菜单栏和本机采集 · 不登录或上传", "Isolated data · Test UI, menu bar and local collection · No sign-in or upload")}</p></section>;
 
   const avatar = websiteAvatarUrl(accountWebsite(), user?.avatarUrl);
   return <section className="settings-account" aria-label={t("账号", "Account")}>

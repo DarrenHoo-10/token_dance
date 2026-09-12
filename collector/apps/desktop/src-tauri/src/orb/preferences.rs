@@ -274,7 +274,7 @@ mod tests {
         assert!(matches!(error, PreferencesError::Io(_)));
         let after = store.snapshot();
         assert_eq!(after.enabled, true);
-        assert_eq!(after.diameter_dip, 112);
+        assert_eq!(after.diameter_dip, super::super::model::DEFAULT_DIAMETER_DIP);
         assert_eq!(after.revision, before.revision);
     }
 
@@ -319,10 +319,26 @@ mod tests {
         let err = store
             .patch(PreferencesPatch {
                 expected_revision: "3".into(),
-                diameter_dip: Some(96),
+                diameter_dip: Some(48),
                 ..PreferencesPatch::default()
             })
             .unwrap_err();
-        assert!(matches!(err, PreferencesError::InvalidDiameter(96)));
+        assert!(matches!(err, PreferencesError::InvalidDiameter(48)));
+    }
+
+    #[test]
+    fn smaller_sizes_persist_and_existing_sizes_remain_valid() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = PreferencesStore::load(dir.path());
+        assert_eq!(store.snapshot().diameter_dip, 80);
+        for diameter in ALLOWED_DIAMETERS {
+            let saved = store.patch(PreferencesPatch {
+                expected_revision: store.snapshot().revision,
+                diameter_dip: Some(diameter),
+                ..PreferencesPatch::default()
+            }).unwrap();
+            assert_eq!(saved.diameter_dip, diameter);
+            assert_eq!(PreferencesStore::load(dir.path()).snapshot().diameter_dip, diameter);
+        }
     }
 }

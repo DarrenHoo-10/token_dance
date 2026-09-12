@@ -18,6 +18,7 @@ import urllib.request
 import zipfile
 
 MAX_DOWNLOAD = 150 * 1024 * 1024
+MAX_MAC_DOWNLOAD = 512 * 1024 * 1024
 MAX_MANIFEST = 2 * 1024 * 1024
 
 
@@ -49,13 +50,13 @@ def valid_url(value):
         return False
 
 
-def file_digest(path):
+def file_digest(path, limit=MAX_DOWNLOAD):
     digest = hashlib.sha256()
     size = 0
     with path.open('rb') as stream:
         for block in iter(lambda: stream.read(64 * 1024), b''):
             size += len(block)
-            if size > MAX_DOWNLOAD:
+            if size > limit:
                 raise ValueError('Package exceeds download limit')
             digest.update(block)
     if not size:
@@ -63,10 +64,10 @@ def file_digest(path):
     return size, digest.hexdigest()
 
 
-def describe(path, url):
+def describe(path, url, limit=MAX_DOWNLOAD):
     if not valid_url(url):
         raise ValueError('Use a permanent public HTTPS package URL without credentials or a query')
-    size, digest = file_digest(path)
+    size, digest = file_digest(path, limit)
     return {'url': url, 'sha256': digest, 'size': size}
 
 
@@ -75,6 +76,43 @@ def validate_build(build, release_version, executable):
             or not isinstance(build.get('commit'), str) or not re.fullmatch(r'[0-9a-f]{40}', build['commit'])
             or build.get('sha256') != executable['sha256']):
         raise ValueError('Build provenance must match the executable, version and main branch')
+
+
+def validate_macos_build(build, release):
+    dmg = release['dmg']
+    architecture = {'macos-arm64': 'arm64', 'macos-x64': 'x86_64'}[release['platform']]
+    if (not isinstance(build, dict) or build.get('branch') != 'main'
+            or not isinstance(build.get('commit'), str) or not re.fullmatch(r'[a-f0-9]{40}', build['commit'])
+            or build.get('dirty') is not False or build.get('profile') != 'release'
+            or build.get('version') != release['version'] or build.get('architecture') != architecture
+            or build.get('bundleId') != 'io.tokendance.desktop'
+            or type(build.get('notarized')) is not bool or build['notarized'] != release.get('notarized')
+            or build.get('minimumSystemVersion') != release['minimumSystemVersion']
+            or not isinstance(build.get('dmg'), dict)
+            or build['dmg'].get('sha256') != dmg['sha256'] or build['dmg'].get('size') != dmg['size']):
+        raise ValueError('macOS release must match its final DMG build and main provenance')
+    if build['notarized']:
+        if (not isinstance(build.get('teamIdentifier'), str) or not re.fullmatch(r'[A-Z0-9]{10}', build['teamIdentifier'])
+                or not str(build.get('signingAuthority', '')).startswith('Developer ID Application:')
+                or not all(isinstance(build.get(key), str) and re.fullmatch(r'[a-fA-F0-9-]{36}', build[key]) for key in ('appNotaryId','dmgNotaryId'))):
+            raise ValueError('Notarized release requires Developer ID and both notarization records')
+    elif (build.get('distribution') != 'unnotarized' or build.get('signingAuthority') != 'adhoc'
+            or build.get('credentialStore') != 'login-keychain' or build.get('teamIdentifier') is not None
+            or build.get('appNotaryId') is not None or build.get('dmgNotaryId') is not None):
+        raise ValueError('Free distribution must explicitly identify its ad-hoc signature and login Keychain')
+
+
+def release_assets(release):
+    if release['platform'] == 'windows-x64':
+        return [release['exe']] + ([release['zip']] if release.get('zip') else [])
+    return [release['dmg']]
+
+
+def validate_release_build(build, release):
+    if release['platform'] == 'windows-x64':
+        validate_build(build, release['version'], release['exe'])
+    else:
+        validate_macos_build(build, release)
 
 
 def validate_manifest(manifest):
@@ -88,6 +126,8 @@ def validate_manifest(manifest):
                 or not release['platform'] or not isinstance(release.get('notes'), str)
                 or type(release.get('prerelease', False)) is not bool):
             raise ValueError('Invalid release')
+        if release['platform'] not in ('windows-x64', 'macos-arm64', 'macos-x64'):
+            raise ValueError('Unsupported release platform')
         key = (release['platform'], version(release.get('version')))
         if key in seen:
             raise ValueError('Duplicate release')
@@ -96,14 +136,36 @@ def validate_manifest(manifest):
         if not isinstance(date, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})', date):
             raise ValueError('Invalid release date')
         datetime.fromisoformat(date.replace('Z', '+00:00'))
-        assets = [release.get('exe')]
-        if release.get('zip') is not None:
-            assets.append(release['zip'])
+        if release['platform'].startswith('macos-'):
+            if (not isinstance(release.get('minimumSystemVersion'), str)
+                    or not re.fullmatch(r'[1-9]\d*\.\d+(?:\.\d+)?', release['minimumSystemVersion'])
+                    or type(release.get('notarized')) is not bool
+                    or release.get('exe') is not None or release.get('zip') is not None):
+                raise ValueError('Invalid macOS release details')
+            assets = [release.get('dmg')]
+            limit = MAX_MAC_DOWNLOAD
+        else:
+            if release.get('dmg') is not None:
+                raise ValueError('Windows release cannot contain a Mac disk image')
+            assets = [release.get('exe')] + ([release['zip']] if release.get('zip') is not None else [])
+            limit = MAX_DOWNLOAD
         for asset in assets:
             if (not isinstance(asset, dict) or not valid_url(asset.get('url'))
-                    or type(asset.get('size')) is not int or not 0 < asset['size'] <= MAX_DOWNLOAD
+                    or type(asset.get('size')) is not int or not 0 < asset['size'] <= limit
                     or not isinstance(asset.get('sha256'), str) or not re.fullmatch(r'[a-fA-F0-9]{64}', asset['sha256'])):
                 raise ValueError('Invalid package metadata')
+        if release['platform'].startswith('macos-') and not urllib.parse.urlsplit(assets[0]['url']).path.endswith('.dmg'):
+            raise ValueError('macOS package URL must point to a DMG')
+
+
+def check_dmg(path):
+    with path.open('rb') as stream:
+        stream.seek(0, 2)
+        if not 512 <= stream.tell() <= MAX_MAC_DOWNLOAD:
+            raise ValueError('Invalid DMG size')
+        stream.seek(-512, 2)
+        if stream.read(4) != b'koly':
+            raise ValueError('Expected a UDIF disk image')
 
 
 def check_windows_exe(path):
@@ -166,19 +228,26 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--reconcile', action='store_true', help='Rebuild manifest from MySQL without build artifacts')
     parser.add_argument('--version')
+    parser.add_argument('--platform', choices=['windows-x64', 'macos-arm64', 'macos-x64'], default='windows-x64')
     parser.add_argument('--exe', type=Path)
     parser.add_argument('--exe-url')
     parser.add_argument('--zip', type=Path)
     parser.add_argument('--zip-url')
+    parser.add_argument('--dmg', type=Path)
+    parser.add_argument('--dmg-url')
     parser.add_argument('--build-info', type=Path)
     parser.add_argument('--notes-file', type=Path)
     parser.add_argument('--manifest', type=Path, required=True)
     parser.add_argument('--prerelease', action='store_true')
     args = parser.parse_args()
+    import subprocess
+    root = Path(__file__).resolve().parents[2]
+    subprocess.run(['node', str(root / 'collector/apps/desktop/scripts/build-source.mjs')], cwd=root, check=True)
     import release_registry
     if args.reconcile:
         if any([args.version, args.exe, args.exe_url, args.zip, args.zip_url,
-                args.build_info, args.notes_file, args.prerelease]):
+                args.build_info, args.notes_file, args.prerelease, args.dmg, args.dmg_url,
+                args.platform != 'windows-x64']):
             parser.error('--reconcile cannot be combined with release arguments')
         db = release_registry.connect()
         try:
@@ -187,22 +256,34 @@ def main():
             db.close()
         print('Release manifest reconciled from MySQL.')
         return
-    if not all([args.version, args.exe, args.exe_url, args.build_info, args.notes_file]):
-        parser.error('Publishing requires version, exe, exe-url, build-info and notes-file')
+    if not all([args.version, args.build_info, args.notes_file]):
+        parser.error('Publishing requires version, build-info and notes-file')
     version(args.version)
     if bool(args.zip) != bool(args.zip_url):
         raise ValueError('ZIP path and URL must be supplied together')
-    check_windows_exe(args.exe)
-    executable = describe(args.exe, args.exe_url)
     build = json.loads(args.build_info.read_text(encoding='utf-8-sig'))
-    validate_build(build, args.version, executable)
-    release = {'version': args.version, 'platform': 'windows-x64',
+    build = {**build, 'commit': build.get('commit', build.get('commitSha'))}
+    release = {'version': args.version, 'platform': args.platform,
                'publishedAt': datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
                'notes': args.notes_file.read_text(encoding='utf-8-sig'),
-               'prerelease': args.prerelease, 'exe': executable}
-    if args.zip:
-        check_zip(args.zip, executable)
-        release['zip'] = describe(args.zip, args.zip_url)
+               'prerelease': args.prerelease}
+    if args.platform == 'windows-x64':
+        if not args.exe or not args.exe_url or args.dmg or args.dmg_url:
+            parser.error('Windows publishing requires exe and exe-url, not dmg')
+        check_windows_exe(args.exe)
+        release['exe'] = describe(args.exe, args.exe_url)
+        if args.zip:
+            check_zip(args.zip, release['exe'])
+            release['zip'] = describe(args.zip, args.zip_url)
+    else:
+        if not args.dmg or not args.dmg_url or args.exe or args.exe_url or args.zip:
+            parser.error('macOS publishing requires dmg and dmg-url only')
+        check_dmg(args.dmg)
+        release['dmg'] = describe(args.dmg, args.dmg_url, MAX_MAC_DOWNLOAD)
+        release['minimumSystemVersion'] = build.get('minimumSystemVersion')
+        release['notarized'] = build.get('notarized')
+    validate_manifest({'schemaVersion': 1, 'releases': [release]})
+    validate_release_build(build, release)
     db = release_registry.connect()
     try:
         changed = release_registry.publish(db, args.manifest, release, build, verify_remote)

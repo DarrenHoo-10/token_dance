@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>LSUIElement</key><true/>
+  <key>LSMultipleInstancesProhibited</key><true/>
+  <key>CFBundleDisplayName</key><string>TokenDance</string>
+  <key>CFBundleName</key><string>TokenDance</string>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>TokenDanceDistribution</key><string>unnotarized</string>
+  <key>TokenDanceCredentialStore</key><string>login-keychain</string>
+</dict></plist>

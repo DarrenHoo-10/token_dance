@@ -78,16 +78,68 @@ fn suppress_orb(app: &AppHandle) {
 
 fn present(window: &WebviewWindow) -> tauri::Result<()> {
     suppress_orb(window.app_handle());
+    #[cfg(target_os = "macos")]
+    {
+        crate::macos_tray::activate_app();
+        let _ = window
+            .app_handle()
+            .set_activation_policy(tauri::ActivationPolicy::Regular);
+        let _ = window.app_handle().show();
+        apply_macos_overlay_chrome(window);
+    }
     if window.is_minimized()? { window.unminimize()?; }
     if !window.is_visible()? { window.show()?; }
+    #[cfg(target_os = "macos")]
+    crate::macos_tray::order_front(window);
     if !window.is_focused()? { window.set_focus()?; }
     Ok(())
+}
+
+fn clamp_to_visible(
+    pos: PhysicalPosition<i32>,
+    size: PhysicalSize<u32>,
+    origin: PhysicalPosition<i32>,
+    area: PhysicalSize<u32>,
+) -> PhysicalPosition<i32> {
+    let max_x = origin.x + area.width as i32 - size.width as i32;
+    let max_y = origin.y + area.height as i32 - size.height as i32;
+    PhysicalPosition::new(
+        pos.x.clamp(origin.x, max_x.max(origin.x)),
+        pos.y.clamp(origin.y, max_y.max(origin.y)),
+    )
+}
+
+fn center_in_work_area(
+    origin: PhysicalPosition<i32>,
+    area: PhysicalSize<u32>,
+    size: PhysicalSize<u32>,
+) -> PhysicalPosition<i32> {
+    PhysicalPosition::new(
+        origin.x + (area.width as i32 - size.width as i32) / 2,
+        origin.y + (area.height as i32 - size.height as i32) / 2,
+    )
+}
+
+#[cfg(target_os = "macos")]
+pub fn apply_macos_overlay_chrome(window: &WebviewWindow) {
+    crate::macos_tray::apply_settings_overlay(window);
+    let _ = window.set_title_bar_style(tauri::TitleBarStyle::Overlay);
+}
+
+#[cfg(target_os = "macos")]
+pub fn apply_macos_settings_chrome(settings: &WebviewWindow) {
+    let _ = settings.set_title("TokenDance");
+    apply_macos_overlay_chrome(settings);
 }
 
 pub fn request_initial_panel(app: &AppHandle) -> tauri::Result<()> {
     let point = app.get_webview_window("main")
         .and_then(|window| window.current_monitor().ok().flatten())
-        .map(|monitor| PhysicalPosition::new((monitor.position().x + 1) as f64, (monitor.position().y + 1) as f64))
+        .map(|monitor| {
+            // The macOS backend looks up monitors in CGDisplayBounds points.
+            let scale = if cfg!(target_os = "macos") { monitor.scale_factor() } else { 1.0 };
+            PhysicalPosition::new(monitor.position().x as f64 / scale + 1.0, monitor.position().y as f64 / scale + 1.0)
+        })
         .unwrap_or(PhysicalPosition::new(0.0, 0.0));
     show_usage_panel(app, point)
 }
@@ -149,7 +201,16 @@ pub fn show_usage_panel(app: &AppHandle, point: PhysicalPosition<f64>) -> tauri:
                 ((480.0 * scale).round() as u32).min(area.size.width),
                 ((780.0 * scale).round() as u32).min(area.size.height),
             );
-            let position = panel_position(area.position, area.size, size, gap);
+            let position = if cfg!(target_os = "macos") {
+                clamp_to_visible(
+                    center_in_work_area(area.position, area.size, size),
+                    size,
+                    area.position,
+                    area.size,
+                )
+            } else {
+                panel_position(area.position, area.size, size, gap)
+            };
             if window.outer_position()? != position { window.set_position(position)?; }
             if window.inner_size()? != size { window.set_size(size)?; }
         }
@@ -169,6 +230,8 @@ pub fn open_settings(app: AppHandle) -> Result<(), String> {
         panel.hide().map_err(|error| error.to_string())?;
     }
     if app.state::<WindowPresentation>().request("settings", OpenRequest::Settings) {
+        #[cfg(target_os = "macos")]
+        apply_macos_settings_chrome(&settings);
         present(&settings).map_err(|error| error.to_string())?;
     }
     Ok(())
@@ -216,6 +279,21 @@ pub fn open_website(url: String) -> Result<(), String> {
 pub async fn hide_window(window: WebviewWindow) -> Result<(), String> {
     window.state::<WindowPresentation>().mark_hidden(window.label());
     window.hide().map_err(|error| error.to_string())?;
+    #[cfg(target_os = "macos")]
+    {
+        let app = window.app_handle();
+        let settings_visible = app
+            .get_webview_window("settings")
+            .and_then(|item| item.is_visible().ok())
+            .unwrap_or(false);
+        let main_visible = app
+            .get_webview_window("main")
+            .and_then(|item| item.is_visible().ok())
+            .unwrap_or(false);
+        if !settings_visible && !main_visible {
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        }
+    }
     if let Some(orb) = window.app_handle().try_state::<crate::orb::controller::OrbHandle>() {
         orb.queue_visibility_sync();
     }
@@ -236,7 +314,7 @@ pub(crate) fn activate_primary_window(app: &AppHandle) -> Result<(), String> {
     request_initial_panel(app).map_err(|error| error.to_string())
 }
 #[tauri::command]
-pub async fn show_window(window: WebviewWindow) -> Result<(), String> {
+pub fn show_window(window: WebviewWindow) -> Result<(), String> {
     if window.label() == "settings" { open_settings(window.app_handle().clone()) }
     else { request_initial_panel(window.app_handle()).map_err(|e| e.to_string()) }
 }
@@ -295,6 +373,18 @@ mod tests {
         assert!(state.on_focus_change("main", false));
         state.mark_hidden("main");
         assert!(!state.on_focus_change("main", false));
+    }
+
+    #[test]
+    fn macos_panel_centers_in_work_area() {
+        assert_eq!(
+            center_in_work_area(
+                PhysicalPosition::new(0, 38),
+                PhysicalSize::new(1512, 944),
+                PhysicalSize::new(480, 780),
+            ),
+            PhysicalPosition::new(516, 120)
+        );
     }
 
     #[test]

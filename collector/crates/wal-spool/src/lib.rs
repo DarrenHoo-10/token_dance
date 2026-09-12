@@ -25,6 +25,7 @@ pub use keys::{
     InjectedKeyProvider, KeyProvider, OsKeyProvider, ToggleKeyProvider, UnavailableKeyProvider,
 };
 pub use limits::{AppendClass, SpoolLimits};
+pub use store::spool_has_data;
 pub use store::{contains_bytes, wal_files_contain_magic, CompactReport, WalStore};
 
 #[cfg(test)]

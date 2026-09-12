@@ -33,7 +33,7 @@ export function DocsPage() {
   }, [hash, slug]);
   if (!article) return <NotFoundPage />;
   return <div className="desktop-resources">
-    <header className="docs-heading"><div><h1>{zh ? '使用文档' : 'Documentation'}</h1><p>{zh ? '从第一次接入，到读懂每一份用量。' : 'From your first connection to understanding your usage.'}</p></div><Link className="resource-link" to="/download">{zh ? '获取 Windows 桌面客户端' : 'Get the Windows desktop app'}<ArrowDownToLine size={16} aria-hidden="true" /></Link></header>
+    <header className="docs-heading"><div><h1>{zh ? '使用文档' : 'Documentation'}</h1><p>{zh ? '从第一次接入，到读懂每一份用量。' : 'From your first connection to understanding your usage.'}</p></div><Link className="resource-link" to="/download">{zh ? '获取桌面客户端' : 'Get the desktop app'}<ArrowDownToLine size={16} aria-hidden="true" /></Link></header>
     <div className="docs-layout">
       <nav className="docs-menu" aria-label={zh ? '文档导航' : 'Documentation navigation'}>
         {articles.map((item, index) => <Fragment key={item.slug}>{item.group !== articles[index - 1]?.group && <div className="doc-menu-group">{item.group}</div>}<NavLink to={`/docs/${item.slug}`} className={({ isActive }) => isActive ? 'active' : ''}>{item.label}</NavLink></Fragment>)}

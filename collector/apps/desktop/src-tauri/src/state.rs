@@ -13,16 +13,15 @@ use adapter_sdk::{ConfigMutation, SetupPlan};
 use chrono::{Local, Utc};
 use adapter_grok_build::{hook_auth_token, write_session_end_hook};
 use collector_service::{
-    detect_local, grok_user_home, start_listener, DetectionSnapshot, ProductionService,
+    detect_local, grok_user_home, start_listener, AppPaths, InstanceLock, DetectionSnapshot, ProductionService,
 };
 use config_executor::{EncryptedBackupStore, SemanticVerifier, SetupPlanExecutor};
 use protocol::EventEnvelope;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
-#[cfg(test)]
 use wal_spool::InjectedKeyProvider;
-use wal_spool::{AckPayload, KeyProvider, OsKeyProvider, WalStore};
+use wal_spool::{AckPayload, KeyProvider, WalStore};
 
 use crate::autostart::{AutostartProvider, SystemAutostartManager};
 use crate::local_store::pipeline::{event_pipeline_v2_client_enabled, Grain};
@@ -168,6 +167,8 @@ pub struct DaemonStatus {
     pub last_heartbeat_at: String,
     pub sync_status: String,
     pub last_sync_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub init_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -181,14 +182,43 @@ pub struct CollectorMetrics {
     pub active_agent_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AutostartStatus {
+    Enabled,
+    Disabled,
+    RequiresApproval,
+    Unavailable,
+}
+
+impl AutostartStatus {
+    pub fn from_enabled(enabled: bool) -> Self {
+        if enabled {
+            Self::Enabled
+        } else {
+            Self::Disabled
+        }
+    }
+
+    pub fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AutostartInfo {
     pub enabled: bool,
+    #[serde(default = "default_autostart_status")]
+    pub status: AutostartStatus,
     pub platform: String,
     pub method: String,
     pub target_path: String,
     pub details: String,
+}
+
+fn default_autostart_status() -> AutostartStatus {
+    AutostartStatus::Disabled
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -326,21 +356,27 @@ pub struct AppState {
     pipeline_runtime: Arc<StdMutex<Option<Arc<PipelineRuntime>>>>,
     storage_error: Arc<StdMutex<Option<String>>>,
     rebuilding: Arc<StdMutex<bool>>,
+    logs_dir: Arc<PathBuf>,
+    instance_lock: Arc<StdMutex<Option<InstanceLock>>>,
 }
 
 impl AppState {
     pub async fn production() -> Result<Self, String> {
-        let root = app_data_root();
-        let key_provider: Arc<dyn KeyProvider> = Arc::new(OsKeyProvider::new(
-            "io.tokendance.desktop",
-            "collector-wal-key",
-        ));
-        Self::build(
-            root,
-            key_provider,
+        let paths = AppPaths::production()?;
+        paths.ensure()?;
+        let lock = InstanceLock::acquire(&paths)?;
+        collector_service::platform::maybe_migrate_macos_home_dir(&paths)?;
+        let key_provider: Arc<dyn KeyProvider> = if crate::local_test::enabled() {
+            Arc::new(InjectedKeyProvider::new(crate::local_test::data_key(&paths.collector)?))
+        } else {
+            collector_service::runtime::wal_key_provider(&paths.collector)?
+        };
+        let state = Self::build(
+            paths.collector.clone(), paths.logs.clone(), key_provider,
             Arc::new(SystemAutostartManager::new("TokenDance")),
-        )
-        .await
+        ).await?;
+        *state.instance_lock.lock().expect("instance lock") = Some(lock);
+        Ok(state)
     }
 
     #[cfg(test)]
@@ -349,6 +385,7 @@ impl AppState {
         autostart: Arc<dyn AutostartProvider>,
     ) -> Result<Self, String> {
         Self::build(
+            root.clone(),
             root,
             Arc::new(InjectedKeyProvider::new([0x61; 32])),
             autostart,
@@ -358,6 +395,7 @@ impl AppState {
 
     async fn build(
         root: PathBuf,
+        logs: PathBuf,
         key_provider: Arc<dyn KeyProvider>,
         autostart: Arc<dyn AutostartProvider>,
     ) -> Result<Self, String> {
@@ -392,9 +430,11 @@ impl AppState {
             service.driver_registry.reset_source(source_id);
         }
         local_store.clear_rescan_markers(&rescan_sources)?;
-        if let Some(home) = grok_user_home() {
-            let _ = write_session_end_hook(&home, &key);
-            let _ = start_listener(hook_auth_token(&key), service.grok_hooks.clone());
+        if !crate::local_test::enabled() {
+            if let Some(home) = grok_user_home() {
+                let _ = write_session_end_hook(&home, &key);
+                let _ = start_listener(hook_auth_token(&key), service.grok_hooks.clone());
+            }
         }
         let autostart_enabled = autostart.is_enabled()?;
         let control = load_control(&root)?
@@ -441,6 +481,8 @@ impl AppState {
             pipeline_runtime: Arc::new(StdMutex::new(pipeline_runtime)),
             storage_error: Arc::new(StdMutex::new(None)),
             rebuilding: Arc::new(StdMutex::new(false)),
+            logs_dir: Arc::new(logs),
+            instance_lock: Arc::new(StdMutex::new(None)),
         };
         state.apply_saved_agent_controls().await?;
         state.persist_control().await?;
@@ -449,6 +491,29 @@ impl AppState {
 
     pub fn control_dir_path(&self) -> PathBuf {
         (*self.control_dir).clone()
+    }
+
+    pub fn log_dir_path(&self) -> PathBuf {
+        (*self.logs_dir).clone()
+    }
+
+    pub fn onboarding_complete_path(&self) -> PathBuf {
+        self.control_dir.join(".onboarding-complete")
+    }
+
+    pub fn is_shutting_down(&self) -> bool {
+        *self.shutting_down.lock().expect("shutdown lock")
+    }
+
+    pub async fn retry_runtime_init(&self) -> Result<(), String> {
+        if crate::local_test::enabled() {
+            crate::local_test::data_key(&self.control_dir)?;
+        } else {
+            wal_spool::OsKeyProvider::wal_key(false)
+                .data_key()
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     pub(crate) fn lock_store(&self) -> std::sync::MutexGuard<'_, LocalStore> {
@@ -673,6 +738,7 @@ impl AppState {
             last_heartbeat_at: Utc::now().to_rfc3339(),
             sync_status,
             last_sync_at: control.last_sync_time.clone(),
+            init_error: None,
         }
     }
 
@@ -1326,15 +1392,22 @@ fn pipeline_today_token_value(
 }
 
 pub(crate) fn app_data_root() -> PathBuf {
-    if let Some(path) = std::env::var_os("TOKENDANCE_DATA_DIR").filter(|p| !p.is_empty()) {
-        return PathBuf::from(path);
+    // The explicit local-test identity takes precedence over older partial
+    // test overrides, so no helper can accidentally reuse production state.
+    if !crate::local_test::enabled() {
+        if let Some(path) = std::env::var_os("TOKENDANCE_DATA_DIR").filter(|p| !p.is_empty()) {
+            return PathBuf::from(path);
+        }
     }
-    let base = std::env::var_os("LOCALAPPDATA")
-        .or_else(|| std::env::var_os("XDG_DATA_HOME"))
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("TokenDance").join("collector")
+    AppPaths::production()
+        .map(|paths| paths.collector)
+        .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+pub(crate) fn crash_log_path() -> PathBuf {
+    AppPaths::production()
+        .map(|paths| paths.crash_log_file())
+        .unwrap_or_else(|_| app_data_root().join("crash.log"))
 }
 
 fn load_or_create_installation_id(root: &Path) -> Result<String, String> {
@@ -1345,7 +1418,7 @@ fn load_or_create_installation_id(root: &Path) -> Result<String, String> {
             .map_err(|error| error.to_string());
     }
     let id = format!("ins_{}", ulid::Ulid::new());
-    fs::write(path, &id).map_err(|error| error.to_string())?;
+    collector_service::platform::write_private_file(&path, &id)?;
     Ok(id)
 }
 

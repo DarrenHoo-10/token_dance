@@ -3,6 +3,10 @@ name: cross-platform-packaging
 on:
   workflow_dispatch:
     inputs:
+      unnotarized_macos_release:
+        description: "Build a free macOS DMG from main (no Apple certificate required)"
+        type: boolean
+        default: false
       sign_release:
         description: "Sign and notarize a release (requires configured certificates)"
         type: boolean
@@ -26,8 +30,19 @@ permissions:
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      BUILD_PROFILE: ${{ github.event_name == 'workflow_dispatch' && inputs.sign_release && 'release' || 'debug' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.sign_release && 'main' || '' }}
+          fetch-depth: 0
+      - name: Reject release requests outside main
+        if: github.event_name == 'workflow_dispatch' && inputs.sign_release && github.ref != 'refs/heads/main'
+        shell: bash
+        run: |
+          echo 'BLOCKED: releases may only be requested from main' >&2
+          exit 1
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
@@ -37,7 +52,14 @@ jobs:
           cache: npm
           cache-dependency-path: collector/apps/desktop/package-lock.json
       - name: Release wiring static tests
-        run: python collector/packaging/tests/test_release_wiring.py
+        run: |
+          python collector/packaging/tests/test_release_wiring.py
+          python collector/packaging/tests/test_macos_keychain_signing.py
+          node --test collector/apps/desktop/scripts/build-source.test.mjs
+      - name: Build desktop frontend before embedded-resource checks
+        run: |
+          npm --prefix collector/apps/desktop ci
+          npm --prefix collector/apps/desktop run build
       - name: Windows crate format
         run: cargo fmt --manifest-path collector/crates/platform-windows/Cargo.toml -- --check
       - name: Windows runnable tests
@@ -50,6 +72,7 @@ jobs:
         shell: pwsh
         run: |
           $scripts = @(
+            'collector/apps/desktop/scripts/build-windows.ps1',
             'collector/packaging/windows/Verify-Authenticode.ps1',
             'collector/packaging/windows/Sign-Authenticode.ps1',
             'collector/packaging/windows/Install-CurrentUser.ps1',
@@ -80,15 +103,19 @@ jobs:
           } finally {
             $env:WINDOWS_SIGNING_CERT_THUMBPRINT = $oldThumbprint
           }
-      - name: Build Windows release executable
+      - name: Build Windows executable
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
-          npm --prefix collector/apps/desktop ci
-          npm --prefix collector/apps/desktop run build
-          cargo build --locked --release --manifest-path collector/apps/desktop/src-tauri/Cargo.toml --features custom-protocol
-          $artifact = 'collector/apps/desktop/src-tauri/target/release/tokendance-desktop.exe'
+          if ($env:BUILD_PROFILE -eq 'release') {
+            node collector/apps/desktop/scripts/build-source.mjs "$env:RUNNER_TEMP/release-source.json"
+            cargo build --locked --release --manifest-path collector/apps/desktop/src-tauri/Cargo.toml --features custom-protocol
+            Get-Content "$env:RUNNER_TEMP/release-source.json" | Add-Content $env:GITHUB_STEP_SUMMARY
+          } else {
+            cargo build --locked --manifest-path collector/apps/desktop/src-tauri/Cargo.toml --features custom-protocol
+          }
+          $artifact = "collector/apps/desktop/src-tauri/target/$env:BUILD_PROFILE/tokendance-desktop.exe"
           if (-not (Test-Path -LiteralPath $artifact -PathType Leaf)) {
             throw "BLOCKED: Windows release executable was not produced: $artifact"
           }
@@ -138,45 +165,81 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.sign_release
         with:
           name: tokendance-desktop-windows-signed
-          path: collector/apps/desktop/src-tauri/target/release/tokendance-desktop.exe
+          path: |
+            collector/apps/desktop/src-tauri/target/release/tokendance-desktop.exe
+            ${{ runner.temp }}/release-source.json
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
         if: github.event_name != 'workflow_dispatch' || !inputs.sign_release
         with:
           name: tokendance-desktop-windows-unsigned
-          path: collector/apps/desktop/src-tauri/target/release/tokendance-desktop.exe
+          path: collector/apps/desktop/src-tauri/target/debug/tokendance-desktop.exe
           if-no-files-found: error
 
   macos:
     runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: arm64
+            target: aarch64-apple-darwin
+          - architecture: x86_64
+            target: x86_64-apple-darwin
+    env:
+      BUILD_PROFILE: ${{ github.event_name == 'workflow_dispatch' && (inputs.sign_release || inputs.unnotarized_macos_release) && 'release' || 'debug' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && (inputs.sign_release || inputs.unnotarized_macos_release) && 'main' || '' }}
+          fetch-depth: 0
+      - name: Reject release requests outside main
+        if: github.event_name == 'workflow_dispatch' && (inputs.sign_release || inputs.unnotarized_macos_release) && github.ref != 'refs/heads/main'
+        run: |
+          echo 'BLOCKED: releases may only be requested from main' >&2
+          exit 1
+      - name: Reject conflicting macOS release modes
+        if: inputs.sign_release && inputs.unnotarized_macos_release
+        run: exit 1
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-          targets: x86_64-apple-darwin,aarch64-apple-darwin
+          targets: ${{ matrix.target }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: collector/apps/desktop/package-lock.json
+      - name: Build desktop frontend before embedded-resource checks
+        run: |
+          npm --prefix collector/apps/desktop ci
+          npm --prefix collector/apps/desktop run build
       - name: macOS crate format and tests
         run: |
           cargo fmt --manifest-path collector/crates/platform-macos/Cargo.toml -- --check
           cargo test --locked --manifest-path collector/crates/platform-macos/Cargo.toml
-      - name: Both macOS architectures compile
+      - name: Free macOS credential and desktop regression tests
+        if: matrix.architecture == 'arm64'
         run: |
-          cargo check --locked --manifest-path collector/crates/platform-macos/Cargo.toml --target aarch64-apple-darwin
-          cargo check --locked --manifest-path collector/crates/platform-macos/Cargo.toml --target x86_64-apple-darwin
+          cargo test --locked --manifest-path collector/Cargo.toml -p platform-credentials --features login-keychain
+          cargo test --locked --manifest-path collector/apps/desktop/src-tauri/Cargo.toml --features unnotarized-distribution --lib
+      - name: Selected macOS architecture compiles
+        run: |
+          cargo check --locked --manifest-path collector/crates/platform-macos/Cargo.toml --target ${{ matrix.target }}
       - name: Packaging scripts and archive-binding tests
         run: |
           python3 collector/packaging/tests/test_release_wiring.py
+          python3 collector/packaging/tests/test_macos_keychain_signing.py
+          python3 collector/packaging/tests/test_dmg.py
+          python3 collector/packaging/tests/test_unnotarized.py
+          node --test collector/apps/desktop/scripts/build-source.test.mjs
           plutil -lint collector/packaging/macos/collector.entitlements
           plutil -lint collector/packaging/macos/dev.tokenshow.collector.plist.template
           bash -n collector/packaging/macos/Build-App-Bundle.sh
           bash -n collector/packaging/macos/Verify-NotarizationArchive.sh
           bash -n collector/packaging/macos/sign-notarize.sh
+          python3 -m py_compile collector/packaging/macos/dmg.py
           work_dir="$(mktemp -d)"
           trap 'rm -rf "$work_dir"' EXIT
           bash collector/packaging/macos/Build-App-Bundle.sh /usr/bin/true "$work_dir/Expected.app"
@@ -199,22 +262,44 @@ jobs:
           grep -F 'BLOCKED: DEVELOPER_ID_APPLICATION signing identity is missing' "$work_dir/blocked.log"
       - name: Adapter Pack tests
         run: cargo test --locked --manifest-path collector/packaging/adapter-pack/Cargo.toml
-      - name: Build macOS release app
+      - name: Build macOS app for selected architecture
         run: |
-          npm --prefix collector/apps/desktop ci
-          npm --prefix collector/apps/desktop run build
-          cargo build --locked --release --manifest-path collector/apps/desktop/src-tauri/Cargo.toml --features custom-protocol
+          build_args=("${{ matrix.architecture }}" --no-install)
+          if [[ "$BUILD_PROFILE" == debug ]]; then build_args+=(--debug); fi
+          if [[ "${{ inputs.sign_release }}" == true ]]; then build_args+=(--notarized); else build_args+=(--unnotarized); fi
+          npm --prefix collector/apps/desktop run build:macos -- "${build_args[@]}"
           rm -rf collector/packaging/macos/release
           mkdir -p collector/packaging/macos/release
-          bash collector/packaging/macos/Build-App-Bundle.sh \
-            collector/apps/desktop/src-tauri/target/release/tokendance-desktop \
-            collector/packaging/macos/release/TokenDance.app
+          native_app="collector/apps/desktop/src-tauri/target/${{ matrix.target }}/$BUILD_PROFILE/bundle/macos/TokenDance.app"
+          if [[ ! -d "$native_app" ]]; then
+            echo 'BLOCKED: Tauri bundler did not produce a .app' >&2
+            exit 1
+          fi
+          cp -R "$native_app" collector/packaging/macos/release/TokenDance.app
+          cp "collector/apps/desktop/release/build-info-${{ matrix.architecture }}.json" collector/packaging/macos/release/build-info.json
+          cat collector/packaging/macos/release/build-info.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Stage free unnotarized DMG
+        if: github.event_name == 'workflow_dispatch' && inputs.unnotarized_macos_release
+        run: |
+          cp collector/apps/desktop/release/*-macos-${{ matrix.architecture }}-unnotarized.dmg collector/packaging/macos/release/
+          cp collector/apps/desktop/release/*-macos-${{ matrix.architecture }}-unnotarized.dmg.sha256 collector/packaging/macos/release/
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && inputs.unnotarized_macos_release
+        with:
+          name: tokendance-desktop-macos-${{ matrix.architecture }}-unnotarized
+          path: |
+            collector/packaging/macos/release/*.dmg
+            collector/packaging/macos/release/*.dmg.sha256
+            collector/packaging/macos/release/build-info.json
+          if-no-files-found: error
       - name: Sign, notarize, staple, and verify bound macOS release artifact
         if: github.event_name == 'workflow_dispatch' && inputs.sign_release
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
           MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
           DEVELOPER_ID_APPLICATION: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.MACOS_PROVISIONING_PROFILE_BASE64 }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
           APPLE_NOTARY_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_NOTARY_PRIVATE_KEY_BASE64 }}
@@ -222,6 +307,8 @@ jobs:
           : "${MACOS_CERTIFICATE_P12_BASE64:?BLOCKED: MACOS_CERTIFICATE_P12_BASE64 is missing}"
           : "${MACOS_CERTIFICATE_PASSWORD:?BLOCKED: MACOS_CERTIFICATE_PASSWORD is missing}"
           : "${DEVELOPER_ID_APPLICATION:?BLOCKED: DEVELOPER_ID_APPLICATION is missing}"
+          : "${APPLE_TEAM_ID:?BLOCKED: APPLE_TEAM_ID is missing}"
+          : "${MACOS_PROVISIONING_PROFILE_BASE64:?BLOCKED: MACOS_PROVISIONING_PROFILE_BASE64 is missing}"
           : "${APPLE_NOTARY_KEY_ID:?BLOCKED: APPLE_NOTARY_KEY_ID is missing}"
           : "${APPLE_NOTARY_ISSUER_ID:?BLOCKED: APPLE_NOTARY_ISSUER_ID is missing}"
           : "${APPLE_NOTARY_PRIVATE_KEY_BASE64:?BLOCKED: APPLE_NOTARY_PRIVATE_KEY_BASE64 is missing}"
@@ -229,10 +316,11 @@ jobs:
           keychain_password="$(uuidgen)"
           p12_path="$RUNNER_TEMP/tokenshow-release.p12"
           api_key_path="$RUNNER_TEMP/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
+          provisioning_path="$RUNNER_TEMP/tokendance-release.provisionprofile"
           profile="tokenshow-ci-notary"
           cleanup() {
             security delete-keychain "$keychain" >/dev/null 2>&1 || true
-            rm -f "$p12_path" "$api_key_path"
+            rm -f "$p12_path" "$api_key_path" "$provisioning_path"
           }
           trap cleanup EXIT
           python3 - "$MACOS_CERTIFICATE_P12_BASE64" "$p12_path" <<'PY'
@@ -246,6 +334,13 @@ jobs:
           import sys
           with open(sys.argv[2], "wb") as output:
               output.write(base64.b64decode(sys.argv[1], validate=True))
+          PY
+          python3 - "$provisioning_path" <<'PY'
+          import base64
+          import os
+          import sys
+          with open(sys.argv[1], "wb") as output:
+              output.write(base64.b64decode(os.environ["MACOS_PROVISIONING_PROFILE_BASE64"], validate=True))
           PY
           security create-keychain -p "$keychain_password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
@@ -264,25 +359,33 @@ jobs:
             --keychain "$keychain"
           export APPLE_NOTARY_PROFILE="$profile"
           export APPLE_NOTARY_KEYCHAIN="$keychain"
+          export MACOS_PROVISIONING_PROFILE="$provisioning_path"
+          version="$(plutil -extract CFBundleShortVersionString raw -o - collector/packaging/macos/release/TokenDance.app/Contents/Info.plist)"
+          dmg="collector/packaging/macos/release/TokenDance-${version}-macos-${{ matrix.architecture }}.dmg"
           bash collector/packaging/macos/sign-notarize.sh \
-            collector/packaging/macos/release/TokenDance.app \
-            collector/packaging/macos/release/tokendance-desktop-macos.zip
+            collector/packaging/macos/release/TokenDance.app "$dmg"
+          cp "${dmg%.dmg}.build-info.json" collector/packaging/macos/release/build-info.json
       - name: Record unsigned build status
-        if: github.event_name != 'workflow_dispatch' || !inputs.sign_release
+        if: github.event_name != 'workflow_dispatch' || (!inputs.sign_release && !inputs.unnotarized_macos_release)
         run: |
           echo 'Unsigned CI build. Request sign_release explicitly to produce a signed and notarized macOS release.' >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'workflow_dispatch' && inputs.sign_release
         with:
-          name: tokendance-desktop-macos-notarized
-          path: collector/packaging/macos/release/tokendance-desktop-macos.zip
+          name: tokendance-desktop-macos-${{ matrix.architecture }}-notarized
+          path: |
+            collector/packaging/macos/release/*.dmg
+            collector/packaging/macos/release/*.dmg.sha256
+            collector/packaging/macos/release/build-info.json
           if-no-files-found: error
       - name: Archive unsigned macOS build
-        if: github.event_name != 'workflow_dispatch' || !inputs.sign_release
+        if: github.event_name != 'workflow_dispatch' || (!inputs.sign_release && !inputs.unnotarized_macos_release)
         run: ditto -c -k --keepParent collector/packaging/macos/release/TokenDance.app collector/packaging/macos/release/tokendance-desktop-macos-unsigned.zip
       - uses: actions/upload-artifact@v4
-        if: github.event_name != 'workflow_dispatch' || !inputs.sign_release
+        if: github.event_name != 'workflow_dispatch' || (!inputs.sign_release && !inputs.unnotarized_macos_release)
         with:
-          name: tokendance-desktop-macos-unsigned
-          path: collector/packaging/macos/release/tokendance-desktop-macos-unsigned.zip
+          name: tokendance-desktop-macos-${{ matrix.architecture }}-unsigned
+          path: |
+            collector/packaging/macos/release/tokendance-desktop-macos-unsigned.zip
+            collector/packaging/macos/release/build-info.json
           if-no-files-found: error

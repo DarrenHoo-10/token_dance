@@ -2,35 +2,161 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "TokenDance desktop release manifest",
   "type": "object",
-  "required": ["schemaVersion", "releases"],
+  "required": [
+    "schemaVersion",
+    "releases"
+  ],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": {
+      "const": 1
+    },
     "releases": {
       "type": "array",
       "maxItems": 100,
       "items": {
         "type": "object",
-        "required": ["version", "platform", "publishedAt", "notes", "exe"],
+        "required": [
+          "version",
+          "platform",
+          "publishedAt",
+          "notes"
+        ],
         "properties": {
-          "version": { "type": "string", "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$" },
-          "platform": { "type": "string", "examples": ["windows-x64"] },
-          "publishedAt": { "type": "string", "format": "date-time" },
-          "notes": { "type": "string" },
-          "prerelease": { "type": "boolean", "default": false },
-          "exe": { "$ref": "#/$defs/asset" },
-          "zip": { "$ref": "#/$defs/asset" }
-        }
+          "version": {
+            "type": "string",
+            "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+          },
+          "platform": {
+            "enum": [
+              "windows-x64",
+              "macos-arm64",
+              "macos-x64"
+            ]
+          },
+          "publishedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "prerelease": {
+            "type": "boolean",
+            "default": false
+          },
+          "exe": {
+            "$ref": "#/$defs/asset"
+          },
+          "zip": {
+            "$ref": "#/$defs/asset"
+          },
+          "dmg": {
+            "$ref": "#/$defs/dmgAsset"
+          },
+          "minimumSystemVersion": {
+            "type": "string",
+            "pattern": "^[1-9]\\d*\\.\\d+(?:\\.\\d+)?$"
+          },
+          "notarized": {
+            "type": "boolean"
+          }
+        },
+        "oneOf": [
+          {
+            "properties": {
+              "platform": {
+                "const": "windows-x64"
+              }
+            },
+            "required": [
+              "exe"
+            ],
+            "not": {
+              "required": [
+                "dmg"
+              ]
+            }
+          },
+          {
+            "properties": {
+              "platform": {
+                "enum": [
+                  "macos-arm64",
+                  "macos-x64"
+                ]
+              }
+            },
+            "required": [
+              "dmg",
+              "minimumSystemVersion",
+              "notarized"
+            ],
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "exe"
+                  ]
+                },
+                {
+                  "required": [
+                    "zip"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
       }
     }
   },
   "$defs": {
     "asset": {
       "type": "object",
-      "required": ["url", "sha256", "size"],
+      "required": [
+        "url",
+        "sha256",
+        "size"
+      ],
       "properties": {
-        "url": { "type": "string", "format": "uri", "pattern": "^https://" },
-        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
-        "size": { "type": "integer", "minimum": 1, "maximum": 157286400 }
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 157286400
+        }
+      }
+    },
+    "dmgAsset": {
+      "type": "object",
+      "required": [
+        "url",
+        "sha256",
+        "size"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://[^?#]+\\.dmg$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{64}$"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 536870912
+        }
       }
     }
   }

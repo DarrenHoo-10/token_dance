@@ -6,6 +6,7 @@ members = [
     "crates/adapter-host",
     "crates/collector-core",
     "crates/privacy",
+    "crates/platform-credentials",
     "crates/wal-spool",
     "crates/uploader",
     "crates/acquisition",
@@ -36,6 +37,7 @@ adapter-sdk = { path = "crates/adapter-sdk" }
 adapter-host = { path = "crates/adapter-host" }
 collector-core = { path = "crates/collector-core" }
 privacy = { path = "crates/privacy" }
+platform-credentials = { path = "crates/platform-credentials" }
 wal-spool = { path = "crates/wal-spool" }
 uploader = { path = "crates/uploader" }
 acquisition = { path = "crates/acquisition" }
@@ -64,6 +66,7 @@ futures = "0.3"
 hmac = "0.12"
 keyring = { version = "3", features = ["windows-native"] }
 rand = "0.8"
+rusqlite = { version = "0.32", features = ["bundled"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

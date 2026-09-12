@@ -3,6 +3,9 @@ pub mod autostart;
 pub mod commands;
 pub mod daemon;
 pub mod local_store;
+pub mod local_test;
+#[cfg(target_os = "macos")]
+pub mod macos_tray;
 pub mod orb;
 pub mod pricing;
 pub mod rebuild;
@@ -23,7 +26,7 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{Manager, WindowEvent};
 
 fn crash_log_path() -> std::path::PathBuf {
-    state::app_data_root().join("crash.log")
+    state::crash_log_path()
 }
 
 fn write_crash_log(message: &str) {
@@ -40,6 +43,87 @@ fn install_panic_hook() {
         let backtrace = std::backtrace::Backtrace::force_capture();
         write_crash_log(&format!("panic: {info}\n{backtrace}"));
     }));
+}
+
+fn app_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
+fn show_startup_error(error: String) {
+    // No AppState or credential IPC exists in this recovery shell. In particular,
+    // opening it must not retry a locked Keychain or replace an existing key.
+    use base64::Engine;
+    let escaped = error
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;");
+    let authorization = if platform_credentials::uses_login_keychain() {
+        "<p>未公证版本使用登录钥匙串。仅在你点击下方按钮时请求授权；如希望重启后继续使用，可在系统窗口选择“始终允许”。升级后可能需要再次授权。</p><p><a href=\"tokendance-keychain://authorize\">授权钥匙串并重新启动</a></p>"
+    } else {
+        ""
+    };
+    let html = format!(
+        r#"<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><title>TokenDance</title><style>body{{font:15px system-ui;padding:32px;color:#25322d;background:#f7f9f7}}h1{{font-size:22px}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;padding:16px;background:#fff;border:1px solid #ddd}}</style><h1>TokenDance 暂时无法启动</h1><p>本机存储或钥匙串暂不可用。原有数据已保留，程序不会反复请求密码。</p><pre>{escaped}</pre><p>处理上述问题后，关闭此窗口并重新打开 TokenDance。若是钥匙串访问问题，请先在“钥匙串访问”中检查登录钥匙串及应用权限。</p>"#
+    );
+    let html = format!("{html}{authorization}");
+    let url = format!(
+        "data:text/html;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(html)
+    );
+    let result = tauri::Builder::default()
+        .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Regular);
+            let handle = app.handle().clone();
+            let authorizing = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            tauri::WebviewWindowBuilder::new(
+                app,
+                "startup-error",
+                tauri::WebviewUrl::External(tauri::Url::parse(&url)?),
+            )
+            .on_navigation(move |url| {
+                if url.scheme() != "tokendance-keychain" {
+                    return url.scheme() == "data";
+                }
+                if platform_credentials::uses_login_keychain()
+                    && url.host_str() == Some("authorize")
+                    && !authorizing.swap(true, std::sync::atomic::Ordering::AcqRel)
+                {
+                    let handle = handle.clone();
+                    let authorizing = authorizing.clone();
+                    tauri::async_runtime::spawn(async move {
+                        match commands::account::authorize_saved_credentials(None).await {
+                            Ok(()) => handle.restart(),
+                            Err(error) => {
+                                write_crash_log(&format!(
+                                    "explicit Keychain authorization failed: {error}"
+                                ));
+                                authorizing.store(false, std::sync::atomic::Ordering::Release);
+                            }
+                        }
+                    });
+                }
+                false
+            })
+            .title("TokenDance · 启动问题")
+            .inner_size(600.0, 500.0)
+            .center()
+            .build()?;
+            for label in ["main", "settings"] {
+                if let Some(window) = app.get_webview_window(label) {
+                    let _ = window.close();
+                }
+            }
+            if let Some(tray) = app.remove_tray_by_id("main-tray") {
+                drop(tray);
+            }
+            Ok(())
+        })
+        .run(app_context());
+    if let Err(error) = result {
+        write_crash_log(&format!("startup error window failed: {error}"));
+    }
 }
 
 fn install_tray(app: &tauri::App) -> tauri::Result<()> {
@@ -162,17 +246,24 @@ pub fn run() {
             return;
         }
     };
-    if updates::apply_pending_before_start(|| instance.release()) {
+    if !local_test::enabled() && updates::apply_pending_before_start(|| instance.release()) {
         return;
     }
 
-    let app_state = match tauri::async_runtime::block_on(AppState::production()) {
-        Ok(state) => state,
-        Err(error) => {
-            write_crash_log(&format!(
-                "failed to initialize service-backed desktop state: {error}"
-            ));
-            panic!("initialize service-backed desktop state: {error}");
+    let app_state = {
+        match tauri::async_runtime::block_on(AppState::production()) {
+            Ok(state) => state,
+            Err(error) if error.contains("already running") => {
+                eprintln!("TokenDance is already running");
+                std::process::exit(0);
+            }
+            Err(error) => {
+                write_crash_log(&format!(
+                    "failed to initialize service-backed desktop state: {error}"
+                ));
+                show_startup_error(error);
+                return;
+            }
         }
     };
 
@@ -192,6 +283,7 @@ pub fn run() {
             commands::daemon::toggle_global_pause,
             commands::daemon::set_global_pause,
             commands::daemon::get_collector_metrics,
+            commands::daemon::retry_runtime_init,
             commands::agents::get_agent_configs,
             commands::quotas::get_agent_quotas,
             commands::agents::toggle_agent,
@@ -208,6 +300,7 @@ pub fn run() {
             commands::deletion::purge_local_cache,
             commands::autostart::get_autostart_status,
             commands::autostart::set_autostart,
+            commands::autostart::open_login_items_settings,
             commands::window::hide_window,
             commands::window::window_ready,
             commands::window::show_window,
@@ -283,6 +376,28 @@ pub fn run() {
             }
         })
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                if let Err(error) = install_macos_menu(app) {
+                    eprintln!("macos menu setup failed: {error}");
+                }
+                if let Some(settings) = app.get_webview_window("settings") {
+                    commands::window::apply_macos_settings_chrome(&settings);
+                }
+                if let Some(panel) = app.get_webview_window("main") {
+                    commands::window::apply_macos_overlay_chrome(&panel);
+                }
+                if let Some(tray) = app.remove_tray_by_id("main-tray") {
+                    drop(tray);
+                }
+                if let Err(error) = macos_tray::install(app.handle()) {
+                    write_crash_log(&format!("native status item failed: {error}"));
+                    if let Err(error) = install_tray(app) {
+                        write_crash_log(&format!("tray setup failed: {error}"));
+                    }
+                }
+            }
             // Keep the native WebView hidden until React has committed its
             // first layout, including loading state. Autostart never requests presentation.
             if !std::env::args().any(|arg| arg == "--minimized") {
@@ -292,8 +407,11 @@ pub fn run() {
             let orb = crate::orb::controller::OrbHandle::install(app.handle(), state.clone());
             app.manage(orb);
             CollectorDaemon::new(state.clone()).start();
-            commands::account::start_auto_sync(app.handle().clone(), state);
-            updates::start(app.handle());
+            if !local_test::enabled() {
+                commands::account::start_auto_sync(app.handle().clone(), state.clone());
+                updates::start(app.handle());
+            }
+            #[cfg(not(target_os = "macos"))]
             if let Err(error) = install_tray(app) {
                 write_crash_log(&format!("tray setup failed: {error}"));
             }
@@ -301,10 +419,48 @@ pub fn run() {
             Ok(())
         });
 
-    if let Err(error) = builder.run(tauri::generate_context!()) {
+    if let Err(error) = builder.run(app_context()) {
         write_crash_log(&format!("run TokenDance desktop application: {error}"));
         panic!("run TokenDance desktop application: {error}");
     }
+}
+
+#[cfg(target_os = "macos")]
+fn install_macos_menu(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+
+    let about = PredefinedMenuItem::about(app, None, None)?;
+    let settings = MenuItem::with_id(app, "open_settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
+    let hide = PredefinedMenuItem::hide(app, None)?;
+    let hide_others = PredefinedMenuItem::hide_others(app, None)?;
+    let quit = PredefinedMenuItem::quit(app, Some("Quit TokenDance"))?;
+    let app_menu = Submenu::with_items(
+        app,
+        "TokenDance",
+        true,
+        &[&about, &settings, &hide, &hide_others, &quit],
+    )?;
+    let edit = Submenu::with_items(
+        app,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, None)?,
+            &PredefinedMenuItem::redo(app, None)?,
+            &PredefinedMenuItem::cut(app, None)?,
+            &PredefinedMenuItem::copy(app, None)?,
+            &PredefinedMenuItem::paste(app, None)?,
+            &PredefinedMenuItem::select_all(app, None)?,
+        ],
+    )?;
+    let menu = Menu::with_items(app, &[&app_menu, &edit])?;
+    app.set_menu(menu)?;
+    app.on_menu_event(|app, event| {
+        if event.id().as_ref() == "open_settings" {
+            let _ = commands::window::open_settings(app.clone());
+        }
+    });
+    Ok(())
 }
 
 #[cfg(test)]
@@ -325,6 +481,7 @@ mod tests {
         fn info(&self) -> AutostartInfo {
             AutostartInfo {
                 enabled: self.0.load(Ordering::Acquire),
+                status: crate::state::AutostartStatus::from_enabled(self.0.load(Ordering::Acquire)),
                 platform: "test".into(),
                 method: "memory".into(),
                 target_path: "test://autostart".into(),

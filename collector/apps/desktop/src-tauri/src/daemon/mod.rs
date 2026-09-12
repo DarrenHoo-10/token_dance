@@ -25,7 +25,7 @@ impl CollectorDaemon {
         let price_state = state.clone();
         let price_running = Arc::clone(&is_running);
         tauri::async_runtime::spawn(async move {
-            while price_running.load(Ordering::Acquire) {
+            while price_running.load(Ordering::Acquire) && !price_state.is_shutting_down() {
                 price_state.refresh_local_prices().await;
                 tokio::time::sleep(Duration::from_secs(300)).await;
             }
@@ -33,11 +33,13 @@ impl CollectorDaemon {
         tauri::async_runtime::spawn(async move {
             state.backfill_local_prices().await;
             let mut interval = tokio::time::interval(Duration::from_secs(5));
-            while is_running.load(Ordering::Acquire) {
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            while is_running.load(Ordering::Acquire) && !state.is_shutting_down() {
                 interval.tick().await;
-                let maintenance = state
-                    .lock_store()
-                    .prune_details(chrono::Utc::now().date_naive());
+                if state.is_shutting_down() {
+                    break;
+                }
+                let maintenance = state.lock_store().prune_details(chrono::Utc::now().date_naive());
                 if let Err(error) = maintenance {
                     state.set_storage_error(&error);
                     continue;

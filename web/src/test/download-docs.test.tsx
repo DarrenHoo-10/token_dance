@@ -6,6 +6,7 @@ import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
 import { DownloadPage } from '@/pages/resources/DownloadPage';
 import { DocsPage } from '@/pages/resources/DocsPage';
 import { selectWindowsRelease, releasesApi, validAssetUrl } from '@/pages/resources/windowsRelease';
+import { macosReleasesApi, selectMacRelease } from '@/pages/resources/macosRelease';
 
 import contract from '../../../schemas/fixtures/desktop-release-manifest.json';
 const downloadBase = 'https://downloads.example.com';
@@ -15,6 +16,68 @@ const makeRelease = (tag: string, overrides: Record<string, unknown> = {}) => ({
 });
 const manifest = (releases: unknown[]) => ({ schemaVersion: 1, releases });
 const respond = (payload: unknown, ok = true) => Promise.resolve(new Response(JSON.stringify(payload), { status: ok ? 200 : 503 }));
+const makeMacRelease = (tag: string, architecture = 'arm64', overrides: Record<string, unknown> = {}) => ({
+  version: tag, platform: `macos-${architecture}`, publishedAt: '2026-09-12T00:00:00Z',
+  minimumSystemVersion: '13.0', notarized: true, notes: 'Mac release', prerelease: false,
+  dmg: { url: `${downloadBase}/${tag}/TokenDance-${architecture}.dmg`, size: 90_000_000, sha256: 'b'.repeat(64) },
+  ...overrides,
+});
+
+describe('macOS DMG releases', () => {
+  it('clearly labels unnotarized downloads and explains the first-open step', async () => {
+    vi.stubGlobal('fetch', vi.fn(url => respond(url === macosReleasesApi ? manifest([makeMacRelease('0.3.0','arm64',{notarized:false})]) : manifest([]))));
+    page();
+    expect(await screen.findByText('未公证版本 · 免费分发')).toBeInTheDocument();
+    expect(screen.getByText(/首次打开若被 macOS 阻止/)).toBeInTheDocument();
+    expect(screen.queryByText('已通过 Apple 公证')).not.toBeInTheDocument();
+  });
+  it('selects newest versions independently for Apple Silicon and Intel', () => {
+    const payload = manifest([makeMacRelease('0.1.9'), makeMacRelease('0.1.10'), makeMacRelease('0.2.0', 'x64'), makeRelease('9.0.0')]);
+    expect(selectMacRelease(payload, 'arm64')?.version).toBe('0.1.10');
+    expect(selectMacRelease(payload, 'x64')?.version).toBe('0.2.0');
+    expect(selectMacRelease(manifest([]), 'x64')).toBeNull();
+  });
+  it('rejects broken newest packages instead of falling back', () => {
+    for (const broken of [
+      { dmg: null }, { exe: {} }, { minimumSystemVersion: 'latest' }, { publishedAt: '2026-02-30T00:00:00Z' },
+      { dmg: { ...makeMacRelease('0.2.0').dmg, url: 'http://downloads.example.com/a.dmg' } },
+      { dmg: { ...makeMacRelease('0.2.0').dmg, url: 'https://downloads.example.com/a.zip' } },
+      { dmg: { ...makeMacRelease('0.2.0').dmg, sha256: '' } },
+      { dmg: { ...makeMacRelease('0.2.0').dmg, size: 513 * 1024 * 1024 } },
+    ]) expect(() => selectMacRelease(manifest([makeMacRelease('0.1.0'), makeMacRelease('0.2.0','arm64',broken)]), 'arm64')).toThrow();
+    expect(() => selectMacRelease(manifest([makeMacRelease('1.0.0'), makeMacRelease('1.0.0')]), 'arm64')).toThrow();
+  });
+  it('shows real DMG links, architecture requirements and independent versions', async () => {
+    vi.stubGlobal('fetch', vi.fn((url) => respond(url === macosReleasesApi
+      ? manifest([makeMacRelease('0.3.0'), makeMacRelease('0.2.0','x64')]) : manifest([makeRelease('0.1.0')]))));
+    page();
+    expect(await screen.findByRole('link', {name:'下载 Apple Silicon DMG'})).toHaveAttribute('href', `${downloadBase}/0.3.0/TokenDance-arm64.dmg`);
+    expect(screen.getByRole('link', {name:'下载 Intel DMG'})).toHaveAttribute('href', `${downloadBase}/0.2.0/TokenDance-x64.dmg`);
+    expect(screen.getByText(/v0.3.0 · macOS 13.0/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', {name:'EN'}));
+    expect(screen.getByRole('link', {name:'Download Apple Silicon DMG'})).toBeInTheDocument();
+  });
+  it('does not invent Mac download links before a package is published', async () => {
+    vi.stubGlobal('fetch', vi.fn(url => url === macosReleasesApi ? Promise.resolve(new Response('', {status:404})) : respond(manifest([makeRelease('0.1.0')]))));
+    page();
+    expect(await screen.findAllByText('该架构暂未发布安装包。')).toHaveLength(2);
+    expect(screen.queryByRole('link', {name:'下载 Apple Silicon DMG'})).not.toBeInTheDocument();
+    expect(screen.getAllByRole('link', {name:'下载 Windows 版'})).toHaveLength(2);
+  });
+  it('one invalid Mac architecture does not hide the valid one', async () => {
+    vi.stubGlobal('fetch', vi.fn(url => respond(url === macosReleasesApi
+      ? manifest([makeMacRelease('0.3.0'), makeMacRelease('0.3.0','x64',{dmg:null})]) : manifest([]))));
+    page();
+    expect(await screen.findByRole('link', {name:'下载 Apple Silicon DMG'})).toBeInTheDocument();
+    expect(screen.queryByRole('link', {name:'下载 Intel DMG'})).not.toBeInTheDocument();
+    expect(screen.getByRole('button', {name:'重新获取 Mac 版本'})).toBeInTheDocument();
+  });
+  it('documents DMG installation and manual updates on Mac', () => {
+    page('/docs/install#macos');
+    expect(screen.getByRole('heading', {name:'安装 macOS 版'})).toBeInTheDocument();
+    expect(screen.getByText(/将 TokenDance 拖入 Applications/)).toBeInTheDocument();
+  });
+});
 
 beforeEach(() => {
   localStorage.clear();
@@ -67,15 +130,17 @@ describe('Downloads and docs', () => {
     expect(links).toHaveLength(2);
     for (const link of links) expect(link).toHaveAttribute('href', `${downloadBase}/0.1.10/TokenDance.exe`);
     expect(screen.getByText(/v0.1.10 · 2026-09-07/)).toBeInTheDocument();
-    expect(screen.queryByText(/macOS/)).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'macOS' })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(releasesApi, expect.objectContaining({ credentials: 'omit' }));
     fireEvent.click(screen.getByRole('button', { name: 'EN' }));
     expect(screen.getAllByRole('link', { name: 'Download for Windows' })).toHaveLength(2);
-    expect(screen.getByText(/Currently available for Windows only/)).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/One desktop app connects multiple AI tools/)).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
   it('shows retry on a failed manifest request, then recovers without linking to GitHub', async () => {
-    const fetchMock = vi.fn().mockImplementationOnce(() => respond({}, false)).mockImplementationOnce(() => respond(manifest([makeRelease('0.2.0')])));
+    let windowsAttempts = 0;
+    const fetchMock = vi.fn(url => url === macosReleasesApi ? respond(manifest([]))
+      : ++windowsAttempts === 1 ? respond({}, false) : respond(manifest([makeRelease('0.2.0')])));
     vi.stubGlobal('fetch', fetchMock);
     page();
     expect(await screen.findByRole('alert')).toHaveTextContent('暂时无法获取最新版本');

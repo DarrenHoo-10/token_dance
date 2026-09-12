@@ -2,6 +2,7 @@ import { ArrowDownToLine, ArrowRight, ArrowUpRight, Monitor, Minus } from 'lucid
 import { Link } from 'react-router-dom';
 import { useLocale } from '@/context/LocaleContext';
 import { useWindowsRelease } from './windowsRelease';
+import { MacDownloads } from './MacDownloads';
 import { useResourceNavigation } from './useResourceNavigation';
 import './resources.css';
 
@@ -30,15 +31,16 @@ export function DownloadPage() {
     <section className="download-hero">
       <div className="download-copy"><div className="resource-eyebrow">TOKENDANCE DESKTOP</div>
         <h1>{zh ? '专注创造。' : 'Focus on creating.'}<br /><span>{zh ? '让用量自动记录。' : 'Let usage track itself.'}</span></h1>
-        <p className="resource-intro">{zh ? '一个轻量的 Windows 桌面客户端，汇总你的 AI 工具用量。留在托盘里，与你的每一次创造同行。' : 'A lightweight Windows desktop app for your AI tool usage. Quietly in your system tray, ready whenever you need it.'}</p>
+        <p className="resource-intro">{zh ? '一个轻量的桌面客户端，汇总你的 AI 工具用量。常驻 Windows 托盘或 Mac 菜单栏，随时查看。' : 'A lightweight desktop app for your AI tool usage. Available from the Windows tray or Mac menu bar.'}</p>
         <div className="source-list" aria-label={zh ? '主要采集来源' : 'Main supported tools'}>{['Codex', 'Claude Code', 'Cursor', 'Grok Build', 'ZCode'].map(name => <span key={name}>{name}</span>)}</div>
         <div className="resource-actions">{release ? <a className="resource-button resource-button-primary" href={release.exeUrl}>{zh ? '下载 Windows 版' : 'Download for Windows'}<ArrowDownToLine size={17} aria-hidden="true" /></a> : <a className="resource-button resource-button-primary" href="#windows-heading">{zh ? '获取 Windows 客户端' : 'Get the Windows app'}<ArrowDownToLine size={17} aria-hidden="true" /></a>}<Link className="resource-link" to="/docs/quickstart">{zh ? '阅读安装指南' : 'Read the setup guide'}<ArrowUpRight size={16} aria-hidden="true" /></Link></div>
+        <a className="resource-link mac-hero-link" href="#macos-heading">{zh ? '获取 Mac 版 · DMG' : 'Get the Mac app · DMG'}<ArrowDownToLine size={16} aria-hidden="true" /></a>
         <p className="download-meta">Windows x64{release && ` · v${release.version} · ${release.prerelease ? (zh ? '预览版' : 'Preview') : (zh ? '正式版' : 'Stable')}`}</p>
         <p className="resource-small resource-muted">{zh ? '不上传提示词、模型回复或代码正文。' : 'Prompts, model responses and source code are not uploaded.'}</p>
       </div><DesktopPreview zh={zh} />
     </section>
     <section className="windows-download" aria-labelledby="windows-heading">
-      <div><h2 id="windows-heading">{zh ? '下载桌面客户端' : 'Get the desktop app'}</h2><p>{zh ? '目前仅支持 Windows。一个客户端连接多种 AI 工具，无需分别安装扩展。' : 'Currently available for Windows only. One desktop app connects multiple AI tools.'}</p></div>
+      <div><h2 id="windows-heading">Windows</h2><p>{zh ? '一个客户端连接多种 AI 工具，无需分别安装扩展。' : 'One desktop app connects multiple AI tools.'}</p></div>
       <div className="windows-release" aria-busy={status === 'loading'}>
         <div className="windows-heading"><span className="windows-icon"><Monitor size={27} aria-hidden="true" /></span><div><h3>Windows <span className="resource-pill">{zh ? '便携版' : 'Portable'}</span></h3><p>x64 · .exe{release && ` · ${(release.bytes / 1024 / 1024).toFixed(1)} MiB`}</p></div></div>
         <p className="release-description">{zh ? '下载后运行，常驻系统托盘。更新前请先从托盘菜单退出旧版本。' : 'Run the downloaded app to open it in your system tray. Quit the previous version from the tray menu before updating.'}</p>
@@ -49,6 +51,7 @@ export function DownloadPage() {
         </div>}
       </div>
     </section>
+    <MacDownloads zh={zh} />
     <section className="resource-start-strip"><div><h2>{zh ? '第一次使用？从这里开始。' : 'First time? Start here.'}</h2><p>{zh ? '获取客户端 → 登录账号 → 确认采集 → 查看榜单' : 'Get the app → Sign in → Check collection → Open the board'}</p></div><Link className="resource-button" to="/docs/quickstart">{zh ? '打开接入指南' : 'Open the setup guide'}<ArrowRight size={16} aria-hidden="true" /></Link></section>
     <section className="resource-privacy-strip"><h2>{zh ? '你的内容，留在你的设备上。' : 'Your content stays on your device.'}</h2><div><p>{zh ? 'TokenDance 同步经过隐私过滤的用量记录。排行榜会展示头像、昵称、Token 和排名；详细资料页的公开设置单独管理。' : 'TokenDance syncs privacy-filtered usage records. The leaderboard displays your avatar, name, tokens and rank. Detailed profile visibility is managed separately.'}</p><Link className="resource-link" to="/docs/privacy">{zh ? '了解数据与隐私' : 'Learn about data & privacy'}<ArrowRight size={15} aria-hidden="true" /></Link></div></section>
   </div>;

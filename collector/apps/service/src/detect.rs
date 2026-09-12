@@ -1,8 +1,8 @@
-use std::cmp::Reverse;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use crate::platform::PathResolver;
 use crate::{adapter_id, AgentDetection, DetectedSourceConfig, DetectionSnapshot, OfficialAgent};
 
 const MAX_JSONL_FILES: usize = 8;
@@ -10,21 +10,26 @@ const GROK_HISTORY_FILE_LIMIT: usize = 512;
 const GROK_UPDATES_FILE_NAME: &str = "updates.jsonl";
 
 pub fn detect_local() -> DetectionSnapshot {
-    detect_from_home(&user_home())
+    detect_from_resolver(&PathResolver::production())
 }
 
 pub fn detect_from_home(home: &Path) -> DetectionSnapshot {
+    detect_from_resolver(&PathResolver::isolated(home.to_path_buf()))
+}
+
+fn detect_from_resolver(resolver: &PathResolver) -> DetectionSnapshot {
+    let home = resolver.home();
     let mut snapshot = DetectionSnapshot::default();
     detect_claude(home, &mut snapshot);
-    detect_codex(home, &mut snapshot);
+    detect_codex(resolver, &mut snapshot);
     detect_grok(home, &mut snapshot);
     detect_zcode(home, &mut snapshot);
-    detect_cursor(home, &mut snapshot);
+    detect_cursor(resolver, &mut snapshot);
     detect_deepseek(home, &mut snapshot);
     detect_pi(home, &mut snapshot);
-    detect_opencode(home, &mut snapshot);
-    detect_workbuddy(home, &mut snapshot);
-    detect_doubao_work(home, &mut snapshot);
+    detect_opencode(resolver, &mut snapshot);
+    detect_workbuddy(resolver, &mut snapshot);
+    detect_doubao_work(resolver, &mut snapshot);
     snapshot
 }
 
@@ -77,7 +82,11 @@ pub fn discover_jsonl_files(root: &Path) -> Vec<DiscoveredFile> {
     }
     let mut files = Vec::new();
     walk_jsonl(root, &mut files);
-    files.sort_by_key(|(mtime, _)| Reverse(*mtime));
+    files.sort_by(|(left_time, left_path), (right_time, right_path)| {
+        right_time
+            .cmp(left_time)
+            .then_with(|| left_path.cmp(right_path))
+    });
     files
         .into_iter()
         .map(|(mtime, path)| DiscoveredFile { path, mtime })
@@ -139,8 +148,10 @@ fn is_sqlite_path(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .is_some_and(|ext| {
-        ext.eq_ignore_ascii_case("sqlite") || ext.eq_ignore_ascii_case("vscdb") || ext.eq_ignore_ascii_case("db")
-    })
+            ext.eq_ignore_ascii_case("sqlite")
+                || ext.eq_ignore_ascii_case("vscdb")
+                || ext.eq_ignore_ascii_case("db")
+        })
 }
 
 fn mtime_of(path: &Path) -> SystemTime {
@@ -161,13 +172,6 @@ pub fn detected_adapter_ids(snapshot: &DetectionSnapshot) -> Vec<&'static str> {
         .filter(|agent| snapshot.is_installed(*agent))
         .map(adapter_id)
         .collect()
-}
-
-fn user_home() -> PathBuf {
-    std::env::var_os("USERPROFILE")
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 fn detect_claude(home: &Path, snapshot: &mut DetectionSnapshot) {
@@ -198,8 +202,8 @@ fn detect_claude(home: &Path, snapshot: &mut DetectionSnapshot) {
     );
 }
 
-fn detect_codex(home: &Path, snapshot: &mut DetectionSnapshot) {
-    let root = home.join(".codex");
+fn detect_codex(resolver: &PathResolver, snapshot: &mut DetectionSnapshot) {
+    let root = resolver.codex_root();
     let sessions = root.join("sessions");
     if !root.is_dir() {
         return;
@@ -290,26 +294,27 @@ fn detect_zcode(home: &Path, snapshot: &mut DetectionSnapshot) {
     }
 }
 
-fn detect_cursor(home: &Path, snapshot: &mut DetectionSnapshot) {
-    let roaming = std::env::var_os("APPDATA")
-        .map(PathBuf::from)
-        .map(|path| path.join("Cursor"));
-    let local = home.join(".cursor");
-    if roaming.as_ref().is_some_and(|path| path.is_dir()) || local.is_dir() {
-        let mut detection = AgentDetection::installed("0");
-        detection.cursor_mode = Some(crate::DetectedCursorMode::PersonalLocal);
-        snapshot.insert(OfficialAgent::Cursor, detection);
-        let transcripts = local.join("projects");
-        if transcripts.is_dir() {
-            snapshot.configure_source(
-                OfficialAgent::Cursor,
-                adapter_cursor::TRANSCRIPT_SOURCE_ID,
-                DetectedSourceConfig {
-                    path: Some(transcripts),
-                    ..DetectedSourceConfig::default()
-                },
-            );
-        }
+fn detect_cursor(resolver: &PathResolver, snapshot: &mut DetectionSnapshot) {
+    let candidates = resolver.cursor_candidates();
+    if !candidates.iter().any(|path| path.is_dir()) {
+        return;
+    }
+    let mut detection = AgentDetection::installed("0");
+    detection.cursor_mode = Some(crate::DetectedCursorMode::PersonalLocal);
+    snapshot.insert(OfficialAgent::Cursor, detection);
+    if let Some(transcripts) = candidates
+        .iter()
+        .map(|root| root.join("projects"))
+        .find(|path| path.is_dir())
+    {
+        snapshot.configure_source(
+            OfficialAgent::Cursor,
+            adapter_cursor::TRANSCRIPT_SOURCE_ID,
+            DetectedSourceConfig {
+                path: Some(transcripts),
+                ..DetectedSourceConfig::default()
+            },
+        );
     }
 }
 
@@ -335,7 +340,8 @@ fn detect_deepseek(home: &Path, snapshot: &mut DetectionSnapshot) {
     }
 }
 
-fn detect_opencode(home: &Path, snapshot: &mut DetectionSnapshot) {
+fn detect_opencode(resolver: &PathResolver, snapshot: &mut DetectionSnapshot) {
+    let home = resolver.home();
     let mut candidates = vec![
         home.join(".local")
             .join("share")
@@ -343,11 +349,13 @@ fn detect_opencode(home: &Path, snapshot: &mut DetectionSnapshot) {
             .join("opencode.db"),
         home.join(".opencode").join("opencode.db"),
     ];
-    if let Some(local) = env_dir("LOCALAPPDATA") {
+    if let Some(local) = resolver.env_dir("LOCALAPPDATA") {
         candidates.push(local.join("opencode").join("opencode.db"));
     }
     let Some(db) = candidates.into_iter().find(|path| path.is_file()) else {
-        let desktop = env_dir("APPDATA").map(|path| path.join("ai.opencode.desktop"));
+        let desktop = resolver
+            .env_dir("APPDATA")
+            .map(|path| path.join("ai.opencode.desktop"));
         if desktop.as_ref().is_some_and(|path| path.is_dir()) {
             snapshot.insert(OfficialAgent::OpenCode, AgentDetection::installed("0"));
         }
@@ -374,22 +382,30 @@ fn detect_opencode(home: &Path, snapshot: &mut DetectionSnapshot) {
     }
 }
 
-fn detect_workbuddy(home: &Path, snapshot: &mut DetectionSnapshot) {
+fn detect_workbuddy(resolver: &PathResolver, snapshot: &mut DetectionSnapshot) {
+    let home = resolver.home();
     let roots = [
-        env_dir("LOCALAPPDATA").map(|path| path.join("WorkBuddy")),
-        env_dir("APPDATA").map(|path| path.join("@genie").join("workbuddy-desktop")),
-        env_dir("LOCALAPPDATA").map(|path| path.join("CodeBuddyExtension")),
+        resolver
+            .env_dir("LOCALAPPDATA")
+            .map(|path| path.join("WorkBuddy")),
+        resolver
+            .env_dir("APPDATA")
+            .map(|path| path.join("@genie").join("workbuddy-desktop")),
+        resolver
+            .env_dir("LOCALAPPDATA")
+            .map(|path| path.join("CodeBuddyExtension")),
         Some(home.join(".codebuddy")),
         Some(home.join(".workbuddy")),
     ];
-    let present: Vec<PathBuf> = roots.into_iter().flatten().filter(|path| path.is_dir()).collect();
+    let present: Vec<PathBuf> = roots
+        .into_iter()
+        .flatten()
+        .filter(|path| path.is_dir())
+        .collect();
     if present.is_empty() {
         return;
     }
-    snapshot.insert(
-        OfficialAgent::WorkBuddy,
-        AgentDetection::installed("1.0.0"),
-    );
+    snapshot.insert(OfficialAgent::WorkBuddy, AgentDetection::installed("1.0.0"));
     if let Some(root) = present.into_iter().find(|path| dir_has_jsonl(path)) {
         snapshot.configure_source(
             OfficialAgent::WorkBuddy,
@@ -402,14 +418,21 @@ fn detect_workbuddy(home: &Path, snapshot: &mut DetectionSnapshot) {
     }
 }
 
-fn detect_doubao_work(home: &Path, snapshot: &mut DetectionSnapshot) {
+fn detect_doubao_work(resolver: &PathResolver, snapshot: &mut DetectionSnapshot) {
+    let home = resolver.home();
     let roots = [
-        env_dir("LOCALAPPDATA").map(|path| path.join("Doubao")),
-        env_dir("APPDATA").map(|path| path.join("Doubao")),
+        resolver
+            .env_dir("LOCALAPPDATA")
+            .map(|path| path.join("Doubao")),
+        resolver.env_dir("APPDATA").map(|path| path.join("Doubao")),
         Some(home.join(".doubao-work")),
         Some(home.join(".doubao")),
     ];
-    let present: Vec<PathBuf> = roots.into_iter().flatten().filter(|path| path.is_dir()).collect();
+    let present: Vec<PathBuf> = roots
+        .into_iter()
+        .flatten()
+        .filter(|path| path.is_dir())
+        .collect();
     if present.is_empty() {
         return;
     }
@@ -427,10 +450,6 @@ fn detect_doubao_work(home: &Path, snapshot: &mut DetectionSnapshot) {
             },
         );
     }
-}
-
-fn env_dir(key: &str) -> Option<PathBuf> {
-    std::env::var_os(key).map(PathBuf::from)
 }
 
 fn dir_has_jsonl(root: &Path) -> bool {
@@ -473,29 +492,50 @@ fn read_json_version(path: &Path) -> Option<String> {
 }
 
 fn walk_jsonl(dir: &Path, out: &mut Vec<(SystemTime, PathBuf)>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with('.')
-            || matches!(
-                name.as_ref(),
-                "node_modules" | "target" | "bin" | "vendor" | "cache"
-            )
-        {
+    walk_source_files(dir, out, false);
+}
+
+// Complete enumeration runs off the UI thread. Entry/time/depth caps silently
+// lose sources on every subsequent scan; bound work in the processing scheduler
+// instead. Do not follow child symlinks, so cycles cannot make a scan unbounded
+// or allow it to leave the authorized root.
+fn walk_source_files(dir: &Path, out: &mut Vec<(SystemTime, PathBuf)>, grok: bool) {
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
             continue;
-        }
-        if path.is_dir() {
-            walk_jsonl(&path, out);
-        } else if is_jsonl(&path) {
-            let mtime = entry
-                .metadata()
-                .and_then(|meta| meta.modified())
-                .unwrap_or(SystemTime::UNIX_EPOCH);
-            out.push((mtime, path));
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.')
+                || matches!(
+                    name.as_ref(),
+                    "node_modules" | "target" | "bin" | "vendor" | "cache"
+                )
+                || (grok && name == "subagents")
+            {
+                continue;
+            }
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let path = entry.path();
+            if file_type.is_dir() {
+                pending.push(path);
+            } else if file_type.is_file()
+                && if grok {
+                    is_grok_updates_file(&path)
+                } else {
+                    is_jsonl(&path)
+                }
+            {
+                let mtime = entry
+                    .metadata()
+                    .and_then(|meta| meta.modified())
+                    .unwrap_or(SystemTime::UNIX_EPOCH);
+                out.push((mtime, path));
+            }
         }
     }
 }
@@ -536,7 +576,11 @@ pub fn discover_grok_history_files(root: &Path) -> Vec<DiscoveredFile> {
     }
     let mut files = Vec::new();
     walk_grok_updates(root, &mut files);
-    files.sort_by_key(|(mtime, _)| Reverse(*mtime));
+    files.sort_by(|(left_time, left_path), (right_time, right_path)| {
+        right_time
+            .cmp(left_time)
+            .then_with(|| left_path.cmp(right_path))
+    });
     files
         .into_iter()
         .map(|(mtime, path)| DiscoveredFile { path, mtime })
@@ -544,31 +588,7 @@ pub fn discover_grok_history_files(root: &Path) -> Vec<DiscoveredFile> {
 }
 
 fn walk_grok_updates(dir: &Path, out: &mut Vec<(SystemTime, PathBuf)>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with('.')
-            || matches!(
-                name.as_ref(),
-                "node_modules" | "target" | "bin" | "vendor" | "cache" | "subagents"
-            )
-        {
-            continue;
-        }
-        if path.is_dir() {
-            walk_grok_updates(&path, out);
-        } else if is_grok_updates_file(&path) {
-            let mtime = entry
-                .metadata()
-                .and_then(|meta| meta.modified())
-                .unwrap_or(SystemTime::UNIX_EPOCH);
-            out.push((mtime, path));
-        }
-    }
+    walk_source_files(dir, out, true);
 }
 
 fn is_grok_updates_file(path: &Path) -> bool {
@@ -616,6 +636,41 @@ mod tests {
         }
         assert_eq!(list_jsonl_files(root.path(), 8).len(), 8);
         assert_eq!(discover_jsonl_files(root.path()).len(), 12);
+    }
+
+    #[test]
+    fn complete_discovery_includes_large_and_deep_trees() {
+        let root = tempfile::tempdir().unwrap();
+        for index in 0..4200 {
+            fs::write(root.path().join(format!("{index:05}.jsonl")), "{}\n").unwrap();
+        }
+        let mut deep = root.path().to_path_buf();
+        for _ in 0..10 {
+            deep = deep.join("nested");
+        }
+        fs::create_dir_all(&deep).unwrap();
+        fs::write(deep.join("deep.jsonl"), "{}\n").unwrap();
+        assert_eq!(discover_jsonl_files(root.path()).len(), 4201);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discovery_does_not_follow_symlink_cycles_or_external_files() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(root.path().join("local.jsonl"), "{}\n").unwrap();
+        fs::write(root.path().join("updates.jsonl"), "{}\n").unwrap();
+        fs::write(outside.path().join("outside.jsonl"), "{}\n").unwrap();
+        symlink(root.path(), root.path().join("cycle")).unwrap();
+        symlink(outside.path(), root.path().join("escape")).unwrap();
+        symlink(
+            outside.path().join("outside.jsonl"),
+            root.path().join("alias.jsonl"),
+        )
+        .unwrap();
+        assert_eq!(discover_jsonl_files(root.path()).len(), 2);
+        assert_eq!(discover_grok_history_files(root.path()).len(), 1);
     }
 
     #[test]
@@ -683,4 +738,3 @@ mod tests {
         assert!(files[0].to_string_lossy().contains("primary"));
     }
 }
-

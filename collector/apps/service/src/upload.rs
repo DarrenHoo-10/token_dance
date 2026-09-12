@@ -2,13 +2,13 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use protocol::{Architecture, OsType};
 use uploader::{
     DeviceSigner, FlushReport, HttpTransport, InMemoryDeviceSigner, RegistrationClient,
     RetryPolicy, Uploader,
 };
-use wal_spool::{KeyProvider, OsKeyProvider};
+use wal_spool::{KeyError, KeyProvider, OsKeyProvider};
 
+use crate::platform;
 use crate::runtime::append_log;
 
 const COLLECTOR_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -23,10 +23,10 @@ pub struct UploadPipeline {
 
 impl UploadPipeline {
     pub fn new(installation_id: String) -> Result<Self, String> {
-        let seed_provider = OsKeyProvider::new("io.tokendance.desktop", "collector-device-ed25519");
-        let seed = seed_provider
-            .data_key()
-            .map_err(|error| error.to_string())?;
+        let create = platform::AppPaths::production()
+            .ok()
+            .is_none_or(|paths| !paths.device_registered_path().exists());
+        let seed = device_seed(create)?;
         let signer = Arc::new(InMemoryDeviceSigner::from_seed(seed));
         let api_base = std::env::var("TOKENDANCE_API_BASE_URL")
             .or_else(|_| std::env::var("TOKENSHOW_API_BASE_URL"))
@@ -87,6 +87,7 @@ impl UploadPipeline {
     }
 
     async fn register(&self) -> Result<Uploader<HttpTransport>, String> {
+        let identity = platform::protocol_identity()?;
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()
@@ -95,19 +96,34 @@ impl UploadPipeline {
             RegistrationClient::new(self.api_base.clone(), client, self.session_token.clone())
                 .register_with_installation(
                     Arc::clone(&self.signer) as Arc<dyn DeviceSigner>,
-                    OsType::Windows,
-                    Architecture::X8664,
+                    identity.os,
+                    identity.arch,
                     COLLECTOR_VERSION,
                     Some(self.installation_id.clone()),
                 )
                 .await
                 .map_err(|error| error.to_string())?;
+        #[cfg(not(test))]
+        if let Ok(paths) = platform::AppPaths::production() {
+            let _ = platform::write_private_file(&paths.device_registered_path(), b"1");
+        }
         Ok(Uploader::new(
             registered.registration.installation_id,
             registered.transport,
         )
         .with_retry(retry_policy()))
     }
+}
+
+fn device_seed(create_if_missing: bool) -> Result<[u8; 32], String> {
+    OsKeyProvider::device_seed(create_if_missing)
+        .data_key()
+        .map_err(|error| match error {
+            KeyError::NotFound => {
+                "device signing seed is missing; refusing to mint a replacement identity".into()
+            }
+            other => other.to_string(),
+        })
 }
 
 fn retry_policy() -> RetryPolicy {
