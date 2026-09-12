@@ -31,11 +31,24 @@ fn crash_log_path() -> std::path::PathBuf {
 
 fn write_crash_log(message: &str) {
     let path = crash_log_path();
+    append_crash_record(&path, message);
+    use std::io::Write;
+    let _ = writeln!(std::io::stderr(), "{message}\ncrash log: {}", path.display());
+}
+
+fn append_crash_record(path: &std::path::Path, message: &str) {
+    use std::io::Write;
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let _ = fs::write(&path, message);
-    eprintln!("{message}\ncrash log: {}", path.display());
+    // A panic crossing an Objective-C callback triggers a second panic. Keep
+    // the original error, rather than replacing it with "cannot unwind".
+    if fs::metadata(path).is_ok_and(|meta| meta.len() > 256 * 1024) {
+        let _ = fs::rename(path, path.with_extension("previous.log"));
+    }
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "\n[{}]\n{message}", chrono::Utc::now().to_rfc3339());
+    }
 }
 
 fn install_panic_hook() {
@@ -49,6 +62,20 @@ fn app_context() -> tauri::Context<tauri::Wry> {
     tauri::generate_context!()
 }
 
+fn recovery_context() -> tauri::Context<tauri::Wry> {
+    let mut context = app_context();
+    // Recovery has no AppState: do not construct normal windows or the tray.
+    context.config_mut().app.windows.clear();
+    context.config_mut().app.tray_icon = None;
+    context
+}
+
+fn startup_error_smoke() -> bool {
+    cfg!(debug_assertions)
+        && local_test::enabled()
+        && std::env::args().any(|arg| arg == "--smoke-startup-error")
+}
+
 fn show_startup_error(error: String) {
     // No AppState or credential IPC exists in this recovery shell. In particular,
     // opening it must not retry a locked Keychain or replace an existing key.
@@ -58,7 +85,7 @@ fn show_startup_error(error: String) {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;");
-    let authorization = if platform_credentials::uses_login_keychain() {
+    let authorization = if platform_credentials::uses_login_keychain() && !local_test::enabled() {
         "<p>未公证版本使用登录钥匙串。仅在你点击下方按钮时请求授权；如希望重启后继续使用，可在系统窗口选择“始终允许”。升级后可能需要再次授权。</p><p><a href=\"tokendance-keychain://authorize\">授权钥匙串并重新启动</a></p>"
     } else {
         ""
@@ -72,6 +99,14 @@ fn show_startup_error(error: String) {
         base64::engine::general_purpose::STANDARD.encode(html)
     );
     let result = tauri::Builder::default()
+        .on_page_load(|webview, payload| {
+            if startup_error_smoke()
+                && webview.label() == "startup-error"
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+            {
+                println!("TOKENDANCE_STARTUP_ERROR_READY");
+            }
+        })
         .setup(move |app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Regular);
@@ -120,7 +155,7 @@ fn show_startup_error(error: String) {
             }
             Ok(())
         })
-        .run(app_context());
+        .run(recovery_context());
     if let Err(error) = result {
         write_crash_log(&format!("startup error window failed: {error}"));
     }
@@ -236,6 +271,14 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
 
 pub fn run() {
     install_panic_hook();
+    if std::env::args().any(|arg| arg == "--smoke-startup-error") {
+        if !startup_error_smoke() {
+            eprintln!("Recovery smoke testing requires a debug build and --local-test");
+            std::process::exit(2);
+        }
+        show_startup_error("恢复页面测试：模拟钥匙串暂不可用，未读取生产凭据。".into());
+        return;
+    }
     let instance = match single_instance::InstanceGuard::acquire(
         !std::env::args().any(|arg| arg == "--minimized"),
     ) {
@@ -467,6 +510,34 @@ fn install_macos_menu(app: &tauri::App) -> tauri::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn recovery_context_does_not_create_normal_windows_or_tray() {
+        let context = super::recovery_context();
+        assert!(context.config().app.windows.is_empty());
+        assert!(context.config().app.tray_icon.is_none());
+    }
+
+    #[test]
+    fn crash_log_retains_the_first_error_before_a_secondary_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("crash.log");
+        super::append_crash_record(&path, "initial setup failure");
+        super::append_crash_record(&path, "panic cannot unwind");
+        let log = std::fs::read_to_string(path).unwrap();
+        assert!(log.find("initial setup failure").unwrap() < log.find("panic cannot unwind").unwrap());
+    }
+
+    #[test]
+    fn crash_log_rotates_large_history_without_losing_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("crash.log");
+        let history = "x".repeat(256 * 1024 + 1);
+        std::fs::write(&path, &history).unwrap();
+        super::append_crash_record(&path, "new failure");
+        assert_eq!(std::fs::read_to_string(path.with_extension("previous.log")).unwrap(), history);
+        assert!(std::fs::read_to_string(path).unwrap().contains("new failure"));
+    }
+
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 

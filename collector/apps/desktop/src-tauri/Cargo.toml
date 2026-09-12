@@ -36,7 +36,7 @@ cookie = "0.18"
 sha2 = "0.10"
 base64 = "0.22"
 rusqlite = { version = "0.32", features = ["bundled"] }
-tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
+tauri = { version = "2", features = ["tray-icon", "macos-private-api", "webview-data-url"] }
 self-replace = "1"
 semver = "1"
 tempfile = "3"

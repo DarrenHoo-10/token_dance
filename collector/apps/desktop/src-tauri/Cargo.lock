@@ -908,6 +908,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "data-url"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "be1e0bca6c3637f992fc1cc7cbc52a78c1ef6db076dbf1059c4323d6a2048376"
+
+[[package]]
 name = "dbus"
 version = "0.9.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4358,6 +4364,7 @@ dependencies = [
  "anyhow",
  "bytes",
  "cookie",
+ "data-url",
  "dirs",
  "dunce",
  "embed_plist",
@@ -4696,6 +4703,7 @@ dependencies = [
  "cookie",
  "core-foundation 0.10.1",
  "core-graphics",
+ "notify",
  "objc2",
  "objc2-app-kit",
  "objc2-core-graphics",
@@ -4703,7 +4711,6 @@ dependencies = [
  "objc2-quartz-core",
  "platform-credentials",
  "platform-macos",
- "notify",
  "privacy",
  "protocol",
  "reqwest 0.12.28",
