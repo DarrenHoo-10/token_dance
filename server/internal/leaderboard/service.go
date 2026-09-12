@@ -72,6 +72,7 @@ func (s *Service) GetCommunityStats(ctx context.Context, now time.Time) (*domain
 	if current == nil {
 		return &domain.CommunityStatsResponse{MetricDate: today, Timezone: domain.DayTZName}, nil
 	}
+	costAmount, costs := communityCostProjection(*current)
 	response := &domain.CommunityStatsResponse{
 		MetricDate:   current.MetricDate,
 		Timezone:     domain.DayTZName,
@@ -79,7 +80,8 @@ func (s *Service) GetCommunityStats(ctx context.Context, now time.Time) (*domain
 		Developers:   &current.Developers,
 		CodeLines:    uint64String(current.CodeLines),
 		Interactions: uint64String(current.Interactions),
-		CostAmount:   roundedCost(current.CostAmount),
+		CostAmount:   costAmount,
+		Costs:        costs,
 		ComputedAt:   &current.ComputedAt,
 	}
 	previous, err := s.community.GetCommunityDailyStats(ctx, domain.PreviousDayDate(now))
@@ -92,7 +94,7 @@ func (s *Service) GetCommunityStats(ctx context.Context, now time.Time) (*domain
 			Developers:   deltaPct(current.Developers, previous.Developers),
 			CodeLines:    deltaPct(current.CodeLines, previous.CodeLines),
 			Interactions: deltaPct(current.Interactions, previous.Interactions),
-			CostAmount:   deltaPct(uint64(math.Round(current.CostAmount*100)), uint64(math.Round(previous.CostAmount*100))),
+			CostAmount:   communityCostDelta(*current, *previous),
 		}
 	}
 	harnesses, err := s.community.GetCommunityHarnessShares(ctx, today, 5)
@@ -132,4 +134,48 @@ func uint64String(value uint64) *string {
 func roundedCost(amount float64) *float64 {
 	rounded := math.Round(amount*100) / 100
 	return &rounded
+}
+
+func communityCostDTOs(costs []store.CommunityCost) []domain.CommunityCostDTO {
+	if len(costs) == 0 {
+		return nil
+	}
+	out := make([]domain.CommunityCostDTO, len(costs))
+	for i, c := range costs {
+		out[i] = domain.CommunityCostDTO{
+			Amount:   math.Round(c.Amount*100) / 100,
+			Currency: c.Currency,
+		}
+	}
+	return out
+}
+
+// communityCostProjection returns a scalar only when a single currency exists.
+// Multiple currencies keep Costs and omit CostAmount (no FX merge).
+func communityCostProjection(totals store.CommunityDailyTotals) (*float64, []domain.CommunityCostDTO) {
+	costs := communityCostDTOs(totals.Costs)
+	switch len(totals.Costs) {
+	case 0:
+		return roundedCost(totals.CostAmount), nil
+	case 1:
+		return roundedCost(totals.Costs[0].Amount), costs
+	default:
+		return nil, costs
+	}
+}
+
+func communityCostDelta(current, previous store.CommunityDailyTotals) *float64 {
+	if len(current.Costs) > 1 || len(previous.Costs) > 1 {
+		return nil
+	}
+	if len(current.Costs) == 1 && len(previous.Costs) == 1 {
+		if current.Costs[0].Currency != previous.Costs[0].Currency {
+			return nil
+		}
+		return deltaPct(uint64(math.Round(current.Costs[0].Amount*100)), uint64(math.Round(previous.Costs[0].Amount*100)))
+	}
+	if len(current.Costs) == 0 && len(previous.Costs) == 0 {
+		return deltaPct(uint64(math.Round(current.CostAmount*100)), uint64(math.Round(previous.CostAmount*100)))
+	}
+	return nil
 }

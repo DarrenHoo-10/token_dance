@@ -148,65 +148,34 @@ func (w *Worker) communityDayIsFresh(ctx context.Context, date string, now time.
 
 // recomputeCommunityDay overwrites the precomputed stores for one metric date.
 func (w *Worker) recomputeCommunityDay(ctx context.Context, date string, now time.Time, final bool) error {
-	bucketStart, err := domain.DayBucketStartMs(date)
+	totals, err := w.communityStatsStore().SumCommunityDay(ctx, date)
 	if err != nil {
 		return err
 	}
-	var tokens, developers, interactions uint64
-	if err := w.db.QueryRowContext(ctx, `
-		SELECT
-			CAST(COALESCE(SUM(exact_token_total + derived_token_total), 0) AS UNSIGNED),
-			COUNT(DISTINCT CASE WHEN exact_token_total + derived_token_total > 0 THEN user_id END),
-			CAST(COALESCE(SUM(model_request_count), 0) AS UNSIGNED)
-		FROM telemetry_model_metrics
-		WHERE grain = 'day' AND delete_at IS NULL AND bucket_start = ?`, bucketStart).Scan(
-		&tokens, &developers, &interactions,
-	); err != nil {
-		return fmt.Errorf("sum community day %s: %w", date, err)
-	}
-	var codeLines uint64
-	if err := w.db.QueryRowContext(ctx, `
-		SELECT CAST(COALESCE(SUM(code_generated_lines), 0) AS UNSIGNED)
-		FROM telemetry_harness_metrics
-		WHERE grain = 'day' AND delete_at IS NULL AND bucket_start = ?`, bucketStart).Scan(&codeLines); err != nil {
-		return fmt.Errorf("sum community code lines %s: %w", date, err)
-	}
-	var costUnits float64
-	var costRaw sql.NullString
-	if err := w.db.QueryRowContext(ctx, `
-		SELECT CAST(COALESCE(SUM(reported_cost_units + estimated_cost_units), 0) AS CHAR)
-		FROM telemetry_cost_metrics
-		WHERE grain = 'day' AND delete_at IS NULL AND bucket_start = ?`, bucketStart).Scan(&costRaw); err != nil {
-		return fmt.Errorf("sum community cost %s: %w", date, err)
-	}
-	if costRaw.Valid && costRaw.String != "" {
-		fmt.Sscanf(costRaw.String, "%f", &costUnits)
-	}
-	costAmount := costUnits / 1e8
-	if _, err := w.db.ExecContext(ctx, `
-		INSERT INTO community_daily_stats (
-			metric_date, tokens_total, developers, code_lines, interactions,
-			cost_amount, is_final, computed_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON DUPLICATE KEY UPDATE
-			tokens_total = VALUES(tokens_total),
-			developers = VALUES(developers),
-			code_lines = VALUES(code_lines),
-			interactions = VALUES(interactions),
-			cost_amount = VALUES(cost_amount),
-			is_final = VALUES(is_final),
-			computed_at = VALUES(computed_at)`,
-		date, tokens, developers, codeLines, interactions, costAmount, final, now,
-	); err != nil {
+	totals.IsFinal = final
+	totals.ComputedAt = now
+	if err := w.communityStatsStore().UpsertCommunityDailyStats(ctx, totals); err != nil {
 		return fmt.Errorf("store community day %s: %w", date, err)
 	}
 	if err := w.recomputeCommunityAgentDay(ctx, date); err != nil {
 		return err
 	}
 	return w.publishCommunityStats(ctx, ranking.CommunityStatsSnapshot{
-		Date: date, Tokens: tokens, Developers: developers, CodeLines: codeLines,
-		Interactions: interactions, CostAmount: costAmount, ComputedAt: now,
+		Date: date, Tokens: totals.TokensTotal, Developers: totals.Developers,
+		CodeLines: totals.CodeLines, Interactions: totals.Interactions,
+		CostAmount: totals.CostAmount, Costs: rankingCommunityCosts(totals.Costs), ComputedAt: now,
 	})
+}
+
+func rankingCommunityCosts(costs []store.CommunityCost) []ranking.CommunityCost {
+	if len(costs) == 0 {
+		return nil
+	}
+	out := make([]ranking.CommunityCost, len(costs))
+	for i, c := range costs {
+		out[i] = ranking.CommunityCost{Currency: c.Currency, Amount: c.Amount}
+	}
+	return out
 }
 
 // recomputeCommunityAgentDay refreshes the per-harness token share of a day.

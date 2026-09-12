@@ -130,18 +130,26 @@ type LeaderboardStore interface {
 	GetLeaderboardView(ctx context.Context, q LeaderboardQuery) (*domain.LeaderboardResponse, error)
 }
 
+// CommunityCost is one currency's community total in major units.
+// Distinct currencies are never FX-merged into CostAmount.
+type CommunityCost struct {
+	Currency string  `json:"currency"`
+	Amount   float64 `json:"amount"`
+}
+
 // CommunityDailyTotals is one precomputed day of whole-community aggregates.
-// The stats worker recomputes a day from daily_user_agent_metrics and
-// overwrites the row; request paths only read these rows, never aggregate.
+// The stats worker recomputes a day from telemetry_* tables and overwrites
+// the row; request paths only read these rows, never aggregate.
 type CommunityDailyTotals struct {
-	MetricDate   string    `json:"metricDate"`
-	TokensTotal  uint64    `json:"tokensTotal"`
-	Developers   uint64    `json:"developers"`
-	CodeLines    uint64    `json:"codeLines"`
-	Interactions uint64    `json:"interactions"`
-	CostAmount   float64   `json:"costAmount"`
-	IsFinal      bool      `json:"isFinal"`
-	ComputedAt   time.Time `json:"computedAt"`
+	MetricDate   string          `json:"metricDate"`
+	TokensTotal  uint64          `json:"tokensTotal"`
+	Developers   uint64          `json:"developers"`
+	CodeLines    uint64          `json:"codeLines"`
+	Interactions uint64          `json:"interactions"`
+	CostAmount   float64         `json:"costAmount"`
+	Costs        []CommunityCost `json:"costs,omitempty"`
+	IsFinal      bool            `json:"isFinal"`
+	ComputedAt   time.Time       `json:"computedAt"`
 }
 
 type CommunityStatsStore interface {

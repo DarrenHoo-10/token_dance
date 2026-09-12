@@ -686,6 +686,13 @@ type LeaderboardResponse struct {
 	Stale             *bool              `json:"stale,omitempty"`
 }
 
+// CommunityCostDTO is one currency's community total. Amounts are never
+// FX-converted; clients must not SUM these into a single `$` figure.
+type CommunityCostDTO struct {
+	Amount   float64 `json:"amount"`
+	Currency string  `json:"currency"`
+}
+
 // CommunityStatsResponse projects precomputed daily community totals. Every
 // field is nil/omitted when the precomputed row is missing so clients can
 // render an empty state instead of a zero.
@@ -697,6 +704,7 @@ type CommunityStatsResponse struct {
 	CodeLines    *string                 `json:"codeLines,omitempty"`
 	Interactions *string                 `json:"interactions,omitempty"`
 	CostAmount   *float64                `json:"costAmount,omitempty"`
+	Costs        []CommunityCostDTO      `json:"costs,omitempty"`
 	Deltas       *CommunityStatsDeltaDTO `json:"deltas,omitempty"`
 	Harnesses    []CommunityHarnessDTO   `json:"harnesses,omitempty"`
 	ComputedAt   *time.Time              `json:"computedAt,omitempty"`
