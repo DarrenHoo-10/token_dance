@@ -58,6 +58,36 @@ TokenDance 常驻 Windows 托盘，点击图标即可展开用量面板。也可
 
 已有用户可在设置中点击 **检查更新**，或开启自动更新。
 
+## 项目目录
+
+| 目录 | 用途 |
+| --- | --- |
+| `collector/` | Rust 采集端：桌面应用、本地采集服务、工具适配器和共享库 |
+| `collector/apps/desktop/` | Tauri 桌面应用；`src/` 为 React 界面，`src-tauri/` 为 Rust 原生逻辑 |
+| `collector/apps/service/` | 本地采集服务、来源发现及运行时集成 |
+| `collector/adapters/` | 各 harness 工具的采集策略及测试样本 |
+| `collector/crates/` | 采集、协议、隐私处理、持久化、上传和平台能力等共享 Rust 库 |
+| `collector/packaging/` | Windows/macOS 安装包构建、签名及打包验证 |
+| `collector/schemas/` | 采集端适配器清单和事件的 JSON Schema |
+| `server/` | Go 服务端；`cmd/` 为 API/worker 入口，`internal/` 为业务实现，`api/` 为接口说明，`db/` 为数据库迁移，`scripts/` 为 SQL 代码生成等验证脚本 |
+| `web/` | React 网站：个人统计、排行榜、账号设置和下载文档页；`src/` 为源码，`public/` 为静态资源，`e2e/` 为端到端测试 |
+| `schemas/` | 跨端事件协议、协议样本和桌面发布清单的 JSON Schema |
+| `tools/` | 协议代码生成与校验、发布清单管理、安全检查等可复用工具 |
+| `scripts/` | 跨模块集成验收脚本 |
+| `deploy/` | 云端部署脚本、Nginx 配置、systemd 服务配置及部署说明 |
+| `docs/` | 文档入口；过程文档按需求归档，项目事实记录模块现状，spec 维护正式规范 |
+| `.github/workflows/` | CI、跨平台打包、发布清单及敏感信息扫描工作流 |
+| `.githooks/` | 本地 Git 钩子，包括提交前敏感信息扫描 |
+| `build/` | 本地临时构建、验证产物；已被 Git 忽略，可能包含其他工作区，清理前先检查内容 |
+
+根目录 `package.json` 提供跨端协议生成与校验命令；桌面端和网站在各自目录维护前端依赖。`AGENTS.md` 记录协作与部署约束，`SECURITY.md` 记录安全规则，`.gitignore` 和 `.gitattributes` 管理忽略项及文本属性。
+
+构建、运行和测试方法见 [开发指南](docs/development.md)，云端服务部署见 [部署说明](deploy/README.md)。
+
+## 项目文档
+
+[文档目录与维护规则](docs/README.md)：过程文档按需求归档，项目事实按模块记录现状，spec 维护正式行为与契约。
+
 ## 开源协议
 
 [MIT License](LICENSE)
