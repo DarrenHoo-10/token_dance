@@ -9,9 +9,8 @@ use base64::Engine as _;
 #[cfg(test)]
 use protocol::v2::{Accuracy, TimeSource};
 use protocol::v2::{
-    AckResult, EventEnvelope, EventPayload, EventType, ModelRef, SkillRef,
-    TelemetryEventsResponse, METRIC_SEMANTICS_VERSION, PROTOCOL_VERSION_NUMBER,
-    SCHEMA_VERSION,
+    AckResult, EventEnvelope, EventPayload, EventType, ModelRef, SkillRef, TelemetryEventsResponse,
+    METRIC_SEMANTICS_VERSION, PROTOCOL_VERSION_NUMBER, SCHEMA_VERSION,
 };
 use serde_json::Value;
 use uploader::{
@@ -137,8 +136,8 @@ impl UploadConsumer {
                             .supported_metric_semantics_versions
                             .contains(&METRIC_SEMANTICS_VERSION)
                     {
-                        // Unsupported versions: leave tasks pending; do not auto-ACK.
-                        return Ok(report);
+                        // Leave tasks intact and expose the incompatible server contract.
+                        return Err("SYNC_PROTOCOL_UNSUPPORTED".into());
                     }
                     self.capabilities_ok = true;
                 }
@@ -147,7 +146,8 @@ impl UploadConsumer {
                     report.auth_blocked = true;
                     return Ok(report);
                 }
-                Err(_) => return Ok(report),
+                Err(TransportError::Decode(_)) => return Err("SYNC_ENDPOINT_INVALID".into()),
+                Err(_) => return Err("NETWORK_ERROR".into()),
             }
         }
 
@@ -578,7 +578,7 @@ pub fn session_bearer_from_cookies(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::local_store::pipeline::{
         CursorKind, EventCandidate, PipelineStore, RegisterSource, SourceCommitBatch, SourceKind,
@@ -586,6 +586,66 @@ mod tests {
     };
     use protocol::v2::EventAck;
     use uploader::{ScriptedTelemetryV2, V2ScriptStep};
+
+    struct InvalidCapabilities;
+    #[async_trait::async_trait]
+    impl TelemetryV2Transport for InvalidCapabilities {
+        async fn capabilities(
+            &self,
+        ) -> Result<protocol::v2::TelemetryCapabilities, TransportError> {
+            Err(TransportError::Decode("HTML instead of JSON".into()))
+        }
+        async fn upload_events(
+            &self,
+            _: &V2UploadAuth,
+            _: &[u8],
+        ) -> Result<TelemetryEventsResponse, TransportError> {
+            panic!("must not upload before valid capabilities")
+        }
+    }
+    #[tokio::test]
+    async fn invalid_capabilities_are_visible_and_keep_tasks_unclaimed() {
+        let (store, _) = seed_store_with_upload_events(1);
+        let writer = Arc::new(PipelineWriter::start(store));
+        let mut consumer = UploadConsumer::new(Arc::clone(&writer), Arc::new(InvalidCapabilities));
+        let creds = UploadCredentials {
+            session_bearer: "fixture".into(),
+            binding_status_version: 1,
+            binding_generation: 1,
+        };
+        assert_eq!(
+            consumer.tick(Some(&creds)).await.unwrap_err(),
+            "SYNC_ENDPOINT_INVALID"
+        );
+        assert_eq!(writer.pending_upload_count().unwrap(), 1);
+        consumer.transport = Arc::new(ScriptedTelemetryV2::new(vec![]));
+        assert_eq!(
+            consumer.tick(Some(&creds)).await.unwrap().batches_started,
+            1
+        );
+    }
+    #[tokio::test]
+    async fn uploads_do_not_wait_for_rebuild_or_local_statistics() {
+        let (mut store, _) = seed_store_with_consumers(1, vec![Consumer::Hour, Consumer::Day, Consumer::Month, Consumer::Upload]);
+        store.with_connection(|c| {
+            c.execute("UPDATE schema_meta SET extra=json_set(extra,'$.rebuild',json('{\"active\":true}'))",[])?;
+            Ok(())
+        }).unwrap();
+        let writer = Arc::new(PipelineWriter::start(store));
+        let mut consumer = UploadConsumer::new(
+            Arc::clone(&writer),
+            Arc::new(ScriptedTelemetryV2::new(vec![])),
+        );
+        let creds = UploadCredentials {
+            session_bearer: "fixture".into(),
+            binding_status_version: 1,
+            binding_generation: 1,
+        };
+        assert_eq!(
+            consumer.tick(Some(&creds)).await.unwrap().batches_started,
+            1
+        );
+    }
 
     fn blob(seed: u8) -> [u8; 32] {
         [seed; 32]
@@ -596,7 +656,11 @@ mod tests {
             .into()
     }
 
-    fn seed_store_with_upload_events(n: u8) -> (PipelineStore, Vec<i64>) {
+    pub(crate) fn seed_store_with_upload_events(n: u8) -> (PipelineStore, Vec<i64>) {
+        seed_store_with_consumers(n, vec![Consumer::Upload])
+    }
+
+    pub(crate) fn seed_store_with_consumers(n: u8, consumers: Vec<Consumer>) -> (PipelineStore, Vec<i64>) {
         let mut store = PipelineStore::open_in_memory().unwrap();
         store.set_clock_ms(1_700_000_000_000);
         let source_id = store
@@ -631,7 +695,7 @@ mod tests {
                 turn_key: None,
                 cost_scope_key: None,
                 payload_json: payload_exact(),
-                applicable_consumers: vec![Consumer::Upload],
+                applicable_consumers: consumers.clone(),
             })
             .collect();
         store

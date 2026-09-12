@@ -37,3 +37,6 @@ pub use jsonl_harness::{
 pub use opencode::{OpenCodeStrategy, HARNESS_ID as OPENCODE_ID};
 pub use registry::{AdapterRoots, HarnessRegistry, SkillAllocator};
 pub use zcode::{ZcodeStrategy, HARNESS_ID as ZCODE_ID};
+
+#[cfg(test)]
+pub(crate) use zcode::SQL_CODE as ZCODE_SQL_CODE;

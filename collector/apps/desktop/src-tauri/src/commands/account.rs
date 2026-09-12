@@ -474,6 +474,10 @@ impl AccountState {
                     } else {
                         "NEEDS_ATTENTION"
                     }
+                } else if error == "SYNC_ENDPOINT_INVALID" {
+                    "SYNC_ENDPOINT_INVALID"
+                } else if error == "SYNC_PROTOCOL_UNSUPPORTED" {
+                    "SYNC_PROTOCOL_UNSUPPORTED"
                 } else {
                     "RETRYING"
                 }
