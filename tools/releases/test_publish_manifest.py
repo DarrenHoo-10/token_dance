@@ -105,10 +105,7 @@ class PublishTests(unittest.TestCase):
             publisher.NoRedirect().redirect_request(None, None, 302, '', {}, 'https://other.example.com/file')
 
     def test_executable_architecture_and_zip_must_match(self):
-        data = bytearray(128)
-        data[:2] = b'MZ'
-        data[60:64] = (64).to_bytes(4, 'little')
-        data[64:70] = b'PE\0\0\x64\x86'
+        data = self.gui_pe()
         exe = self.root / 'TokenDance.exe'
         exe.write_bytes(data)
         publisher.check_windows_exe(exe)
@@ -125,6 +122,26 @@ class PublishTests(unittest.TestCase):
         exe.write_bytes(data)
         with self.assertRaises(ValueError):
             publisher.check_windows_exe(exe)
+
+    def test_windows_console_subsystem_is_rejected(self):
+        exe = self.root / 'TokenDance.exe'
+        exe.write_bytes(self.gui_pe(subsystem=3))
+        with self.assertRaises(ValueError) as error:
+            publisher.check_windows_exe(exe)
+        self.assertIn('Windows GUI subsystem', str(error.exception))
+        exe.write_bytes(self.gui_pe(subsystem=2))
+        publisher.check_windows_exe(exe)
+
+    @staticmethod
+    def gui_pe(subsystem=2):
+        data = bytearray(160)
+        data[:2] = b'MZ'
+        data[60:64] = (64).to_bytes(4, 'little')
+        data[64:68] = b'PE\0\0'
+        data[68:70] = (0x8664).to_bytes(2, 'little')
+        data[88:90] = (0x20B).to_bytes(2, 'little')
+        data[156:158] = subsystem.to_bytes(2, 'little')
+        return data
 
 
 if __name__ == '__main__':

@@ -2,7 +2,7 @@
 
 `cross-platform-packaging` builds Windows and macOS on collector changes and pull requests. Both builds use the checked-in desktop `Cargo.lock`, `--locked`, and the `custom-protocol` feature so the frontend is embedded in the executable.
 
-Ordinary CI uploads artifacts explicitly named `tokendance-desktop-windows-unsigned` and `tokendance-desktop-macos-unsigned`. These builds do not claim Authenticode verification, Developer ID signing, or Apple notarization.
+Ordinary CI uploads artifacts explicitly named `tokendance-desktop-windows-unsigned` and `tokendance-desktop-macos-unsigned`. These builds do not claim Authenticode verification, Developer ID signing, or Apple notarization. The Windows portable is always a `--release` GUI-subsystem PE; CI and `publish_manifest.py` reject a Console subsystem `TokenDance.exe`.
 
 For a signed release, run this workflow manually with `sign_release: true`. Configure the Windows signing certificate secrets and Apple Developer ID/notarization secrets referenced in the workflow first. Missing certificates, failed signatures, missing trusted timestamps, and failed notarization remain fatal. Signed artifacts are uploaded only after verification succeeds.
 
