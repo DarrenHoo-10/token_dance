@@ -97,3 +97,10 @@ Redis 使用 `redis_dev`，对象存储使用独立 `token-dance-test/` 前缀�
 - 本次浏览器 API 样本返回 61 ms，`Server-Timing` 服务端 11.499 ms；37 行历史快照后台读取/汇总 8.309 ms、写入 6.768 ms、发布 6.152 ms，共 21.230 ms，排队 176.726 ms。API样本是已就绪快照，不能当作首次整页加载耗时；自动化脚本总耗时包含页面跳转与测试等待。
 - 验证：云端隔离 schema 的团队 Worker 22 项 + 设备日汇总重建 1 项 + 镜像完整性 1 项集成测试通过，无跳过；前端 14 项及 TypeScript 检查通过。原始回归中发现的旧规则断言已与当前共享口径一致。保留项目既有测试边界，未宣称全仓所有 MySQL 测试通过。
 - 测试和生产 `/readyz` 均为 200，测试三项服务 active；公开 build-info 核对分支与完整 SHA 一致。截图、逐成员对账和原始日志只保存在忽略的本地 `build/test-release/legacy-*`，不提交账号凭据或成员明细。
+
+
+### 总览卡片说明精简（17:02 CST）
+
+- 按用户截图移除总览四张指标卡底部的绿色说明。构建分支 `release`，完整 SHA `80ba777a69103a747ec33428669a6bb050f9062d`，干净工作区构建并发布。
+- 发布目录 `/opt/token-dance-test/releases/20260912-090152-80ba777a`，备份 `/var/backups/token-dance-test/20260912-090237`。包 SHA-256 `09e1d21dfb438961c8dc8fbac92f00f4687e66c9fd4facb42935932064b3e1f8`。
+- 构建通过；真实登录浏览器确认四张卡片仍显示，卡片内说明元素数量为 0，无页面运行时异常。截图保存在忽略目录 `build/test-release/cards-no-hints.png`。
