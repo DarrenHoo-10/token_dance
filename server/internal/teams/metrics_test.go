@@ -20,8 +20,8 @@ func TestCurrentSharingIncludesHistory(t *testing.T) {
 		t.Fatalf("history must follow current grants: %+v", got)
 	}
 	grants[1].RevokedAt = &now
-	if got := AuthorizeEvent(event, member, grants); !got.Eligible || got.Mask != 0 {
-		t.Fatalf("revoked name must hide history: %+v", got)
+	if got := AuthorizeEvent(event, member, grants); !got.Eligible || got.Mask != VisibilityNamed {
+		t.Fatalf("named ranking follows base sharing: %+v", got)
 	}
 	grants[0].EndsAt = &now
 	if AuthorizeEvent(event, member, grants).Eligible {

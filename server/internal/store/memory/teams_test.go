@@ -310,12 +310,15 @@ func TestMemoryTeams_SharingOpenClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open base: %v", err)
 	}
-	if !state.Sharing.Base || state.SharingVersion != 2 {
+	if !state.Sharing.Base || !state.Sharing.Named || state.SharingVersion != 2 {
 		t.Fatalf("after open base: %+v", state)
 	}
 	baseFrom := state.EffectiveFrom["base"]
 	if !baseFrom.Equal(t10) {
 		t.Fatalf("base starts_at=%v", baseFrom)
+	}
+	if !state.EffectiveFrom["named"].Equal(t10) {
+		t.Fatalf("named starts_at=%v", state.EffectiveFrom["named"])
 	}
 	t11 := now.Add(2 * time.Hour)
 	state, err = m.UpdateSharingTx(ctx, store.UpdateSharingTxInput{
@@ -326,13 +329,13 @@ func TestMemoryTeams_SharingOpenClose(t *testing.T) {
 		Now:             t11,
 	})
 	if err != nil {
-		t.Fatalf("open named: %v", err)
+		t.Fatalf("keep named: %v", err)
 	}
 	if !state.EffectiveFrom["base"].Equal(t10) {
 		t.Fatalf("base starts_at reset to %v", state.EffectiveFrom["base"])
 	}
-	if !state.EffectiveFrom["named"].Equal(t11) {
-		t.Fatalf("named starts_at=%v", state.EffectiveFrom["named"])
+	if !state.EffectiveFrom["named"].Equal(t10) {
+		t.Fatalf("named starts_at reset to %v", state.EffectiveFrom["named"])
 	}
 	t13 := now.Add(3 * time.Hour)
 	state, err = m.UpdateSharingTx(ctx, store.UpdateSharingTxInput{
@@ -343,10 +346,10 @@ func TestMemoryTeams_SharingOpenClose(t *testing.T) {
 		Now:             t13,
 	})
 	if err != nil {
-		t.Fatalf("close named: %v", err)
+		t.Fatalf("named follows base: %v", err)
 	}
-	if state.Sharing.Named {
-		t.Fatal("named still open")
+	if !state.Sharing.Named {
+		t.Fatal("named must stay open with base sharing")
 	}
 	t15 := now.Add(4 * time.Hour)
 	state, err = m.UpdateSharingTx(ctx, store.UpdateSharingTxInput{

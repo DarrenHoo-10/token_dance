@@ -86,8 +86,6 @@ export const TeamOverviewPage: React.FC = () => {
 
       <TeamDateRangeBar timezone={scope.team.timezone} />
 
-      {analysis?.quality.hasLegacyAggregates && <p className="team-status-banner">{t('teams.quality.legacySummary')}</p>}
-
       {analysis && (
         <p className="text-muted" style={{ fontSize: 12, margin: '12px 0 20px' }}>
           {t('teams.overview.updatedAt', { time: formatInTimezone(analysis.snapshot.asOf, analysis.range.timezone, locale) })}
@@ -142,7 +140,6 @@ export const TeamOverviewPage: React.FC = () => {
         <div className="panel-header">
           <div>
             <h2>{t('teams.overview.contributions')}</h2>
-            <p>{t('teams.overview.namedShare')}</p>
           </div>
         </div>
         {!analysis?.contributions.items.length && <p className="text-muted">{t('teams.overview.noContributions')}</p>}

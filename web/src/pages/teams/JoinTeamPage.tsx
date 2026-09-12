@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ApiError } from '@/api/client';
-import { EMPTY_SHARING, teamsApi, type InviteLinkPreview, type SharingFlags } from '@/api/teams';
+import { TEAM_JOIN_SHARING, teamsApi, type InviteLinkPreview } from '@/api/teams';
 import { Button } from '@/components/common/Button';
 import { Card } from '@/components/common/Card';
 import { LoadingState } from '@/components/states/LoadingState';
@@ -13,11 +13,10 @@ import {
   clearJoinToken,
   createIdempotencyKey,
   joinReturnTo,
-  normalizeSharing,
   readJoinToken,
   redactInviteSecrets,
 } from './teamUtils';
-import { RoleBadge, SharingControls, TeamGateLink, teamErrorMessage } from './TeamShared';
+import { RoleBadge, TeamGateLink, teamErrorMessage } from './TeamShared';
 
 type JoinState =
   | 'reading'
@@ -46,7 +45,6 @@ export const JoinTeamPage: React.FC = () => {
   const [pageState, setPageState] = useState<JoinState>('reading');
   const [token, setToken] = useState<string | null>(null);
   const [preview, setPreview] = useState<InviteLinkPreview | null>(null);
-  const [sharing, setSharing] = useState<SharingFlags>(EMPTY_SHARING);
   const [errorText, setErrorText] = useState<string | null>(null);
   const [idempotencyKey] = useState(() => createIdempotencyKey());
 
@@ -128,7 +126,7 @@ export const JoinTeamPage: React.FC = () => {
       setPageState('submitting');
       const result = await teamsApi.acceptInviteLink(
         linkId,
-        { token, expectedLinkVersion: preview.linkVersion, sharing: normalizeSharing(sharing) },
+        { token, expectedLinkVersion: preview.linkVersion, sharing: TEAM_JOIN_SHARING },
         { idempotencyKey }
       );
       applyScope(result);
@@ -201,14 +199,9 @@ export const JoinTeamPage: React.FC = () => {
         {pageState === 'failed' && <p role="alert">{errorText || t('errors.unknown')}</p>}
 
         {(pageState === 'confirm' || pageState === 'submitting') && (
-          <>
-            <div style={{ margin: '20px 0' }}>
-              <SharingControls value={sharing} onChange={setSharing} disabled={pageState === 'submitting'} />
-            </div>
-            <Button variant="primary" loading={pageState === 'submitting'} onClick={() => void accept()}>
-              {t('teams.join.submit')}
-            </Button>
-          </>
+          <Button variant="primary" loading={pageState === 'submitting'} onClick={() => void accept()}>
+            {t('teams.join.submit')}
+          </Button>
         )}
       </Card>
     </section>

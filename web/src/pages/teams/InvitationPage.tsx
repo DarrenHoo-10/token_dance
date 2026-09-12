@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ApiError } from '@/api/client';
-import { EMPTY_SHARING, teamsApi, type InvitationPreview, type SharingFlags } from '@/api/teams';
+import { TEAM_JOIN_SHARING, teamsApi, type InvitationPreview } from '@/api/teams';
 import { Button } from '@/components/common/Button';
 import { Card } from '@/components/common/Card';
 import { ErrorState } from '@/components/states/ErrorState';
@@ -9,8 +9,8 @@ import { LoadingState } from '@/components/states/LoadingState';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { useTeam } from '@/context/TeamContext';
-import { createIdempotencyKey, normalizeSharing } from './teamUtils';
-import { RoleBadge, SharingControls, TeamGateLink, teamErrorMessage } from './TeamShared';
+import { createIdempotencyKey } from './teamUtils';
+import { RoleBadge, TeamGateLink, teamErrorMessage } from './TeamShared';
 
 export const InvitationPage: React.FC = () => {
   const { invitationId } = useParams<{ invitationId: string }>();
@@ -19,7 +19,6 @@ export const InvitationPage: React.FC = () => {
   const { scope, refresh, applyScope } = useTeam();
   const navigate = useNavigate();
   const [preview, setPreview] = useState<InvitationPreview | null>(null);
-  const [sharing, setSharing] = useState<SharingFlags>(EMPTY_SHARING);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
@@ -79,7 +78,7 @@ export const InvitationPage: React.FC = () => {
       setBusy(true);
       const result = await teamsApi.acceptInvitation(
         invitationId,
-        { expectedInvitationVersion: preview.version, sharing: normalizeSharing(sharing) },
+        { expectedInvitationVersion: preview.version, sharing: TEAM_JOIN_SHARING },
         { idempotencyKey }
       );
       applyScope(result);
@@ -116,12 +115,7 @@ export const InvitationPage: React.FC = () => {
           </div>
         )}
         {!alreadyHere && !otherTeam && (
-          <>
-            <div style={{ margin: '20px 0' }}>
-              <SharingControls value={sharing} onChange={setSharing} disabled={busy} />
-            </div>
-            <Button variant="primary" loading={busy} onClick={() => void accept()}>{t('teams.join.submit')}</Button>
-          </>
+          <Button variant="primary" loading={busy} onClick={() => void accept()}>{t('teams.join.submit')}</Button>
         )}
       </Card>
     </section>

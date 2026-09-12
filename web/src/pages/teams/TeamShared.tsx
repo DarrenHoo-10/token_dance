@@ -62,7 +62,7 @@ export const SharingControls: React.FC<{
   const showDetails = !revealDetailsWithBase || value.base;
 
   const setBase = (base: boolean) => {
-    onChange(base ? { ...value, base: true } : { base: false, named: false, classification: false, cost: false });
+    onChange(base ? { ...value, base: true, named: true } : { base: false, named: false, classification: false, cost: false });
   };
 
   return (
@@ -77,23 +77,16 @@ export const SharingControls: React.FC<{
       {showDetails && (
         <>
           <Switch
-            checked={value.named}
-            disabled={disabled || !value.base}
-            onChange={(named) => onChange({ ...value, named })}
-            label={t('teams.sharing.named')}
-            description={t('teams.sharing.namedHint')}
-          />
-          <Switch
             checked={value.classification}
             disabled={disabled || !value.base}
-            onChange={(classification) => onChange({ ...value, classification })}
+            onChange={(classification) => onChange({ ...value, classification, named: true })}
             label={t('teams.sharing.classification')}
             description={t('teams.sharing.classificationHint')}
           />
           <Switch
             checked={value.cost}
             disabled={disabled || !value.base}
-            onChange={(cost) => onChange({ ...value, cost })}
+            onChange={(cost) => onChange({ ...value, cost, named: true })}
             label={t('teams.sharing.cost')}
             description={t('teams.sharing.costHint')}
           />
@@ -157,9 +150,6 @@ export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) =
           <Input type="date" label={t('teams.range.to')} min={from || undefined} max={today} value={to} onChange={(e) => setDate('to', e.target.value)} />
         </div>
       )}
-      <p className="text-muted" style={{ fontSize: 12, margin: 0 }}>
-        {t('teams.range.timezone', { timezone })}
-      </p>
       {spanError && <p className="form-error">{t('teams.range.tooLong')}</p>}
       {range === 'custom' && !spanError && <p className="text-muted" style={{ fontSize: 12, width: '100%', margin: 0 }}>{t('teams.range.customHint')}</p>}
     </div>

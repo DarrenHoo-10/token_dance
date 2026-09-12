@@ -110,7 +110,6 @@ export const TeamMembersPage: React.FC = () => {
   return (
     <div>
       <TeamDateRangeBar timezone={scope.team.timezone} />
-      {analysis?.quality.hasLegacyAggregates && <p className="team-status-banner">{t('teams.quality.legacySummary')}</p>}
       <div className="segmented-control" role="tablist" style={{ marginBottom: 16 }}>
         <button type="button" className={`segmented-item ${tab === 'joined' ? 'active' : ''}`} onClick={() => setTab('joined')}>
           {t('teams.members.joined', { count: members.length })}

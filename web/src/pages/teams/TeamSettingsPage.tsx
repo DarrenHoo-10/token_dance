@@ -90,7 +90,6 @@ export const TeamSettingsPage: React.FC = () => {
   const reducing = Boolean(
     sharingServer &&
       ((sharingServer.sharing.base && !sharingDraft.base) ||
-        (sharingServer.sharing.named && !sharingDraft.named) ||
         (sharingServer.sharing.classification && !sharingDraft.classification) ||
         (sharingServer.sharing.cost && !sharingDraft.cost))
   );

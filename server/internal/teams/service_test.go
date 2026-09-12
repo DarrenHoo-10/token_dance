@@ -203,16 +203,9 @@ func TestCreateTeamValidation(t *testing.T) {
 	})
 
 	t.Run("sharing base false with named true", func(t *testing.T) {
-		_, err := svc.CreateTeam(context.Background(), user, CreateTeamInput{
-			Name: "星河开发组", Timezone: "Asia/Shanghai",
-			Sharing: &domain.SharingFlags{Named: true},
-		}, "idemp-3")
-		if err == nil {
-			t.Fatal("expected sharing error")
-		}
-		var app *domain.AppError
-		if !errors.As(err, &app) || app.Code != "API_INVALID_ARGUMENT" {
-			t.Fatalf("got %v", err)
+		got, err := normalizeSharing(&domain.SharingFlags{Named: true})
+		if err != nil || got.Base || got.Named {
+			t.Fatalf("named without base should coerce off, got %+v err=%v", got, err)
 		}
 	})
 
@@ -476,6 +469,31 @@ func TestSharingDefaultValid(t *testing.T) {
 	got, err := normalizeSharing(nil)
 	if err != nil || got.Base || got.Named || got.Classification || got.Cost {
 		t.Fatalf("default sharing %+v err=%v", got, err)
+	}
+	named, err := normalizeSharing(&domain.SharingFlags{Base: true})
+	if err != nil || !named.Base || !named.Named || named.Classification || named.Cost {
+		t.Fatalf("base should enable named ranking, got %+v err=%v", named, err)
+	}
+}
+
+func TestAssembleContributionsFollowsMembership(t *testing.T) {
+	mem, date := "tmb_1", "2026-09-06"
+	row := domain.TeamAnalysisRow{
+		MembershipID: &mem, MetricDate: &date, TokenExactTotal: "50", TokenDerivedTotal: "0",
+		UsageEventCount: "1", VisibilityMask: 0,
+	}
+	handle := "ada"
+	dto := assembleAnalysis(
+		&domain.Team{TimezoneName: "UTC"},
+		&domain.TeamAnalysisSnapshot{SnapshotID: "tas_1", AuthRevision: 1, AsOf: time.Date(2026, 9, 6, 8, 0, 0, 0, time.UTC)},
+		[]domain.TeamAnalysisRow{row},
+		[]domain.TeamMembership{{MembershipID: mem, UserID: "usr_1"}},
+		[]domain.User{{UserID: "usr_1", DisplayName: "Ada", Handle: &handle}},
+		1, time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC), time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC),
+		domain.TeamAnalysisFilters{}, AnalysisQuery{},
+	)
+	if len(dto.Contributions.Items) != 1 || dto.Contributions.Items[0]["displayName"] != "Ada" || dto.Contributions.Items[0]["membershipId"] != mem {
+		t.Fatalf("contributions %+v", dto.Contributions.Items)
 	}
 }
 

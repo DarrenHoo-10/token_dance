@@ -26,6 +26,13 @@ export const EMPTY_SHARING: SharingFlags = {
   cost: false,
 };
 
+export const TEAM_JOIN_SHARING: SharingFlags = {
+  base: true,
+  named: true,
+  classification: false,
+  cost: false,
+};
+
 export interface TeamPermissions {
   inviteMembers: boolean;
   assignAdmins: boolean;

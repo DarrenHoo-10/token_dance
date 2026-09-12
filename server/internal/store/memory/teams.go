@@ -514,6 +514,7 @@ func (m *MemoryStore) sharingFlags(membershipID string) (domain.SharingFlags, ma
 		}
 		effective[string(g.Dimension)] = g.StartsAt
 	}
+	flags.Named = flags.Base
 	return flags, effective
 }
 

@@ -47,7 +47,7 @@ describe('Create team gate', () => {
 
     expect(await screen.findByLabelText('团队名称')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '创建团队' })).toBeEnabled();
-    expect(screen.getByLabelText('将基础用量计入团队')).not.toBeChecked();
+    expect(screen.queryByLabelText('将基础用量计入团队')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('展示我的成员贡献')).not.toBeInTheDocument();
   });
 });

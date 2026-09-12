@@ -92,7 +92,7 @@ describe('Team analysis updating state', () => {
     ['overview', <TeamOverviewPage />, ''],
     ['analytics', <TeamAnalyticsPage />, '/analytics'],
     ['members', <TeamMembersPage />, '/members'],
-  ] as const)('discloses legacy summary limits on %s', async (_name, page, suffix) => {
+  ] as const)('does not show the legacy summary banner on %s', async (_name, page, suffix) => {
     vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     vi.spyOn(teamsApi, 'getExports').mockResolvedValue({ exports: [] });
@@ -101,8 +101,25 @@ describe('Team analysis updating state', () => {
     result.quality.hasLegacyAggregates = true;
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(page, `/teams/tem_0123456789abcdefghijklmnop${suffix}?range=7d`);
-    expect(await screen.findByText(/包含历史日汇总/)).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '7 天' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByRole('tab', { name: '7 天' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.queryByText(/包含历史日汇总/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/团队时区/)).not.toBeInTheDocument();
+  });
+
+  it('lists contributions without named-share copy', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    const result = readyAnalysis('1', '120000');
+    result.contributions = {
+      items: [{ membershipId: 'tmb_1', displayName: 'Ada', handle: 'ada', rank: '1', tokens: { value: '120000', state: 'available' } }],
+      nextCursor: null,
+    };
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
+    renderTeams(<TeamOverviewPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
+    expect(await screen.findByText('Ada')).toBeInTheDocument();
+    expect(screen.getByText('成员贡献')).toBeInTheDocument();
+    expect(screen.queryByText(/仅显示主动授权/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/团队时区/)).not.toBeInTheDocument();
   });
 
   it('shows a skeleton and never fakes 0 while the snapshot is updating', async () => {

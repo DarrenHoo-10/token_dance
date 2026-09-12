@@ -109,15 +109,10 @@ export function normalizeSharing(flags: SharingFlags): SharingFlags {
   }
   return {
     base: true,
-    named: flags.named,
+    named: true,
     classification: flags.classification,
     cost: flags.cost,
   };
-}
-
-export function sharingFingerprint(flags: SharingFlags): string {
-  const normalized = normalizeSharing(flags);
-  return `${normalized.base}:${normalized.named}:${normalized.classification}:${normalized.cost}`;
 }
 
 export function joinReturnTo(linkId: string): string {

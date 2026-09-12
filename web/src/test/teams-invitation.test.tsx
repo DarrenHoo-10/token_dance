@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { api } from '@/api/client';
-import { EMPTY_SHARING, teamsApi } from '@/api/teams';
+import { TEAM_JOIN_SHARING, teamsApi } from '@/api/teams';
 import { InvitationPage } from '@/pages/teams/InvitationPage';
 import { renderTeams, sampleScope, signedInUser } from './teams-test-helpers';
 
@@ -26,7 +26,7 @@ describe('Invitation accept', () => {
     expect(previewSpy).not.toHaveBeenCalled();
   });
 
-  it('accepts an email invitation with sharing defaults all false', async () => {
+  it('accepts an email invitation with team sharing enabled automatically', async () => {
     vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue({ team: null });
     vi.spyOn(teamsApi, 'getInvitation').mockResolvedValue({
@@ -47,14 +47,15 @@ describe('Invitation accept', () => {
 
     expect(await screen.findByRole('heading', { name: '确认加入团队' })).toBeInTheDocument();
     expect(screen.getByText('星河开发组')).toBeInTheDocument();
-    expect(screen.getByLabelText('将基础用量计入团队')).not.toBeChecked();
+    expect(screen.queryByLabelText('将基础用量计入团队')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('展示我的成员贡献')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: '加入团队' }));
 
     await waitFor(() => {
       expect(acceptSpy).toHaveBeenCalledWith(
         'tiv_01',
-        { expectedInvitationVersion: '1', sharing: EMPTY_SHARING },
+        { expectedInvitationVersion: '1', sharing: TEAM_JOIN_SHARING },
         expect.objectContaining({ idempotencyKey: expect.any(String) })
       );
     });

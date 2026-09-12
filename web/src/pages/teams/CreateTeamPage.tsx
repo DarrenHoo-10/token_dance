@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ApiError } from '@/api/client';
-import { EMPTY_SHARING, teamsApi, type SharingFlags, type TeamScope } from '@/api/teams';
+import { TEAM_JOIN_SHARING, teamsApi, type TeamScope } from '@/api/teams';
 import { Button } from '@/components/common/Button';
 import { Card } from '@/components/common/Card';
 import { Input } from '@/components/common/Input';
@@ -21,13 +21,11 @@ import {
   createIdempotencyKey,
   firstGrapheme,
   graphemeLength,
-  normalizeSharing,
   readCreateDraft,
-  sharingFingerprint,
   writeCreateDraft,
 } from './teamUtils';
 import { InviteDialog } from './InviteDialog';
-import { RoleBadge, SharingControls, TeamGateLink, teamErrorMessage } from './TeamShared';
+import { RoleBadge, TeamGateLink, teamErrorMessage } from './TeamShared';
 
 type CreateState = 'checkingMembership' | 'alreadyMember' | 'checkFailed' | 'editing' | 'submitting' | 'created';
 
@@ -44,7 +42,6 @@ export const CreateTeamPage: React.FC = () => {
   const [description, setDescription] = useState('');
   const [timezone, setTimezone] = useState('UTC');
   const [timezoneFallback, setTimezoneFallback] = useState(false);
-  const [sharing, setSharing] = useState<SharingFlags>(EMPTY_SHARING);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [created, setCreated] = useState<TeamScope | null>(null);
@@ -134,8 +131,7 @@ export const CreateTeamPage: React.FC = () => {
     return Object.keys(next).length === 0;
   };
 
-  const requestFingerprint = () =>
-    `${name.trim()}|${description.trim()}|${timezone}|${sharingFingerprint(sharing)}`;
+  const requestFingerprint = () => `${name.trim()}|${description.trim()}|${timezone}`;
 
   const submit = async () => {
     if (!validate(true)) {
@@ -165,7 +161,7 @@ export const CreateTeamPage: React.FC = () => {
           name: name.trim(),
           description: description.trim() || undefined,
           timezone,
-          sharing: normalizeSharing(sharing),
+          sharing: TEAM_JOIN_SHARING,
         },
         { idempotencyKey: key }
       );
@@ -257,9 +253,7 @@ export const CreateTeamPage: React.FC = () => {
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                 <RoleBadge role="owner" />
                 <span className="text-muted" style={{ fontSize: 12 }}>{t('teams.create.oneMember')}</span>
-                <span className="text-muted" style={{ fontSize: 12 }}>
-                  {created.membership ? t(sharing.base ? 'teams.sharing.on' : 'teams.sharing.off') : t('teams.sharing.off')}
-                </span>
+                <span className="text-muted" style={{ fontSize: 12 }}>{t('teams.sharing.on')}</span>
               </div>
             </div>
           </div>
@@ -331,10 +325,6 @@ export const CreateTeamPage: React.FC = () => {
               options={timezoneOptions}
               hint={timezoneFallback ? t('teams.create.timezoneFallback') : t('teams.create.timezoneHint')}
             />
-            <div style={{ margin: '20px 0' }}>
-              <h2 style={{ fontSize: 16 }}>{t('teams.sharing.title')}</h2>
-              <SharingControls value={sharing} onChange={setSharing} disabled={frozen} />
-            </div>
             <p className="text-muted" style={{ fontSize: 12 }}>{t('teams.create.seatNotice')}</p>
             {formError && <p className="form-error" role="alert">{formError}</p>}
             <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
