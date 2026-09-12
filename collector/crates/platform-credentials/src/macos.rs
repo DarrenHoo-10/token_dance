@@ -352,15 +352,26 @@ pub fn authorize_login_keychain(accounts: &[String]) -> Result<(), CredentialErr
         .unwrap_or_else(|error| error.into_inner());
     // No UI suppression here: the caller is an explicit authorization button.
     // The same lock serializes background reads so they cannot display prompts.
+    authorize_accounts(accounts, |account| {
+        match find_generic_password(None, super::DESKTOP_SERVICE, account) {
+            Ok((password, _)) => decode_secret(&password).map(Some),
+            Err(error) if error.code() == errSecItemNotFound => Ok(None),
+            Err(error) => Err(map_error(error)),
+        }
+    })
+}
+
+#[cfg(feature = "login-keychain")]
+fn authorize_accounts(
+    accounts: &[String],
+    mut read: impl FnMut(&str) -> Result<Option<String>, CredentialError>,
+) -> Result<(), CredentialError> {
     for account in accounts {
         super::validate(super::DESKTOP_SERVICE, account)?;
-        match find_generic_password(None, super::DESKTOP_SERVICE, account) {
-            Ok((password, _)) => {
-                let secret = decode_secret(&password)?;
-                cache_put(super::DESKTOP_SERVICE, account, &secret);
-            }
-            Err(error) if error.code() == errSecItemNotFound => {}
-            Err(error) => return Err(map_error(error)),
+        // Preserve earlier grants if a later system prompt was canceled.
+        if cache_get(super::DESKTOP_SERVICE, account).is_some() { continue; }
+        if let Some(secret) = read(account)? {
+            cache_put(super::DESKTOP_SERVICE, account, &secret);
         }
     }
     Ok(())
@@ -430,6 +441,30 @@ pub fn delete(service: &str, account: &str) -> Result<(), CredentialError> {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    #[cfg(feature = "login-keychain")]
+    fn canceled_authorization_reuses_earlier_grants_on_retry() {
+        let first = "test-recovery-cache-first".to_string();
+        let second = "test-recovery-cache-second".to_string();
+        let accounts = vec![first.clone(), second.clone()];
+        let mut calls = Vec::new();
+        assert!(authorize_accounts(&accounts, |account| {
+            calls.push(account.to_string());
+            if account == first { Ok(Some("fixture-one".into())) }
+            else { Err(CredentialError::Denied("canceled (-128)".into())) }
+        }).is_err());
+        assert_eq!(calls, accounts);
+        calls.clear();
+        authorize_accounts(&accounts, |account| {
+            calls.push(account.to_string());
+            Ok(Some("fixture-two".into()))
+        }).unwrap();
+        assert_eq!(calls, vec![second.clone()]);
+        assert_eq!(cache_get(super::super::DESKTOP_SERVICE, &first).as_deref(), Some("fixture-one"));
+        cache_delete(super::super::DESKTOP_SERVICE, &first);
+        cache_delete(super::super::DESKTOP_SERVICE, &second);
+    }
 
     #[test]
     #[cfg(feature = "login-keychain")]

@@ -109,7 +109,7 @@ impl PipelineRuntime {
         )
     }
 
-    fn from_roots(writer: Arc<PipelineWriter>, roots: AdapterRoots) -> Self {
+    pub(crate) fn from_roots(writer: Arc<PipelineWriter>, roots: AdapterRoots) -> Self {
         let scan_dirty = Arc::new(AtomicBool::new(true));
         let metadata_dirty = Arc::new(AtomicBool::new(true));
         let scan_signal = Arc::clone(&scan_dirty);

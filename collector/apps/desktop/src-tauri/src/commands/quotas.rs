@@ -91,6 +91,7 @@ fn read_codex_quota() -> Vec<AgentQuota> {
 
 #[tauri::command]
 pub async fn get_agent_quotas() -> Result<Vec<AgentQuota>, String> {
+    if crate::startup_error_smoke() { return Ok(Vec::new()); }
     static CACHE: Mutex<Option<(Instant, Vec<AgentQuota>)>> = Mutex::new(None);
     let mut result = tauri::async_runtime::spawn_blocking(|| -> Result<Vec<AgentQuota>, String> {
         let mut cache = CACHE.lock().map_err(|_| "Quota cache unavailable")?;
