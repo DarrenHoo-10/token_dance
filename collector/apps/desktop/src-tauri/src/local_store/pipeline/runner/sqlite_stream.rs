@@ -97,6 +97,8 @@ struct LiveCursor {
     last_rowid: i64,
     last_updated_at: i64,
     pending: PendingSet,
+    pending_scan: Option<Vec<i64>>,
+    discover_next: bool,
 }
 
 fn open_readonly(path: &Path) -> Result<Connection, RunnerError> {
@@ -161,23 +163,30 @@ pub fn read_sqlite_change_stream(
             }
         }
         SqliteChangeMode::RunningToCompleted => {
-            let pending_ids: Vec<i64> = state.pending.row_ids.iter().copied().collect();
-            for id in pending_ids {
-                if budget.exhausted(rows.len(), bytes_read, started.elapsed()) {
-                    has_more = true;
-                    break;
-                }
-                if let Some(row) = load_one(&tx, select_sql, id)? {
-                    bytes_read = bytes_read.saturating_add(estimate_row_bytes(&row));
-                    let done = is_completed(&row);
-                    if done {
-                        state.pending.remove(id);
-                        rows.push(row);
+            let pending_ids = state.pending_scan.take().unwrap_or_else(|| state.pending.row_ids.iter().copied().collect());
+            // Finish one bounded pass over pending rows, yielding discovery a turn
+            // when budget is exhausted. New running rows join the next pass.
+            let skip_pending = state.discover_next && !state.pending.is_full();
+            state.discover_next = false;
+            let mut checked = 0;
+            if !skip_pending {
+                for id in pending_ids.iter().copied() {
+                    if rows.len() >= budget.max_records || bytes_read >= budget.max_bytes
+                        || (checked > 0 && started.elapsed() >= budget.max_duration) {
+                        has_more = true;
+                        break;
                     }
-                } else {
-                    state.pending.remove(id);
+                    checked += 1;
+                    if let Some(row) = load_one(&tx, select_sql, id)? {
+                        bytes_read = bytes_read.saturating_add(estimate_row_bytes(&row));
+                        if is_completed(&row) {
+                            state.pending.remove(id);
+                            rows.push(row);
+                        }
+                    } else { state.pending.remove(id); }
                 }
             }
+            state.pending_scan = Some(pending_ids[checked..].to_vec());
 
             if state.pending.is_full() {
                 discovery_paused = true;
@@ -225,6 +234,17 @@ pub fn read_sqlite_change_stream(
                         break;
                     }
                 }
+            } else {
+                // Discovery has not reached EOF; give it the next poll's budget.
+                state.discover_next = true;
+                has_more = true;
+            }
+            let revisit_remaining = state.pending_scan.as_ref().is_some_and(|ids| !ids.is_empty());
+            has_more |= revisit_remaining;
+            // Reaching EOF with only still-running records is an idle stream,
+            // not an endless reconstruction or a permanently busy worker.
+            if !has_more || (state.pending.is_full() && !revisit_remaining) {
+                state.pending_scan = None;
             }
         }
         SqliteChangeMode::UpdatedAtRowid => {
@@ -348,18 +368,28 @@ fn parse_cursor(cursor_json: &Value, mode: SqliteChangeMode) -> LiveCursor {
         mode: parsed_mode,
         last_rowid,
         last_updated_at,
+        pending_scan: cursor_json["pending_scan"].as_array().map(|values| {
+            values.iter().filter_map(Value::as_i64).filter(|id| pending.row_ids.contains(id))
+                .collect::<BTreeSet<_>>().into_iter().collect()
+        }),
+        discover_next: cursor_json["discover_next"].as_bool().unwrap_or(false),
         pending,
     }
 }
 
 fn serialize_cursor(state: &LiveCursor) -> Value {
-    json!({
+    let mut value = json!({
         "mode": state.mode,
         "last_rowid": state.last_rowid,
         "last_updated_at": state.last_updated_at,
         "pending": state.pending.row_ids.iter().copied().collect::<Vec<_>>(),
         "pending_limit": state.pending.limit,
-    })
+    });
+    if state.mode == SqliteChangeMode::RunningToCompleted {
+        value["pending_scan"] = json!(state.pending_scan);
+        value["discover_next"] = json!(state.discover_next);
+    }
+    value
 }
 
 /// Rebuild cursor JSON after mutating a live PendingSet + watermarks.

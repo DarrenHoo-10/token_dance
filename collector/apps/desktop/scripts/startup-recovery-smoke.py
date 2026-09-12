@@ -11,11 +11,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('executable', type=Path)
     parser.add_argument('--flow', action='store_true', help='Exercise cancel, retry and success with a fake OS result')
+    parser.add_argument('--reopen', action='store_true', help='Check native minimize and restore after recovery')
     args = parser.parse_args()
+    if args.reopen:
+        args.flow = True
     with tempfile.TemporaryDirectory(prefix='tokendance-recovery-fixture-') as fixture, tempfile.TemporaryFile(mode='w+b') as output:
         process = subprocess.Popen(
             [str(args.executable.resolve()), '--local-test', '--smoke-startup-error']
-            + (['--smoke-recovery-flow'] if args.flow else []),
+            + (['--smoke-recovery-flow'] if args.flow else [])
+            + (['--smoke-reopen'] if args.reopen else []),
             stdout=output, stderr=subprocess.STDOUT,
             env={**os.environ, "TOKENDANCE_RECOVERY_SMOKE_DIR": fixture},
         )
@@ -27,11 +31,13 @@ def main():
                 if process.poll() is not None:
                     raise RuntimeError(f'Recovery UI exited ({process.returncode}):\n{log}')
                 marker = 'TOKENDANCE_RECOVERY_FLOW_PASSED' if args.flow else 'TOKENDANCE_STARTUP_ERROR_READY'
-                if marker in log and (not args.flow or "TOKENDANCE_DESKTOP_READY" in log):
+                if (marker in log and (not args.flow or "TOKENDANCE_DESKTOP_READY" in log)
+                        and (not args.reopen or "TOKENDANCE_REOPEN_PASSED" in log)):
                     time.sleep(1)
                     if process.poll() is not None:
                         raise RuntimeError('Recovery UI crashed after loading')
-                    print('Recovery authorization flow passed in the same process.' if args.flow
+                    print('Authorization and native window restoration passed.' if args.reopen
+                          else 'Recovery authorization flow passed in the same process.' if args.flow
                           else 'Recovery HTML loaded and the native app remained alive.')
                     return
                 time.sleep(0.1)

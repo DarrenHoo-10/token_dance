@@ -1052,3 +1052,58 @@ fn sqlite_source_probe_reaches_eof() {
     }
     panic!("scan failed to reach EOF");
 }
+
+#[test]
+fn expired_budget_revisits_completed_pending_rows_and_then_discovers_new_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pending.sqlite");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("CREATE TABLE usage(id INTEGER PRIMARY KEY, updated_at INTEGER, status TEXT, payload TEXT);
+        INSERT INTO usage VALUES(1,10,'completed','{}'),(2,11,'completed','{}'),(3,12,'completed','{}');").unwrap();
+    let sql = "SELECT id, updated_at, status, payload FROM usage WHERE id > ?1 ORDER BY id";
+    let mut cursor = json!({"last_rowid":2,"pending":[1,2],"pending_limit":2});
+    let mut ids = Vec::new();
+    for _ in 0..8 {
+        let result = read_sqlite_change_stream(&path, sql, &cursor, SqliteChangeMode::RunningToCompleted, ReadBudget::new(1,1024,0)).unwrap();
+        ids.extend(result.rows.iter().map(|row| row.rowid));
+        cursor = result.next_cursor_json;
+        if !result.has_more { break; }
+    }
+    ids.sort_unstable();
+    assert_eq!(ids, vec![1,2,3]);
+    assert_eq!(cursor["pending"], json!([]));
+    assert_eq!(db.query_row("SELECT count(*) FROM usage", [], |r| r.get::<_, i64>(0)).unwrap(), 3);
+}
+
+#[test]
+fn unfinished_oldest_pending_row_does_not_starve_completion_or_discovery() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pending-fairness.sqlite");
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch("CREATE TABLE usage(id INTEGER PRIMARY KEY, updated_at INTEGER, status TEXT, payload TEXT);
+        INSERT INTO usage VALUES(1,10,'running','{}'),(2,11,'completed','{}'),(3,12,'completed','{}');").unwrap();
+    let sql = "SELECT id, updated_at, status, payload FROM usage WHERE id > ?1 ORDER BY id";
+    let mut cursor = json!({"last_rowid":2,"pending":[1,2],"pending_limit":2});
+    let mut ids = Vec::new();
+    let mut idle = false;
+    for _ in 0..10 {
+        let result = read_sqlite_change_stream(&path, sql, &cursor, SqliteChangeMode::RunningToCompleted, ReadBudget::new(1,1024,0)).unwrap();
+        ids.extend(result.rows.iter().map(|row| row.rowid));
+        cursor = result.next_cursor_json;
+        if !result.has_more { idle = true; break; }
+    }
+    assert!(idle, "unfinished records must not keep reconstruction busy at EOF");
+    assert_eq!(ids, vec![2,3]);
+    assert_eq!(cursor["pending"], json!([1]));
+    assert_eq!(cursor["last_rowid"], 3);
+}
+
+#[test]
+fn completed_pending_scan_does_not_spin_without_data_progress() {
+    let before = json!({"mode":"running_to_completed","last_rowid":2,"pending":[1,2],"pending_limit":2,"pending_scan":[2],"discover_next":false});
+    let mut after = before.clone();
+    after["pending_scan"] = json!(null);
+    assert!(!super::engine::cursor_progress(&before, &after));
+    after["pending"] = json!([1]);
+    assert!(super::engine::cursor_progress(&before, &after));
+}

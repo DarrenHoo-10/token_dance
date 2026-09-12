@@ -395,7 +395,7 @@ jobs:
         run: |
           python3 collector/apps/desktop/scripts/startup-recovery-smoke.py \
             collector/apps/desktop/src-tauri/target/${{ matrix.target }}/debug/bundle/macos/TokenDance.app/Contents/MacOS/tokendance-desktop
-          python3 collector/apps/desktop/scripts/startup-recovery-smoke.py --flow \
+          python3 collector/apps/desktop/scripts/startup-recovery-smoke.py --reopen \
             collector/apps/desktop/src-tauri/target/${{ matrix.target }}/debug/bundle/macos/TokenDance.app/Contents/MacOS/tokendance-desktop
       - name: Stage free unnotarized DMG
         if: github.event_name == 'workflow_dispatch' && inputs.unnotarized_macos_release
