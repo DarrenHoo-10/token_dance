@@ -323,3 +323,148 @@ func TestDirtyDayVersionConfirmDoesNotSwallowMidFlight(t *testing.T) {
 		t.Fatalf("expected window tokens 10, got %d", tokens)
 	}
 }
+
+func TestReviewHourDurationWithdrawsTurnBucketsE2E(t *testing.T) {
+	st, w, cleanup := setupAggDB(t)
+	defer cleanup()
+	now := time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC)
+	w.clk = clock.NewMockClock(now)
+	userID, installationID := "usr_review_dur", "ins_review_dur"
+	seedAggUserInstall(t, st, userID, installationID, now)
+
+	session := b64url32Seed("session:review-dur")
+	turn1 := b64url32Seed("turn:1")
+	turn2 := b64url32Seed("turn:2")
+	h9 := time.Date(2024, 6, 15, 9, 0, 0, 0, domain.DayTZ).UnixMilli()
+	h10 := time.Date(2024, 6, 15, 10, 0, 0, 0, domain.DayTZ).UnixMilli()
+	h11 := time.Date(2024, 6, 15, 11, 0, 0, 0, domain.DayTZ).UnixMilli()
+
+	mkTurn := func(seed string, at int64, turn v2.Base64Url32, dur string) v2.EventEnvelope {
+		return makeAggEvent(t, seed, at, func(m map[string]any) {
+			m["eventType"] = "turn_completed"
+			m["sessionKey"] = string(session)
+			m["turnKey"] = string(turn)
+			m["payload"] = map[string]any{
+				"activity": map[string]any{"duration_ms": dur, "trigger": "user"},
+				"meta":     map[string]any{"accuracy": "exact", "time_source": "source_record"},
+			}
+			delete(m["payload"].(map[string]any), "usage")
+		})
+	}
+	end := makeAggEvent(t, "sess-end", h11, func(m map[string]any) {
+		m["eventType"] = "session_ended"
+		m["sessionKey"] = string(session)
+		m["payload"] = map[string]any{
+			"activity": map[string]any{"duration_ms": "500"},
+			"meta":     map[string]any{"accuracy": "exact", "time_source": "source_record"},
+		}
+	})
+
+	commitAggEvents(t, st, userID, installationID, "n-dur-1", now,
+		mkTurn("t1", h9, turn1, "100"),
+		mkTurn("t2", h10, turn2, "200"),
+		end,
+	)
+	for {
+		n, err := w.ProcessTelemetryAggregation(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			break
+		}
+	}
+
+	b9, _ := domain.BucketStartMs(domain.TelemetryGrainHour, h9)
+	b10, _ := domain.BucketStartMs(domain.TelemetryGrainHour, h10)
+	b11, _ := domain.BucketStartMs(domain.TelemetryGrainHour, h11)
+	readHour := func(bucket int64) int64 {
+		t.Helper()
+		var v int64
+		err := st.DB().QueryRow(`
+			SELECT CAST(COALESCE(active_duration_ms,0) AS SIGNED)
+			FROM telemetry_harness_metrics
+			WHERE user_id=? AND grain='hour' AND bucket_start=?`, userID, bucket).Scan(&v)
+		if err == sql.ErrNoRows {
+			return 0
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	if got := readHour(b9); got != 0 {
+		t.Fatalf("hour-09 must withdraw turn fallback, got %d", got)
+	}
+	if got := readHour(b10); got != 0 {
+		t.Fatalf("hour-10 must withdraw turn fallback, got %d", got)
+	}
+	if got := readHour(b11); got != 500 {
+		t.Fatalf("hour-11 must hold session_end 500, got %d", got)
+	}
+}
+
+func TestReviewDirtyConfirmOutboxSameTxFaultInject(t *testing.T) {
+	st, w, cleanup := setupAggDB(t)
+	defer cleanup()
+	now := w.clk.Now()
+	userID, installationID := "usr_review_dirty", "ins_review_dirty"
+	seedAggUserInstall(t, st, userID, installationID, now)
+	commitAggEvents(t, st, userID, installationID, "n-dirty-outbox", now, makeAggEvent(t, "dirty-outbox", now.UnixMilli(), nil))
+	if _, err := w.ProcessTelemetryAggregation(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	claims, err := mysql.ClaimDirtyDays(context.Background(), st.DB(), now, 10)
+	if err != nil || len(claims) != 1 {
+		t.Fatalf("claim: %v len=%d", err, len(claims))
+	}
+
+	dirtyRefreshAfterConfirmHook = func() error {
+		return fmt.Errorf("injected_fail_after_confirm")
+	}
+	defer func() { dirtyRefreshAfterConfirmHook = nil }()
+
+	ok, err := w.refreshDirtyDay(context.Background(), claims[0], now)
+	if err == nil || ok {
+		t.Fatalf("expected failpoint error, ok=%v err=%v", ok, err)
+	}
+
+	var outbox int
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM community_stats_outbox WHERE metric_date=?`, claims[0].MetricDate).Scan(&outbox); err != nil {
+		t.Fatal(err)
+	}
+	if outbox != 0 {
+		t.Fatalf("outbox must roll back with confirm, got %d", outbox)
+	}
+	var applied, dirty uint64
+	if err := st.DB().QueryRow(`
+		SELECT applied_version, dirty_version FROM aggregate_dirty_days
+		WHERE user_id=? AND metric_date=?`, userID, claims[0].MetricDate).Scan(&applied, &dirty); err != nil {
+		t.Fatal(err)
+	}
+	if applied >= dirty {
+		t.Fatalf("confirm must roll back: applied=%d dirty=%d", applied, dirty)
+	}
+
+	// Lease still held from ClaimDirtyDays; reclaim after TTL then succeed.
+	later := now.Add(2 * time.Minute)
+	if _, err := mysql.ReclaimExpiredDirtyDayLeases(context.Background(), st.DB(), later); err != nil {
+		t.Fatal(err)
+	}
+	dirtyRefreshAfterConfirmHook = nil
+	claims2, err := mysql.ClaimDirtyDays(context.Background(), st.DB(), later, 10)
+	if err != nil || len(claims2) != 1 {
+		t.Fatalf("reclaim claim: %v len=%d", err, len(claims2))
+	}
+	ok, err = w.refreshDirtyDay(context.Background(), claims2[0], later)
+	if err != nil || !ok {
+		t.Fatalf("expected confirm after reclaim, ok=%v err=%v", ok, err)
+	}
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM community_stats_outbox WHERE metric_date=?`, claims2[0].MetricDate).Scan(&outbox); err != nil {
+		t.Fatal(err)
+	}
+	if outbox != 1 {
+		t.Fatalf("expected 1 community outbox row after success, got %d", outbox)
+	}
+}

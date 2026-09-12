@@ -724,40 +724,28 @@ func TestUSR011_TenMetricsMySQLSupportedVsZero(t *testing.T) {
 	userC := "usr_metric_c"
 	seedTestUser(t, db, st, userC, "user_c", "User C", "user_c@tokendance.dev", true, now)
 
-	// Insert User A rows into daily_user_agent_metrics (agg_version = 2)
+	// Insert User A rows into telemetry_* only (daily_* left empty).
 	metricDateStr := "2026-08-29"
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO daily_user_agent_metrics (
-			metric_date, user_id, agent_id, exact_token_total, derived_token_total,
-			token_input_total, token_output_total, token_cache_read_total, token_cache_write_total, token_reasoning_total,
-			code_generated_lines, active_duration_ms, message_count, user_message_count,
-			cost_amount, cost_currency, source_max_event_pk, aggregation_version, computed_at
-		) VALUES (
-			?, ?, 'claude-code', 1000000, 500000,
-			800000, 400000, 300000, 0, 50000,
-			2500, 3600000, 120, 45,
-			12.50000000, 'USD', 100, 2, ?
-		)`, metricDateStr, userA, now)
-	if err != nil {
-		t.Fatalf("failed to insert user A metrics: %v", err)
-	}
+	seedTelemetryPersonalDay(t, db, userA, metricDateStr, "claude-code",
+		struct {
+			Exact, Derived, InputContext, Output, CacheRead, CacheWrite, Reasoning int64
+		}{1000000, 500000, 1100000, 400000, 300000, 0, 50000},
+		struct {
+			CodeLines, DurationMs, Messages, UserMessages int64
+		}{2500, 3600000, 120, 45},
+		1250000000, // 12.5 USD in 1e-8 units
+	)
 
-	// Insert User B rows into daily_user_agent_metrics (agg_version = 1, extensions NULL)
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO daily_user_agent_metrics (
-			metric_date, user_id, agent_id, exact_token_total, derived_token_total,
-			token_input_total, token_output_total, token_cache_read_total, token_cache_write_total, token_reasoning_total,
-			code_generated_lines, active_duration_ms, message_count, user_message_count,
-			cost_amount, cost_currency, source_max_event_pk, aggregation_version, computed_at
-		) VALUES (
-			?, ?, 'cursor', 500000, 200000,
-			NULL, NULL, NULL, NULL, NULL,
-			1000, NULL, NULL, NULL,
-			5.00000000, 'USD', 101, 1, ?
-		)`, metricDateStr, userB, now)
-	if err != nil {
-		t.Fatalf("failed to insert user B metrics: %v", err)
-	}
+	// Insert User B with partial coverage (zero structure fields stay 0, still readable).
+	seedTelemetryPersonalDay(t, db, userB, metricDateStr, "cursor",
+		struct {
+			Exact, Derived, InputContext, Output, CacheRead, CacheWrite, Reasoning int64
+		}{500000, 200000, 0, 0, 0, 0, 0},
+		struct {
+			CodeLines, DurationMs, Messages, UserMessages int64
+		}{1000, 0, 0, 0},
+		500000000, // 5.0 USD
+	)
 
 	r := domain.TimeRange{
 		Key:      domain.TimeRange30d,
@@ -803,7 +791,7 @@ func TestUSR011_TenMetricsMySQLSupportedVsZero(t *testing.T) {
 		t.Errorf("expected user A cost 12.50000000, got %+v", sumA.Metrics.EstimatedCost)
 	}
 
-	// 2. Verify User B (Agg version 1 -> supported=false with value=nil for extensions)
+	// 2. Verify User B: telemetry rows present; zero structure fields read as supported zeros.
 	sumB, err := st.Analytics().GetPersonalSummary(ctx, userB, r)
 	if err != nil {
 		t.Fatalf("failed to get personal summary for user B: %v", err)
@@ -812,23 +800,11 @@ func TestUSR011_TenMetricsMySQLSupportedVsZero(t *testing.T) {
 	if sumB.Metrics.TotalTokens.Value == nil || *sumB.Metrics.TotalTokens.Value != "700000" {
 		t.Errorf("expected user B total tokens 700000, got %v", sumB.Metrics.TotalTokens.Value)
 	}
-	if sumB.Metrics.InputContextTokens.Supported || sumB.Metrics.InputContextTokens.Value != nil {
-		t.Errorf("expected user B inputContextTokens supported=false and value=nil, got %+v", sumB.Metrics.InputContextTokens)
+	if !sumB.Metrics.InputContextTokens.Supported || sumB.Metrics.InputContextTokens.Value == nil || *sumB.Metrics.InputContextTokens.Value != "0" {
+		t.Errorf("expected user B inputContextTokens supported zero, got %+v", sumB.Metrics.InputContextTokens)
 	}
-	if sumB.Metrics.OutputTokens.Supported || sumB.Metrics.OutputTokens.Value != nil {
-		t.Errorf("expected user B outputTokens supported=false and value=nil, got %+v", sumB.Metrics.OutputTokens)
-	}
-	if sumB.Metrics.CacheHitRate.Supported || sumB.Metrics.CacheHitRate.Value != nil {
-		t.Errorf("expected user B cacheHitRate supported=false and value=nil, got %+v", sumB.Metrics.CacheHitRate)
-	}
-	if sumB.Metrics.ActiveDurationMs.Supported || sumB.Metrics.ActiveDurationMs.Value != nil {
-		t.Errorf("expected user B activeDurationMs supported=false and value=nil, got %+v", sumB.Metrics.ActiveDurationMs)
-	}
-	if sumB.Metrics.MessageCount.Supported || sumB.Metrics.MessageCount.Value != nil {
-		t.Errorf("expected user B messageCount supported=false and value=nil, got %+v", sumB.Metrics.MessageCount)
-	}
-	if sumB.Metrics.UserMessageCount.Supported || sumB.Metrics.UserMessageCount.Value != nil {
-		t.Errorf("expected user B userMessageCount supported=false and value=nil, got %+v", sumB.Metrics.UserMessageCount)
+	if !sumB.Metrics.OutputTokens.Supported || sumB.Metrics.OutputTokens.Value == nil || *sumB.Metrics.OutputTokens.Value != "0" {
+		t.Errorf("expected user B outputTokens supported zero, got %+v", sumB.Metrics.OutputTokens)
 	}
 
 	// 3. Verify User C (Zero rows -> supported=true with real zero strings)
@@ -860,45 +836,50 @@ func TestUSR012_TokenTrendFiltersAndBreakdownsMySQL(t *testing.T) {
 	userID := "usr_filter_test"
 	seedTestUser(t, db, st, userID, "filteruser", "Filter User", "filter@tokendance.dev", true, now)
 
-	// Seed daily_user_agent_metrics for 2 agents
+	// Seed telemetry_* only (daily_* left empty).
 	d1 := "2026-08-28"
 	d2 := "2026-08-29"
+	installID := "ins_" + userID
+	ensureTestInstallation(t, db, userID, installID, now)
+	nowMs := now.UnixMilli()
 
-	_, err := db.ExecContext(ctx, `
-		INSERT INTO daily_user_agent_metrics (
-			metric_date, user_id, agent_id, exact_token_total, derived_token_total,
-			token_input_total, token_output_total, token_cache_read_total, token_cache_write_total, token_reasoning_total,
-			code_generated_lines, active_duration_ms, message_count, user_message_count,
-			cost_amount, cost_currency, source_max_event_pk, aggregation_version, computed_at
-		) VALUES
-		(?, ?, 'claude-code', 600000, 0, 400000, 150000, 50000, 0, 10000, 100, 1000, 10, 5, 6.0, 'USD', 1, 2, ?),
-		(?, ?, 'cursor', 400000, 0, 250000, 100000, 50000, 0, 5000, 50, 800, 8, 4, 4.0, 'USD', 2, 2, ?),
-		(?, ?, 'claude-code', 800000, 0, 500000, 200000, 100000, 0, 20000, 150, 1200, 15, 6, 8.0, 'USD', 3, 2, ?)`,
-		d1, userID, now,
-		d1, userID, now,
-		d2, userID, now,
-	)
-	if err != nil {
-		t.Fatalf("failed to insert daily_user_agent_metrics: %v", err)
+	ensureModel := func(provider, model string) int64 {
+		t.Helper()
+		res, err := db.ExecContext(ctx, `
+			INSERT INTO telemetry_models (created_at, updated_at, provider_id, model_id)
+			VALUES (?, ?, ?, ?)`, nowMs, nowMs, provider, model)
+		if err != nil {
+			t.Fatalf("insert model: %v", err)
+		}
+		id, _ := res.LastInsertId()
+		return id
 	}
+	mSonnet := ensureModel("anthropic", "claude-3-7-sonnet")
+	mGpt := ensureModel("openai", "gpt-4o")
+	mBedrock := ensureModel("bedrock", "claude-3-7-sonnet")
 
-	// Seed daily_user_agent_model_metrics for 3 models across 2 providers
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO daily_user_agent_model_metrics (
-			metric_date, user_id, agent_id, provider_id, model_id, exact_token_total, derived_token_total,
-			token_input_total, token_output_total, token_cache_read_total, token_cache_write_total, token_reasoning_total,
-			model_request_count, cost_amount, cost_currency, source_max_event_pk, aggregation_version, computed_at
-		) VALUES
-		(?, ?, 'claude-code', 'anthropic', 'claude-3-7-sonnet', 600000, 0, 400000, 150000, 50000, 0, 10000, 10, 6.0, 'USD', 1, 2, ?),
-		(?, ?, 'cursor', 'openai', 'gpt-4o', 400000, 0, 250000, 100000, 50000, 0, 5000, 8, 4.0, 'USD', 2, 2, ?),
-		(?, ?, 'claude-code', 'bedrock', 'claude-3-7-sonnet', 800000, 0, 500000, 200000, 100000, 0, 20000, 15, 8.0, 'USD', 3, 2, ?)`,
-		d1, userID, now,
-		d1, userID, now,
-		d2, userID, now,
-	)
-	if err != nil {
-		t.Fatalf("failed to insert daily_user_agent_model_metrics: %v", err)
+	insertModelMetric := func(date, harness string, modelKey, exact int64) {
+		t.Helper()
+		bucket, err := domain.DayBucketStartMs(date)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = db.ExecContext(ctx, `
+			INSERT INTO telemetry_model_metrics (
+				created_at, updated_at, user_id, installation_id, grain, bucket_start,
+				harness_id, model_key, exact_token_total, derived_token_total,
+				input_context_tokens, output_tokens, cache_read_tokens,
+				model_request_count, usage_observed_count, token_total_known_count,
+				metric_semantics_version
+			) VALUES (?, ?, ?, ?, 'day', ?, ?, ?, ?, 0, 0, 0, 0, 1, 1, 1, 1)`,
+			nowMs, nowMs, userID, installID, bucket, harness, modelKey, exact)
+		if err != nil {
+			t.Fatalf("insert model metric: %v", err)
+		}
 	}
+	insertModelMetric(d1, "claude-code", mSonnet, 600000)
+	insertModelMetric(d1, "cursor", mGpt, 400000)
+	insertModelMetric(d2, "claude-code", mBedrock, 800000)
 
 	r := domain.TimeRange{
 		Key:      domain.TimeRange30d,
@@ -985,30 +966,55 @@ func TestUSR014_PersonalSkillRankingAcrossDaysAndAgentsMySQL(t *testing.T) {
 	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	userID := "usr_skill_ranking"
 	seedTestUser(t, db, st, userID, "skill_ranker", "Skill Ranker", "skill-ranker@tokendance.dev", false, now)
+	installID := "ins_" + userID
+	ensureTestInstallation(t, db, userID, installID, now)
+	nowMs := now.UnixMilli()
 	publicKey := crypto.SHA256([]byte("public-skill-key"))
 	privateKey := crypto.SHA256([]byte("private-skill-key"))
+
+	insertSkill := func(key []byte, name *string) int64 {
+		t.Helper()
+		res, err := db.ExecContext(ctx, `
+			INSERT INTO telemetry_skills (created_at, updated_at, installation_id, skill_key, public_name)
+			VALUES (?, ?, ?, ?, ?)`, nowMs, nowMs, installID, key, name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, _ := res.LastInsertId()
+		return id
+	}
+	pubName := "Public Review Skill"
+	publicSkillID := insertSkill(publicKey[:], &pubName)
+	privateSkillID := insertSkill(privateKey[:], nil)
+
 	for index, date := range []string{"2026-08-27", "2026-08-28", "2026-08-29"} {
 		agent := "claude-code"
 		if index == 1 {
 			agent = "cursor"
 		}
+		bucket, err := domain.DayBucketStartMs(date)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if _, err := db.ExecContext(ctx, `
-			INSERT INTO daily_skill_metrics (
-				metric_date, user_id, agent_id, skill_key, skill_public_name,
-				use_count, exact_use_count, success_count, failure_count,
-				duration_ms, source_max_event_pk, aggregation_version, computed_at, updated_at
-			) VALUES (?, ?, ?, ?, 'Public Review Skill', ?, ?, ?, 1, 100, ?, 2, ?, ?)`,
-			date, userID, agent, publicKey[:], 10+index, 10+index, 9+index, index+1, now, now); err != nil {
+			INSERT INTO telemetry_skill_metrics (
+				created_at, updated_at, user_id, installation_id, grain, bucket_start,
+				harness_id, skill_id, use_count, exact_use_count, success_count, failure_count,
+				duration_ms, metric_semantics_version
+			) VALUES (?, ?, ?, ?, 'day', ?, ?, ?, ?, ?, ?, 1, 100, 1)`,
+			nowMs, nowMs, userID, installID, bucket, agent, publicSkillID,
+			10+index, 10+index, 9+index); err != nil {
 			t.Fatal(err)
 		}
 	}
+	bucket29, _ := domain.DayBucketStartMs("2026-08-29")
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO daily_skill_metrics (
-			metric_date, user_id, agent_id, skill_key, skill_public_name,
-			use_count, exact_use_count, success_count, failure_count,
-			duration_ms, source_max_event_pk, aggregation_version, computed_at, updated_at
-		) VALUES ('2026-08-29', ?, 'cursor', ?, NULL, 5, 5, 5, 0, 50, 10, 2, ?, ?)`,
-		userID, privateKey[:], now, now); err != nil {
+		INSERT INTO telemetry_skill_metrics (
+			created_at, updated_at, user_id, installation_id, grain, bucket_start,
+			harness_id, skill_id, use_count, exact_use_count, success_count, failure_count,
+			duration_ms, metric_semantics_version
+		) VALUES (?, ?, ?, ?, 'day', ?, 'cursor', ?, 5, 5, 5, 0, 50, 1)`,
+		nowMs, nowMs, userID, installID, bucket29, privateSkillID); err != nil {
 		t.Fatal(err)
 	}
 	range30d := domain.TimeRange{Key: domain.TimeRange30d, From: now.AddDate(0, 0, -29), To: now, Timezone: "UTC"}
@@ -1141,21 +1147,7 @@ func TestUSR016_PublicDTOWhitelistMySQL(t *testing.T) {
 		t.Fatalf("failed to update public bio: %v", err)
 	}
 
-	_, err = db.ExecContext(ctx, `
-		INSERT INTO daily_user_agent_metrics (
-			metric_date, user_id, agent_id, exact_token_total, derived_token_total,
-			token_input_total, token_output_total, token_cache_read_total, token_cache_write_total, token_reasoning_total,
-			code_generated_lines, active_duration_ms, message_count, user_message_count,
-			cost_amount, cost_currency, source_max_event_pk, aggregation_version, computed_at
-		) VALUES (
-			'2026-08-29', ?, 'claude-code', 3000000, 0,
-			2000000, 800000, 200000, 0, 50000,
-			500, 1800000, 50, 20,
-			30.0, 'USD', 1, 2, ?
-		)`, userID, now)
-	if err != nil {
-		t.Fatalf("failed to insert metrics: %v", err)
-	}
+	seedTelemetryDayModelTokens(t, db, userID, "2026-08-29", "claude-code", 3000000, 0)
 
 	cfg := config.DefaultConfig()
 	clk := clock.NewMockClock(now)
@@ -1488,16 +1480,8 @@ func seedBoundaryAnalyticsFixture(t *testing.T, db *sql.DB, st *Store, userID st
 		}
 	}
 	for i, date := range dailyDates {
-		_, err = db.ExecContext(ctx, `INSERT INTO daily_user_agent_metrics
-			(metric_date, user_id, agent_id, exact_token_total, derived_token_total,
-			token_input_total, token_output_total, token_cache_read_total, token_cache_write_total, token_reasoning_total,
-			code_generated_lines, active_duration_ms, message_count, user_message_count,
-			cost_amount, cost_currency, source_max_event_pk, aggregation_version, computed_at)
-			VALUES (?, ?, 'claude-code', ?, 0, ?, 0, 0, 0, 0, 0, 0, 0, 0, 0, 'USD', ?, 2, ?)`,
-			date, userID, dailyTokens[i], dailyTokens[i], i+1, now)
-		if err != nil {
-			t.Fatalf("insert boundary daily aggregate: %v", err)
-		}
+		seedTelemetryDayModelTokens(t, db, userID, date, "claude-code", int64(dailyTokens[i]), 0)
+		_ = i
 	}
 }
 
@@ -1552,7 +1536,7 @@ func TestMySQL_NonUTCBoundaryCorrectionAsiaShanghai(t *testing.T) {
 		st, db, cleanup := getTestStore(t)
 		defer cleanup()
 		now := time.Date(2026, 9, 10, 1, 51, 0, 0, time.UTC)
-		userID := "usr_boundary_beijing_morning"
+		userID := "usr_bj_morning"
 		seedBoundaryAnalyticsFixture(t, db, st, userID, now,
 			[]string{"2026-09-10"}, []uint64{218700000},
 			[]struct {
