@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"fmt"
+
 	"tokendance/internal/domain"
 )
 
@@ -31,4 +32,62 @@ func dayGrainBucketRange(fromDate, toDate string) (fromMs, toMs int64, err error
 		return 0, 0, fmt.Errorf("to date: %w", err)
 	}
 	return fromMs, toMs, nil
+}
+
+func coverageFromCounts(known, observed int64) domain.MetricCoverage {
+	if observed <= 0 || known <= 0 {
+		return domain.MetricCoverageNone
+	}
+	if known >= observed {
+		return domain.MetricCoverageComplete
+	}
+	return domain.MetricCoveragePartial
+}
+
+// cacheHitRateMetric uses paired cache_eligible_* sample columns.
+// Denominator 0 → value null; coverage always reflects pair/observed counts.
+func cacheHitRateMetric(eligibleInput, eligibleRead, pairKnown, observed int64, supported bool) domain.MetricDecimal {
+	cov := coverageFromCounts(pairKnown, observed)
+	known := pairKnown
+	obs := observed
+	m := domain.MetricDecimal{
+		Supported:     supported,
+		KnownCount:    &known,
+		ObservedCount: &obs,
+		Coverage:      &cov,
+	}
+	if eligibleInput > 0 {
+		rateStr := fmt.Sprintf("%.3f", float64(eligibleRead)/float64(eligibleInput))
+		m.Value = &rateStr
+	}
+	return m
+}
+
+// scalarCostFromCurrencies fills the legacy single estimatedCost card.
+// Multiple currencies cannot be FX-merged: Amount/Currency stay null.
+func scalarCostFromCurrencies(costs []domain.MetricCost, pricedTotal, requestTotal, costRecords int) domain.MetricCost {
+	supported := costRecords > 0 || len(costs) > 0
+	out := domain.MetricCost{
+		Supported:      supported,
+		PricedRequests: pricedTotal,
+		TotalRequests:  requestTotal,
+	}
+	if !supported {
+		return out
+	}
+	if len(costs) == 1 {
+		c := costs[0]
+		out.Amount = c.Amount
+		out.Currency = c.Currency
+		out.PricingSource = c.PricingSource
+		if c.PricedRequests != 0 {
+			out.PricedRequests = c.PricedRequests
+		}
+		if c.TotalRequests != 0 {
+			out.TotalRequests = c.TotalRequests
+		}
+		return out
+	}
+	// Multi-currency: keep request totals, refuse a fake single-currency amount.
+	return out
 }

@@ -500,13 +500,29 @@ type MetricBigInt struct {
 	Supported bool    `json:"supported"`
 }
 
+// MetricCoverage is the known/observed coverage of a metric sample set.
+type MetricCoverage string
+
+const (
+	MetricCoverageNone     MetricCoverage = "none"
+	MetricCoveragePartial  MetricCoverage = "partial"
+	MetricCoverageComplete MetricCoverage = "complete"
+)
+
 type MetricDecimal struct {
-	Value     *string `json:"value"`
-	Supported bool    `json:"supported"`
+	Value         *string         `json:"value"`
+	Supported     bool            `json:"supported"`
+	KnownCount    *int64          `json:"knownCount,omitempty"`
+	ObservedCount *int64          `json:"observedCount,omitempty"`
+	Coverage      *MetricCoverage `json:"coverage,omitempty"`
 }
 
 type PersonalSummaryMetrics struct {
+	// EstimatedCost is the single-currency scalar card. When multiple
+	// currencies exist without an FX rate, Amount/Currency are null and
+	// EstimatedCosts carries the per-currency breakdown.
 	EstimatedCost      MetricCost    `json:"estimatedCost"`
+	EstimatedCosts     []MetricCost  `json:"estimatedCosts,omitempty"`
 	TotalTokens        MetricBigInt  `json:"totalTokens"`
 	GeneratedCodeLines MetricBigInt  `json:"generatedCodeLines"`
 	TokensPerCodeLine  MetricDecimal `json:"tokensPerCodeLine"`

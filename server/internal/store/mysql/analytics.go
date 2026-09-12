@@ -63,14 +63,16 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 	}
 
 	var rowCount int
-	var costAmount float64
 	var totalTokens, codeLines uint64
 	var inputTokensNull, outputTokensNull, cacheReadNull, cacheWriteNull, reasoningNull sql.NullInt64
+	var eligibleInputNull, eligibleReadNull sql.NullInt64
+	var cachePairKnown, usageObserved int64
 	var activeDurationNull, messageCountNull, userMsgNull sql.NullInt64
 	var minAggVerNull, maxAggVerNull sql.NullInt64
 	var maxComputedAtNull sql.NullTime
 
 	// Tokens + token structure from telemetry_model_metrics (trusted = exact+derived).
+	// Cache hit rate uses paired cache_eligible_* columns, not unpaired totals.
 	err = s.db.QueryRowContext(ctx, `
 		SELECT
 			COUNT(*),
@@ -80,6 +82,10 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 			SUM(cache_read_tokens),
 			SUM(cache_write_tokens),
 			SUM(reasoning_tokens),
+			SUM(cache_eligible_input_tokens),
+			SUM(cache_eligible_read_tokens),
+			CAST(COALESCE(SUM(cache_pair_known_count), 0) AS SIGNED),
+			CAST(COALESCE(SUM(usage_observed_count), 0) AS SIGNED),
 			MIN(metric_semantics_version),
 			MAX(metric_semantics_version),
 			`+telemetryWatermarkSQL+`
@@ -90,6 +96,7 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 	).Scan(
 		&rowCount, &totalTokens,
 		&inputTokensNull, &outputTokensNull, &cacheReadNull, &cacheWriteNull, &reasoningNull,
+		&eligibleInputNull, &eligibleReadNull, &cachePairKnown, &usageObserved,
 		&minAggVerNull, &maxAggVerNull, &maxComputedAtNull,
 	)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -120,28 +127,61 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 	}
 	maxNullTime(&maxComputedAtNull, harnessWatermark)
 
-	// Cost from integer 1e-8 units.
-	var costUnits sql.NullString
-	var costKnown, pricedRequests, totalRequests int
-	err = s.db.QueryRowContext(ctx, `
+	// Costs grouped by currency — never silently SUM across currencies as USD.
+	costRows, err := s.db.QueryContext(ctx, `
 		SELECT
+			currency,
 			CAST(COALESCE(SUM(reported_cost_units + estimated_cost_units), 0) AS CHAR),
 			CAST(COALESCE(SUM(cost_known_count), 0) AS UNSIGNED),
 			CAST(COALESCE(SUM(reported_request_count + estimated_request_count), 0) AS UNSIGNED),
 			CAST(COALESCE(SUM(reported_request_count + estimated_request_count + unpriced_request_count), 0) AS UNSIGNED)
 		FROM telemetry_cost_metrics
 		WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL
-		  AND bucket_start >= ? AND bucket_start <= ?`,
+		  AND bucket_start >= ? AND bucket_start <= ?
+		GROUP BY currency
+		ORDER BY currency`,
 		userID, fromMs, toMs,
-	).Scan(&costUnits, &costKnown, &pricedRequests, &totalRequests)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	)
+	if err != nil {
 		return nil, fmt.Errorf("failed to query personal summary cost: %w", err)
 	}
-	if costUnits.Valid && costUnits.String != "" && costUnits.String != "0" {
-		var units float64
-		if _, err := fmt.Sscanf(costUnits.String, "%f", &units); err == nil {
-			costAmount = units / 1e8
+	defer costRows.Close()
+
+	var estimatedCosts []domain.MetricCost
+	var pricedRequestsTotal, totalRequestsTotal, costRecords int
+	for costRows.Next() {
+		var currency string
+		var costUnits sql.NullString
+		var costKnown, pricedRequests, totalRequests int
+		if err := costRows.Scan(&currency, &costUnits, &costKnown, &pricedRequests, &totalRequests); err != nil {
+			return nil, fmt.Errorf("failed to scan personal summary cost: %w", err)
 		}
+		var amount *string
+		if costUnits.Valid && costUnits.String != "" && costUnits.String != "0" {
+			var units float64
+			if _, err := fmt.Sscanf(costUnits.String, "%f", &units); err == nil {
+				amt := fmt.Sprintf("%.8f", units/1e8)
+				amount = &amt
+			}
+		}
+		curr := currency
+		supported := costKnown > 0 || amount != nil
+		if !supported {
+			amount = nil
+		}
+		estimatedCosts = append(estimatedCosts, domain.MetricCost{
+			Amount:         amount,
+			Currency:       &curr,
+			Supported:      supported,
+			PricedRequests: pricedRequests,
+			TotalRequests:  totalRequests,
+		})
+		pricedRequestsTotal += pricedRequests
+		totalRequestsTotal += totalRequests
+		costRecords += costKnown
+	}
+	if err := costRows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to iterate personal summary cost: %w", err)
 	}
 
 	raw, err := s.queryRawSummary(ctx, userID, plan.raw)
@@ -149,7 +189,9 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 		return nil, err
 	}
 	rowCount += int(raw.rowCount)
-	costAmount += raw.cost
+	// Legacy usage_events boundary path has no FX; do not fold raw.cost into a
+	// USD scalar when telemetry already reports multi-currency (or at all as USD).
+	_ = raw.cost
 	totalTokens += raw.tokens
 	codeLines += raw.codeLines
 	addNullInt64(&inputTokensNull, raw.input)
@@ -172,10 +214,6 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 		  AND bucket_start >= ? AND bucket_start <= ?`,
 		userID, fromMs, toMs,
 	).Scan(&codeRecords, &durationRecords)
-	costRecords := costKnown
-	pricingSource := ""
-	costAmtStr := fmt.Sprintf("%.8f", costAmount)
-	costCurr := "USD"
 	totTokensStr := fmt.Sprintf("%d", totalTokens)
 	codeLinesStr := fmt.Sprintf("%d", codeLines)
 
@@ -197,11 +235,20 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 	var messageMetric domain.MetricBigInt
 	var userMessageMetric domain.MetricBigInt
 
+	eligibleInput := int64(0)
+	eligibleRead := int64(0)
+	if eligibleInputNull.Valid {
+		eligibleInput = eligibleInputNull.Int64
+	}
+	if eligibleReadNull.Valid {
+		eligibleRead = eligibleReadNull.Int64
+	}
+
 	if rowCount == 0 {
 		zeroStr := "0"
 		inputMetric = domain.MetricBigInt{Value: &zeroStr, Supported: true}
 		outputMetric = domain.MetricBigInt{Value: &zeroStr, Supported: true}
-		cacheHitMetric = domain.MetricDecimal{Value: nil, Supported: true}
+		cacheHitMetric = cacheHitRateMetric(0, 0, 0, 0, true)
 		durationMetric = domain.MetricBigInt{Value: &zeroStr, Supported: true}
 		messageMetric = domain.MetricBigInt{Value: &zeroStr, Supported: true}
 		userMessageMetric = domain.MetricBigInt{Value: &zeroStr, Supported: true}
@@ -213,17 +260,10 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 			inpVal := uint64(inputTokensNull.Int64)
 			sVal := fmt.Sprintf("%d", inpVal)
 			inputMetric = domain.MetricBigInt{Value: &sVal, Supported: true}
-
-			if cacheReadNull.Valid && inpVal > 0 {
-				rateStr := fmt.Sprintf("%.3f", float64(cacheReadNull.Int64)/float64(inpVal))
-				cacheHitMetric = domain.MetricDecimal{Value: &rateStr, Supported: true}
-			} else {
-				cacheHitMetric = domain.MetricDecimal{Value: nil, Supported: true}
-			}
 		} else {
 			inputMetric = domain.MetricBigInt{Value: nil, Supported: false}
-			cacheHitMetric = domain.MetricDecimal{Value: nil, Supported: false}
 		}
+		cacheHitMetric = cacheHitRateMetric(eligibleInput, eligibleRead, cachePairKnown, usageObserved, extSupported)
 
 		if extSupported && outputTokensNull.Valid {
 			sVal := fmt.Sprintf("%d", outputTokensNull.Int64)
@@ -279,10 +319,7 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 	if durationRecords == 0 && (!activeDurationNull.Valid || activeDurationNull.Int64 == 0) {
 		durationMetric = domain.MetricBigInt{Supported: false}
 	}
-	costMetric := domain.MetricCost{Amount: &costAmtStr, Currency: &costCurr, Supported: costRecords > 0 || costAmount > 0, PricingSource: pricingSource, PricedRequests: pricedRequests, TotalRequests: totalRequests}
-	if !costMetric.Supported {
-		costMetric.Amount = nil
-	}
+	costMetric := scalarCostFromCurrencies(estimatedCosts, pricedRequestsTotal, totalRequestsTotal, costRecords)
 	codeMetric := domain.MetricBigInt{Value: &codeLinesStr, Supported: codeRecords > 0 || codeLines > 0}
 	if !codeMetric.Supported {
 		codeMetric.Value = nil
@@ -291,6 +328,7 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 		Range: r,
 		Metrics: domain.PersonalSummaryMetrics{
 			EstimatedCost:      costMetric,
+			EstimatedCosts:     estimatedCosts,
 			TotalTokens:        domain.MetricBigInt{Value: &totTokensStr, Supported: true},
 			GeneratedCodeLines: codeMetric,
 			TokensPerCodeLine:  domain.MetricDecimal{Value: tokensPerCodeLineStr, Supported: tokensPerCodeLineStr != nil},

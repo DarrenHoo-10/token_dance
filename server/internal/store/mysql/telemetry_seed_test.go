@@ -80,18 +80,27 @@ func seedTelemetryPersonalDay(t *testing.T, db *sql.DB, userID, date, harness st
 		t.Fatal(err)
 	}
 	nowMs := now.UnixMilli()
+	eligibleIn, eligibleRead, pairKnown := int64(0), int64(0), int64(0)
+	// Mirror aggregation: only paired samples where both fields are known and valid.
+	if tokens.CacheRead <= tokens.InputContext {
+		eligibleIn = tokens.InputContext
+		eligibleRead = tokens.CacheRead
+		pairKnown = 1
+	}
 	_, err = db.Exec(`
 		INSERT INTO telemetry_model_metrics (
 			created_at, updated_at, user_id, installation_id, grain, bucket_start,
 			harness_id, model_key, exact_token_total, derived_token_total,
 			input_context_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
+			cache_eligible_input_tokens, cache_eligible_read_tokens, cache_pair_known_count,
 			model_request_count, usage_observed_count, token_total_known_count,
 			input_context_known_count, output_known_count, cache_read_known_count,
 			metric_semantics_version
-		) VALUES (?, ?, ?, ?, 'day', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 1, 1, 1, 1)`,
+		) VALUES (?, ?, ?, ?, 'day', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 1, 1, 1, 1)`,
 		nowMs, nowMs, userID, installationID, bucket, harness,
 		tokens.Exact, tokens.Derived, tokens.InputContext, tokens.Output,
-		tokens.CacheRead, tokens.CacheWrite, tokens.Reasoning)
+		tokens.CacheRead, tokens.CacheWrite, tokens.Reasoning,
+		eligibleIn, eligibleRead, pairKnown)
 	if err != nil {
 		t.Fatalf("seed model: %v", err)
 	}
@@ -108,15 +117,31 @@ func seedTelemetryPersonalDay(t *testing.T, db *sql.DB, userID, date, harness st
 		t.Fatalf("seed harness: %v", err)
 	}
 	if costUnits > 0 {
-		_, err = db.Exec(`
-			INSERT INTO telemetry_cost_metrics (
-				created_at, updated_at, user_id, installation_id, grain, bucket_start,
-				harness_id, model_key, currency, estimated_cost_units, estimated_request_count,
-				cost_known_count, metric_semantics_version
-			) VALUES (?, ?, ?, ?, 'day', ?, ?, 1, 'USD', ?, 1, 1, 1)`,
-			nowMs, nowMs, userID, installationID, bucket, harness, costUnits)
-		if err != nil {
-			t.Fatalf("seed cost: %v", err)
-		}
+		seedTelemetryCost(t, db, userID, date, harness, "USD", costUnits)
+	}
+}
+
+func seedTelemetryCost(t *testing.T, db *sql.DB, userID, date, harness, currency string, costUnits int64) {
+	t.Helper()
+	now := time.Now().UTC()
+	installationID := "ins_" + userID
+	if len(installationID) > 30 {
+		installationID = installationID[:30]
+	}
+	ensureTestInstallation(t, db, userID, installationID, now)
+	bucket, err := domain.DayBucketStartMs(date)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nowMs := now.UnixMilli()
+	_, err = db.Exec(`
+		INSERT INTO telemetry_cost_metrics (
+			created_at, updated_at, user_id, installation_id, grain, bucket_start,
+			harness_id, model_key, currency, estimated_cost_units, estimated_request_count,
+			cost_known_count, metric_semantics_version
+		) VALUES (?, ?, ?, ?, 'day', ?, ?, 1, ?, ?, 1, 1, 1)`,
+		nowMs, nowMs, userID, installationID, bucket, harness, currency, costUnits)
+	if err != nil {
+		t.Fatalf("seed cost %s: %v", currency, err)
 	}
 }
