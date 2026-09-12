@@ -105,6 +105,14 @@ func upsertSQL(schema, table string, columns []string, pk map[string]struct{}) s
 		if _, isPK := pk[column]; isPK {
 			continue
 		}
+		// Login identity belongs to the test database. New mirrors receive
+		// sanitized placeholders, but later refreshes must retain local bindings.
+		if table == "users" {
+			switch column {
+			case "auth_subject_hash", "email_lookup_hash", "email_ciphertext", "email_verified_at":
+				continue
+			}
+		}
 		quoted := quote(column)
 		assignments = append(assignments, quoted+" = VALUES("+quoted+")")
 	}
