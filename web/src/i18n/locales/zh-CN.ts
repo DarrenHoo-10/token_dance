@@ -444,7 +444,7 @@ export const zhCN = {
       },
     },
     analytics: {
-      updating: '共享范围已更新，正在重新汇总',
+      updating: '正在汇总团队数据，请稍候…',
       authChanged: '共享范围已变化，正在更新统计',
       refreshing: '可能仍有待补传',
       unsharedBucket: '未共享分类',

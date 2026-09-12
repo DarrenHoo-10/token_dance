@@ -444,7 +444,7 @@ export const enUS = {
       },
     },
     analytics: {
-      updating: 'Sharing changed. Totals are being rebuilt.',
+      updating: 'Preparing team totals. Please wait…',
       authChanged: 'Sharing changed. Updating statistics.',
       refreshing: 'Some events may still be arriving',
       unsharedBucket: 'Unshared classification',

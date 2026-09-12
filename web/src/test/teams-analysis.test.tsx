@@ -64,7 +64,7 @@ describe('Team analysis updating state', () => {
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop/analytics');
 
     expect(await screen.findByTestId('analysis-skeleton')).toBeInTheDocument();
-    expect(screen.getByText('共享范围已更新，正在重新汇总')).toBeInTheDocument();
+    expect(screen.getByText('正在汇总团队数据，请稍候…')).toBeInTheDocument();
     expect(screen.queryByText('0')).not.toBeInTheDocument();
     expect(screen.queryByText('$0')).not.toBeInTheDocument();
     expect(screen.queryByText('120,000')).not.toBeInTheDocument();
