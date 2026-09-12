@@ -4681,7 +4681,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokendance-desktop"
-version = "0.1.27"
+version = "0.1.28"
 dependencies = [
  "acquisition",
  "adapter-grok-build",
@@ -4696,6 +4696,7 @@ dependencies = [
  "cookie",
  "core-foundation 0.10.1",
  "core-graphics",
+ "notify",
  "objc2",
  "objc2-app-kit",
  "objc2-core-graphics",
@@ -4703,7 +4704,6 @@ dependencies = [
  "objc2-quartz-core",
  "platform-credentials",
  "platform-macos",
- "notify",
  "privacy",
  "protocol",
  "reqwest 0.12.28",
