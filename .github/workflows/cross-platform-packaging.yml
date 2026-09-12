@@ -12,6 +12,7 @@ on:
         type: boolean
         default: false
   push:
+    branches: [main]
     paths:
       - collector/**
       - schemas/**
@@ -52,11 +53,13 @@ jobs:
           cache: npm
           cache-dependency-path: collector/apps/desktop/package-lock.json
       - name: Release wiring static tests
+        shell: bash
         run: |
           python collector/packaging/tests/test_release_wiring.py
           python collector/packaging/tests/test_macos_keychain_signing.py
           node --test collector/apps/desktop/scripts/build-source.test.mjs
       - name: Build desktop frontend before embedded-resource checks
+        shell: bash
         run: |
           npm --prefix collector/apps/desktop ci
           npm --prefix collector/apps/desktop run build

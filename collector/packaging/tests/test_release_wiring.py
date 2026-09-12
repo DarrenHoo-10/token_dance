@@ -120,7 +120,7 @@ class ReleaseWiringTests(unittest.TestCase):
         self.assertIn('target/${{ matrix.target }}/$BUILD_PROFILE/bundle/macos/TokenDance.app', WORKFLOW)
         self.assertNotIn('find collector/apps/desktop/src-tauri/target', WORKFLOW)
         self.assertIn('tokendance-desktop-macos-${{ matrix.architecture }}-notarized', WORKFLOW)
-        self.assertIn('run("lipo", ["-verify_arch", outArch, binary])', MAC_BUILD)
+        self.assertIn('run("lipo", [binary, "-verify_arch", outArch])', MAC_BUILD)
         self.assertIn('src-tauri/tauri.conf.json', MAC_BUILD)
 
     def test_macos_keychain_signing_requires_profile_and_explicit_team(self):
