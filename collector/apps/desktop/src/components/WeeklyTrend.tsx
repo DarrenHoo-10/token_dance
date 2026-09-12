@@ -73,7 +73,6 @@ export function WeeklyTrend({ points, range, lang }: { points: TrendPoint[]; ran
     <div className="usage-section-title">
       <h2>{titleFor(range, zh)}</h2>
       <span className="usage-trend-caption" aria-live="polite">
-        {selected && <small>{selected.label}</small>}
         <strong>{captionValue === null ? "—" : format(captionValue)}</strong>
       </span>
     </div>
