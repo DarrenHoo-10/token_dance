@@ -84,6 +84,12 @@ enum WriterCommand {
         limit: usize,
         reply: Sender<Result<Vec<i64>, PipelineError>>,
     },
+    ListDueSourcesForHarness {
+        harness_id: String,
+        now_ms: i64,
+        limit: usize,
+        reply: Sender<Result<Vec<i64>, PipelineError>>,
+    },
     SetHarnessSourcesEnabled {
         harness_id: String,
         enabled: bool,
@@ -99,6 +105,12 @@ enum WriterCommand {
         range_end: i64,
         harness_id: Option<String>,
         reply: Sender<Result<super::query::UsageSummary, PipelineError>>,
+    },
+    QueryHarnessUsageHistory {
+        harness_id: String,
+        today_start: i64,
+        range_end: i64,
+        reply: Sender<Result<super::query::HarnessUsageHistory, PipelineError>>,
     },
     QueryHarnessTokenSeries {
         grain: super::buckets::Grain,
@@ -300,6 +312,20 @@ impl PipelineWriter {
         })
     }
 
+    pub fn list_due_sources_for_harness(
+        &self,
+        harness_id: &str,
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<i64>, PipelineError> {
+        self.request(0, |reply| WriterCommand::ListDueSourcesForHarness {
+            harness_id: harness_id.to_string(),
+            now_ms,
+            limit,
+            reply,
+        })
+    }
+
     pub fn set_harness_sources_enabled(
         &self,
         harness_id: &str,
@@ -331,6 +357,20 @@ impl PipelineWriter {
             range_start,
             range_end,
             harness_id: harness_id.map(|s| s.to_string()),
+            reply,
+        })
+    }
+
+    pub fn query_harness_usage_history(
+        &self,
+        harness_id: &str,
+        today_start: i64,
+        range_end: i64,
+    ) -> Result<super::query::HarnessUsageHistory, PipelineError> {
+        self.request(0, |reply| WriterCommand::QueryHarnessUsageHistory {
+            harness_id: harness_id.to_string(),
+            today_start,
+            range_end,
             reply,
         })
     }
@@ -517,6 +557,15 @@ fn writer_loop(store: &mut PipelineStore, rx: Receiver<QueuedBatch>, compensatio
                 let _ = reply.send(store.list_due_sources(now_ms, limit));
                 false
             }
+            WriterCommand::ListDueSourcesForHarness {
+                harness_id,
+                now_ms,
+                limit,
+                reply,
+            } => {
+                let _ = reply.send(store.list_due_sources_for_harness(&harness_id, now_ms, limit));
+                false
+            }
             WriterCommand::SetHarnessSourcesEnabled {
                 harness_id,
                 enabled,
@@ -543,6 +592,23 @@ fn writer_loop(store: &mut PipelineStore, rx: Receiver<QueuedBatch>, compensatio
                         range_start,
                         range_end,
                         harness_id.as_deref(),
+                    )
+                });
+                let _ = reply.send(result);
+                false
+            }
+            WriterCommand::QueryHarnessUsageHistory {
+                harness_id,
+                today_start,
+                range_end,
+                reply,
+            } => {
+                let result = store.with_connection(|conn| {
+                    super::query::query_harness_usage_history(
+                        conn,
+                        &harness_id,
+                        today_start,
+                        range_end,
                     )
                 });
                 let _ = reply.send(result);

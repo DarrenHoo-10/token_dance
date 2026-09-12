@@ -117,3 +117,20 @@ test('estimates combine with recorded currencies, preserve free models and revea
   assert.equal(usageCosts([recent], 'today', now).currencies.USD, 7);
   assert.equal(usageCosts([recent], 'week', now).currencies.USD, 28);
 });
+
+test('pipeline pricing preserves currencies and does not count the legacy USD mirror twice', () => {
+  const pricing = { estimatedUsd: 50000000, estimatedCosts: { USD: 50000000, CNY: 700000000 },
+    estimatedRequests: 2, unpricedRequests: 1, detailedTokens: 1000 };
+  const a = { ...agent, pricing, dailyUsage: [{ date: dates.at(-1), tokens: 7,
+    costs: { USD: 200000000 }, pricing: { ...pricing, detailedTokens: 7 } }] };
+  for (const range of ['today', 'week', 'all']) {
+    const costs = usageCosts([a], range, now);
+    assert.deepEqual(costs.currencies, { USD: 2.5, CNY: 7 });
+    assert.equal(costs.estimatedRequests, 2);
+    assert.equal(costs.unpricedRequests, 1);
+    assert.equal(costs.historyIncomplete, false);
+  }
+  const free = usageCosts([{ ...agent, totalCosts: {}, pricing: { ...pricing,
+    estimatedUsd: 0, estimatedCosts: { CNY: 0 }, estimatedRequests: 1 } }], 'all', now);
+  assert.deepEqual(free.currencies, { CNY: 0 });
+});

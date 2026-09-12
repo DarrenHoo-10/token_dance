@@ -1,5 +1,128 @@
 //! P3 harness adapter contract tests against real-format fixtures.
 
+#[test]
+fn review3_codex_multiple_roots_are_all_discovered() {
+    let dir = tempfile::tempdir().unwrap();
+    let roots = ["archived_sessions", "sessions"].map(|name| {
+        let root = dir.path().join(name);
+        std::fs::create_dir_all(&root).unwrap();
+        for i in 0..40 {
+            std::fs::write(root.join(format!("s{i:03}.jsonl")), "{}\n").unwrap();
+        }
+        (name.to_string(), root)
+    });
+    let strategy = CodexStrategy::with_roots(
+        secret(),
+        roots.to_vec(),
+        SkillBook::new(),
+        Arc::new(|_, _| 1),
+    );
+    for limit in [1, 31, 64] {
+        let mut resume = None;
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..(80 + limit - 1) / limit + 1 {
+            let specs = strategy
+                .discover(DiscoveryBudget::new(limit, 200).with_resume(resume))
+                .unwrap();
+            assert!(specs.len() <= limit);
+            resume = specs.last().map(|s| s.locator_ref.clone());
+            seen.extend(specs.into_iter().map(|s| s.locator_ref));
+        }
+        assert_eq!(
+            seen.len(),
+            80,
+            "all roots must make progress with page size {limit}"
+        );
+    }
+}
+
+#[test]
+fn review3_codex_archive_move_preserves_event_identity() {
+    let now = beijing_wall_to_utc_ms(2026, 9, 12, 12, 0, 0);
+    let dir = tempfile::tempdir().unwrap();
+    let sessions = dir.path().join("sessions");
+    let archive = dir.path().join("archived_sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    std::fs::create_dir_all(&archive).unwrap();
+    let live_file = sessions.join("rollout-session-42.jsonl");
+    let archived_file = archive.join("rollout-session-42.jsonl");
+    let record = json!({
+        "type":"event_msg", "timestamp":now,
+        "payload":{"type":"token_count","info":{
+            "last_token_usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}
+        }}
+    });
+    let header = json!({"type":"session_meta","timestamp":now,"payload":{"id":"session-42"}});
+    std::fs::write(&live_file, format!("{header}\n{record}\n")).unwrap();
+    let strategy = CodexStrategy::with_roots(
+        secret(),
+        vec![
+            ("codex-archived-sessions".into(), archive),
+            ("codex-sessions".into(), sessions),
+        ],
+        SkillBook::new(),
+        Arc::new(|_, _| 1),
+    );
+    let mut store = open_store(now);
+    for pass in 0..3 {
+        if pass == 1 {
+            std::fs::rename(&live_file, &archived_file).unwrap();
+        }
+        if pass == 2 {
+            std::fs::rename(&archived_file, &live_file).unwrap();
+        }
+        for spec in strategy.discover(DiscoveryBudget::default()).unwrap() {
+            let id = register_source(
+                &mut store,
+                "codex",
+                &spec.locator_ref,
+                &spec.stream_key,
+                SourceKind::Jsonl,
+                r#"{"offset":0}"#,
+                r#"{"last_source_time":null}"#,
+                now,
+            );
+            let sink = StoreSinkMut::new(&mut store);
+            if pass == 0 {
+                // Commit just the native header, then resume from persisted decoder state.
+                run_source_once(
+                    &sink,
+                    &strategy,
+                    id,
+                    ReadBudget::new(1, 1024 * 1024, 200),
+                    DEFAULT_LEASE_MS,
+                    &Consumer::ALL,
+                    None,
+                )
+                .unwrap();
+            }
+            let result = run_source_once(
+                &sink,
+                &strategy,
+                id,
+                DEFAULT_READ_BUDGET,
+                DEFAULT_LEASE_MS,
+                &Consumer::ALL,
+                None,
+            )
+            .unwrap();
+            if pass == 2 {
+                assert!(
+                    matches!(result, RunOutcome::Empty(_)),
+                    "unarchive must resume the original cursor: {result:?}"
+                );
+            } else {
+                assert!(matches!(result, RunOutcome::Committed(_)), "{result:?}");
+            }
+        }
+    }
+    assert_eq!(
+        store.event_count().unwrap(),
+        1,
+        "archiving the same already-collected session must not duplicate usage"
+    );
+}
+
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;

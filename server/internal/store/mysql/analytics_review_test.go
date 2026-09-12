@@ -2,11 +2,52 @@ package mysql
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"tokendance/internal/domain"
 )
+
+func TestReview3PersonalSummaryPreservesZeroAndExactCosts(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	r := domain.TimeRange{Key: domain.TimeRange30d, From: now.AddDate(0, 0, -30), To: now, Timezone: "UTC"}
+	for i, tc := range []struct {
+		units int64
+		known bool
+		want  string
+	}{
+		{0, true, "0.00000000"}, {0, false, ""}, {9007199254740993, true, "90071992.54740993"},
+	} {
+		userID := fmt.Sprintf("usr_review3_cost_%d", i)
+		seedTestUser(t, db, st, userID, fmt.Sprintf("review3_cost_%d", i), "Review Cost", fmt.Sprintf("review3-cost-%d@example.test", i), true, now)
+		seedTelemetryCost(t, db, userID, "2026-08-29", "codex", "USD", tc.units)
+		if !tc.known {
+			if _, err := db.Exec(`UPDATE telemetry_cost_metrics SET cost_known_count=0, estimated_request_count=0, unpriced_request_count=1 WHERE user_id=?`, userID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		summary, err := st.Analytics().GetPersonalSummary(ctx, userID, r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(summary.Metrics.EstimatedCosts) != 1 {
+			t.Fatalf("missing currency row: %+v", summary.Metrics)
+		}
+		for _, cost := range []domain.MetricCost{summary.Metrics.EstimatedCost, summary.Metrics.EstimatedCosts[0]} {
+			if tc.want == "" {
+				if cost.Amount != nil || cost.Supported {
+					t.Fatalf("unknown cost must stay unknown: %+v", cost)
+				}
+			} else if cost.Amount == nil || *cost.Amount != tc.want || !cost.Supported {
+				t.Fatalf("want %s, got %+v", tc.want, cost)
+			}
+		}
+	}
+}
 
 // TestReviewPersonalStatsReadTelemetryOnly reproduces review blocker #5:
 // personal summary / trend / breakdown / skills / live board must work when

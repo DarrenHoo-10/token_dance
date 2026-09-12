@@ -2,6 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { formatCommunityCost, formatCost, formatCostList, formatPersonalCost } from '@/utils/cost';
 
 describe('cost formatting', () => {
+  it('shows known zero cost while leaving unpriced cost unknown', () => {
+    expect(formatPersonalCost(
+      { amount: '0.00000000', currency: 'USD', supported: true },
+      [{ amount: '0.00000000', currency: 'USD', supported: true }],
+    ).value).toBe('$0.00');
+    expect(formatPersonalCost(
+      { amount: null, currency: 'USD', supported: false },
+      [{ amount: null, currency: 'USD', supported: false }],
+    ).supported).toBe(false);
+  });
   it('keeps a single USD amount as a dollar scalar', () => {
     expect(formatCost('1', 'USD')).toBe('$1.00');
     expect(formatCostList([{ amount: '1.00000000', currency: 'USD', supported: true }])).toBe('$1.00');

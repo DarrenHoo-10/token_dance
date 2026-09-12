@@ -430,6 +430,7 @@ impl LocalStore {
                 *total_costs.entry(currency).or_default() += amount;
             }
             pricing.add(&CostCoverage {
+                estimated_costs: BTreeMap::new(),
                 estimated_usd: parse_u64_text(&row.estimated_usd),
                 estimated_requests: row.estimated_requests as u64,
                 unpriced_requests: row.unpriced_requests as u64,
@@ -445,6 +446,7 @@ impl LocalStore {
             daily_usage.push(DayUsage {
                 pricing: row
                     .map(|row| CostCoverage {
+                        estimated_costs: BTreeMap::new(),
                         estimated_usd: parse_u64_text(&row.estimated_usd),
                         estimated_requests: row.estimated_requests as u64,
                         unpriced_requests: row.unpriced_requests as u64,

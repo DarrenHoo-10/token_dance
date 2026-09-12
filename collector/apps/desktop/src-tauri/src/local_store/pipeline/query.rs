@@ -2,6 +2,7 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
+use std::collections::BTreeMap;
 
 use super::buckets::Grain;
 use super::types::PipelineError;
@@ -56,6 +57,86 @@ pub struct CostByCurrency {
     pub reported_request_count: i64,
     pub calculated_request_count: i64,
     pub unpriced_request_count: i64,
+    pub cost_known_count: i64,
+}
+
+#[derive(Debug, Default)]
+pub struct HarnessDayUsage {
+    pub bucket_start: i64,
+    pub exact_tokens: i64,
+    pub derived_tokens: i64,
+    pub token_known_count: i64,
+    pub costs: Vec<CostByCurrency>,
+}
+
+#[derive(Debug)]
+pub struct HarnessUsageHistory {
+    pub days: Vec<HarnessDayUsage>,
+    pub hours: Vec<(i64, i64)>,
+}
+
+/// Read the complete day history and today's hourly series in one writer
+/// command, so a metrics commit cannot split the token and cost snapshot.
+pub fn query_harness_usage_history(
+    conn: &Connection,
+    harness_id: &str,
+    today_start: i64,
+    range_end: i64,
+) -> Result<HarnessUsageHistory, PipelineError> {
+    let mut days = BTreeMap::<i64, HarnessDayUsage>::new();
+    let mut stmt = conn.prepare(
+        "SELECT bucket_start,SUM(exact_token_total),SUM(derived_token_total),SUM(token_total_known_count)
+         FROM model_metrics
+         WHERE delete_at IS NULL AND grain='day' AND harness_id=?1 AND bucket_start<?2
+         GROUP BY bucket_start ORDER BY bucket_start",
+    )?;
+    for row in stmt.query_map(params![harness_id, range_end], |r| {
+        Ok(HarnessDayUsage {
+            bucket_start: r.get(0)?,
+            exact_tokens: r.get(1)?,
+            derived_tokens: r.get(2)?,
+            token_known_count: r.get(3)?,
+            costs: Vec::new(),
+        })
+    })? {
+        let row = row?;
+        days.insert(row.bucket_start, row);
+    }
+    let mut stmt = conn.prepare(
+        "SELECT bucket_start,currency,SUM(reported_cost_units),SUM(estimated_cost_units),
+                SUM(reported_request_count),SUM(estimated_request_count),SUM(unpriced_request_count),SUM(cost_known_count)
+         FROM cost_metrics
+         WHERE delete_at IS NULL AND grain='day' AND harness_id=?1 AND bucket_start<?2
+         GROUP BY bucket_start,currency ORDER BY bucket_start,currency",
+    )?;
+    for row in stmt.query_map(params![harness_id, range_end], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            CostByCurrency {
+                currency: r.get(1)?,
+                reported_cost_units: r.get(2)?,
+                calculated_cost_units: r.get(3)?,
+                reported_request_count: r.get(4)?,
+                calculated_request_count: r.get(5)?,
+                unpriced_request_count: r.get(6)?,
+                cost_known_count: r.get(7)?,
+            },
+        ))
+    })? {
+        let (bucket_start, cost) = row?;
+        days.entry(bucket_start)
+            .or_insert_with(|| HarnessDayUsage {
+                bucket_start,
+                ..Default::default()
+            })
+            .costs
+            .push(cost);
+    }
+    let hours = query_harness_token_series(conn, Grain::Hour, today_start, range_end, harness_id)?;
+    Ok(HarnessUsageHistory {
+        days: days.into_values().collect(),
+        hours,
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -175,7 +256,8 @@ pub fn query_usage_summary(
                 COALESCE(SUM(estimated_cost_units),0),
                 COALESCE(SUM(reported_request_count),0),
                 COALESCE(SUM(estimated_request_count),0),
-                COALESCE(SUM(unpriced_request_count),0)
+                COALESCE(SUM(unpriced_request_count),0),
+                COALESCE(SUM(cost_known_count),0)
          FROM cost_metrics
          WHERE delete_at IS NULL
            AND grain=?1
@@ -195,6 +277,7 @@ pub fn query_usage_summary(
                     reported_request_count: r.get(3)?,
                     calculated_request_count: r.get(4)?,
                     unpriced_request_count: r.get(5)?,
+                    cost_known_count: r.get(6)?,
                 })
             },
         )?

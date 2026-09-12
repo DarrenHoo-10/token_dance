@@ -9,7 +9,8 @@ use collector_service::{DetectionSnapshot, OfficialAgent};
 
 use super::adapters::{AdapterRoots, HarnessRegistry, SkillBook};
 use super::runner::{
-    AcquisitionRunner, AcquisitionScheduler, DiscoveryBudget, DEFAULT_READ_BUDGET,
+    AcquisitionRunner, AcquisitionScheduler, DiscoveryBudget,
+    DEFAULT_GLOBAL_ACQUISITION_CONCURRENCY, DEFAULT_PER_HARNESS_CONCURRENCY, DEFAULT_READ_BUDGET,
 };
 use super::types::{Consumer, CursorKind, RegisterSource, SourceKind, DEFAULT_LEASE_MS};
 use super::PipelineWriter;
@@ -27,6 +28,7 @@ pub struct PipelineRuntime {
     discover_cursors: Mutex<HashMap<String, String>>,
     /// Per-harness enable switches (default true). Used for discover/claim gate.
     harness_enabled: Mutex<HashMap<String, bool>>,
+    next_harness: Mutex<usize>,
 }
 
 impl PipelineRuntime {
@@ -60,6 +62,7 @@ impl PipelineRuntime {
             scheduler: AcquisitionScheduler::with_defaults(),
             discover_cursors: Mutex::new(HashMap::new()),
             harness_enabled: Mutex::new(HashMap::new()),
+            next_harness: Mutex::new(0),
         }
     }
 
@@ -163,28 +166,58 @@ impl PipelineRuntime {
 
     fn run_due_sources(&self) -> usize {
         let now = now_ms();
-        let Ok(due) = self.writer.list_due_sources(now, 32) else {
+        let harnesses = self.registry.harness_ids();
+        if harnesses.is_empty() {
             return 0;
+        }
+        let start = {
+            let mut next = self.next_harness.lock().expect("harness rotation");
+            let start = *next % harnesses.len();
+            *next = (start + 1) % harnesses.len();
+            start
         };
-
-        let mut work = Vec::new();
-        for source_id in due {
-            let Ok(snapshot) = self.writer.load_source_checkpoint(source_id) else {
-                continue;
-            };
-            if !self.is_harness_enabled(&snapshot.harness_id) || !snapshot.enabled {
-                continue;
+        let mut candidates = Vec::new();
+        for i in 0..harnesses.len() {
+            let harness = harnesses[(start + i) % harnesses.len()];
+            if self.is_harness_enabled(harness) {
+                if let Ok(ids) = self.writer.list_due_sources_for_harness(
+                    harness,
+                    now,
+                    DEFAULT_PER_HARNESS_CONCURRENCY,
+                ) {
+                    candidates.push(ids);
+                }
             }
-            let Some(strategy) = self
-                .registry
-                .get_for_source(&snapshot.harness_id, &snapshot.locator_ref)
-            else {
-                continue;
-            };
-            let Some(permit) = self.scheduler.try_acquire(&snapshot.harness_id, source_id) else {
-                continue;
-            };
-            work.push((source_id, strategy, permit));
+        }
+        // One source per harness before any harness receives a second slot.
+        // Rotate the first harness each tick when there are more harnesses than slots.
+        let mut work = Vec::new();
+        'candidates: for round in 0..DEFAULT_PER_HARNESS_CONCURRENCY {
+            for ids in &candidates {
+                if work.len() >= DEFAULT_GLOBAL_ACQUISITION_CONCURRENCY {
+                    break 'candidates;
+                }
+                let Some(&source_id) = ids.get(round) else {
+                    continue;
+                };
+                let Ok(snapshot) = self.writer.load_source_checkpoint(source_id) else {
+                    continue;
+                };
+                if !self.is_harness_enabled(&snapshot.harness_id) || !snapshot.enabled {
+                    continue;
+                }
+                let Some(strategy) = self
+                    .registry
+                    .get_for_source(&snapshot.harness_id, &snapshot.locator_ref)
+                else {
+                    continue;
+                };
+                let Some(permit) = self.scheduler.try_acquire(&snapshot.harness_id, source_id)
+                else {
+                    continue;
+                };
+                work.push((source_id, strategy, permit));
+            }
         }
 
         let ran = Mutex::new(0usize);
@@ -328,3 +361,122 @@ pub fn adapter_roots_for_fixture(identity_secret: Vec<u8>, root: &Path) -> Adapt
 
 #[allow(dead_code)]
 fn _touch_kinds(_: SourceKind, _: CursorKind) {}
+
+#[cfg(test)]
+mod review3_probes {
+    use super::*;
+    use crate::local_store::pipeline::PipelineStore;
+
+    #[test]
+    fn review3_more_harnesses_than_slots_all_make_progress() {
+        let fixture = tempfile::tempdir().unwrap();
+        let expected = [
+            "codex",
+            "claude-code",
+            "cursor",
+            "grok-build",
+            "deepseek-harness",
+            "pi",
+        ];
+        for folder in ["codex", "claude", "cursor", "grok", "deepseek", "pi"] {
+            let root = fixture.path().join(folder);
+            std::fs::create_dir_all(&root).unwrap();
+            for i in 0..32 {
+                std::fs::write(root.join(format!("s{i:03}.jsonl")), "{}\n").unwrap();
+            }
+        }
+        let writer = Arc::new(PipelineWriter::start(
+            PipelineStore::open_in_memory().unwrap(),
+        ));
+        let runtime = PipelineRuntime {
+            writer: Arc::clone(&writer),
+            registry: HarnessRegistry::from_roots(
+                adapter_roots_for_fixture(b"fairness-fixture".to_vec(), fixture.path()),
+                Arc::new(|_, _| 1),
+            ),
+            runner: AcquisitionRunner::default(),
+            scheduler: AcquisitionScheduler::with_defaults(),
+            discover_cursors: Mutex::new(HashMap::new()),
+            harness_enabled: Mutex::new(HashMap::new()),
+            next_harness: Mutex::new(0),
+        };
+        runtime.discover_and_register();
+        let mut first_sources = Vec::new();
+        for harness in expected {
+            let sources = writer
+                .list_due_sources_for_harness(harness, now_ms(), 32)
+                .unwrap();
+            assert_eq!(sources.len(), 32, "{harness}");
+            first_sources.push((harness, sources));
+        }
+        for _ in 0..runtime.registry.harness_ids().len() {
+            assert!(runtime.run_due_sources() <= DEFAULT_GLOBAL_ACQUISITION_CONCURRENCY);
+        }
+        for (harness, sources) in first_sources {
+            assert!(
+                sources
+                    .iter()
+                    .any(|id| writer.load_source_checkpoint(*id).unwrap().commit_seq > 0),
+                "{harness} starved while earlier harnesses had backlog"
+            );
+        }
+    }
+
+    #[test]
+    fn review3_due_page_does_not_starve_another_harness() {
+        let fixture = tempfile::tempdir().unwrap();
+        let codex = fixture.path().join("codex");
+        let claude = fixture.path().join("claude");
+        std::fs::create_dir_all(&codex).unwrap();
+        std::fs::create_dir_all(&claude).unwrap();
+        for i in 0..32 {
+            std::fs::write(codex.join(format!("s{i:03}.jsonl")), "{}\n").unwrap();
+        }
+        std::fs::write(claude.join("active.jsonl"), "{}\n").unwrap();
+        let writer = Arc::new(PipelineWriter::start(
+            PipelineStore::open_in_memory().unwrap(),
+        ));
+        let roots = adapter_roots_for_fixture(b"review3-fixture".to_vec(), fixture.path());
+        let registry = HarnessRegistry::from_roots(roots, Arc::new(|_, _| 1));
+        let mut claude_id = None;
+        for (harness, due) in [("codex", 1), ("claude-code", 2)] {
+            for spec in registry
+                .get(harness)
+                .unwrap()
+                .discover(DiscoveryBudget::default())
+                .unwrap()
+            {
+                let id = writer
+                    .register_source(RegisterSource {
+                        harness_id: spec.harness_id,
+                        source_key: spec.source_key,
+                        source_kind: spec.source_kind,
+                        locator_ref: spec.locator_ref,
+                        stream_key: spec.stream_key,
+                        cursor_kind: spec.cursor_kind,
+                        cursor_json: spec.initial_cursor_json.to_string(),
+                        decoder_state_version: 1,
+                        decoder_state_json: spec.initial_decoder_state_json.to_string(),
+                        observed_boundary_json: spec.observed_boundary_json.to_string(),
+                        next_poll_at: Some(due),
+                    })
+                    .unwrap();
+                if harness == "claude-code" {
+                    claude_id = Some(id);
+                }
+            }
+        }
+        let runtime = PipelineRuntime {
+            writer: Arc::clone(&writer),
+            registry,
+            runner: AcquisitionRunner::default(),
+            scheduler: AcquisitionScheduler::with_defaults(),
+            discover_cursors: Mutex::new(HashMap::new()),
+            harness_enabled: Mutex::new(HashMap::new()),
+            next_harness: Mutex::new(0),
+        };
+        let ran = runtime.run_due_sources();
+        let checkpoint = writer.load_source_checkpoint(claude_id.unwrap()).unwrap();
+        assert!(checkpoint.commit_seq > 0, "Claude should use a free global slot while Codex has backlog; ran={ran}, Claude commit_seq={}", checkpoint.commit_seq);
+    }
+}

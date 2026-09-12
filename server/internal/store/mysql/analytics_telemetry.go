@@ -2,9 +2,35 @@ package mysql
 
 import (
 	"fmt"
+	"strings"
 
 	"tokendance/internal/domain"
 )
+
+// Convert integer 1e-8 units without floating-point rounding. Zero is a value
+// when the aggregate has a known sample; an unpriced sample stays unknown.
+func costMetricFromUnits(currency, units string, known, priced, total int) (domain.MetricCost, error) {
+	metric := domain.MetricCost{Currency: &currency, PricedRequests: priced, TotalRequests: total}
+	if units == "" {
+		return metric, fmt.Errorf("empty cost units")
+	}
+	for _, ch := range units {
+		if ch < '0' || ch > '9' {
+			return metric, fmt.Errorf("invalid cost units")
+		}
+	}
+	digits := strings.TrimLeft(units, "0")
+	metric.Supported = known > 0 || digits != ""
+	if !metric.Supported {
+		return metric, nil
+	}
+	if len(digits) <= 8 {
+		digits = strings.Repeat("0", 9-len(digits)) + digits
+	}
+	amount := digits[:len(digits)-8] + "." + digits[len(digits)-8:]
+	metric.Amount = &amount
+	return metric, nil
+}
 
 // telemetryMetricDateSQL formats a day-grain bucket_start (UTC ms of Beijing day
 // start) as YYYY-MM-DD in the product statistics calendar.
@@ -66,7 +92,10 @@ func cacheHitRateMetric(eligibleInput, eligibleRead, pairKnown, observed int64, 
 // scalarCostFromCurrencies fills the legacy single estimatedCost card.
 // Multiple currencies cannot be FX-merged: Amount/Currency stay null.
 func scalarCostFromCurrencies(costs []domain.MetricCost, pricedTotal, requestTotal, costRecords int) domain.MetricCost {
-	supported := costRecords > 0 || len(costs) > 0
+	supported := costRecords > 0
+	for _, cost := range costs {
+		supported = supported || cost.Supported
+	}
 	out := domain.MetricCost{
 		Supported:      supported,
 		PricedRequests: pricedTotal,

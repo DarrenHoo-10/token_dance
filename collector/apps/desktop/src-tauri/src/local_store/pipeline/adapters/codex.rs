@@ -14,7 +14,7 @@ use super::common::{
     CumulativeComponents, SkillBook, UsageFactArgs,
 };
 use super::identity::{source_key, TypedNativeKey};
-use super::jsonl_io::{discover_jsonl_files, read_jsonl_source};
+use super::jsonl_io::{discover_jsonl_files_in_roots, read_jsonl_source};
 use crate::local_store::pipeline::runner::{
     CheckpointView, DecodeOutcome, DecoderState, DiscoveryBudget, FactDraft, HarnessStrategy,
     IgnoreCode, NativeFactKey, RawBatch, RawRecord, ReadBudget, RunnerError, SourceSpec,
@@ -96,91 +96,29 @@ impl HarnessStrategy for CodexStrategy {
     }
 
     fn discover(&self, budget: DiscoveryBudget) -> Result<Vec<SourceSpec>, RunnerError> {
-        if self.roots.is_empty() || budget.max_sources == 0 {
-            return Ok(Vec::new());
-        }
-        // Fair share across roots; resume cursor is global lexicographic across roots.
-        let per_root = (budget.max_sources / self.roots.len()).max(1);
-        let mut specs = Vec::new();
-        let mut remaining = budget.max_sources;
-        for (_source_id, root) in &self.roots {
-            if remaining == 0 {
-                break;
-            }
-            let take = per_root.min(remaining);
-            let (files, _cursor) =
-                discover_jsonl_files(root, ".jsonl", take, budget.resume_after.as_deref());
-            for path in files {
-                if specs.len() >= budget.max_sources {
-                    break;
-                }
-                let scope = path.to_string_lossy().to_string();
-                specs.push(SourceSpec {
+        let (files, _) = discover_jsonl_files_in_roots(
+            self.roots.iter().map(|(_, root)| root.as_path()),
+            ".jsonl",
+            budget.max_sources,
+            budget.resume_after.as_deref(),
+        );
+        Ok(files
+            .into_iter()
+            .map(|path| {
+                let locator = path.to_string_lossy().into_owned();
+                SourceSpec {
                     harness_id: HARNESS_ID.into(),
-                    source_key: source_key(&self.identity_secret, HARNESS_ID, &scope),
+                    source_key: source_key(&self.identity_secret, HARNESS_ID, &locator),
                     source_kind: SourceKind::Jsonl,
-                    locator_ref: path.to_string_lossy().into_owned(),
+                    locator_ref: locator,
                     stream_key: STREAM_SESSIONS.into(),
                     cursor_kind: CursorKind::ByteOffset,
                     initial_cursor_json: json!({ "offset": 0 }),
                     initial_decoder_state_json: json!({ "last_source_time": null }),
                     observed_boundary_json: json!({ "len": 0 }),
-                });
-                remaining = remaining.saturating_sub(1);
-            }
-        }
-        // If resume left a root under-filled and we still have budget, second pass without
-        // per-root cap so rotation can fill from other roots.
-        if specs.len() < budget.max_sources {
-            let mut all_files = Vec::new();
-            for (_source_id, root) in &self.roots {
-                let (files, _) = discover_jsonl_files(
-                    root,
-                    ".jsonl",
-                    budget.max_sources,
-                    budget.resume_after.as_deref(),
-                );
-                all_files.extend(files);
-            }
-            all_files.sort();
-            all_files.dedup();
-            let start = budget
-                .resume_after
-                .as_deref()
-                .and_then(|after| {
-                    all_files
-                        .iter()
-                        .position(|p| p.to_string_lossy().as_ref() > after)
-                        .or_else(|| {
-                            all_files
-                                .iter()
-                                .position(|p| p.to_string_lossy().as_ref() == after)
-                                .map(|i| i + 1)
-                        })
-                })
-                .unwrap_or(0);
-            if !all_files.is_empty() {
-                let n = all_files.len();
-                let take = budget.max_sources.min(n);
-                specs.clear();
-                for i in 0..take {
-                    let path = &all_files[(start + i) % n];
-                    let scope = path.to_string_lossy().to_string();
-                    specs.push(SourceSpec {
-                        harness_id: HARNESS_ID.into(),
-                        source_key: source_key(&self.identity_secret, HARNESS_ID, &scope),
-                        source_kind: SourceKind::Jsonl,
-                        locator_ref: path.to_string_lossy().into_owned(),
-                        stream_key: STREAM_SESSIONS.into(),
-                        cursor_kind: CursorKind::ByteOffset,
-                        initial_cursor_json: json!({ "offset": 0 }),
-                        initial_decoder_state_json: json!({ "last_source_time": null }),
-                        observed_boundary_json: json!({ "len": 0 }),
-                    });
                 }
-            }
-        }
-        Ok(specs)
+            })
+            .collect())
     }
 
     fn read(
@@ -228,6 +166,26 @@ impl HarnessStrategy for CodexStrategy {
         }
 
         let kind = str_field(o, "type").unwrap_or_default();
+        // The native session header survives archive/unarchive. Persist its ID
+        // with the cursor so later batches keep the same logical fact scope.
+        if kind == "session_meta" {
+            if let Some(id) = o
+                .get("payload")
+                .and_then(|v| v.as_object())
+                .and_then(|p| str_field(p, "id").or_else(|| str_field(p, "session_id")))
+                .filter(|id| !id.is_empty())
+            {
+                state.json["codex_session_id"] = json!(id);
+            }
+        }
+        let session_scope = state
+            .json
+            .get("codex_session_id")
+            .and_then(|v| v.as_str())
+            .map(|id| format!("codex-session:{id}"));
+        // Headerless secondary formats still use the file scope: equal byte
+        // offsets or turn labels in independent files must not collide.
+        let logical_scope = session_scope.as_deref().unwrap_or(logical_scope);
         let (occurred_at, time_source, is_native) =
             match resolve_record_time(o, state, record, &["timestamp", "ts", "time"]) {
                 Ok(t) => t,
@@ -235,7 +193,15 @@ impl HarnessStrategy for CodexStrategy {
             };
         remember_source_time(state, occurred_at, is_native);
 
-        let session = str_field(o, "thread_id").or_else(|| str_field(o, "session_id"));
+        let session = str_field(o, "thread_id")
+            .or_else(|| str_field(o, "session_id"))
+            .or_else(|| {
+                state
+                    .json
+                    .get("codex_session_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+            });
         let turn = str_field(o, "turn_id");
         let byte_native = TypedNativeKey::ByteOffset(record.byte_start.unwrap_or(record.ordinal));
 

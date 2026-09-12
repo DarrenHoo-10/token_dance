@@ -61,10 +61,15 @@ export function usageCosts(agents: AgentConfig[], range: UsageRange, now = new D
         known = true;
       }
       const p = row.pricing;
-      if (p?.estimatedRequests && Number.isFinite(p.estimatedUsd) && p.estimatedUsd >= 0) {
-        currencies.USD = (currencies.USD ?? 0) + p.estimatedUsd / 1e8;
+      if (p?.estimatedRequests) {
+        const estimates = p.estimatedCosts && Object.keys(p.estimatedCosts).length > 0
+          ? p.estimatedCosts : { USD: p.estimatedUsd };
+        for (const [currency, units] of Object.entries(estimates)) {
+          if (!/^[A-Z]{3}$/.test(currency) || !Number.isFinite(units) || units < 0) continue;
+          currencies[currency] = (currencies[currency] ?? 0) + units / 1e8;
+          known = true;
+        }
         estimatedRequests += p.estimatedRequests;
-        known = true;
       }
       unpricedRequests += p?.unpricedRequests ?? 0;
       if (row.tokens > (p?.detailedTokens ?? 0)) historyIncomplete = true;

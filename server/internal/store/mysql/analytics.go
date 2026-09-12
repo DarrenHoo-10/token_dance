@@ -151,31 +151,16 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 	var pricedRequestsTotal, totalRequestsTotal, costRecords int
 	for costRows.Next() {
 		var currency string
-		var costUnits sql.NullString
+		var costUnits string
 		var costKnown, pricedRequests, totalRequests int
 		if err := costRows.Scan(&currency, &costUnits, &costKnown, &pricedRequests, &totalRequests); err != nil {
 			return nil, fmt.Errorf("failed to scan personal summary cost: %w", err)
 		}
-		var amount *string
-		if costUnits.Valid && costUnits.String != "" && costUnits.String != "0" {
-			var units float64
-			if _, err := fmt.Sscanf(costUnits.String, "%f", &units); err == nil {
-				amt := fmt.Sprintf("%.8f", units/1e8)
-				amount = &amt
-			}
+		metric, err := costMetricFromUnits(currency, costUnits, costKnown, pricedRequests, totalRequests)
+		if err != nil {
+			return nil, fmt.Errorf("failed to format personal summary cost: %w", err)
 		}
-		curr := currency
-		supported := costKnown > 0 || amount != nil
-		if !supported {
-			amount = nil
-		}
-		estimatedCosts = append(estimatedCosts, domain.MetricCost{
-			Amount:         amount,
-			Currency:       &curr,
-			Supported:      supported,
-			PricedRequests: pricedRequests,
-			TotalRequests:  totalRequests,
-		})
+		estimatedCosts = append(estimatedCosts, metric)
 		pricedRequestsTotal += pricedRequests
 		totalRequestsTotal += totalRequests
 		costRecords += costKnown

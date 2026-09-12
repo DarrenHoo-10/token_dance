@@ -68,38 +68,43 @@ pub fn discover_jsonl_files(
     limit: usize,
     resume_after: Option<&str>,
 ) -> (Vec<PathBuf>, Option<String>) {
-    if limit == 0 || !root.exists() {
+    discover_jsonl_files_in_roots(std::iter::once(root), glob_suffix, limit, resume_after)
+}
+
+/// Page once over the union of roots. A cursor belongs to this global ordering,
+/// so no individual root can repeatedly wrap before another root's cursor.
+pub fn discover_jsonl_files_in_roots<'a>(
+    roots: impl IntoIterator<Item = &'a Path>,
+    glob_suffix: &str,
+    limit: usize,
+    resume_after: Option<&str>,
+) -> (Vec<PathBuf>, Option<String>) {
+    if limit == 0 {
         return (Vec::new(), resume_after.map(|s| s.to_string()));
     }
-
-    if root.is_file() {
-        let name = root.file_name().and_then(|s| s.to_str()).unwrap_or("");
-        let matches = name.ends_with(glob_suffix)
-            || root.extension().and_then(|e| e.to_str()) == Some("jsonl");
-        if matches {
-            let path = root.to_path_buf();
-            let cursor = Some(path.to_string_lossy().into_owned());
-            return (vec![path], cursor);
+    let mut all = Vec::new();
+    for root in roots {
+        if root.is_file() {
+            let name = root.file_name().and_then(|s| s.to_str()).unwrap_or("");
+            if name.ends_with(glob_suffix)
+                || root.extension().and_then(|e| e.to_str()) == Some("jsonl")
+            {
+                all.push(root.to_path_buf());
+            }
+        } else if root.is_dir() {
+            all.extend(list_matching_jsonl(root, glob_suffix));
         }
-        return (Vec::new(), resume_after.map(|s| s.to_string()));
     }
-
-    let mut all = list_matching_jsonl(root, glob_suffix);
     if all.is_empty() {
         return (Vec::new(), resume_after.map(|s| s.to_string()));
     }
-    all.sort();
+    all.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
+    all.dedup();
 
     let start = resume_after
         .and_then(|after| {
             all.iter()
                 .position(|p| p.to_string_lossy().as_ref() > after)
-                .or_else(|| {
-                    // Exact match: continue after it.
-                    all.iter()
-                        .position(|p| p.to_string_lossy().as_ref() == after)
-                        .map(|i| i + 1)
-                })
         })
         .unwrap_or(0);
 

@@ -6,6 +6,35 @@ import (
 	"tokendance/internal/domain"
 )
 
+func TestReview3KnownZeroCostAndUnpricedCostRemainDistinct(t *testing.T) {
+	for _, tc := range []struct {
+		name, units, want string
+		known             int
+	}{
+		{"known zero", "0", "0.00000000", 1},
+		{"unpriced", "0", "", 0},
+		{"fraction", "1", "0.00000001", 1},
+		{"large exact", "9007199254740993", "90071992.54740993", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cost, err := costMetricFromUnits("USD", tc.units, tc.known, tc.known, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			scalar := scalarCostFromCurrencies([]domain.MetricCost{cost}, tc.known, 1, tc.known)
+			for _, got := range []domain.MetricCost{cost, scalar} {
+				if tc.want == "" {
+					if got.Amount != nil || got.Supported {
+						t.Fatalf("unpriced must stay unknown: %+v", got)
+					}
+				} else if got.Amount == nil || *got.Amount != tc.want || !got.Supported {
+					t.Fatalf("want amount %s, got %+v", tc.want, got)
+				}
+			}
+		})
+	}
+}
+
 func TestCacheHitRateMetricDenomZeroIsNull(t *testing.T) {
 	m := cacheHitRateMetric(0, 50, 0, 2, true)
 	if m.Value != nil {

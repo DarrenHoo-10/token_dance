@@ -390,6 +390,30 @@ impl PipelineStore {
         Ok(rows)
     }
 
+    /// Bounded per-harness candidates using idx_sources_due. NULL next_poll_at
+    /// is not runnable; compensation reschedules expired source leases.
+    pub fn list_due_sources_for_harness(
+        &self,
+        harness_id: &str,
+        now_ms: i64,
+        limit: usize,
+    ) -> Result<Vec<i64>, PipelineError> {
+        schema::assert_ready(&self.conn)?;
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM collection_sources
+             WHERE harness_id=?1 AND delete_at IS NULL AND enabled=1
+               AND next_poll_at IS NOT NULL AND next_poll_at<=?2
+               AND lease_token IS NULL
+             ORDER BY next_poll_at,id LIMIT ?3",
+        )?;
+        let rows = stmt
+            .query_map(params![harness_id, now_ms, limit.min(256) as i64], |row| {
+                row.get::<_, i64>(0)
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     /// Enable/disable all live sources for a harness (stops lease/list when disabled).
     pub fn set_harness_sources_enabled(
         &mut self,
