@@ -273,7 +273,7 @@ COMMIT
 
 ### 7.3 日期与数据口径
 
-- `range=7d/30d` 默认含今天，以团队本地日历计算起点；custom 接收 `from/to` 日期，to 在请求中含当天，服务端转换成下一本地午夜的 exclusive end。
+- `range` 缺省或为 `today` 时使用团队当天；`7d/30d` 含今天，以团队本地日历计算起点。custom 接收 `from/to` 日期，to 在请求中含当天，服务端转换成下一本地午夜的 exclusive end；最多 90 个自然日，起止日期均不可晚于团队当地今天。
 - 不沿用现有个人 custom 的 “减一纳秒” 边界；SQL 统一 `>= start AND < endExclusive`。DST 用 AddDate / 日历日，不以 24 小时乘天数。
 - 今日的数据截至 as_of；未来事件不参与。日期跨度按本地日期计数不超过 90，未来日期请求返回 400。
 - Token 首版统计 `model_usage_recorded` 且 accuracy=exact/derived 的事件。优先采用标准化 token_total；缺失时只有适配器分项语义明确才派生。缓存 / reasoning 是否已含在 input/output 不能全局一律相加。

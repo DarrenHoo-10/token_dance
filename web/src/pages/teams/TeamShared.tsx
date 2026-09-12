@@ -106,10 +106,12 @@ export const SharingControls: React.FC<{
 export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) => {
   const { t } = useLocale();
   const [params, setParams] = useSearchParams();
-  const range = params.get('range') || '7d';
+  const range = params.get('range') || 'today';
   const from = params.get('from') || '';
   const to = params.get('to') || '';
   const spanError = range === 'custom' && from && to && inclusiveDaySpan(from, to) > TEAM_RANGE_MAX_DAYS;
+  const dateParts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const today = ['year', 'month', 'day'].map((key) => dateParts.find((part) => part.type === key)?.value).join('-');
 
   const setRange = (next: string) => {
     const nextParams = new URLSearchParams(params);
@@ -132,6 +134,7 @@ export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) =
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'flex-end', justifyContent: 'space-between' }}>
       <div className="segmented-control" role="tablist" aria-label={t('dashboard.timeRangeSelector')}>
         {[
+          { key: 'today', label: t('common.today') },
           { key: '7d', label: t('common.days7') },
           { key: '30d', label: t('common.days30') },
           { key: 'custom', label: t('common.custom') },
@@ -150,21 +153,22 @@ export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) =
       </div>
       {range === 'custom' && (
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-          <Input type="date" label={t('teams.range.from')} value={from} onChange={(e) => setDate('from', e.target.value)} />
-          <Input type="date" label={t('teams.range.to')} value={to} onChange={(e) => setDate('to', e.target.value)} />
+          <Input type="date" label={t('teams.range.from')} max={today} value={from} onChange={(e) => setDate('from', e.target.value)} />
+          <Input type="date" label={t('teams.range.to')} min={from || undefined} max={today} value={to} onChange={(e) => setDate('to', e.target.value)} />
         </div>
       )}
       <p className="text-muted" style={{ fontSize: 12, margin: 0 }}>
         {t('teams.range.timezone', { timezone })}
       </p>
       {spanError && <p className="form-error">{t('teams.range.tooLong')}</p>}
+      {range === 'custom' && !spanError && <p className="text-muted" style={{ fontSize: 12, width: '100%', margin: 0 }}>{t('teams.range.customHint')}</p>}
     </div>
   );
 };
 
 export function useTeamSearchFilters() {
   const [params, setParams] = useSearchParams();
-  const range = params.get('range') || '7d';
+  const range = params.get('range') || 'today';
   const from = params.get('from') || undefined;
   const to = params.get('to') || undefined;
   const agent = params.get('agent') || undefined;

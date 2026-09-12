@@ -97,6 +97,9 @@ describe('Team analysis updating state', () => {
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop/analytics');
 
     expect(await screen.findByTestId('analysis-skeleton')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '今天' })).toHaveAttribute('aria-selected', 'true');
+    expect(teamsApi.getAnalysis).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ range: 'today' }), expect.any(AbortSignal));
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['今天', '7 天', '30 天', '自定义']);
     expect(screen.getByRole('tab', { name: '自定义' })).toBeInTheDocument();
     expect(screen.getByText('正在汇总团队数据，请稍候…')).toBeInTheDocument();
     expect(screen.queryByText('0')).not.toBeInTheDocument();

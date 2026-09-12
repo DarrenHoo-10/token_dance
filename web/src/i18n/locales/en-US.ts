@@ -395,6 +395,7 @@ export const enUS = {
       to: 'End date',
       timezone: 'Team timezone {timezone}',
       tooLong: 'Custom ranges can cover at most 90 days.',
+      customHint: 'Choose any historical range up to 90 days, including both dates. Future dates are unavailable.',
       chooseDates: 'Choose a start and end date to load team data.',
     },
     overview: {

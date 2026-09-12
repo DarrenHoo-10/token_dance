@@ -1969,7 +1969,10 @@ func ResolveTeamRange(timezone, rangeKey, from, to string, now time.Time) (time.
 	today := localMidnight(now.In(loc))
 	var start, endExclusive time.Time
 	switch strings.TrimSpace(rangeKey) {
-	case "", "7d":
+	case "", "today":
+		start = today
+		endExclusive = today.AddDate(0, 0, 1)
+	case "7d":
 		start = today.AddDate(0, 0, -6)
 		endExclusive = today.AddDate(0, 0, 1)
 	case "30d":
@@ -1990,10 +1993,13 @@ func ResolveTeamRange(timezone, rangeKey, from, to string, now time.Time) (time.
 		if endDay.Before(startDay) {
 			return time.Time{}, time.Time{}, fieldError("to", "teams.invalidDateRange", "to must be on or after from")
 		}
+		if endDay.After(today) {
+			return time.Time{}, time.Time{}, fieldError("to", "teams.invalidDateRange", "future dates are not allowed")
+		}
 		start = startDay
 		endExclusive = endDay.AddDate(0, 0, 1)
 	default:
-		return time.Time{}, time.Time{}, fieldError("range", "teams.invalidDateRange", "range must be 7d, 30d, or custom")
+		return time.Time{}, time.Time{}, fieldError("range", "teams.invalidDateRange", "range must be today, 7d, 30d, or custom")
 	}
 	if !start.Before(today.AddDate(0, 0, 1)) || !endExclusive.After(start) {
 		return time.Time{}, time.Time{}, fieldError("from", "teams.invalidDateRange", "future dates are not allowed")
