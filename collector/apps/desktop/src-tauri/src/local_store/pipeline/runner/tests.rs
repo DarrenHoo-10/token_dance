@@ -16,7 +16,7 @@ use super::budget::ReadBudget;
 use super::engine::{run_source_once, RunOutcome, StoreSinkMut};
 use super::jsonl::{read_jsonl_budgeted, SourceChange};
 use super::scheduler::AcquisitionScheduler;
-use super::sqlite_stream::{read_sqlite_change_stream, PendingSet, SqliteChangeMode};
+use super::sqlite_stream::{cursor_from_parts, read_sqlite_change_stream, PendingSet, SqliteChangeMode};
 use super::strategy::{
     CheckpointView, DecodeOutcome, DecoderState, FactDraft, HarnessStrategy, IgnoreCode,
     NativeFactKey, RawBatch, RawRecord, RunnerError, SourceSpec, TokenAccuracy,
@@ -1008,4 +1008,47 @@ fn local_large_line_read_only_probe() {
         "read-only probe: {checked} large-line sources, {advanced} bytes advanced in {:?}",
         started.elapsed()
     );
+}
+
+#[test]
+fn sqlite_expired_time_budget_still_advances_without_duplicates() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("slow-sort.sqlite");
+    let c = rusqlite::Connection::open(&path).unwrap();
+    c.execute_batch("CREATE TABLE part(id INTEGER PRIMARY KEY, updated_at INTEGER, status TEXT, payload TEXT);
+        INSERT INTO part VALUES(1,100,'completed','{}'),(2,100,'completed','{}'),(3,101,'completed','{}');").unwrap();
+    for mode in [SqliteChangeMode::AppendRowid, SqliteChangeMode::UpdatedAtRowid, SqliteChangeMode::RunningToCompleted] {
+        let sql = if matches!(mode, SqliteChangeMode::UpdatedAtRowid) {
+            "SELECT id,updated_at,status,payload FROM part WHERE updated_at>?1 OR (updated_at=?1 AND id>?2) ORDER BY updated_at,id"
+        } else { "SELECT id,updated_at,status,payload FROM part WHERE id>?1 ORDER BY id" };
+        let mut cursor = cursor_from_parts(mode,0,0,&PendingSet::new(4096));
+        let mut ids = Vec::new();
+        for _ in 0..4 {
+            let result=read_sqlite_change_stream(&path,sql,&cursor,mode,ReadBudget::new(2,1024,0)).unwrap();
+            ids.extend(result.rows.iter().map(|r|r.rowid));
+            cursor=result.next_cursor_json;
+            if !result.has_more { break; }
+        }
+        assert_eq!(ids,vec![1,2,3]);
+    }
+}
+
+#[test]
+#[ignore = "explicit read-only source probe"]
+fn sqlite_source_probe_reaches_eof() {
+    let path=std::env::var_os("TOKENDANCE_SQLITE_SOURCE_PROBE").expect("explicit source path");
+    let mut cursor=cursor_from_parts(SqliteChangeMode::UpdatedAtRowid,0,0,&PendingSet::new(4096));
+    let started=std::time::Instant::now();
+    for _ in 0..10000 {
+        let result=read_sqlite_change_stream(std::path::Path::new(&path),
+            crate::local_store::pipeline::adapters::ZCODE_SQL_CODE,&cursor,
+            SqliteChangeMode::UpdatedAtRowid,super::budget::DEFAULT_READ_BUDGET).unwrap();
+        if !result.has_more {
+            eprintln!("source scan reached EOF in {:?}",started.elapsed());
+            return;
+        }
+        assert_ne!(result.next_cursor_json,cursor,"nonterminal read must advance");
+        cursor=result.next_cursor_json;
+    }
+    panic!("scan failed to reach EOF");
 }

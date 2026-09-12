@@ -3,6 +3,8 @@ export function syncStatusText(status: string | undefined, pending: number, zh: 
   switch (status) {
     case "SYNCING": return t("同步中", "Syncing");
     case "SYNCED": return pending > 0 ? t("等待自动同步", "Sync scheduled") : t("已同步", "Synced");
+    case "SYNC_ENDPOINT_INVALID": return t("同步接口响应异常，稍后自动重试", "Invalid sync endpoint response · Retrying");
+    case "SYNC_PROTOCOL_UNSUPPORTED": return t("服务端同步协议不兼容，稍后自动重试", "Incompatible sync protocol · Retrying");
     case "WAITING": return t("等待自动同步", "Sync scheduled");
     case "RETRYING": return t("同步未完成，稍后自动重试", "Sync incomplete · Retrying");
     case "DATA_REJECTED": return t("部分记录校验未通过，已保留在本机", "Some records rejected · Kept locally");
