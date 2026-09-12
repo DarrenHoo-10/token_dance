@@ -50,9 +50,10 @@ func liveEligibleTotalsSQL() string {
 	LEFT JOIN (
 		SELECT user_id,
 		       SUM(exact_token_total + derived_token_total) AS tokens,
-		       MAX(computed_at) AS watermark
-		FROM daily_user_agent_metrics
-		WHERE metric_date >= ? AND metric_date <= ?
+		       FROM_UNIXTIME(MAX(updated_at) / 1000) AS watermark
+		FROM telemetry_model_metrics
+		WHERE grain = 'day' AND delete_at IS NULL
+		  AND bucket_start >= ? AND bucket_start <= ?
 		GROUP BY user_id
 	) m ON m.user_id = e.user_id`
 }
@@ -98,11 +99,19 @@ func (s *leaderboardStore) previousTotalsQuery(ctx context.Context, window strin
 	if err != nil {
 		return "", nil, err
 	}
-	return liveEligibleTotalsSQL(), []interface{}{window, prevGen, from, to}, nil
+	fromMs, toMs, err := dayGrainBucketRange(from, to)
+	if err != nil {
+		return "", nil, err
+	}
+	return liveEligibleTotalsSQL(), []interface{}{window, prevGen, fromMs, toMs}, nil
 }
 
 func (s *leaderboardStore) getLiveTokenLeaderboard(ctx context.Context, window string, cursor *string, limit int, now time.Time) (*domain.LeaderboardResponse, error) {
 	from, to, err := leaderboardDates(window, now)
+	if err != nil {
+		return nil, err
+	}
+	fromMs, toMs, err := dayGrainBucketRange(from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -122,7 +131,7 @@ func (s *leaderboardStore) getLiveTokenLeaderboard(ctx context.Context, window s
 	if endRank > 1000 {
 		endRank = 1000
 	}
-	args := []interface{}{window, generation, from, to}
+	args := []interface{}{window, generation, fromMs, toMs}
 	args = append(args, previousArgs...)
 	args = append(args, after, endRank)
 	rows, err := s.db.QueryContext(ctx, liveTokenComparisonSQL(previousSQL)+`
@@ -196,10 +205,14 @@ func (s *leaderboardStore) liveTokenRank(ctx context.Context, userID, window str
 	if err != nil {
 		return nil, nil, nil
 	}
+	fromMs, toMs, err := dayGrainBucketRange(from, to)
+	if err != nil {
+		return nil, nil, err
+	}
 	generation := WindowGeneration(now)
 	var rank, count int
 	err = s.db.QueryRowContext(ctx, liveTokenRankingSQL()+`SELECT rank_no, participants FROM ranked CROSS JOIN stats WHERE user_id = ?`,
-		window, generation, from, to, userID).Scan(&rank, &count)
+		window, generation, fromMs, toMs, userID).Scan(&rank, &count)
 	if err == sql.ErrNoRows {
 		return nil, nil, nil
 	}
@@ -217,12 +230,16 @@ func (s *leaderboardStore) liveOwnTokenEntry(ctx context.Context, userID, window
 	if err != nil {
 		return nil, nil, nil
 	}
+	fromMs, toMs, err := dayGrainBucketRange(from, to)
+	if err != nil {
+		return nil, nil, err
+	}
 	generation := WindowGeneration(now)
 	previousSQL, previousArgs, err := s.previousTotalsQuery(ctx, window, now)
 	if err != nil {
 		return nil, nil, err
 	}
-	args := []interface{}{window, generation, from, to}
+	args := []interface{}{window, generation, fromMs, toMs}
 	args = append(args, previousArgs...)
 	args = append(args, userID)
 	var entry domain.LeaderboardEntry

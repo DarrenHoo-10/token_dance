@@ -55,6 +55,8 @@ func (w *Worker) ProcessTelemetryAggregation(ctx context.Context) (int, error) {
 }
 
 // ProcessDirtyDayRefresh claims dirty days, rebuilds window scores from telemetry, version-confirms.
+// Community outbox enqueue happens inside refreshDirtyDay's confirm transaction so a crash after
+// confirm cannot leave dirty applied without the community refresh signal (and vice versa).
 func (w *Worker) ProcessDirtyDayRefresh(ctx context.Context) (int, error) {
 	if w.db == nil {
 		return 0, nil
@@ -68,7 +70,7 @@ func (w *Worker) ProcessDirtyDayRefresh(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	processed := 0
-	dates := make(map[string]struct{})
+	confirmedAny := false
 	for _, claim := range claims {
 		ok, err := w.refreshDirtyDay(ctx, claim, now)
 		if err != nil {
@@ -76,16 +78,12 @@ func (w *Worker) ProcessDirtyDayRefresh(ctx context.Context) (int, error) {
 		}
 		if ok {
 			processed++
-			dates[claim.MetricDate] = struct{}{}
+			confirmedAny = true
 		}
 	}
-	if len(dates) > 0 {
+	if confirmedAny {
 		tx, err := w.db.BeginTx(ctx, nil)
 		if err != nil {
-			return processed, err
-		}
-		if err := mysqlstore.EnqueueCommunityStatsOutboxTx(ctx, tx, mapKeys(dates), now); err != nil {
-			_ = tx.Rollback()
 			return processed, err
 		}
 		if err := mysqlstore.PruneOldWindowScoresTx(ctx, tx, now); err != nil {
@@ -98,6 +96,10 @@ func (w *Worker) ProcessDirtyDayRefresh(ctx context.Context) (int, error) {
 	}
 	return processed, nil
 }
+
+// dirtyRefreshAfterConfirmHook is an optional test failpoint invoked after dirty
+// confirm + community outbox staging, before commit. Non-nil error rolls back the tx.
+var dirtyRefreshAfterConfirmHook func() error
 
 func (w *Worker) refreshDirtyDay(ctx context.Context, claim mysqlstore.DirtyDayClaim, now time.Time) (bool, error) {
 	tx, err := w.db.BeginTx(ctx, nil)
@@ -112,6 +114,16 @@ func (w *Worker) refreshDirtyDay(ctx context.Context, claim mysqlstore.DirtyDayC
 	confirmed, requeued, err := mysqlstore.ConfirmDirtyDayAtVersionTx(ctx, tx, claim, now)
 	if err != nil {
 		return false, err
+	}
+	if confirmed {
+		if err := mysqlstore.EnqueueCommunityStatsOutboxTx(ctx, tx, []string{claim.MetricDate}, now); err != nil {
+			return false, err
+		}
+		if dirtyRefreshAfterConfirmHook != nil {
+			if err := dirtyRefreshAfterConfirmHook(); err != nil {
+				return false, err
+			}
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return false, err
@@ -723,34 +735,40 @@ func applyDurationDiff(
 
 	oldFacts := facts
 	newFacts := append(append([]telemetryagg.DurationFact{}, facts...), cand)
+	sessionKey := bytesTo32(ev.SessionKey)
 
 	switch grain {
-	case domain.TelemetryGrainDay, domain.TelemetryGrainHour:
-		dayStart := domain.StartOfDay(time.UnixMilli(ev.OccurredAtMs)).UnixMilli()
-		dayEnd := domain.StartOfDay(time.UnixMilli(ev.OccurredAtMs)).AddDate(0, 0, 1).UnixMilli()
-		oldDur := telemetryagg.SelectSessionDayDuration(oldFacts, bytesTo32(ev.SessionKey), dayStart, dayEnd)
-		newDur := telemetryagg.SelectSessionDayDuration(newFacts, bytesTo32(ev.SessionKey), dayStart, dayEnd)
+	case domain.TelemetryGrainHour:
+		dayStart, dayEnd := telemetryagg.BeijingDayBounds(ev.OccurredAtMs)
+		oldMap := telemetryagg.SessionHourContributions(oldFacts, sessionKey, dayStart, dayEnd)
+		newMap := telemetryagg.SessionHourContributions(newFacts, sessionKey, dayStart, dayEnd)
+		deltas := telemetryagg.DiffHourDurationMaps(oldMap, newMap)
+		oldSum := telemetryagg.SumDurationMap(oldMap)
+		newSum := telemetryagg.SumDurationMap(newMap)
+		knownBumpDone := false
+		for hourBucket, delta := range deltas {
+			d := map[string]int64{"active_duration_ms": delta}
+			if !knownBumpDone && oldSum == 0 && newSum > 0 && delta > 0 {
+				d["duration_known_count"] = 1
+				knownBumpDone = true
+			}
+			if hourBucket == bucketStart {
+				harnessDelta["active_duration_ms"] += delta
+				if d["duration_known_count"] != 0 {
+					harnessDelta["duration_known_count"] += d["duration_known_count"]
+				}
+				continue
+			}
+			if err := mysqlstore.ApplyHarnessMetricDeltaTx(ctx, tx, ev.UserID, ev.InstallationID, grain, hourBucket, ev.HarnessID, ev.MetricSemanticsVersion, nowMs, d); err != nil {
+				return err
+			}
+		}
+	case domain.TelemetryGrainDay:
+		dayStart, dayEnd := telemetryagg.BeijingDayBounds(ev.OccurredAtMs)
+		oldDur := telemetryagg.SelectSessionDayDuration(oldFacts, sessionKey, dayStart, dayEnd)
+		newDur := telemetryagg.SelectSessionDayDuration(newFacts, sessionKey, dayStart, dayEnd)
 		delta := int64(newDur) - int64(oldDur)
 		if delta != 0 {
-			// Hour grain: put duration into the hour of the authoritative fact end.
-			targetBucket := bucketStart
-			if grain == domain.TelemetryGrainHour {
-				// If switching to session_end, duration lands on session_end hour.
-				authMs := ev.OccurredAtMs
-				if b, err := domain.BucketStartMs(grain, authMs); err == nil {
-					targetBucket = b
-				}
-				if targetBucket != bucketStart {
-					// Apply duration to target hour bucket separately.
-					if err := mysqlstore.ApplyHarnessMetricDeltaTx(ctx, tx, ev.UserID, ev.InstallationID, grain, targetBucket, ev.HarnessID, ev.MetricSemanticsVersion, nowMs, map[string]int64{
-						"active_duration_ms":  delta,
-						"duration_known_count": 1,
-					}); err != nil {
-						return err
-					}
-					return nil
-				}
-			}
 			harnessDelta["active_duration_ms"] += delta
 			if oldDur == 0 && newDur > 0 {
 				harnessDelta["duration_known_count"] += 1
@@ -872,9 +890,9 @@ func applyCostDiff(
 		Units:      units,
 		Source:     payload.Cost.Source,
 	}
-	oldEff := telemetryagg.SelectEffectiveCost(oldFacts)
-	newEff := telemetryagg.SelectEffectiveCost(append(append([]telemetryagg.CostFact{}, oldFacts...), cand))
-	for _, delta := range telemetryagg.DiffEffectiveCost(oldEff, newEff) {
+	oldEff := telemetryagg.SelectEffectiveCosts(oldFacts)
+	newEff := telemetryagg.SelectEffectiveCosts(append(append([]telemetryagg.CostFact{}, oldFacts...), cand))
+	for _, delta := range telemetryagg.DiffEffectiveCosts(oldEff, newEff) {
 		d := map[string]int64{
 			"reported_cost_units":     delta.ReportedUnits,
 			"estimated_cost_units":    delta.EstimatedUnits,

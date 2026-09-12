@@ -13,12 +13,8 @@ import (
 
 func seedRankUsage(t *testing.T, db *sql.DB, userID, date, agent string, exact, derived, estimated int) {
 	t.Helper()
-	_, err := db.Exec(`INSERT INTO daily_user_agent_metrics
-	(metric_date,user_id,agent_id,exact_token_total,derived_token_total,estimated_token_total,aggregation_version)
-	VALUES (?,?,?,?,?,?,2)`, date, userID, agent, exact, derived, estimated)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_ = estimated // estimated tokens are not trusted in telemetry_* trusted Token sums
+	seedTelemetryDayModelTokens(t, db, userID, date, agent, int64(exact), int64(derived))
 }
 
 func TestLeaderboardTop1000MySQL(t *testing.T) {

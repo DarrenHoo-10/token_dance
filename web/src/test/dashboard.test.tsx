@@ -167,4 +167,22 @@ describe('Dashboard Components Tests', () => {
 
     expect(screen.getAllByText('N/A').length).toBe(9);
   });
+
+  it('lists multi-currency estimatedCosts instead of a fake USD sum', () => {
+    render(
+      <LocaleProvider>
+        <MetricGrid metrics={{
+          ...mockMetrics,
+          estimatedCost: { amount: null, currency: null, supported: true },
+          estimatedCosts: [
+            { amount: '1.00000000', currency: 'USD', supported: true },
+            { amount: '7.00000000', currency: 'CNY', supported: true },
+          ],
+        }} />
+      </LocaleProvider>
+    );
+    expect(screen.getByText('USD 1.00 · CNY 7.00')).toBeInTheDocument();
+    expect(screen.queryByText('$8.00')).not.toBeInTheDocument();
+    expect(screen.queryByText('$1.00')).not.toBeInTheDocument();
+  });
 });

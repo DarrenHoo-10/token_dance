@@ -13,6 +13,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useVisibleRefresh } from '@/hooks/useVisibleRefresh';
 import { api } from '@/api/client';
 import type { LeaderboardEntry, LeaderboardResponse, PersonalSummary, CalendarDay, CommunityStatsResponse } from '@/types/api';
+import { formatCommunityCost } from '@/utils/cost';
 
 type Range = 'Today' | '7 Days' | '30 Days' | 'All Time';
 
@@ -225,7 +226,7 @@ export const LeaderboardPage: React.FC = () => {
               <HeroMiniCard label={zh ? '活跃开发者' : 'Active devs'} value={community?.developers != null ? community.developers.toLocaleString('en-US') : '—'} delta={community?.deltas?.developers} />
               <HeroMiniCard label={zh ? '生成代码行' : 'Code lines'} value={formatTokens(community?.codeLines)} delta={community?.deltas?.codeLines} />
               <HeroMiniCard label={zh ? 'AI 交互' : 'AI turns'} value={formatTokens(community?.interactions)} delta={community?.deltas?.interactions} />
-              <HeroMiniCard label={zh ? '预估费用' : 'Est. cost'} value={community?.costAmount != null ? `$${community.costAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'} delta={community?.deltas?.costAmount} />
+              <HeroMiniCard label={zh ? '预估费用' : 'Est. cost'} value={formatCommunityCost(community ?? {})} delta={community?.deltas?.costAmount} />
             </div>
           </div>
         </div>
