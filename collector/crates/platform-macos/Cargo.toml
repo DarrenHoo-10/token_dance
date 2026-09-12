@@ -18,4 +18,7 @@ tempfile = "3"
 [target.'cfg(target_os = "macos")'.dependencies]
 base64 = "0.22"
 getrandom = "0.2"
-keyring = { version = "3", default-features = false, features = ["apple-native"] }
+keyring = { version = "3.6.3", default-features = false, features = ["apple-native"] }
+objc2 = "0.6.4"
+objc2-foundation = "0.3.2"
+objc2-service-management = "0.3.2"

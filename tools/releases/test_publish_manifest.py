@@ -31,6 +31,55 @@ class PublishTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 publisher.validate_build({**build, field: value}, self.release['version'], self.release['exe'])
 
+    def test_macos_dmg_requires_bound_notarization_and_main_provenance(self):
+        image = self.root / 'TokenDance.dmg'
+        image.write_bytes(b'fixture-dmg' + b'koly' + bytes(508))
+        publisher.check_dmg(image)
+        asset = publisher.describe(image, 'https://downloads.example.com/TokenDance.dmg', publisher.MAX_MAC_DOWNLOAD)
+        release = {k: v for k, v in self.release.items() if k != 'exe'}
+        release.update(platform='macos-arm64', minimumSystemVersion='13.0', notarized=True, dmg=asset)
+        build = {'branch':'main','commit':'a'*40,'dirty':False,'profile':'release',
+                 'version':release['version'],'architecture':'arm64','bundleId':'io.tokendance.desktop',
+                 'minimumSystemVersion':'13.0','notarized':True,'teamIdentifier':'ABCDEFGHIJ',
+                 'signingAuthority':'Developer ID Application: Example (ABCDEFGHIJ)',
+                 'appNotaryId':'a'*8+'-'+ 'b'*4+'-'+ 'c'*4+'-'+ 'd'*4+'-'+ 'e'*12,
+                 'dmgNotaryId':'f'*8+'-'+ 'b'*4+'-'+ 'c'*4+'-'+ 'd'*4+'-'+ 'e'*12,
+                 'dmg': {'sha256':asset['sha256'],'size':asset['size']}}
+        publisher.validate_manifest({'schemaVersion':1,'releases':[self.release, release]})
+        publisher.validate_macos_build(build, release)
+        for field, value in [('dirty',True),('profile','debug'),('notarized',False),('architecture','x86_64'),('branch','feature/test'),('dmg',{'size':1,'sha256':'b'*64}),('dmgNotaryId','')]:
+            with self.assertRaises(ValueError):
+                publisher.validate_macos_build({**build,field:value}, release)
+        self.assertEqual(publisher.release_assets(release), [asset])
+        with self.assertRaises(ValueError):
+            publisher.validate_manifest({'schemaVersion':1,'releases':[{**release,'exe':self.release['exe']}]})
+        image.write_bytes(b'<html>not a disk image</html>')
+        with self.assertRaises(ValueError):
+            publisher.check_dmg(image)
+
+    def test_macos_has_its_own_asset_limit_and_does_not_accept_zip_urls(self):
+        release = {k:v for k,v in self.release.items() if k != 'exe'}
+        release.update(platform='macos-x64', minimumSystemVersion='13.0', notarized=True, dmg={
+            'url':'https://downloads.example.com/mac.dmg','sha256':'a'*64,'size':300*1024*1024})
+        publisher.validate_manifest({'schemaVersion':1,'releases':[release]})
+        for patch in [{'size':513*1024*1024},{'url':'https://downloads.example.com/mac.zip'}]:
+            with self.assertRaises(ValueError):
+                publisher.validate_manifest({'schemaVersion':1,'releases':[{**release,'dmg':{**release['dmg'],**patch}}]})
+
+    def test_free_release_is_explicit_and_cannot_claim_notarization(self):
+        release = {key:value for key,value in self.release.items() if key != 'exe'}
+        asset = {'url':'https://downloads.example.com/free.dmg','sha256':'a'*64,'size':512}
+        release.update(platform='macos-arm64', minimumSystemVersion='13.0', notarized=False, dmg=asset)
+        build = {'branch':'main','commit':'a'*40,'dirty':False,'profile':'release','version':release['version'],
+                 'architecture':'arm64','bundleId':'io.tokendance.desktop','minimumSystemVersion':'13.0',
+                 'notarized':False,'distribution':'unnotarized','signingAuthority':'adhoc',
+                 'teamIdentifier':None,'credentialStore':'login-keychain','dmg':asset}
+        publisher.validate_manifest({'schemaVersion':1,'releases':[release]})
+        publisher.validate_macos_build(build,release)
+        for change in [{'notarized':True},{'profile':'debug'},{'credentialStore':'plaintext'},{'branch':'feature/test'},{'dmgNotaryId':'fabricated'}]:
+            with self.assertRaises(ValueError):
+                publisher.validate_macos_build({**build,**change},release)
+
     def test_permanent_https_urls_and_numeric_versions(self):
         self.assertTrue(publisher.valid_url(self.release['exe']['url']))
         for url in ['http://cdn.example.com/a.exe', 'https://u:p@cdn.example.com/a.exe',

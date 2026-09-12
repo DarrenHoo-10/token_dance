@@ -1,9 +1,9 @@
-use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
-use wal_spool::{KeyProvider, OsKeyProvider, WalStore};
+use wal_spool::{KeyError, KeyProvider, OsKeyProvider, WalStore};
 
 use acquisition::DriverBatch;
 use adapter_grok_build::{hook_auth_token, write_session_end_hook, HOOK_SOURCE_ID};
@@ -13,6 +13,7 @@ use crate::detect::{
     list_grok_history_files, list_jsonl_files,
 };
 use crate::grok_hook::{grok_sessions_root, grok_user_home, start_listener, take_hook_frames};
+use crate::platform::{self, AppPaths, InstanceLock};
 use crate::upload::UploadPipeline;
 use crate::{adapter_id, DecodedSourceBatch, DetectionSnapshot, ProductionService};
 
@@ -31,36 +32,22 @@ impl acquisition::SecretResolver for FileSecrets {
 }
 
 pub fn collector_data_root() -> PathBuf {
-    let base = std::env::var_os("LOCALAPPDATA")
-        .or_else(|| std::env::var_os("XDG_DATA_HOME"))
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("TokenDance").join("collector")
+    AppPaths::production()
+        .map(|paths| paths.collector)
+        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 pub fn append_log(root: &Path, message: &str) {
-    let path = root.join("daemon.log");
-    let _ = fs::create_dir_all(root);
-    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
-        let _ = writeln!(file, "{message}");
-    }
+    let path = match AppPaths::production() {
+        Ok(paths) if root == paths.collector || root == paths.logs => paths.log_file(),
+        _ => root.join("daemon.log"),
+    };
+    platform::append_rotated_log(&path, message);
 }
 
-pub fn acquire_instance_lock(root: &Path) -> Result<File, String> {
-    fs::create_dir_all(root).map_err(|error| error.to_string())?;
-    let path = root.join("collector.lock");
-    if path.exists() {
-        if let Ok(existing) = fs::read_to_string(&path) {
-            let pid = existing.trim();
-            if !pid.is_empty() && process_is_running(pid) {
-                return Err(format!("collector already running as pid {pid}"));
-            }
-        }
-    }
-    let mut file = File::create(&path).map_err(|error| error.to_string())?;
-    write!(file, "{}", std::process::id()).map_err(|error| error.to_string())?;
-    Ok(file)
+pub fn acquire_instance_lock(root: &Path) -> Result<InstanceLock, String> {
+    let paths = AppPaths::for_root(root.to_path_buf());
+    InstanceLock::acquire(&paths)
 }
 
 pub async fn collect_tick(
@@ -202,15 +189,28 @@ pub async fn collect_decoded(
     outcome
 }
 
+pub fn wal_key_provider(root: &Path) -> Result<Arc<dyn KeyProvider>, String> {
+    // WAL remains the transitional upload queue. Do not mint a replacement key
+    // when encrypted spool frames already exist; the event-pipeline writer will
+    // retire this key together with the spool.
+    let spool = root.join("spool");
+    let create = !wal_spool::spool_has_data(&spool);
+    let provider = OsKeyProvider::wal_key(create);
+    match provider.data_key() {
+        Ok(_) => Ok(Arc::new(provider)),
+        Err(KeyError::NotFound) => Err(
+            "encrypted collector data exists but the OS keystore entry is missing; refusing to mint a replacement key".into(),
+        ),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 pub async fn assemble_local_service(
     root: &Path,
 ) -> Result<(DetectionSnapshot, ProductionService), String> {
-    fs::create_dir_all(root).map_err(|error| error.to_string())?;
+    platform::create_private_dir(root)?;
     let snapshot = detect_local();
-    let key_provider: std::sync::Arc<dyn KeyProvider> = std::sync::Arc::new(OsKeyProvider::new(
-        "io.tokendance.desktop",
-        "collector-wal-key",
-    ));
+    let key_provider = wal_key_provider(root)?;
     let key = key_provider.data_key().map_err(|error| error.to_string())?;
     let wal =
         WalStore::open(root.join("spool"), key_provider).map_err(|error| error.to_string())?;
@@ -299,31 +299,6 @@ fn load_or_create_installation_id(root: &Path) -> Result<String, String> {
             .map_err(|error| error.to_string());
     }
     let id = wal_spool::new_prefixed_id("ins");
-    fs::write(&path, &id).map_err(|error| error.to_string())?;
+    platform::write_private_file(&path, &id)?;
     Ok(id)
-}
-
-fn process_is_running(pid: &str) -> bool {
-    let Ok(pid) = pid.parse::<u32>() else {
-        return false;
-    };
-    if pid == std::process::id() {
-        return false;
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-
-        let output = std::process::Command::new("tasklist")
-            .creation_flags(0x08000000) // CREATE_NO_WINDOW for GUI callers
-            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-            .output();
-        return output
-            .map(|output| String::from_utf8_lossy(&output.stdout).contains(&pid.to_string()))
-            .unwrap_or(false);
-    }
-    #[cfg(not(windows))]
-    {
-        Path::new("/proc").join(pid.to_string()).exists()
-    }
 }

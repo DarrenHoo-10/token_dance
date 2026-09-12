@@ -101,6 +101,8 @@ pub async fn get_agent_quotas() -> Result<Vec<AgentQuota>, String> {
         *cache = Some((Instant::now(), result.clone()));
         Ok(result)
     }).await.map_err(|error| error.to_string())??;
+    // Local tests can inspect log-based quotas without using connected accounts.
+    if crate::local_test::enabled() { return Ok(result); }
     let (zcode, grok, cursor) = tokio::join!(zcode::read_quota(), connected::grok(), connected::cursor());
     result.extend([zcode, grok, cursor].into_iter().flatten());
     Ok(result)

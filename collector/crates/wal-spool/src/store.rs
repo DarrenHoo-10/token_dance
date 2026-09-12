@@ -60,6 +60,26 @@ pub struct CompactReport {
     pub rewritten_segments: Vec<u64>,
 }
 
+/// True when `root` already contains WAL segments or snapshots.
+pub fn spool_has_data(root: impl AsRef<Path>) -> bool {
+    let root = root.as_ref();
+    dir_has_files(&root.join("wal")) || dir_has_files(&root.join("snapshots"))
+}
+
+fn dir_has_files(dir: &Path) -> bool {
+    fs::read_dir(dir)
+        .ok()
+        .map(|entries| {
+            entries.flatten().any(|entry| {
+                entry
+                    .file_type()
+                    .map(|kind| kind.is_file())
+                    .unwrap_or(false)
+            })
+        })
+        .unwrap_or(false)
+}
+
 impl WalStore {
     pub fn open(root: impl AsRef<Path>, keys: Arc<dyn KeyProvider>) -> Result<Self, WalError> {
         Self::open_with_limits(root, keys, SpoolLimits::default())

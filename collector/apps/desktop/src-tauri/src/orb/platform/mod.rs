@@ -1,22 +1,28 @@
 //! Cross-platform orb window-group contract.
 //!
-//! HWND/HRGN work stays in `windows.rs`. Non-Windows backends return `暂不可用`.
+//! Native handles stay inside the Windows/macOS adapters.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tauri::PhysicalPosition;
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(not(any(windows, target_os = "macos")))]
 mod unsupported;
 #[cfg(windows)]
 mod windows;
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub use macos::OrbWindowGroup;
+#[cfg(not(any(windows, target_os = "macos")))]
 pub use unsupported::OrbWindowGroup;
 #[cfg(windows)]
 pub use windows::OrbWindowGroup;
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+pub use macos::{is_foreground_fullscreen_at, is_foreground_fullscreen_excluding_self};
+#[cfg(not(any(windows, target_os = "macos")))]
 pub use unsupported::{is_foreground_fullscreen_at, is_foreground_fullscreen_excluding_self};
 #[cfg(windows)]
 pub use windows::{is_foreground_fullscreen_at, is_foreground_fullscreen_excluding_self};
@@ -25,7 +31,7 @@ pub const ORB_LABEL: &str = "orb";
 pub const EFFECTS_LABEL: &str = "orb-effects";
 pub const DETAILS_LABEL: &str = "orb-details";
 
-pub const DEFAULT_DIAMETER_DIP: f64 = 112.0;
+pub const DEFAULT_DIAMETER_DIP: f64 = super::model::DEFAULT_DIAMETER_DIP as f64;
 pub const EFFECTS_INSET_DIP: f64 = 16.0;
 pub const DETAILS_MIN_WIDTH_DIP: f64 = 344.0;
 pub const DETAILS_MIN_HEIGHT_DIP: f64 = 420.0;
@@ -119,11 +125,16 @@ mod tests {
 
     #[test]
     fn effects_remain_concentric_at_every_scale_and_screen_origin() {
-        for diameter in [112.0, 128.0, 160.0] {
+        for diameter in super::super::model::ALLOWED_DIAMETERS.map(f64::from) {
             for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
                 for (x, y) in [(100, 200), (-1920, -500), (3800, 1200)] {
                     let size = dip_to_physical(diameter, scale);
-                    let orb = super::super::placement::PixelRect { x, y, width: size, height: size };
+                    let orb = super::super::placement::PixelRect {
+                        x,
+                        y,
+                        width: size,
+                        height: size,
+                    };
                     let effects = effects_bounds(orb, diameter);
                     assert_eq!(effects.x * 2 + effects.width, orb.x * 2 + orb.width);
                     assert_eq!(effects.y * 2 + effects.height, orb.y * 2 + orb.height);
@@ -155,7 +166,7 @@ mod tests {
             effects_origin(orb_origin, scale),
             PhysicalPosition::new(same_scale, 200 + dip_to_physical(-EFFECTS_INSET_DIP, scale))
         );
-        assert_eq!(effects_size_dip(DEFAULT_DIAMETER_DIP), 144.0);
+        assert_eq!(effects_size_dip(DEFAULT_DIAMETER_DIP), 112.0);
     }
 
     #[test]

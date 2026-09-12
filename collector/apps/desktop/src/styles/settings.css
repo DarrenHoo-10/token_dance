@@ -45,6 +45,13 @@
 .settings-notice { position:absolute; left:32px; right:32px; bottom:76px; border-radius:8px; background:#24301f; color:#fff; padding:12px 16px; font-size:12px; box-shadow:0 5px 20px #17231022; overflow-wrap:anywhere; }
 .settings-error { padding:10px 12px; border-radius:8px; margin-bottom:16px; background:#fdeee9; color:#973323; font-size:12px; }
 .settings-error button { text-decoration:underline; margin-left:10px; }
+.settings-inline-link { margin-top:6px; font-size:11px; color:#375e00; text-decoration:underline; }
+html[data-platform="macos"] .settings-page .usage-window-controls .usage-minimize,
+html[data-platform="macos"] .settings-page .usage-window-controls .usage-close { display:none; }
+html[data-platform="macos"] .settings-header { padding-left:86px; -webkit-app-region:drag; app-region:drag; user-select:none; cursor:default; }
+html[data-platform="macos"] .settings-header button,
+html[data-platform="macos"] .settings-header a,
+html[data-platform="macos"] .settings-header input { -webkit-app-region:no-drag; app-region:no-drag; }
 @media(min-width:900px) { .settings-page { height:min(600px, calc(100dvh - 48px)); max-width:680px; margin:24px auto; border-radius:14px; overflow:hidden; box-shadow:0 16px 50px #1d2b1618; } }
 @media(max-width:580px) { .settings-header { padding:0 20px; } .settings-main { padding:24px 20px; } .settings-footer { padding:12px 20px; } .settings-row { gap:14px; } .settings-brand > span { display:none; } }
 @media(prefers-reduced-motion:reduce) { .settings-toggle,.settings-toggle span { transition:none; } }

@@ -1,4 +1,5 @@
 use crate::state::AppState;
+use platform_credentials::{CredentialError, DESKTOP_SERVICE};
 use crate::upload_pipeline::{session_bearer_from_cookies, UploadConsumer, UploadCredentials};
 use std::collections::BTreeMap;
 use std::fs;
@@ -337,11 +338,16 @@ impl Connection {
             *app.sync_status.write().await = "SYNCING".into();
         }
         if self.telemetry_v2.is_none() {
-            let seed = OsKeyProvider::new("io.tokendance.desktop", "collector-device-ed25519")
+            let create = !app.control_dir_path().join("device-registered").exists();
+            let seed = OsKeyProvider::device_seed(create)
                 .data_key()
                 .map_err(|_| "DEVICE_KEY_ERROR")?;
             self.register_sync_device(Arc::new(InMemoryDeviceSigner::from_seed(seed)))
                 .await?;
+            collector_service::platform::write_private_file(
+                &app.control_dir_path().join("device-registered"),
+                b"1",
+            )?;
         }
         let Some(session_bearer) = session_bearer_from_cookies(&self.cookies) else {
             return Ok("LOGIN_REQUIRED");
@@ -441,6 +447,9 @@ impl AccountState {
 }
 
 pub fn start_auto_sync(handle: tauri::AppHandle, app: AppState) {
+    if crate::local_test::enabled() {
+        return;
+    }
     tauri::async_runtime::spawn(async move {
         let account = handle.state::<AccountState>();
         {
@@ -471,17 +480,34 @@ pub fn start_auto_sync(handle: tauri::AppHandle, app: AppState) {
 }
 
 const SESSION_TTL_SECS: u64 = 30 * 24 * 60 * 60;
+const SESSION_VERSION: u32 = 1;
 
 #[derive(Serialize, Deserialize)]
 struct PersistedAccount {
+    #[serde(default = "session_version")]
+    version: u32,
     origin: String,
     cookies: BTreeMap<String, String>,
     csrf: String,
     expires_at: u64,
 }
 
+fn session_version() -> u32 {
+    SESSION_VERSION
+}
+
+#[derive(Serialize, Deserialize)]
+struct SessionIndex {
+    origin: String,
+    expires_at: u64,
+}
+
 fn persist_path() -> std::path::PathBuf {
     crate::state::app_data_root().join("account-session.json")
+}
+
+fn index_path() -> std::path::PathBuf {
+    crate::state::app_data_root().join("account-session.index.json")
 }
 
 fn unix_now() -> u64 {
@@ -491,37 +517,98 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
+fn session_account(origin: &str) -> String {
+    let digest = Sha256::digest(origin.as_bytes());
+    format!("account-session-{}", hex_encode(&digest[..16]))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
 fn save_account(connection: &Connection) {
+    let origin = connection.origin.as_str().to_string();
+    let account = session_account(&origin);
     if connection.cookies.is_empty() {
+        let _ = platform_credentials::delete(DESKTOP_SERVICE, &account);
+        let _ = fs::remove_file(index_path());
         let _ = fs::remove_file(persist_path());
         return;
     }
-    let path = persist_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
     let payload = PersistedAccount {
-        origin: connection.origin.as_str().to_string(),
+        version: SESSION_VERSION,
+        origin: origin.clone(),
         cookies: connection.cookies.clone(),
         csrf: connection.csrf.clone(),
         expires_at: unix_now().saturating_add(SESSION_TTL_SECS),
     };
-    if let Ok(body) = serde_json::to_vec(&payload) {
-        let _ = fs::write(path, body);
+    let Ok(secret) = serde_json::to_string(&payload) else {
+        return;
+    };
+    if platform_credentials::put(DESKTOP_SERVICE, &account, &secret).is_err() {
+        return;
+    }
+    match platform_credentials::get(DESKTOP_SERVICE, &account) {
+        Ok(readback) if readback == secret => {}
+        _ => return,
+    }
+    let index = SessionIndex {
+        origin,
+        expires_at: payload.expires_at,
+    };
+    if let Ok(body) = serde_json::to_vec(&index) {
+        let _ = collector_service::platform::write_private_file(&index_path(), body);
+    }
+    if persist_path().exists() {
+        let _ = fs::remove_file(persist_path());
     }
 }
 
 fn load_account(origin: &Url) -> Option<(BTreeMap<String, String>, String)> {
-    let body = fs::read(persist_path()).ok()?;
-    let stored: PersistedAccount = serde_json::from_slice(&body).ok()?;
-    if stored.origin != origin.as_str()
-        || stored.expires_at <= unix_now()
-        || stored.cookies.is_empty()
-    {
-        let _ = fs::remove_file(persist_path());
+    let origin_s = origin.as_str();
+    let account = session_account(origin_s);
+    match platform_credentials::get(DESKTOP_SERVICE, &account) {
+        Ok(secret) => parse_session_secret(&secret, origin_s),
+        Err(CredentialError::NotFound) => migrate_legacy_session(origin_s),
+        Err(_) => None,
+    }
+}
+
+fn parse_session_secret(secret: &str, origin: &str) -> Option<(BTreeMap<String, String>, String)> {
+    let stored: PersistedAccount = serde_json::from_str(secret).ok()?;
+    if stored.origin != origin || stored.expires_at <= unix_now() || stored.cookies.is_empty() {
         return None;
     }
     Some((stored.cookies, stored.csrf))
+}
+
+fn migrate_legacy_session(origin: &str) -> Option<(BTreeMap<String, String>, String)> {
+    let body = fs::read(persist_path()).ok()?;
+    let stored: PersistedAccount = serde_json::from_slice(&body).ok()?;
+    if stored.origin != origin || stored.expires_at <= unix_now() || stored.cookies.is_empty() {
+        return None;
+    }
+    let cookies = stored.cookies.clone();
+    let csrf = stored.csrf.clone();
+    if let Ok(secret) = serde_json::to_string(&stored) {
+        let account = session_account(origin);
+        if platform_credentials::put(DESKTOP_SERVICE, &account, &secret).is_ok() {
+            if platform_credentials::get(DESKTOP_SERVICE, &account)
+                .ok()
+                .as_deref()
+                == Some(secret.as_str())
+            {
+                let _ = fs::remove_file(persist_path());
+            }
+        }
+    }
+    Some((cookies, csrf))
 }
 
 fn connection(state: &mut Option<Connection>, origin: Url) -> Result<&mut Connection, String> {
@@ -539,6 +626,9 @@ pub async fn get_account_session(
     website: String,
     state: State<'_, AccountState>,
 ) -> Result<AccountSession, String> {
+    if crate::local_test::enabled() {
+        return Ok(AccountSession { user: None });
+    }
     let mut guard = state.0.lock().await;
     if website.is_empty() {
         *guard = None;
@@ -564,6 +654,28 @@ pub async fn get_account_session(
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
+pub(crate) async fn authorize_saved_credentials(website: Option<String>) -> Result<(), String> {
+    if crate::local_test::enabled() || !platform_credentials::uses_login_keychain() {
+        return Ok(());
+    }
+    let mut accounts = vec![
+        platform_credentials::WAL_KEY_ACCOUNT.to_owned(),
+        platform_credentials::DEVICE_SEED_ACCOUNT.to_owned(),
+    ];
+    let saved_origin = website.or_else(|| {
+        let bytes = fs::read(index_path()).ok()?;
+        let index: SessionIndex = serde_json::from_slice(&bytes).ok()?;
+        Some(index.origin)
+    });
+    if let Some(origin) = saved_origin.and_then(|value| account_origin(&value).ok()) {
+        accounts.push(session_account(origin.as_str()));
+    }
+    tokio::task::spawn_blocking(move || platform_credentials::authorize_login_keychain(&accounts))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 pub async fn login_account(
     website: String,
@@ -571,6 +683,10 @@ pub async fn login_account(
     state: State<'_, AccountState>,
     app: State<'_, AppState>,
 ) -> Result<AccountSession, String> {
+    if crate::local_test::enabled() {
+        return Err("LOCAL_TEST_MODE".into());
+    }
+    authorize_saved_credentials(Some(website.clone())).await?;
     wait_for_login(browser_login(website, mode, state, app)).await
 }
 
@@ -767,6 +883,9 @@ pub async fn logout_account(
     state: State<'_, AccountState>,
     app: State<'_, AppState>,
 ) -> Result<(), String> {
+    if crate::local_test::enabled() {
+        return Ok(());
+    }
     state.2.fetch_add(1, Ordering::SeqCst);
     let mut guard = state.0.lock().await;
     let origin = account_origin(&website)?;

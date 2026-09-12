@@ -2,13 +2,14 @@
 
 [package]
 name = "tokendance-desktop"
-version = "0.1.26"
+version = "0.1.27"
 edition = "2021"
 authors = ["TokenDance Team"]
 description = "TokenDance Desktop"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
+unnotarized-distribution = ["platform-credentials/login-keychain"]
 
 [dependencies]
 async-trait = "0.1"
@@ -18,6 +19,7 @@ collector-core = { path = "../../../crates/collector-core" }
 collector-service = { path = "../../service" }
 adapter-grok-build = { path = "../../../adapters/grok-build" }
 config-executor = { path = "../../../crates/config-executor" }
+platform-credentials = { path = "../../../crates/platform-credentials" }
 protocol = { path = "../../../crates/protocol" }
 wal-spool = { path = "../../../crates/wal-spool" }
 uploader = { path = "../../../crates/uploader" }
@@ -34,13 +36,24 @@ cookie = "0.18"
 sha2 = "0.10"
 base64 = "0.22"
 rusqlite = { version = "0.32", features = ["bundled"] }
-tauri = { version = "2", features = ["tray-icon"] }
+tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 self-replace = "1"
 semver = "1"
 tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Security", "Win32_System_Threading"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CALayer", "CAShapeLayer", "CATransaction", "objc2-core-graphics", "objc2-core-foundation"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGPath", "CGGeometry"] }
+core-foundation = "0.10"
+core-graphics = "0.25"
+block2 = "0.6"
+objc2 = "0.6.4"
+objc2-app-kit = "0.3.2"
+objc2-foundation = "0.3.2"
+platform-macos = { path = "../../../crates/platform-macos" }
 
 [build-dependencies]
 tauri-build = "2"

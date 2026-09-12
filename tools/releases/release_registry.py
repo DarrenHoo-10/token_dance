@@ -9,7 +9,7 @@ import tempfile
 
 import pymysql
 
-from publish_manifest import MAX_MANIFEST, validate_build, validate_manifest, version
+from publish_manifest import MAX_MANIFEST, release_assets, validate_release_build, validate_manifest, version
 
 
 def connect():
@@ -59,7 +59,22 @@ def snapshot(db):
 
 
 def render(db, path):
+    if path.name != 'stable.json':
+        raise ValueError('Publish via stable.json; macos.json is projected alongside it')
     revision, data = snapshot(db)
+    manifest = json.loads(data)
+    # Shipped Windows clients require exe on every entry. Preserve that feed;
+    # macOS downloads have their own projection from the same release ledger.
+    for output, family in ((path, 'windows-'), (path.with_name('macos.json'), 'macos-')):
+        projected = {'schemaVersion': 1, 'releases': [r for r in manifest['releases'] if r['platform'].startswith(family)]}
+        write_projection(output, (json.dumps(projected, ensure_ascii=False, indent=2) + '\n').encode('utf-8'))
+    with db.cursor() as cursor:
+        cursor.execute('UPDATE desktop_release_publication SET rendered_revision=%s, '
+                       'rendered_at=UTC_TIMESTAMP(3) WHERE id=1', (revision,))
+    db.commit()
+
+
+def write_projection(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
@@ -79,10 +94,6 @@ def render(db, path):
     finally:
         if temporary is not None and temporary.exists():
             temporary.unlink()
-    with db.cursor() as cursor:
-        cursor.execute('UPDATE desktop_release_publication SET rendered_revision=%s, '
-                       'rendered_at=UTC_TIMESTAMP(3) WHERE id=1', (revision,))
-    db.commit()
 
 
 def reconcile(db, path):
@@ -93,13 +104,12 @@ def reconcile(db, path):
 
 def publish(db, path, release, build, verify):
     validate_manifest({'schemaVersion': 1, 'releases': [release]})
-    validate_build(build, release['version'], release['exe'])
+    validate_release_build(build, release)
     if len(release['platform']) > 32 or len(release['version']) > 64:
         raise ValueError('Release identifier exceeds database limit')
     # Network checks happen before taking the publication lock or touching the DB.
-    verify(release['exe'])
-    if release.get('zip'):
-        verify(release['zip'])
+    for asset in release_assets(release):
+        verify(asset)
     with locked(db):
         with db.cursor() as cursor:
             cursor.execute('SELECT r.manifest_json FROM desktop_release_channels c '

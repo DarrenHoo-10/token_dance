@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { patchOrbPreferences } from './bridge';
-import { ORB_DIAMETERS, type EffectsMode, type OrbDiameter, type OrbPreferencesPatch } from './types';
+import { DEFAULT_ORB_DIAMETER, ORB_DIAMETERS, type EffectsMode, type OrbDiameter, type OrbPreferencesPatch } from './types';
 import { useOrbDetailsSnapshot, useOrbLanguage, useOrbPreferences } from './useOrbSnapshot';
 import './orb.css';
 
@@ -40,7 +40,7 @@ export function OrbSettings({ zh: zhProp }: { zh?: boolean } = {}) {
   };
 
   const enabled = preferences?.enabled ?? false;
-  const diameter = preferences?.diameterDip ?? 112;
+  const diameter = preferences?.diameterDip ?? DEFAULT_ORB_DIAMETER;
   const effectsMode = preferences?.effectsMode ?? 'orbit';
   const hideOnFullscreen = preferences?.hideOnFullscreen ?? true;
   const selected = preferences?.selection ? `${preferences.selection.agentId}\0${preferences.selection.windowId}` : '';
@@ -75,7 +75,7 @@ export function OrbSettings({ zh: zhProp }: { zh?: boolean } = {}) {
         <div className="settings-row">
           <div>
             <h3>{t('球体尺寸', 'Orb size')}</h3>
-            <p>{t('默认 112 DIP，可按桌面缩放加大', 'Default 112 DIP. Larger sizes follow desktop scaling.')}</p>
+            <p>{t('64–160，默认 80；小尺寸只显示用量和余量', '64–160, default 80. Small orbs show usage and remaining quota.')}</p>
           </div>
           <select aria-label={t('球体尺寸', 'Orb size')} value={diameter} disabled={disabled} onChange={event => void apply({ diameterDip: Number(event.target.value) as OrbDiameter })}>
             {ORB_DIAMETERS.map(size => <option key={size} value={size}>{size} DIP</option>)}

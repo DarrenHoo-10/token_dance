@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { brandLogo } from "./brand";
+import { brandLogo, localTestBuild } from "./brand";
 import { DesktopAccountCard } from "./DesktopAccountCard";
-import { getAgentConfigs, getAutostartStatus, getDaemonStatus, getWebsiteUrl, hideWindow, isTauriEnvironment, openWebsite, setAgentStatus, setAutostart, setGlobalPause } from "./tauri-bridge";
+import { getAgentConfigs, getAutostartStatus, getDaemonStatus, getWebsiteUrl, hideWindow, isTauriEnvironment, openLoginItemsSettings, openWebsite, retryRuntimeInit, setAgentStatus, setAutostart, setGlobalPause, startWindowDrag } from "./tauri-bridge";
 import { resolveWebsiteOrigin } from "./website";
 import type { AgentConfig, AutostartInfo, DaemonStatus } from "./tauri-bridge";
 import "./styles/settings.css";
@@ -46,6 +46,9 @@ export function SettingsPage() {
   }, []);
 
   useEffect(() => {
+    if (/Mac/i.test(navigator.platform) || /Mac/i.test(navigator.userAgent)) {
+      document.documentElement.dataset.platform = "macos";
+    }
     mounted.current = true;
     const onFocus = () => { setLang(localStorage.getItem("tokendance.language") === "en" ? "en" : "zh"); void refresh(); };
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") void hideWindow().catch(err => setNotice(String(err))); };
@@ -77,11 +80,16 @@ export function SettingsPage() {
   };
   const disabled = busy || !data || error;
   const collecting = !!data && !data.status.globalPaused && (data.status.status === "RUNNING" || data.status.status === "REBUILDING");
-  const statusLabel = error ? t("连接中断", "Disconnected") : !data ? t("连接中", "Connecting") : data.status.globalPaused ? t("已暂停", "Paused") : collecting ? t("采集中", "Collecting") : t("需要检查", "Needs attention");
+  const statusLabel = error ? t("连接中断", "Disconnected") : !data ? t("连接中", "Connecting") : data.status.initError ? t("凭据暂不可用", "Credentials unavailable") : data.status.globalPaused ? t("已暂停", "Paused") : collecting ? t("采集中", "Collecting") : t("需要检查", "Needs attention");
+  const autostartNeedsApproval = data?.autostart.status === "requires_approval";
 
   return <div className="settings-page">
-    <header className="settings-header" data-tauri-drag-region>
-      <div className="settings-brand" data-tauri-drag-region><img src={brandLogo} alt="" draggable={false} data-tauri-drag-region /><div className="desktop-update-wordmark"><strong data-tauri-drag-region>TokenDance</strong><UpdateNotice zh={zh} /></div><span data-tauri-drag-region>{t("桌面端", "Desktop")}</span></div>
+    <header className="settings-header" data-tauri-drag-region="deep" onMouseDown={(event) => {
+      if (event.button !== 0) return;
+      if ((event.target as HTMLElement).closest("button, a, input, select, textarea")) return;
+      void startWindowDrag();
+    }}>
+      <div className="settings-brand" data-tauri-drag-region><img src={brandLogo} alt="" draggable={false} data-tauri-drag-region /><div className="desktop-update-wordmark"><strong data-tauri-drag-region>TokenDance{localTestBuild ? " Test" : ""}</strong>{!localTestBuild && <UpdateNotice zh={zh} />}</div><span data-tauri-drag-region>{t("桌面端", "Desktop")}</span></div>
       <div className="usage-controls"><div className="usage-window-controls" role="group" aria-label={t("语言与窗口控制", "Language and window controls")}>
         <button className="usage-language" onClick={() => changeLanguage(zh ? "en" : "zh")} aria-label={t("切换到英文", "Switch to Chinese")}>{zh ? "EN" : "中"}</button>
         <button className="usage-minimize" onClick={() => void perform(hideWindow)} aria-label={t("最小化到托盘", "Minimize to tray")} title={t("最小化到托盘", "Minimize to tray")}><span aria-hidden="true">−</span></button>
@@ -91,11 +99,12 @@ export function SettingsPage() {
     <main className="settings-main">
       <div className="settings-intro"><h1>{t("桌面设置", "Desktop settings")}</h1><span className={`settings-status ${collecting && !error ? "active" : ""}`}><i />{statusLabel}</span></div>
       {error && <div className="settings-error" role="alert">{t("无法读取本机设置，已保留上次状态。", "Unable to refresh settings. Showing the last known state.")}<button onClick={() => void refresh()}>{t("重试", "Retry")}</button></div>}
+      {data?.status.initError && <div className="settings-error" role="alert">{t("凭据暂不可用，采集已暂停。请检查系统凭据存储的访问权限，然后重试。", "Credentials are temporarily unavailable and collection is paused. Check access to the system credential store, then retry.")}<span> {data.status.initError}</span><button disabled={busy} onClick={() => void perform(async () => { await retryRuntimeInit(); }, true)}>{t("重试", "Retry")}</button></div>}
       <DesktopAccountCard key={website} zh={zh} />
       <section className="settings-section" aria-labelledby="preferences-heading">
         <div className="settings-section-heading"><h2 id="preferences-heading">{t("运行偏好", "Preferences")}</h2><span>{t("更改自动保存", "Changes save automatically")}</span></div>
         <div className="settings-sheet">
-          <div className="settings-row"><div><h3>{t("开机启动", "Launch at login")}</h3><p>{t("登录电脑后，自动在托盘中运行", "Start quietly in the tray when you sign in")}</p></div><Toggle label={t("开机启动", "Launch at login")} checked={data?.autostart.enabled ?? false} disabled={disabled} onChange={enabled => void perform(async () => { const autostart = await setAutostart(enabled); setData(current => current ? { ...current, autostart } : current); }, true)} /></div>
+          <div className="settings-row"><div><h3>{t("开机启动", "Launch at login")}</h3><p>{autostartNeedsApproval ? t("系统设置尚未允许登录项，请先在系统设置中打开。", "macOS still needs permission for this login item. Allow it in System Settings.") : t("登录电脑后，自动在托盘中运行", "Start quietly in the tray when you sign in")}</p>{autostartNeedsApproval && <button className="settings-inline-link" onClick={() => void perform(openLoginItemsSettings)}>{t("打开系统设置", "Open System Settings")}</button>}</div><Toggle label={t("开机启动", "Launch at login")} checked={(data?.autostart.enabled ?? false) || autostartNeedsApproval} disabled={disabled} onChange={enabled => void perform(async () => { const autostart = await setAutostart(enabled); setData(current => current ? { ...current, autostart } : current); }, true)} /></div>
           <div className="settings-row"><div><h3>{t("采集用量", "Collect usage")}</h3><p>{t("记录本机 Agent 用量，可随时暂停", "Record agent usage on this device. Pause anytime.")}</p></div><Toggle label={t("采集用量", "Collect usage")} checked={data ? !data.status.globalPaused : false} disabled={disabled} onChange={enabled => void perform(() => setGlobalPause(!enabled), true)} /></div>
         </div>
       </section>

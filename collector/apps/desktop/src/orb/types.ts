@@ -9,7 +9,7 @@ export type QuotaState =
   | 'unlimited';
 
 export type EffectsMode = 'orbit' | 'soft' | 'off';
-export type OrbDiameter = 112 | 128 | 144 | 160;
+export type OrbDiameter = 64 | 80 | 96 | 112 | 128 | 144 | 160;
 export type CollectorRunState = 'running' | 'paused' | 'degraded' | 'stopped';
 export type UsageValueState = 'known' | 'unknown' | 'error';
 export type OrbPulseKind = 'usage' | 'low_quota';
@@ -147,7 +147,8 @@ export type OrbAction =
 
 export type SnapshotEventDecision = 'accept' | 'drop' | 'resync';
 
-export const ORB_DIAMETERS: readonly OrbDiameter[] = [112, 128, 144, 160];
+export const ORB_DIAMETERS: readonly OrbDiameter[] = [64, 80, 96, 112, 128, 144, 160];
+export const DEFAULT_ORB_DIAMETER: OrbDiameter = 80;
 export const DRAG_THRESHOLD_DIP = 4;
 export const ORB_ROOT_CLASS = 'tokendance-orb';
 export const PEEK_OPEN_MS = 400;

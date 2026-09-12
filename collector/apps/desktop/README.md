@@ -1,6 +1,22 @@
 # TokenDance 桌面托盘
 
-启动后常驻 Windows 通知区域，主窗口和设置窗口默认隐藏，不占任务栏。
+## 本地隔离测试
+
+在 macOS 执行 `npm run test:macos`，生成 `release/TokenDance Test.app`。打开该应用即可测试当前工作区的界面、菜单栏、用量与日志额度读取；编译时固定为本地测试模式，Finder 重开也不会切换成正式模式。
+
+测试版使用 `~/Library/Application Support/io.tokendance.desktop.local-test/`，独立保存测试数据与私有测试密钥，不读取正式 Keychain、不注册登录项、不写入 Agent hooks，也不登录或上传。当前版本只首次准入当天事件，因此全新的测试数据目录不会导入历史用量。`/Applications/TokenDance.app` 保持原样。
+
+这是明确的 debug 本地测试入口；正式构建、签名与安装仍执行下文的 `main` 发布检查。
+
+## macOS 悬浮球
+
+macOS 已接入原生透明窗口层，复用 Windows 的球体、用量、额度、拖动与贴边状态机。主面板或设置窗口打开时隐藏球体，收起后恢复；左键拖动可移动，拖到边缘收起，点击露出部分展开，双击打开用量面板。设置支持显示开关、64/80/96/112/128/144/160 DIP 尺寸（新配置默认 80）、光效及全屏时隐藏。64/80 小尺寸仅保留用量数字和额度状态；已保存的较大尺寸仍有效，可在设置中改小。
+
+球体和光效分别使用 AppKit 浮动窗口，显示时不主动激活应用；光效透传全部鼠标事件，球体透明角落及屏幕外部分不接收点击。鼠标事件监视器随窗口重建清理，所有原生操作限定主线程。全屏检测只使用前台进程与窗口边界，不读取窗口标题或屏幕内容。透明 WKWebView 使用 Tauri 的 `macos-private-api` 功能，沿用站外签名分发方案。
+
+验证记录：macOS 15.6 单屏实测透明显示、拖动、边缘裁剪与展开、双击、尺寸/光效重建；原生坐标/命中/裁剪单测通过。不同物理显示器组合与全屏 Spaces 切换仍需进一步实机验收。
+
+启动后常驻系统托盘 / macOS 菜单栏，主窗口和设置窗口默认隐藏。macOS 13+ 以菜单栏应用运行，不占 Dock；登录项使用系统 `SMAppService`，凭据保存在 Keychain。
 
 - 左键点击 TokenDance 图标：在所在显示器工作区右下角打开 480 × 780 逻辑像素的用量面板，小屏幕自动限制在工作区内。内容滚动，状态栏和底部入口固定。
 - 点击面板外部、按 Escape 或点击右上角 −：收起面板到托盘，后台采集继续。
@@ -22,6 +38,12 @@ Codex 额度从 CODEX_HOME（默认用户目录 .codex）的近期 sessions 日�
 在本目录执行 `npm ci`、`npm run dev`，然后在另一个终端执行 `cargo run --manifest-path src-tauri/Cargo.toml`。浏览器预览为本地 1420 端口，`?view=settings` 可预览设置页。
 
 `npm run build` 检查 TypeScript 并构建前端；`npm test` 检查桌面配置、IPC 对齐并运行 Rust 测试。Windows 发布统一使用 `npm run build:windows`：先构建前端，再使用 `--features custom-protocol` 嵌入到原生程序，输出独立的 `release/TokenDance.exe` 和包含文件哈希的 `release/build-info.json`。桌面快捷方式应指向该发布文件，不再指向可能被其他 Cargo 构建覆盖的 target 目录。未启用 custom-protocol 的 release 构建会明确报错，避免生成依赖开发服务器的程序。
+
+macOS 最低支持 13.0。`npm run build:macos -- arm64 --unnotarized` 或 `x86_64` 默认生成免费未公证 DMG，无需 Apple 付费账号；应用使用传统登录钥匙串，保留登录与同步。下载页明确说明首次打开需在系统设置中允许。可选 `--notarized` 使用 Developer ID 和 profile 进行公证分发。正式构建都要求干净 `main`、拉取最新 `origin/main` 并校验 HEAD，默认不安装。功能分支仍只用于 debug 本地测试。
+
+正式签名需要明确的 `APPLE_TEAM_ID`、`DEVELOPER_ID_APPLICATION` 签名身份和 `MACOS_PROVISIONING_PROFILE` 文件路径。该 profile 必须是授权当前 Team、`io.tokendance.desktop`、Keychain 访问组及所选签名证书的有效 macOS Developer ID distribution profile。`prepare-keychain-signing.py` 校验这些条件，生成 Team 对应的 `com.apple.application-identifier`、`com.apple.developer.team-identifier` 和私有 `keychain-access-groups`，将 profile 嵌入 `.app`，随后才允许签名。完成后还会检查实际签名包含这些权限。静态 entitlement 模板不保存具体 Team ID。Apple 明确要求 Data Protection Keychain 的访问组由 provisioning profile 授权，只有证书或只添加 entitlement 均不足以代替该 profile；见 [TN3137](https://developer.apple.com/documentation/technotes/tn3137-on-mac-keychains) 和 [Keychain access groups](https://developer.apple.com/documentation/security/sharing-access-to-keychain-items-among-a-collection-of-apps)。
+
+可选的 `--notarized` 构建要求 Developer ID Application 身份和 `APPLE_NOTARY_PROFILE`，统一使用 `sign-notarize.sh` 完成应用及 DMG 两次公证；调试构建继续使用独立测试入口。CI 的签名任务额外需要 `APPLE_TEAM_ID` 和 `MACOS_PROVISIONING_PROFILE_BASE64` secrets，将 profile 解码为临时文件后交给 `sign-notarize.sh`；其余证书、公证凭据配置保持不变。签名、公证只接受 `main`，并把源码分支和提交记录放入签名包；生成的 schema 若改变已跟踪文件，必须先合入 `main`，脚本不会自动恢复文件来绕过检查。未签名或缺少授权 profile 的调试构建可能无法访问 Keychain，应显示初始化错误，禁止改写现有凭据或弹出密码请求。
 
 ## 精简设置与桌面登录
 
@@ -71,3 +93,5 @@ Cursor 优先复用 CLI 登录：Windows 的 `%APPDATA%/Cursor/auth.json`、macO
 构建前设置 `VITE_TOKENDANCE_WEBSITE_ORIGIN=http://127.0.0.1:3011`，即可将桌面默认登录地址指向本地网站；未设置时仍使用生产地址。本地与生产账号、数据不会自动互通。
 
 2026-09-06 本机优化版本部署目录为 `%LOCALAPPDATA%/TokenDance/local-optimization`，使用目录中的 `start-desktop.ps1` 启动桌面。Web 位于 `127.0.0.1:3011`，API 位于 `127.0.0.1:8082`；数据库使用云端 `tokendance_dev` 和 `redis_dev`，不使用本机数据库。当前云端公网端口直连不通，MySQL 复用本机 3307 转发，Redis 使用本机 16480 转发到云端 6380。程序和开发配置留在该运行目录，凭据不提交到仓库；错误创建的本机数据库容器已停止并保留数据卷。Web/API/Worker 和转发当前为本机进程，不承诺系统重启后自动启动。
+
+DMG 发布与网站下载清单的登记步骤见 [桌面发布说明](../../../docs/desktop-release-publishing.md#macos-dmg-交付)。Mac 下载使用独立 `releases/macos.json`，已安装的 Windows 更新器继续读取 `stable.json`。

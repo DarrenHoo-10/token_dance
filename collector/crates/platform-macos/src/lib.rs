@@ -1,6 +1,9 @@
-//! macOS Keychain and per-user LaunchAgent integration.
+//! macOS Keychain (legacy) and SMAppService login-item integration.
+//!
+//! Production WAL / session secrets go through `platform-credentials`.
+//! Native ServiceManagement calls live only in `login_items`.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 use std::fs;
 use std::io::Write;
@@ -187,6 +190,44 @@ fn xml_escape(value: &str) -> Result<String, PlatformError> {
 
 #[cfg(target_os = "macos")]
 mod keychain;
+
+#[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
+pub mod login_items;
+
+#[cfg(not(target_os = "macos"))]
+pub mod login_items {
+    use super::PlatformError;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum LoginItemStatus {
+        Enabled,
+        Disabled,
+        RequiresApproval,
+        Unavailable,
+        NotFound,
+    }
+
+    pub fn status() -> Result<LoginItemStatus, PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+
+    pub fn set_enabled(_: bool) -> Result<LoginItemStatus, PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+
+    pub fn open_system_settings() -> Result<(), PlatformError> {
+        Err(PlatformError::Unsupported)
+    }
+
+    pub fn running_from_install_location(_: &std::path::Path) -> bool {
+        false
+    }
+
+    pub fn migrate_legacy_plist() -> Result<(), PlatformError> {
+        Ok(())
+    }
+}
 
 #[cfg(not(target_os = "macos"))]
 mod keychain {

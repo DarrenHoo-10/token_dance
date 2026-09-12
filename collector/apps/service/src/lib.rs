@@ -2,6 +2,7 @@
 
 pub mod detect;
 pub mod grok_hook;
+pub mod platform;
 pub mod runtime;
 pub mod upload;
 
@@ -13,6 +14,7 @@ pub use grok_hook::{
     decode_pending_session_ends, grok_sessions_root, grok_user_home, start_listener, take_hook_frames,
     GrokHookInbox,
 };
+pub use platform::{AppPaths, InstanceLock, PathResolver};
 pub use runtime::{collect_decoded, collect_tick, CollectReport, LocalCollectOutcome};
 
 use std::collections::BTreeMap;

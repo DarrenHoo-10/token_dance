@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { isTauriEnvironment } from '../tauri-bridge';
-import { ORB_ROOT_CLASS, type OrbAction, type OrbDetailsSnapshot, type OrbPreferences, type OrbPreferencesPatch, type OrbRenderSnapshot, type OrbSnapshot } from './types';
+import { DEFAULT_ORB_DIAMETER, ORB_ROOT_CLASS, type OrbAction, type OrbDetailsSnapshot, type OrbPreferences, type OrbPreferencesPatch, type OrbRenderSnapshot, type OrbSnapshot } from './types';
 
 export const ORB_SNAPSHOT_EVENT = 'orb://snapshot';
 export const ORB_RENDER_EVENT = 'orb://render';
@@ -59,7 +59,7 @@ function mockRenderSnapshot(): OrbRenderSnapshot {
     streamId: snap.streamId,
     revision: snap.revision,
     emittedAtMs: snap.emittedAtMs,
-    diameterDip: 112,
+    diameterDip: DEFAULT_ORB_DIAMETER,
     hidden: false,
     collectorPaused: false,
     quota: {
@@ -107,7 +107,7 @@ function mockPreferences(): OrbPreferences {
     schemaVersion: 1,
     revision: '1',
     enabled: false,
-    diameterDip: 112,
+    diameterDip: DEFAULT_ORB_DIAMETER,
     effectsMode: 'orbit',
     hideOnFullscreen: true,
     selection: { agentId: 'codex', windowId: 'codex:primary:300m' },

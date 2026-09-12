@@ -25,3 +25,5 @@
 .release-notes { margin-top: 16px; }
 .release-notes summary { cursor: pointer; }
 .release-notes p { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.mac-hero-link{margin-top:18px}.mac-download{border-top:1px solid var(--border-light);margin-top:32px;padding-top:30px}#macos-heading{scroll-margin-top:115px}.mac-download>div>p{font-size:13px;margin-top:9px}.mac-download-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin-top:22px}.mac-package{min-width:0;padding:26px;border:1px solid var(--border-light);border-radius:18px;background:#fff}.mac-package>p{font-size:13px;margin:8px 0 16px}.mac-package .mac-package-meta{font-size:12px}.mac-package .release-status{min-height:46px;margin:20px 0 0}.mac-download-help{margin-top:20px}.mac-package .release-notes p{font-size:13px;margin-top:12px}@media(max-width:720px){.mac-download-grid{grid-template-columns:1fr}.mac-package{padding:22px}#macos-heading{scroll-margin-top:25px}}

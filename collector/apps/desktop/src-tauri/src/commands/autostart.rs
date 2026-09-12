@@ -13,3 +13,15 @@ pub async fn set_autostart(
 ) -> Result<AutostartInfo, String> {
     app_state.set_autostart(enabled)
 }
+
+#[tauri::command]
+pub async fn open_login_items_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        platform_macos::login_items::open_system_settings().map_err(|error| error.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(())
+    }
+}

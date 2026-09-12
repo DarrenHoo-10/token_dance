@@ -25,3 +25,10 @@ pub async fn set_global_pause(
 pub async fn get_collector_metrics(state: State<'_, AppState>) -> Result<CollectorMetrics, String> {
     Ok(state.get_collector_metrics().await)
 }
+
+#[tauri::command]
+pub async fn retry_runtime_init(state: State<'_, AppState>) -> Result<DaemonStatus, String> {
+    super::account::authorize_saved_credentials(None).await?;
+    state.retry_runtime_init().await?;
+    Ok(state.get_daemon_status().await)
+}
