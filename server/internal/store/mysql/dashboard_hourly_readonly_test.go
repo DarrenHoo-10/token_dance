@@ -8,7 +8,7 @@ import (
 	"tokendance/internal/domain"
 )
 
-// Read-only integration against the shared dev database: never resets its schema.
+// Isolated temporary-table integration: never changes shared dev rows or schema.
 func TestDashboardHourlyReadOnlyMySQL(t *testing.T) {
 	dsn := os.Getenv("TOKENDANCE_TEST_MYSQL_DSN")
 	if dsn == "" {
@@ -23,20 +23,41 @@ func TestDashboardHourlyReadOnlyMySQL(t *testing.T) {
 	if err = db.QueryRow("SELECT DATABASE()").Scan(&name); err != nil || name != "tokendance_dev" {
 		t.Fatal("read-only probe requires tokendance_dev")
 	}
-	var user string
-	var bucket int64
-	if err = db.QueryRow("SELECT user_id,bucket_start FROM telemetry_model_metrics WHERE grain='hour' AND delete_at IS NULL ORDER BY bucket_start DESC LIMIT 1").Scan(&user, &bucket); err != nil {
+	// Connection-local fixtures disappear on close; shared dev rows stay untouched.
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
+	_, err = db.Exec(`CREATE TEMPORARY TABLE telemetry_model_metrics (
+        user_id VARCHAR(64), grain VARCHAR(8), bucket_start BIGINT, delete_at BIGINT NULL,
+        harness_id VARCHAR(64), model_key BIGINT DEFAULT 0,
+        exact_token_total BIGINT DEFAULT 0, derived_token_total BIGINT DEFAULT 0,
+        input_context_tokens BIGINT DEFAULT 0, output_tokens BIGINT DEFAULT 0,
+        cache_read_tokens BIGINT DEFAULT 0, cache_write_tokens BIGINT DEFAULT 0,
+        reasoning_tokens BIGINT DEFAULT 0, updated_at BIGINT, metric_semantics_version INT DEFAULT 1
+    )`)
+	if err != nil {
 		t.Fatal(err)
 	}
+	user := "dashboard-hourly-fixture"
+	bucket := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC).UnixMilli()
 	from := domain.StartOfDay(time.UnixMilli(bucket))
 	to := from.AddDate(0, 0, 1).Add(-time.Nanosecond)
 	r := domain.TimeRange{Key: domain.TimeRangeToday, From: from, To: to, Timezone: "Asia/Shanghai"}
+	for i, value := range []int{100, 200} {
+		_, err = db.Exec("INSERT INTO telemetry_model_metrics (user_id,grain,bucket_start,harness_id,exact_token_total,updated_at) VALUES (?,'hour',?,'codex',?,?)", user, bucket+int64(i)*3600000, value, bucket)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err = db.Exec("INSERT INTO telemetry_model_metrics (user_id,grain,bucket_start,harness_id,exact_token_total,updated_at) VALUES (?,'day',?,'codex',300,?)", user, from.UnixMilli(), bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
 	a := analyticsStore{db: db}
 	response, err := a.GetTokenTrend(context.Background(), user, r, "total", nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if response.Granularity != "hour" || len(response.Points) == 0 {
+	if response.Granularity != "hour" || len(response.Points) != 2 {
 		t.Fatal("missing hourly series")
 	}
 	for _, p := range response.Points {
@@ -52,11 +73,10 @@ func TestDashboardHourlyReadOnlyMySQL(t *testing.T) {
 	if daily.Granularity != "day" {
 		t.Fatal("multi-day query lost day granularity")
 	}
-	summary, err := a.GetPersonalSummary(context.Background(), user, r)
-	if err != nil {
-		t.Fatal(err)
+	if len(daily.Points) != 1 || *daily.Points[0].TokenTotal != "300" {
+		t.Fatal("daily total differs")
 	}
-	if summary == nil {
-		t.Fatal("missing summary")
+	if *response.Points[0].TokenTotal != "100" || *response.Points[1].TokenTotal != "200" {
+		t.Fatal("hourly totals differ")
 	}
 }
