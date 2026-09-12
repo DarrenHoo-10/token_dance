@@ -3,6 +3,7 @@ import { act, fireEvent, renderHook, screen, waitFor } from '@testing-library/re
 import { api } from '@/api/client';
 import { teamsApi, type TeamAnalysisReady, type TeamAnalysisUpdating } from '@/api/teams';
 import { TeamAnalyticsPage } from '@/pages/teams/TeamAnalyticsPage';
+import { memberPercent } from '@/pages/teams/TeamMemberInsights';
 import { TeamOverviewPage } from '@/pages/teams/TeamOverviewPage';
 import { TeamMembersPage } from '@/pages/teams/TeamMembersPage';
 import { useTeamAnalysis } from '@/pages/teams/useTeamAnalysis';
@@ -108,21 +109,20 @@ describe('Team analysis updating state', () => {
     expect(screen.queryByText(/团队时区/)).not.toBeInTheDocument();
   });
 
-  it('keeps charts above the date controls and preserves a complete range while editing', async () => {
+  it('keeps date controls above the charts and preserves a complete range while editing', async () => {
     vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     const query = vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
     renderTeams(<TeamOverviewPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
     const chart = await screen.findByRole('heading', { name: 'Token 趋势' });
     const custom = screen.getByRole('tab', { name: '自定义' });
-    expect(chart.compareDocumentPosition(custom) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(chart.closest('.panel')).toContainElement(custom);
+    expect(custom.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(custom);
     expect(screen.getByRole('heading', { name: 'Token 趋势' })).toBeInTheDocument();
-    expect(screen.getByText('120.0K')).toBeInTheDocument();
+    expect(screen.getAllByText('120.0K')[0]).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '2026-09-01' } });
     expect(query).toHaveBeenCalledTimes(1);
-    expect(screen.getByText('120.0K')).toBeInTheDocument();
+    expect(screen.getAllByText('120.0K')[0]).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('结束日期'), { target: { value: '2026-09-06' } });
     await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: 'custom', from: '2026-09-01', to: '2026-09-06' }), expect.any(AbortSignal)));
   });
@@ -152,7 +152,7 @@ describe('Team analysis updating state', () => {
     };
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(<TeamOverviewPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    expect(await screen.findByText('Ada')).toBeInTheDocument();
+    expect(await screen.findAllByText('Ada').then(items => items[0])).toBeInTheDocument();
     expect(screen.getByText('成员贡献')).toBeInTheDocument();
     expect(screen.queryByText(/仅显示主动授权/)).not.toBeInTheDocument();
     expect(screen.queryByText(/团队时区/)).not.toBeInTheDocument();
@@ -191,7 +191,7 @@ describe('Team analysis updating state', () => {
     vi.spyOn(teamsApi, 'getExports').mockResolvedValue({ exports: [] });
 
     const view = renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop/analytics');
-    expect(await screen.findByText('120.0K')).toBeInTheDocument();
+    expect(await screen.findAllByText('120.0K').then(items => items[0])).toBeInTheDocument();
 
     analysisSpy.mockResolvedValue({
       state: 'updating',
@@ -270,7 +270,7 @@ describe('Team analysis updating state', () => {
       <TeamAnalyticsPage />,
       '/teams/tem_0123456789abcdefghijklmnop/analytics?agent=codex&model=gpt-test'
     );
-    expect(await screen.findByText('120.0K')).toBeInTheDocument();
+    expect(await screen.findAllByText('120.0K').then(items => items[0])).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '每日' }));
     await waitFor(() => {
       expect(exportSpy).toHaveBeenCalledWith(
@@ -299,5 +299,34 @@ describe('Team analysis updating state', () => {
     expect(await screen.findByText('团队 Token')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '自定义' })).toBeInTheDocument();
     expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();
+  });
+});
+
+
+describe('Team member insights', () => {
+  it('keeps large integer share precision and handles zero totals', () => {
+    expect(memberPercent('900719925474099300', '1801439850948198600')).toBe(50);
+    expect(memberPercent('1', '0')).toBe(0);
+  });
+  it('compares up to five members and uses the full team share denominator', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    const result = readyAnalysis('1', '1000');
+    result.contributions = { nextCursor: 'more', items: Array.from({ length: 6 }, (_, i) => ({
+      membershipId: `member-${i}`, displayName: `Person ${i}`, handle: null, rank: String(i + 1),
+      tokens: { state: 'available' as const, value: '100' },
+      trend: [{ date: '2026-09-05', tokens: { value: '100', state: 'available' as const } }],
+    })) };
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
+    renderTeams(<TeamOverviewPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
+    const first = await screen.findByRole('button', { name: 'Person 0' });
+    expect(first).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getAllByText('10.0%')).toHaveLength(11);
+    expect(screen.getByText('50.0%')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Person 3' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Person 4' }));
+    expect(screen.getByRole('button', { name: 'Person 5' })).toBeDisabled();
+    fireEvent.click(first);
+    expect(screen.getByRole('button', { name: 'Person 5' })).toBeEnabled();
   });
 });
