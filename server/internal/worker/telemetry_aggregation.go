@@ -292,7 +292,14 @@ func (w *Worker) executeTelemetryTask(ctx context.Context, claim mysqlstore.Tele
 		return err
 	}
 
-	changed, err := w.applyTelemetryContribution(ctx, tx, claim.Consumer, bucketStart, &ev, &payload, nowMs)
+	apply, err := w.prepareUsageRevision(ctx, tx, claim.Consumer, &ev, nowMs)
+	if err != nil {
+		return err
+	}
+	changed := false
+	if apply {
+		changed, err = w.applyTelemetryContribution(ctx, tx, claim.Consumer, bucketStart, &ev, &payload, nowMs)
+	}
 	if err != nil {
 		return err
 	}
@@ -301,6 +308,11 @@ func (w *Worker) executeTelemetryTask(ctx context.Context, claim mysqlstore.Tele
 		return err
 	}
 
+	if !apply {
+		if _, err := tx.ExecContext(ctx, "UPDATE telemetry_events SET status_json=JSON_SET(status_json,?,4) WHERE id=?", "$."+claim.Consumer, ev.ID); err != nil {
+			return err
+		}
+	}
 	if changed && claim.Consumer == domain.TelemetryGrainDay {
 		metricDate := domain.DayDate(time.UnixMilli(ev.OccurredAtMs))
 		if err := mysqlstore.MarkAggregateDirtyDayTx(ctx, tx, ev.UserID, metricDate, now); err != nil {
@@ -962,4 +974,79 @@ func decodeB64URL32(s string) ([32]byte, error) {
 	}
 	copy(out[:], raw)
 	return out, nil
+}
+
+// prepareUsageRevision replaces older applied usage contributions atomically.
+// The event rows retain ingestion identity; only this grain's processing state changes.
+func (w *Worker) prepareUsageRevision(ctx context.Context, tx *sql.Tx, grain string, ev *telemetryEventRow, nowMs int64) (bool, error) {
+	if ev.EventType != string(v2.EventTypeModelUsageRecorded) {
+		return true, nil
+	}
+	var key []byte
+	var revision uint64
+	if err := tx.QueryRowContext(ctx, "SELECT fact_key,fact_revision FROM telemetry_events WHERE id=?", ev.ID).Scan(&key, &revision); err != nil {
+		return false, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT id,fact_revision,occurred_at,model_key,payload_json,metric_semantics_version
+        FROM telemetry_events WHERE installation_id=? AND fact_key=? AND id<>? AND delete_at IS NULL
+        AND JSON_EXTRACT(status_json,?)=3 ORDER BY fact_revision DESC FOR UPDATE`, ev.InstallationID, key, ev.ID, "$."+grain)
+	if err != nil {
+		return false, err
+	}
+	type prior struct {
+		id        int64
+		revision  uint64
+		at        int64
+		model     uint64
+		payload   []byte
+		semantics uint16
+	}
+	var peers []prior
+	for rows.Next() {
+		var p prior
+		if err = rows.Scan(&p.id, &p.revision, &p.at, &p.model, &p.payload, &p.semantics); err != nil {
+			rows.Close()
+			return false, err
+		}
+		peers = append(peers, p)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return false, err
+	}
+	for _, p := range peers {
+		if p.revision > revision {
+			return false, nil
+		}
+	}
+	for _, p := range peers {
+		var payload v2.EventPayload
+		if err = json.Unmarshal(p.payload, &payload); err != nil {
+			return false, err
+		}
+		delta := map[string]int64{}
+		if err = accumulateUsage(&payload, delta); err != nil {
+			return false, err
+		}
+		for k, v := range delta {
+			delta[k] = -v
+		}
+		bucket, err := domain.BucketStartMs(grain, p.at)
+		if err != nil {
+			return false, err
+		}
+		if err = mysqlstore.ApplyModelMetricDeltaTx(ctx, tx, ev.UserID, ev.InstallationID, grain, bucket, ev.HarnessID, p.model, p.semantics, nowMs, delta); err != nil {
+			return false, err
+		}
+		if grain == domain.TelemetryGrainDay {
+			if err = mysqlstore.MarkAggregateDirtyDayTx(ctx, tx, ev.UserID, domain.DayDate(time.UnixMilli(p.at)), time.UnixMilli(nowMs)); err != nil {
+				return false, err
+			}
+		}
+		if _, err = tx.ExecContext(ctx, "UPDATE telemetry_events SET status_json=JSON_SET(status_json,?,4),updated_at=? WHERE id=?", "$."+grain, nowMs, p.id); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
 }
