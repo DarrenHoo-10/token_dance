@@ -231,20 +231,26 @@ func TestMySQL_TelemetryV2RebindFencing(t *testing.T) {
 		t.Fatalf("expected accepted for A, got %+v", first.Acks[0])
 	}
 
+	if _, err := st.Device().RebindInstallationTx(context.Background(), installationID, userB, now); err != domain.ErrPublicKeyConflict {
+		t.Fatalf("bound device must reject another user: %v", err)
+	}
+	if _, err := st.Device().RevokeInstallation(context.Background(), installationID, userA, now); err != nil {
+		t.Fatal(err)
+	}
 	rebound, err := st.Device().RebindInstallationTx(context.Background(), installationID, userB, now.Add(time.Second))
 	if err != nil {
 		t.Fatalf("rebind: %v", err)
 	}
-	if rebound.UserID != userB || rebound.StatusVersion != 2 {
+	if rebound.UserID != userB || rebound.StatusVersion != 3 {
 		t.Fatalf("unexpected rebound installation: %+v", rebound)
 	}
 
 	var storedUser string
-	if err := db.QueryRow(`SELECT user_id FROM telemetry_events WHERE installation_id = ?`, installationID).Scan(&storedUser); err != nil {
+	if err := db.QueryRow(`SELECT installation_id FROM telemetry_events WHERE installation_id = ?`, installationID).Scan(&storedUser); err != nil {
 		t.Fatal(err)
 	}
-	if storedUser != userA {
-		t.Fatalf("historical event user_id changed: got %s want %s", storedUser, userA)
+	if storedUser != installationID {
+		t.Fatalf("historical event device changed: got %s want %s", storedUser, installationID)
 	}
 
 	eventB := makeV2Event(t, "owned-by-b", now.UnixMilli(), nil)
@@ -262,20 +268,20 @@ func TestMySQL_TelemetryV2RebindFencing(t *testing.T) {
 		t.Fatalf("expected binding version mismatch, got %v", err)
 	}
 
-	ok := commitV2(t, st, userB, installationID, 2, "nonce-rebind-new", now, eventB)
+	ok := commitV2(t, st, userB, installationID, 3, "nonce-rebind-new", now, eventB)
 	if ok.Acks[0].Result != v2.AckResultAccepted {
 		t.Fatalf("expected accepted for B with new version, got %+v", ok.Acks[0])
 	}
 	var ownerB string
 	if err := db.QueryRow(`
-		SELECT user_id FROM telemetry_events
+		SELECT installation_id FROM telemetry_events
 		WHERE installation_id = ? AND event_id = ?`,
 		installationID, mustDecodeB64(t, string(eventB.EventID)),
 	).Scan(&ownerB); err != nil {
 		t.Fatal(err)
 	}
-	if ownerB != userB {
-		t.Fatalf("new event owner = %s, want %s", ownerB, userB)
+	if ownerB != installationID {
+		t.Fatalf("new event owner = %s, want %s", ownerB, installationID)
 	}
 }
 
@@ -286,4 +292,15 @@ func mustDecodeB64(t *testing.T, value string) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+func TestReconstructionRejectsInvalidTimestampWithoutOverflow(t *testing.T) {
+	now := time.Now().UnixMilli()
+	for _, timestamp := range []string{"0", "9223372036854775808", "18446744073709551615"} {
+		event := v2.EventEnvelope{SchemaVersion: v2.SchemaVersion, MetricSemanticsVersion: v2.MetricSemanticsVersion, OccurredAt: v2.UInt64String(timestamp)}
+		ack, err := processTelemetryEventV2(context.Background(), nil, domain.TelemetryEventsV2Input{Reconstruction: true}, event, [32]byte{}, now, now-14*86400000, now+300000)
+		if err != nil || ack.Result != v2.AckResultInvalid {
+			t.Fatalf("invalid timestamp %s: %+v %v", timestamp, ack, err)
+		}
+	}
 }

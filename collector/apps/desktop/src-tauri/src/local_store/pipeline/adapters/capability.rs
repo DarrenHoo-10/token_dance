@@ -72,7 +72,7 @@ pub const CURSOR: HarnessCapability = HarnessCapability {
             poll_interval_ms: None,
         },
         StreamCapability {
-            stream_key: "personal-sqlite",
+            stream_key: "official-usage-events",
             level: CapabilityLevel::Available,
             reason_code: None,
             poll_interval_ms: None,

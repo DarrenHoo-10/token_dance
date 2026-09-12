@@ -6,15 +6,17 @@ use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+#[cfg(test)]
+use protocol::v2::{Accuracy, TimeSource};
 use protocol::v2::{
     AckResult, EventEnvelope, EventPayload, EventType, ModelRef, SkillRef,
-    TelemetryEventsResponse, Accuracy, TimeSource, PROTOCOL_VERSION_NUMBER, SCHEMA_VERSION,
-    METRIC_SEMANTICS_VERSION,
+    TelemetryEventsResponse, METRIC_SEMANTICS_VERSION, PROTOCOL_VERSION_NUMBER,
+    SCHEMA_VERSION,
 };
 use serde_json::Value;
 use uploader::{
-    freeze_events_request, RetryPolicy, TelemetryV2Transport, TransportError, V2UploadAuth,
-    CLIENT_LEASE_MS, CLIENT_MAX_BATCH_BYTES, CLIENT_MAX_BATCH_EVENTS, CLIENT_MAX_IN_FLIGHT,
+    RetryPolicy, TelemetryV2Transport, TransportError, V2UploadAuth, CLIENT_LEASE_MS,
+    CLIENT_MAX_BATCH_BYTES, CLIENT_MAX_BATCH_EVENTS, CLIENT_MAX_IN_FLIGHT,
 };
 
 use crate::local_store::pipeline::{
@@ -86,12 +88,21 @@ impl UploadConsumer {
         }
     }
 
+    pub async fn finish_in_flight(&mut self) {
+        for flight in self.in_flight.drain(..) {
+            let _ = flight.handle.await;
+        }
+    }
+
     pub fn with_retry_policy(mut self, retry: RetryPolicy) -> Self {
         self.retry = retry;
         self
     }
 
-    pub async fn tick(&mut self, creds: Option<&UploadCredentials>) -> Result<UploadTickReport, String> {
+    pub async fn tick(
+        &mut self,
+        creds: Option<&UploadCredentials>,
+    ) -> Result<UploadTickReport, String> {
         let _ = self.writer.run_compensation().map_err(|e| e.to_string())?;
         self.poll_finished(creds).await?;
 
@@ -166,10 +177,7 @@ impl UploadConsumer {
         Ok(report)
     }
 
-    async fn poll_finished(
-        &mut self,
-        creds: Option<&UploadCredentials>,
-    ) -> Result<(), String> {
+    async fn poll_finished(&mut self, creds: Option<&UploadCredentials>) -> Result<(), String> {
         let mut finished = Vec::new();
         for (idx, flight) in self.in_flight.iter_mut().enumerate() {
             if flight.handle.is_finished() {
@@ -208,10 +216,7 @@ impl UploadConsumer {
         Ok(())
     }
 
-    fn claim_and_freeze(
-        &self,
-        creds: &UploadCredentials,
-    ) -> Result<Option<FrozenBatch>, String> {
+    fn claim_and_freeze(&self, creds: &UploadCredentials) -> Result<Option<FrozenBatch>, String> {
         let claimed = self
             .writer
             .claim_tasks(Consumer::Upload, CLIENT_MAX_BATCH_EVENTS, CLIENT_LEASE_MS)
@@ -265,8 +270,16 @@ impl UploadConsumer {
         if envelopes.is_empty() {
             return Ok(None);
         }
+        let lower = (chrono::Utc::now().timestamp_millis() + 28_800_000).div_euclid(86_400_000)
+            * 86_400_000
+            - 28_800_000
+            - 14 * 86_400_000;
+        let historical = envelopes
+            .iter()
+            .any(|e| e.occurred_at.parse::<i64>().is_ok_and(|t| t < lower));
         let (request_id, body, body_hash) =
-            freeze_events_request(envelopes).map_err(|e| e.to_string())?;
+            uploader::freeze_events_request_with_reconstruction(envelopes, historical)
+                .map_err(|e| e.to_string())?;
         Ok(Some(FrozenBatch {
             request_id,
             body,
@@ -398,7 +411,9 @@ impl UploadConsumer {
                 runnable_at,
                 error_code: code.map(str::to_owned),
             }) {
-                Ok(()) | Err(PipelineError::TaskLeaseMismatch) | Err(PipelineError::TaskNotRunnable) => {}
+                Ok(())
+                | Err(PipelineError::TaskLeaseMismatch)
+                | Err(PipelineError::TaskNotRunnable) => {}
                 Err(e) => return Err(e.to_string()),
             }
         }
@@ -552,7 +567,9 @@ fn stringify_uint_leaves(map: &mut serde_json::Map<String, Value>) {
 }
 
 /// Extract session bearer from desktop cookie jar (cookie value == session token).
-pub fn session_bearer_from_cookies(cookies: &std::collections::BTreeMap<String, String>) -> Option<String> {
+pub fn session_bearer_from_cookies(
+    cookies: &std::collections::BTreeMap<String, String>,
+) -> Option<String> {
     cookies
         .get("__Host-tokendance_session")
         .or_else(|| cookies.get("tokendance_session"))
@@ -809,7 +826,10 @@ mod tests {
         let bodies = transport.bodies();
         assert!(!bodies.is_empty());
         let first: Value = serde_json::from_slice(&bodies[0]).unwrap();
-        let hash1 = first["events"][0]["contentHash"].as_str().unwrap().to_string();
+        let hash1 = first["events"][0]["contentHash"]
+            .as_str()
+            .unwrap()
+            .to_string();
         // Force re-claim after retry runnable.
         tokio::time::sleep(Duration::from_millis(5)).await;
         let _ = consumer.tick(Some(&creds)).await.unwrap();
@@ -836,7 +856,9 @@ mod tests {
 
     #[async_trait::async_trait]
     impl TelemetryV2Transport for PartialAckTransport {
-        async fn capabilities(&self) -> Result<protocol::v2::TelemetryCapabilities, TransportError> {
+        async fn capabilities(
+            &self,
+        ) -> Result<protocol::v2::TelemetryCapabilities, TransportError> {
             self.inner.capabilities().await
         }
 

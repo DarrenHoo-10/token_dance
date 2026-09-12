@@ -30,38 +30,77 @@ impl CollectorDaemon {
                 tokio::time::sleep(Duration::from_secs(300)).await;
             }
         });
+        // Persistent worker tasks refill independently after every commit. Blocking
+        // filesystem/SQLite-channel work runs on Tokio's blocking pool, never its async threads.
+        for _ in 0..crate::local_store::pipeline::runner::DEFAULT_GLOBAL_ACQUISITION_CONCURRENCY {
+            let worker_state = state.clone();
+            let worker_running = Arc::clone(&is_running);
+            tauri::async_runtime::spawn(async move {
+                while worker_running.load(Ordering::Acquire) && !worker_state.is_shutting_down() {
+                    if event_pipeline_v2_client_enabled() && !worker_state.collection_paused().await
+                    {
+                        if let Some(runtime) = worker_state.pipeline_runtime() {
+                            let work = Arc::clone(&runtime);
+                            if tauri::async_runtime::spawn_blocking(move || work.acquire_one())
+                                .await
+                                .unwrap_or(false)
+                            {
+                                continue;
+                            }
+                            // Notification on commit/discovery, timeout for retries and pause/stop.
+                            let _ = tokio::time::timeout(
+                                Duration::from_millis(500),
+                                runtime.work_available.notified(),
+                            )
+                            .await;
+                            continue;
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+            });
+        }
         tauri::async_runtime::spawn(async move {
             state.backfill_local_prices().await;
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut next_legacy = std::time::Instant::now();
             while is_running.load(Ordering::Acquire) && !state.is_shutting_down() {
                 interval.tick().await;
                 if state.is_shutting_down() {
                     break;
                 }
-                let maintenance = state.lock_store().prune_details(chrono::Utc::now().date_naive());
-                if let Err(error) = maintenance {
-                    state.set_storage_error(&error);
-                    continue;
-                }
-                if state.get_daemon_status().await.global_paused {
+                if state.collection_paused().await {
                     continue;
                 }
 
                 // P0–P8 pipeline path: discover → acquire → metrics. Stop legacy rebuild writes.
                 if event_pipeline_v2_client_enabled() {
                     if let Some(runtime) = state.pipeline_runtime() {
-                        let stats = runtime.tick();
-                        state.clear_storage_error();
-                        state.set_rebuilding(false);
+                        let stats = match tauri::async_runtime::spawn_blocking(move || {
+                            runtime.tick()
+                        })
+                        .await
+                        {
+                            Ok(stats) => stats,
+                            Err(error) => {
+                                state.set_storage_error(&error.to_string());
+                                continue;
+                            }
+                        };
+                        if stats.failures == 0 {
+                            state.clear_storage_error();
+                        }
+                        state.set_rebuilding(stats.rebuilding);
                         runtime::append_log(
                             &state.control_dir_path(),
                             &format!(
-                                "pipeline discover={} acquire={} metrics={} pending={}",
+                                "pipeline discover={} acquire={} metrics={} pending={} sources={} backlog={} failures={}",
                                 stats.discovered,
                                 stats.acquired,
                                 stats.metrics,
                                 state.pending_sync_count(),
+                                stats.sources, stats.backlog, stats.failures,
                             ),
                         );
                     } else {
@@ -70,6 +109,18 @@ impl CollectorDaemon {
                             "pipeline workers paused or store unavailable",
                         );
                     }
+                    continue;
+                }
+
+                if std::time::Instant::now() < next_legacy {
+                    continue;
+                }
+                next_legacy = std::time::Instant::now() + Duration::from_secs(5);
+                let maintenance = state
+                    .lock_store()
+                    .prune_details(chrono::Utc::now().date_naive());
+                if let Err(error) = maintenance {
+                    state.set_storage_error(&error);
                     continue;
                 }
 

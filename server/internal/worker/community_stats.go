@@ -186,7 +186,7 @@ func (w *Worker) recomputeCommunityAgentDay(ctx context.Context, date string) er
 	}
 	rows, err := w.db.QueryContext(ctx, `
 		SELECT harness_id, CAST(COALESCE(SUM(exact_token_total + derived_token_total), 0) AS UNSIGNED)
-		FROM telemetry_model_metrics
+		FROM bound_telemetry_model_metrics
 		WHERE grain = 'day' AND delete_at IS NULL AND bucket_start = ?
 		GROUP BY harness_id`, bucketStart)
 	if err != nil {

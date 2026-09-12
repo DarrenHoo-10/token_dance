@@ -49,6 +49,8 @@ pub struct RolloutStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct RolloutExtra {
+    #[serde(flatten)]
+    other: serde_json::Map<String, serde_json::Value>,
     #[serde(default)]
     rollout_generation: i64,
     #[serde(default)]
@@ -188,11 +190,9 @@ fn read_extra(conn: &Connection) -> Result<RolloutExtra, PipelineError> {
         return Ok(RolloutExtra::default());
     }
     let raw: Option<String> = conn
-        .query_row(
-            "SELECT extra FROM schema_meta WHERE id = 1",
-            [],
-            |r| r.get(0),
-        )
+        .query_row("SELECT extra FROM schema_meta WHERE id = 1", [], |r| {
+            r.get(0)
+        })
         .optional()?;
     match raw {
         None => Ok(RolloutExtra::default()),
@@ -303,6 +303,7 @@ mod tests {
             let mut conn = Connection::open(&path).unwrap();
             // Simulate crash after stopping_legacy stamp, before tables.
             let extra = RolloutExtra {
+                other: Default::default(),
                 rollout_generation: CLOSED_BETA_GENERATION,
                 rollout_phase: RolloutPhase::Initializing.as_str().into(),
                 legacy_stopped_at: Some(500),

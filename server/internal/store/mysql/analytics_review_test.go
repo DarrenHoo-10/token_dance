@@ -26,7 +26,7 @@ func TestReview3PersonalSummaryPreservesZeroAndExactCosts(t *testing.T) {
 		seedTestUser(t, db, st, userID, fmt.Sprintf("review3_cost_%d", i), "Review Cost", fmt.Sprintf("review3-cost-%d@example.test", i), true, now)
 		seedTelemetryCost(t, db, userID, "2026-08-29", "codex", "USD", tc.units)
 		if !tc.known {
-			if _, err := db.Exec(`UPDATE telemetry_cost_metrics SET cost_known_count=0, estimated_request_count=0, unpriced_request_count=1 WHERE user_id=?`, userID); err != nil {
+			if _, err := db.Exec(`UPDATE telemetry_cost_metrics SET cost_known_count=0, estimated_request_count=0, unpriced_request_count=1 WHERE installation_id IN (SELECT installation_id FROM installations WHERE user_id=?)`, userID); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -203,28 +203,28 @@ func TestReview2CacheHitRateUsesPairedEligibleColumns(t *testing.T) {
 	// Paired samples: 90/100 + 10/1000 → 100/1100 ≈ 0.091
 	_, err = db.Exec(`
 		INSERT INTO telemetry_model_metrics (
-			created_at, updated_at, user_id, installation_id, grain, bucket_start,
+			created_at, updated_at, installation_id, grain, bucket_start,
 			harness_id, model_key, exact_token_total, derived_token_total,
 			input_context_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
 			cache_eligible_input_tokens, cache_eligible_read_tokens, cache_pair_known_count,
 			model_request_count, usage_observed_count, token_total_known_count,
 			input_context_known_count, cache_read_known_count, metric_semantics_version
-		) VALUES (?, ?, ?, ?, 'day', ?, 'codex', 1, 1100, 0, 1100, 0, 100, 0, 0, 1100, 100, 2, 2, 2, 2, 2, 2, 1)`,
-		nowMs, nowMs, userID, installationID, bucket)
+		) VALUES (?, ?, ?, 'day', ?, 'codex', 1, 1100, 0, 1100, 0, 100, 0, 0, 1100, 100, 2, 2, 2, 2, 2, 2, 1)`,
+		nowMs, nowMs, installationID, bucket)
 	if err != nil {
 		t.Fatalf("seed paired: %v", err)
 	}
 	// Unpaired pollution: large unpaired cache_read must not enter the rate.
 	_, err = db.Exec(`
 		INSERT INTO telemetry_model_metrics (
-			created_at, updated_at, user_id, installation_id, grain, bucket_start,
+			created_at, updated_at, installation_id, grain, bucket_start,
 			harness_id, model_key, exact_token_total, derived_token_total,
 			input_context_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
 			cache_eligible_input_tokens, cache_eligible_read_tokens, cache_pair_known_count,
 			model_request_count, usage_observed_count, token_total_known_count,
 			cache_read_known_count, metric_semantics_version
-		) VALUES (?, ?, ?, ?, 'day', ?, 'cursor', 1, 0, 0, 0, 0, 999999, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1)`,
-		nowMs, nowMs, userID, installationID, bucket)
+		) VALUES (?, ?, ?, 'day', ?, 'cursor', 1, 0, 0, 0, 0, 999999, 0, 0, 0, 0, 0, 1, 1, 0, 1, 1)`,
+		nowMs, nowMs, installationID, bucket)
 	if err != nil {
 		t.Fatalf("seed unpaired: %v", err)
 	}
@@ -252,14 +252,14 @@ func TestReview2CacheHitRateUsesPairedEligibleColumns(t *testing.T) {
 	ensureTestInstallation(t, db, emptyUser, emptyInstall, now)
 	_, err = db.Exec(`
 		INSERT INTO telemetry_model_metrics (
-			created_at, updated_at, user_id, installation_id, grain, bucket_start,
+			created_at, updated_at, installation_id, grain, bucket_start,
 			harness_id, model_key, exact_token_total, derived_token_total,
 			input_context_tokens, cache_read_tokens,
 			cache_eligible_input_tokens, cache_eligible_read_tokens, cache_pair_known_count,
 			model_request_count, usage_observed_count, token_total_known_count,
 			metric_semantics_version
-		) VALUES (?, ?, ?, ?, 'day', ?, 'codex', 1, 10, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1)`,
-		nowMs, nowMs, emptyUser, emptyInstall, bucket)
+		) VALUES (?, ?, ?, 'day', ?, 'codex', 1, 10, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1)`,
+		nowMs, nowMs, emptyInstall, bucket)
 	if err != nil {
 		t.Fatalf("seed empty denom: %v", err)
 	}

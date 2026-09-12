@@ -46,17 +46,17 @@ func seedTelemetryDayModelTokens(t *testing.T, db *sql.DB, userID, date, harness
 	nowMs := now.UnixMilli()
 	_, err = db.Exec(`
 		INSERT INTO telemetry_model_metrics (
-			created_at, updated_at, user_id, installation_id, grain, bucket_start,
+			created_at, updated_at, installation_id, grain, bucket_start,
 			harness_id, model_key, exact_token_total, derived_token_total,
 			input_context_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
 			model_request_count, usage_observed_count, token_total_known_count,
 			metric_semantics_version
-		) VALUES (?, ?, ?, ?, 'day', ?, ?, 1, ?, ?, 0, 0, 0, 0, 0, 1, 1, 1, 1)
+		) VALUES (?, ?, ?, 'day', ?, ?, 1, ?, ?, 0, 0, 0, 0, 0, 1, 1, 1, 1)
 		ON DUPLICATE KEY UPDATE
 			exact_token_total = exact_token_total + VALUES(exact_token_total),
 			derived_token_total = derived_token_total + VALUES(derived_token_total),
 			updated_at = VALUES(updated_at)`,
-		nowMs, nowMs, userID, installationID, bucket, harness, exact, derived)
+		nowMs, nowMs, installationID, bucket, harness, exact, derived)
 	if err != nil {
 		t.Fatalf("seed telemetry model metrics: %v", err)
 	}
@@ -89,15 +89,15 @@ func seedTelemetryPersonalDay(t *testing.T, db *sql.DB, userID, date, harness st
 	}
 	_, err = db.Exec(`
 		INSERT INTO telemetry_model_metrics (
-			created_at, updated_at, user_id, installation_id, grain, bucket_start,
+			created_at, updated_at, installation_id, grain, bucket_start,
 			harness_id, model_key, exact_token_total, derived_token_total,
 			input_context_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
 			cache_eligible_input_tokens, cache_eligible_read_tokens, cache_pair_known_count,
 			model_request_count, usage_observed_count, token_total_known_count,
 			input_context_known_count, output_known_count, cache_read_known_count,
 			metric_semantics_version
-		) VALUES (?, ?, ?, ?, 'day', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 1, 1, 1, 1)`,
-		nowMs, nowMs, userID, installationID, bucket, harness,
+		) VALUES (?, ?, ?, 'day', ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 1, 1, 1, 1, 1)`,
+		nowMs, nowMs, installationID, bucket, harness,
 		tokens.Exact, tokens.Derived, tokens.InputContext, tokens.Output,
 		tokens.CacheRead, tokens.CacheWrite, tokens.Reasoning,
 		eligibleIn, eligibleRead, pairKnown)
@@ -106,12 +106,12 @@ func seedTelemetryPersonalDay(t *testing.T, db *sql.DB, userID, date, harness st
 	}
 	_, err = db.Exec(`
 		INSERT INTO telemetry_harness_metrics (
-			created_at, updated_at, user_id, installation_id, grain, bucket_start, harness_id,
+			created_at, updated_at, installation_id, grain, bucket_start, harness_id,
 			code_generated_lines, active_duration_ms, turn_started_count, turn_completed_count,
 			user_turn_started_count, code_known_count, duration_known_count, message_known_count,
 			metric_semantics_version
-		) VALUES (?, ?, ?, ?, 'day', ?, ?, ?, ?, ?, 0, ?, 1, 1, 1, 1)`,
-		nowMs, nowMs, userID, installationID, bucket, harness,
+		) VALUES (?, ?, ?, 'day', ?, ?, ?, ?, ?, 0, ?, 1, 1, 1, 1)`,
+		nowMs, nowMs, installationID, bucket, harness,
 		harnessVals.CodeLines, harnessVals.DurationMs, harnessVals.Messages, harnessVals.UserMessages)
 	if err != nil {
 		t.Fatalf("seed harness: %v", err)
@@ -136,11 +136,11 @@ func seedTelemetryCost(t *testing.T, db *sql.DB, userID, date, harness, currency
 	nowMs := now.UnixMilli()
 	_, err = db.Exec(`
 		INSERT INTO telemetry_cost_metrics (
-			created_at, updated_at, user_id, installation_id, grain, bucket_start,
+			created_at, updated_at, installation_id, grain, bucket_start,
 			harness_id, model_key, currency, estimated_cost_units, estimated_request_count,
 			cost_known_count, metric_semantics_version
-		) VALUES (?, ?, ?, ?, 'day', ?, ?, 1, ?, ?, 1, 1, 1)`,
-		nowMs, nowMs, userID, installationID, bucket, harness, currency, costUnits)
+		) VALUES (?, ?, ?, 'day', ?, ?, 1, ?, ?, 1, 1, 1)`,
+		nowMs, nowMs, installationID, bucket, harness, currency, costUnits)
 	if err != nil {
 		t.Fatalf("seed cost %s: %v", currency, err)
 	}

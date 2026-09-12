@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getAgentConfigs, getAgentQuotas, getDaemonStatus, hideWindow, isTauriEnvironment, openSettings, openWebsite, toggleGlobalPause } from './tauri-bridge';
 import { syncStatusText } from './sync-status';
 import type { AgentConfig, DaemonStatus } from './tauri-bridge';
-import { usageTokens, usageCosts, usageTrend, type UsageRange, type AgentQuota } from './usage-analytics';
+import { collectionStatusText, usageTokens, usageCosts, usageTrend, type UsageRange, type AgentQuota } from './usage-analytics';
 import { WeeklyTrend } from './components/WeeklyTrend';
 import { AnnualActivity, QuotaRings } from './components/UsageDetails';
 import { brandLogo, localTestBuild } from './brand';
@@ -85,14 +85,14 @@ export function UsagePanel() {
     if (!entries.length) return '—';
     return entries.map(([currency, value]) => new Intl.NumberFormat(zh ? 'zh-CN' : 'en-US', { style: 'currency', currency, currencyDisplay: 'narrowSymbol', maximumFractionDigits: 2 }).format(value)).join(' + ');
   };
-  const agentState = (agent: AgentConfig) => agent.status === 'UNDETECTED' ? text('未检测到', 'Not detected') : !agent.enabled ? text('已关闭', 'Disabled') : paused || agent.status === 'PAUSED' ? text('已暂停', 'Paused') : agent.status === 'DEGRADED' && (usageTokens(agent, 'all') ?? 0) > 0 ? text('部分功能不可用', 'Some features unavailable') : ['ERROR', 'DEGRADED', 'NEEDS_PERMISSION', 'CONFIGURING'].includes(agent.status) ? text('需要配置', 'Needs setup') : range === 'today' ? text('今日暂无用量', 'No usage today') : range === 'week' ? text('近 7 日暂无用量', 'No usage in 7 days') : text('暂无历史用量', 'No recorded usage');
+  const agentState = (agent: AgentConfig) => collectionStatusText(agent, range, !!paused, zh);
   return <div className="usage-panel">
     <header className="usage-header" data-tauri-drag-region="deep"><div className="usage-brand" data-tauri-drag-region="deep"><img src={brandLogo} alt="" draggable={false} /><div className="desktop-update-wordmark"><strong>TokenDance{localTestBuild ? " Test" : ""}</strong>{!localTestBuild && <UpdateNotice zh={zh} />}</div></div><div className="usage-window-controls" data-tauri-drag-region="false" role="group" aria-label={text('语言与窗口控制', 'Language and window controls')}>
       <button className="usage-language" onClick={() => { const next = zh ? 'en' : 'zh'; setLang(next); localStorage.setItem('tokendance.language', next); }} aria-label={text('切换到英文', 'Switch to Chinese')}>{zh ? 'EN' : '中'}</button>
       <button disabled={busy} onClick={() => void act(hideWindow)} aria-label={text('最小化到托盘', 'Minimize to tray')} title={text('收起到托盘 · Esc', 'Hide to tray · Esc')}>−</button>
     </div></header>
     <main className="usage-content">
-      <div className="usage-heading"><h1>{text('我的用量', 'My usage')}</h1><span>{text('本机数据', 'This device')} · {new Date().toLocaleDateString(zh ? 'zh-CN' : 'en-US', { month: 'short', day: 'numeric' })}</span></div>
+      <div className="usage-heading"><h1>{text('我的用量', 'My usage')}</h1><span>{new Date().toLocaleDateString(zh ? 'zh-CN' : 'en-US', { month: 'short', day: 'numeric' })}</span></div>
       <div className="usage-totals" aria-label={text('统计周期', 'Usage period')}>{periods.map(period => {
         const values = agents.map(agent => usageTokens(agent, period.key)).filter(value => value !== null);
         return <button className="usage-total-card" key={period.key} aria-pressed={range === period.key} onClick={() => setRange(period.key)} title={period.key === 'all' ? text('本机已记录的全部历史；升级前已清理的数据不包含在内', 'All recorded local history; excludes history removed before this upgrade') : undefined}>
@@ -101,12 +101,12 @@ export function UsagePanel() {
       })}</div>
       <WeeklyTrend key={range} points={trend} range={range} lang={lang} />
       <section className="usage-agents" aria-label={text('Agent 用量与额度', 'Agent usage and quotas')}>
-        <div className="usage-section-title"><h2>{text('Agent 用量与额度', 'Agent usage & quotas')}</h2><span>{text('用量前 3 · ', 'Top 3 · ')}{periods.find(period => period.key === range)?.label} · {text('额度独立周期', 'Separate quota windows')}</span></div>
+        <div className="usage-section-title"><h2>{text('Agent 用量与额度', 'Agent usage & quotas')}</h2></div>
         {active.map(agent => {
           const quota = quotas.find(item => item.agentId === agent.id);
           const tokens = usageTokens(agent, range);
           return <article className="usage-agent-card" key={agent.id}><div className="usage-agent-top"><div className="usage-agent-name"><span className="usage-agent-symbol">{agent.name.slice(0, 2)}</span><strong>{agent.name}</strong>{quota?.plan && <small>{quota.plan}</small>}</div><div className="usage-agent-value"><strong>{tokens === null ? '—' : format(tokens)}</strong><small>{costLabel([agent], range)}</small></div></div>
-            {(paused || !agent.enabled || ['ERROR', 'DEGRADED', 'NEEDS_PERMISSION'].includes(agent.status)) && <div className="usage-agent-warning">{agentState(agent)}</div>}
+            {(paused || !agent.enabled || ['ERROR', 'DEGRADED', 'NEEDS_PERMISSION', 'AUTH_REQUIRED', 'CONNECTING'].includes(agent.status)) && <div className="usage-agent-warning">{agentState(agent)}</div>}
             <QuotaRings quota={quota} zh={zh} />
           </article>;
         })}

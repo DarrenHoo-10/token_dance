@@ -307,22 +307,24 @@ const (
 
 // Installation represents installations table
 type Installation struct {
-	InstallationID     string             `json:"installationId"`
-	UserID             string             `json:"userId"`
-	DevicePublicKey    [32]byte           `json:"-"`
-	DeviceName         *string            `json:"deviceName"`
-	OSType             string             `json:"osType"`
-	OSVersion          *string            `json:"osVersion"`
-	Architecture       string             `json:"architecture"`
-	CollectorVersion   string             `json:"collectorVersion"`
-	InstallationStatus InstallationStatus `json:"installationStatus"`
-	DisabledAt         *time.Time         `json:"disabledAt,omitempty"`
-	DisabledReason     *string            `json:"disabledReason,omitempty"`
-	StatusVersion      uint64             `json:"statusVersion"`
-	RegisteredAt       time.Time          `json:"registeredAt"`
-	LastSeenAt         *time.Time         `json:"lastSeenAt,omitempty"`
-	RevokedAt          *time.Time         `json:"revokedAt,omitempty"`
-	UpdatedAt          time.Time          `json:"updatedAt"`
+	// BindingProofVerified is request-only proof of possession, never persisted or serialized.
+	BindingProofVerified bool               `json:"-"`
+	InstallationID       string             `json:"installationId"`
+	UserID               string             `json:"userId"`
+	DevicePublicKey      [32]byte           `json:"-"`
+	DeviceName           *string            `json:"deviceName"`
+	OSType               string             `json:"osType"`
+	OSVersion            *string            `json:"osVersion"`
+	Architecture         string             `json:"architecture"`
+	CollectorVersion     string             `json:"collectorVersion"`
+	InstallationStatus   InstallationStatus `json:"installationStatus"`
+	DisabledAt           *time.Time         `json:"disabledAt,omitempty"`
+	DisabledReason       *string            `json:"disabledReason,omitempty"`
+	StatusVersion        uint64             `json:"statusVersion"`
+	RegisteredAt         time.Time          `json:"registeredAt"`
+	LastSeenAt           *time.Time         `json:"lastSeenAt,omitempty"`
+	RevokedAt            *time.Time         `json:"revokedAt,omitempty"`
+	UpdatedAt            time.Time          `json:"updatedAt"`
 }
 
 type UsageEvent struct {

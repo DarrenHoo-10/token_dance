@@ -20,16 +20,16 @@ pub use admission::{
     AdmissionDecision, ResolvedTime, TimeSource,
 };
 pub use budget::{
-    DiscoveryBudget, ReadBudget, DEFAULT_GLOBAL_ACQUISITION_CONCURRENCY,
-    DEFAULT_PER_HARNESS_CONCURRENCY, DEFAULT_PENDING_SET_LIMIT, DEFAULT_READ_BUDGET,
+    DiscoveryBudget, ReadBudget, DEFAULT_GLOBAL_ACQUISITION_CONCURRENCY, DEFAULT_PENDING_SET_LIMIT,
+    DEFAULT_PER_HARNESS_CONCURRENCY, DEFAULT_READ_BUDGET,
 };
 pub use engine::{
     raw_record_from_bytes, run_source_once, AcquisitionRunner, RunOutcome, RunStats,
     SourceCommitSink, StoreSinkMut,
 };
 pub use jsonl::{
-    boundary_with_len, cursor_offset, cursor_with_offset, read_jsonl_budgeted, JsonlReadResult,
-    JsonlRecord, SourceChange,
+    boundary_with_len, cursor_offset, cursor_with_offset, read_jsonl_budgeted,
+    read_jsonl_budgeted_with_state, JsonlReadResult, JsonlRecord, SourceChange,
 };
 pub use metrics::AcquisitionMetrics;
 pub use scheduler::AcquisitionScheduler;
@@ -39,5 +39,5 @@ pub use sqlite_stream::{
 };
 pub use strategy::{
     CheckpointView, DecodeOutcome, DecoderState, FactDraft, HarnessStrategy, IgnoreCode,
-    NativeFactKey, RawBatch, RawRecord, RunnerError, SourceSpec, TokenAccuracy,
+    ModelAllocator, NativeFactKey, RawBatch, RawRecord, RunnerError, SourceSpec, TokenAccuracy,
 };

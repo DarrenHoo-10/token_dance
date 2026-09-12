@@ -1,7 +1,7 @@
 //! Budgeted JSONL offset reader: complete newlines only; triple budget; raw EOF.
 
 use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::time::Instant;
 
@@ -37,6 +37,8 @@ pub struct JsonlReadResult {
     pub ignored_incomplete_tail: bool,
     pub oversized_lines: usize,
     pub source_change: Option<SourceChange>,
+    /// Continue discarding an oversized record until its newline (persist with cursor).
+    pub skipping_oversized: bool,
 }
 
 /// Read JSONL from a committed byte offset with record/byte/time budgets.
@@ -46,6 +48,16 @@ pub fn read_jsonl_budgeted(
     committed_offset: u64,
     expected_len_hint: Option<u64>,
     budget: ReadBudget,
+) -> Result<JsonlReadResult, RunnerError> {
+    read_jsonl_budgeted_with_state(path, committed_offset, expected_len_hint, budget, false)
+}
+
+pub fn read_jsonl_budgeted_with_state(
+    path: &Path,
+    committed_offset: u64,
+    expected_len_hint: Option<u64>,
+    budget: ReadBudget,
+    mut skipping_oversized: bool,
 ) -> Result<JsonlReadResult, RunnerError> {
     if !path.exists() {
         return Ok(JsonlReadResult {
@@ -58,6 +70,7 @@ pub fn read_jsonl_budgeted(
             ignored_incomplete_tail: false,
             oversized_lines: 0,
             source_change: None,
+            skipping_oversized,
         });
     }
     let meta = std::fs::metadata(path).map_err(|e| RunnerError::Io(e.to_string()))?;
@@ -79,6 +92,7 @@ pub fn read_jsonl_budgeted(
             ignored_incomplete_tail: false,
             oversized_lines: 0,
             source_change: Some(SourceChange::Truncated),
+            skipping_oversized,
         });
     }
     if let Some(hint) = expected_len_hint {
@@ -95,6 +109,7 @@ pub fn read_jsonl_budgeted(
                 ignored_incomplete_tail: false,
                 oversized_lines: 0,
                 source_change: Some(SourceChange::IdentityMismatch),
+                skipping_oversized,
             });
         }
     }
@@ -103,81 +118,70 @@ pub fn read_jsonl_budgeted(
     file.seek(SeekFrom::Start(committed_offset))
         .map_err(|e| RunnerError::Io(e.to_string()))?;
 
+    // Read only the observed boundary. Concurrent appends are picked up next time.
+    let mut reader = BufReader::with_capacity(CHUNK, file.take(file_len - committed_offset));
     let started = Instant::now();
     let mut records = Vec::new();
     let mut bytes_read = 0usize;
     let mut oversized_lines = 0usize;
     let mut offset = committed_offset;
-    let mut carry = Vec::new();
-    let mut chunk = vec![0u8; CHUNK];
+    let mut line_start = offset;
+    let mut line = Vec::new();
     let mut ignored_incomplete_tail = false;
 
     loop {
-        if budget.exhausted(records.len(), bytes_read, started.elapsed()) {
+        // Byte/time limits are soft for ONE supported record, never mid-line.
+        // Oversized records instead persist a discard cursor, bounding both memory and I/O.
+        if (line.is_empty() || skipping_oversized)
+            && budget.exhausted(records.len(), bytes_read, started.elapsed())
+        {
             break;
         }
-        let n = file
-            .read(&mut chunk)
+        let buf = reader
+            .fill_buf()
             .map_err(|e| RunnerError::Io(e.to_string()))?;
-        if n == 0 {
-            if !carry.is_empty() {
-                ignored_incomplete_tail = true;
-            }
+        if buf.is_empty() {
+            ignored_incomplete_tail = !line.is_empty() || skipping_oversized;
             break;
         }
-        bytes_read = bytes_read.saturating_add(n);
-        carry.extend_from_slice(&chunk[..n]);
-
-        let mut start = 0usize;
-        while start < carry.len() {
-            if budget.exhausted(records.len(), bytes_read, started.elapsed()) {
-                break;
+        let newline = buf.iter().position(|b| *b == b'\n');
+        let used = newline.map_or(buf.len(), |n| n + 1);
+        let payload_len = used - usize::from(newline.is_some());
+        if !skipping_oversized {
+            if line.len() + payload_len > MAX_LINE_BYTES {
+                skipping_oversized = true;
+                oversized_lines += 1;
+                line.clear();
+            } else {
+                line.extend_from_slice(&buf[..payload_len]);
             }
-            match carry[start..].iter().position(|b| *b == b'\n') {
-                Some(rel) => {
-                    let end = start + rel;
-                    let mut line = &carry[start..end];
-                    if line.last() == Some(&b'\r') {
-                        line = &line[..line.len().saturating_sub(1)];
-                    }
-                    let line_start = offset + start as u64;
-                    let line_end = offset + end as u64 + 1; // include newline
-                    if line.len() > MAX_LINE_BYTES {
-                        oversized_lines += 1;
-                    } else if !line.is_empty() {
-                        records.push(JsonlRecord {
-                            byte_start: line_start,
-                            byte_end: line_end,
-                            payload: line.to_vec(),
-                        });
-                    }
-                    start = end + 1;
+        }
+        bytes_read += used;
+        let position = committed_offset + bytes_read as u64;
+        reader.consume(used);
+        if newline.is_some() {
+            if !skipping_oversized {
+                if line.last() == Some(&b'\r') {
+                    line.pop();
                 }
-                None => break,
+                if !line.is_empty() {
+                    records.push(JsonlRecord {
+                        byte_start: line_start,
+                        byte_end: position,
+                        payload: std::mem::take(&mut line),
+                    });
+                }
             }
-        }
-        if start > 0 {
-            offset += start as u64;
-            carry.drain(..start);
-        }
-        if carry.len() > MAX_LINE_BYTES {
-            // Poisonously large unterminated span: skip one byte to make progress
-            // and count as oversized; callers may Ignore.
-            oversized_lines += 1;
-            offset += 1;
-            carry.remove(0);
-        }
-        if n < CHUNK && carry.iter().all(|b| *b != b'\n') {
-            // Likely EOF mid-line; keep incomplete tail uncommitted.
-            if !carry.is_empty() {
-                ignored_incomplete_tail = true;
-            }
-            break;
+            line.clear();
+            skipping_oversized = false;
+            offset = position;
+            line_start = position;
+        } else if skipping_oversized {
+            offset = position;
+            line_start = position;
         }
     }
-
-    // Raw has_more is decided by source bytes, never by decoded emit count.
-    let has_more = offset < file_len || !carry.is_empty();
+    let has_more = offset < file_len;
 
     Ok(JsonlReadResult {
         records,
@@ -189,6 +193,7 @@ pub fn read_jsonl_budgeted(
         ignored_incomplete_tail,
         oversized_lines,
         source_change: None,
+        skipping_oversized,
     })
 }
 
@@ -196,7 +201,12 @@ pub fn cursor_offset(cursor: &Value) -> u64 {
     cursor
         .get("offset")
         .and_then(|v| v.as_u64())
-        .or_else(|| cursor.get("offset").and_then(|v| v.as_i64()).map(|v| v as u64))
+        .or_else(|| {
+            cursor
+                .get("offset")
+                .and_then(|v| v.as_i64())
+                .map(|v| v as u64)
+        })
         .unwrap_or(0)
 }
 

@@ -23,11 +23,11 @@ func TestMigrationEmbedLoading(t *testing.T) {
 	}
 
 	migs := runner.GetMigrations()
-	if len(migs) != 12 {
-		t.Fatalf("expected 12 migrations, got %d", len(migs))
+	if len(migs) != 13 {
+		t.Fatalf("expected 13 migrations, got %d", len(migs))
 	}
 
-	expected := []string{"0001", "0002", "0003", "0004", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013"}
+	expected := []string{"0001", "0002", "0003", "0004", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013", "0014"}
 	for i, m := range migs {
 		if m.Version != expected[i] {
 			t.Errorf("migration %d: expected version %s, got %s", i, expected[i], m.Version)
@@ -44,6 +44,32 @@ func TestMigrationEmbedLoading(t *testing.T) {
 			firstLine := strings.Split(st, "\n")[0]
 			t.Logf("  [%d] %s", j, firstLine)
 		}
+	}
+}
+
+func TestCompoundAlterDoesNotMistakeOldIndexForAppliedMigration(t *testing.T) {
+	db := getTestMySQLDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_, err = conn.ExecContext(ctx, "CREATE TABLE migration_compound_fixture (id BIGINT PRIMARY KEY, user_id BIGINT, device_id BIGINT, UNIQUE KEY uk_owner(user_id,device_id))")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.ExecContext(ctx, "DROP TABLE migration_compound_fixture")
+	stmt := "ALTER TABLE migration_compound_fixture DROP INDEX uk_owner, DROP COLUMN user_id, ADD UNIQUE KEY uk_owner(device_id)"
+	if applied, err := ddlAlreadyApplied(ctx, conn, stmt); err != nil || applied {
+		t.Fatalf("old index must not skip ALTER: applied=%v err=%v", applied, err)
+	}
+	if _, err := conn.ExecContext(ctx, stmt); err != nil {
+		t.Fatal(err)
+	}
+	if applied, err := ddlAlreadyApplied(ctx, conn, stmt); err != nil || !applied {
+		t.Fatalf("completed ALTER must resume safely: applied=%v err=%v", applied, err)
 	}
 }
 
@@ -124,8 +150,8 @@ func TestMigrationRunnerIntegration_CleanInstall(t *testing.T) {
 	// Verify all migrations recorded in schema_migrations
 	var count int
 	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count)
-	if err != nil || count != 12 {
-		t.Fatalf("expected 12 applied migrations, got %d (err: %v)", count, err)
+	if err != nil || count != 13 {
+		t.Fatalf("expected 13 applied migrations, got %d (err: %v)", count, err)
 	}
 
 	// Verify idempotency

@@ -1,3 +1,4 @@
+import { RebuildData } from "./components/RebuildData";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { brandLogo, localTestBuild } from "./brand";
 import { DesktopAccountCard } from "./DesktopAccountCard";
@@ -116,6 +117,7 @@ export function SettingsPage() {
           {data?.agents.length === 0 && <p className="settings-no-sources">{t("尚未发现可用的采集来源。", "No collection sources found yet.")}</p>}
         </div>
       </section>
+      <RebuildData zh={zh} />
       <SoftwareUpdateCard zh={zh} />
     </main>
     <footer className="settings-footer"><a className="settings-website-link" href={website} target="_blank" rel="noopener noreferrer" title={t("在浏览器打开 TokenDance 网站", "Open the TokenDance website in your browser")} onClick={event => { event.preventDefault(); void perform(() => openWebsite()); }}><span>{website}</span><span aria-hidden="true">↗</span></a><span>{!isTauriEnvironment() ? t("界面预览 · 示例状态", "Preview · Sample state") : `TokenDance ${data?.status.collectorVersion ?? ""}`}</span></footer>

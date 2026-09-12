@@ -124,6 +124,7 @@ export interface TelemetryEventsRequest {
   protocolVersion: number
   requestId: string
   events: Array<EventEnvelope>
+  reconstruction?: boolean
 }
 
 export interface EventAck {

@@ -315,19 +315,30 @@ impl TelemetryV2Transport for ScriptedTelemetryV2 {
 pub fn freeze_events_request(
     events: Vec<protocol::v2::EventEnvelope>,
 ) -> Result<(String, Vec<u8>, String), TransportError> {
+    freeze_events_request_with_reconstruction(events, false)
+}
+
+pub fn freeze_events_request_with_reconstruction(
+    events: Vec<protocol::v2::EventEnvelope>,
+    reconstruction: bool,
+) -> Result<(String, Vec<u8>, String), TransportError> {
     if events.is_empty() {
         return Err(TransportError::Decode("empty batch".into()));
     }
     if events.len() > CLIENT_MAX_BATCH_EVENTS {
         return Err(TransportError::Decode("batch event limit".into()));
     }
-    let request_id = format!("req_{}", URL_SAFE_NO_PAD.encode({
-        let mut b = [0u8; 16];
-        OsRng.fill_bytes(&mut b);
-        b
-    }));
+    let request_id = format!(
+        "req_{}",
+        URL_SAFE_NO_PAD.encode({
+            let mut b = [0u8; 16];
+            OsRng.fill_bytes(&mut b);
+            b
+        })
+    );
     let request = TelemetryEventsRequest {
         protocol_version: PROTOCOL_VERSION_NUMBER,
+        reconstruction: reconstruction.then_some(true),
         request_id: request_id.clone(),
         events,
     };

@@ -147,3 +147,19 @@ export function quotaStale(quota: AgentQuota, resetsAt: number | null, now = Dat
   const observed = Date.parse(quota.observedAt);
   return !Number.isFinite(observed) || observed > now || now - observed > 30 * 60 * 1000 || (resetsAt != null && resetsAt * 1000 <= now);
 }
+
+/** Collection status is separate from billing quota availability. */
+export function collectionStatusText(agent: AgentConfig, range: UsageRange, paused: boolean, zh: boolean): string {
+  const text = (cn: string, en: string) => zh ? cn : en;
+  if (!agent.enabled) return text('已关闭', 'Disabled');
+  if (paused || agent.status === 'PAUSED') return text('已暂停', 'Paused');
+  switch (agent.status) {
+    case 'UNDETECTED': return text('未检测到', 'Not detected');
+    case 'AUTH_REQUIRED': return text(`请在 ${agent.name} 重新登录`, `Sign in again to ${agent.name}`);
+    case 'CONNECTING': case 'CONFIGURING': return text('正在连接用量来源', 'Connecting to usage source');
+    case 'ERROR': return text('用量读取失败，将自动重试', 'Usage read failed; retrying automatically');
+    case 'NEEDS_PERMISSION': return text('缺少采集权限', 'Collection permission required');
+    case 'DEGRADED': return text('部分数据暂不可用', 'Some data is unavailable');
+    default: return range === 'today' ? text('今日暂无用量', 'No usage today') : range === 'week' ? text('近 7 日暂无用量', 'No usage in 7 days') : text('暂无历史用量', 'No recorded usage');
+  }
+}

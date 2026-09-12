@@ -19,7 +19,7 @@ const communityDaySumSQL = `
 		0,
 		CAST(COALESCE(SUM(model_request_count), 0) AS UNSIGNED),
 		0
-	FROM telemetry_model_metrics
+	FROM bound_telemetry_model_metrics
 	WHERE grain = 'day'
 	  AND delete_at IS NULL
 	  AND bucket_start = ?`
@@ -80,7 +80,7 @@ func (s *communityStatsStore) SumCommunityDay(ctx context.Context, date string) 
 	// Trusted code lines + cost from companion tables for the same day bucket.
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT CAST(COALESCE(SUM(code_generated_lines), 0) AS UNSIGNED)
-		FROM telemetry_harness_metrics
+		FROM bound_telemetry_harness_metrics
 		WHERE grain = 'day' AND delete_at IS NULL AND bucket_start = ?`, bucketStart,
 	).Scan(&totals.CodeLines); err != nil {
 		return store.CommunityDailyTotals{}, fmt.Errorf("sum community code lines %s: %w", date, err)
@@ -100,7 +100,7 @@ func queryCommunityCostsByCurrency(ctx context.Context, db *sql.DB, bucketStart 
 		SELECT
 			currency,
 			CAST(COALESCE(SUM(reported_cost_units + estimated_cost_units), 0) AS CHAR)
-		FROM telemetry_cost_metrics
+		FROM bound_telemetry_cost_metrics
 		WHERE grain = 'day' AND delete_at IS NULL AND bucket_start = ?
 		GROUP BY currency
 		ORDER BY currency`, bucketStart)

@@ -51,7 +51,7 @@ func liveEligibleTotalsSQL() string {
 		SELECT user_id,
 		       SUM(exact_token_total + derived_token_total) AS tokens,
 		       FROM_UNIXTIME(MAX(updated_at) / 1000) AS watermark
-		FROM telemetry_model_metrics
+		FROM bound_telemetry_model_metrics
 		WHERE grain = 'day' AND delete_at IS NULL
 		  AND bucket_start >= ? AND bucket_start <= ?
 		GROUP BY user_id

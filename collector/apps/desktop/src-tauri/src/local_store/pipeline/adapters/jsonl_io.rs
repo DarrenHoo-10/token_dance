@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 
 use crate::local_store::pipeline::runner::{
-    read_jsonl_budgeted, CheckpointView, RawBatch, RawRecord, ReadBudget, RunnerError, SourceChange,
+    read_jsonl_budgeted_with_state, CheckpointView, RawBatch, RawRecord, ReadBudget, RunnerError,
+    SourceChange,
 };
 
 pub fn read_jsonl_source(
@@ -22,7 +23,12 @@ pub fn read_jsonl_source(
         .observed_boundary_json
         .get("len")
         .and_then(|v| v.as_u64());
-    let result = read_jsonl_budgeted(path, offset, expected_len, budget)?;
+    let skipping = committed
+        .cursor_json
+        .get("skipping_oversized")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let result = read_jsonl_budgeted_with_state(path, offset, expected_len, budget, skipping)?;
     if let Some(change) = result.source_change {
         match change {
             SourceChange::Truncated | SourceChange::IdentityMismatch => {
@@ -45,7 +51,7 @@ pub fn read_jsonl_source(
         .collect();
     Ok(RawBatch {
         records,
-        next_cursor_json: json!({ "offset": result.next_offset }),
+        next_cursor_json: json!({ "offset": result.next_offset, "skipping_oversized": result.skipping_oversized }),
         next_observed_boundary_json: json!({ "len": result.file_len }),
         has_more: result.has_more,
         bytes_read: result.bytes_read,

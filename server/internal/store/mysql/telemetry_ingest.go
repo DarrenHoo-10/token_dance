@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"time"
@@ -138,7 +139,7 @@ func processTelemetryEventV2(
 	}
 
 	occurredAt, err := strconv.ParseUint(string(event.OccurredAt), 10, 64)
-	if err != nil {
+	if err != nil || occurredAt == 0 || occurredAt > math.MaxInt64 {
 		code := v2.AckErrorCodeSchemaInvalid
 		ack.Result = v2.AckResultInvalid
 		ack.Code = &code
@@ -180,7 +181,7 @@ func processTelemetryEventV2(
 		return ack, nil
 	}
 
-	if int64(occurredAt) < lowerBoundMs {
+	if int64(occurredAt) < lowerBoundMs && !in.Reconstruction {
 		existingAck, found, err := classifyExistingTelemetryEvent(ctx, tx, in.InstallationID, eventID, providedHash, event.ContentHash)
 		if err != nil {
 			return ack, err
@@ -264,19 +265,19 @@ func processTelemetryEventV2(
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO telemetry_events (
 			created_at, updated_at, extra,
-			user_id, installation_id, event_id, fact_key, fact_revision,
+			installation_id, event_id, fact_key, fact_revision,
 			harness_id, event_type, schema_version, metric_semantics_version,
 			content_hash, occurred_at, model_key, skill_id,
 			session_key, turn_key, cost_scope_key, payload_json, status_json
 		) VALUES (
 			?, ?, JSON_OBJECT(),
-			?, ?, ?, ?, ?,
+			?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?, ?
 		)`,
 		nowMs, nowMs,
-		in.UserID, in.InstallationID, eventID[:], factKey[:], factRevision,
+		in.InstallationID, eventID[:], factKey[:], factRevision,
 		event.HarnessID, string(event.EventType), event.SchemaVersion, event.MetricSemanticsVersion,
 		providedHash[:], occurredAt, modelKey, skillID,
 		nullableBytes(sessionKey), nullableBytes(turnKey), nullableBytes(costScopeKey),

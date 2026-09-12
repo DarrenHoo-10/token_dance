@@ -59,6 +59,8 @@ commands.allow = [
   "install_update",
   "get_daemon_status",
   "retry_runtime_init",
+  "get_rebuild_status",
+  "rebuild_local_data",
   "toggle_global_pause",
   "set_global_pause",
   "get_collector_metrics",

@@ -11,6 +11,7 @@ use super::common::{
     emit_usage_fact, json_obj, parse_json_record, remember_source_time, resolve_record_time,
     str_field, u64_field, SkillBook, UsageFactArgs,
 };
+use super::cursor_usage::{decode_usage, CursorUsagePaths, CursorUsageSource, STREAM_USAGE};
 use super::identity::{source_key, TypedNativeKey};
 use super::jsonl_io::{discover_jsonl_files, read_jsonl_source};
 use crate::local_store::pipeline::runner::{
@@ -27,6 +28,8 @@ pub const STREAM_REMOTE: &str = "remote-api-aggregate";
 pub struct CursorStrategy {
     pub identity_secret: Vec<u8>,
     pub transcripts_root: PathBuf,
+    pub usage_source: Option<CursorUsageSource>,
+    model_allocator: Option<crate::local_store::pipeline::runner::ModelAllocator>,
     pub skill_book: SkillBook,
     #[allow(dead_code)]
     pub skill_allocator: Arc<dyn Fn([u8; 32], &str) -> i64 + Send + Sync>,
@@ -42,18 +45,54 @@ impl CursorStrategy {
         Self {
             identity_secret: identity_secret.into(),
             transcripts_root: transcripts_root.into(),
+            usage_source: None,
+            model_allocator: None,
             skill_book,
             skill_allocator,
         }
     }
 }
 
+impl CursorStrategy {
+    pub fn with_usage(mut self, paths: CursorUsagePaths) -> Self {
+        self.usage_source = Some(CursorUsageSource::new(paths));
+        self
+    }
+}
+
 impl HarnessStrategy for CursorStrategy {
+    fn set_model_allocator(
+        &mut self,
+        allocator: crate::local_store::pipeline::runner::ModelAllocator,
+    ) {
+        self.model_allocator = Some(allocator);
+    }
+    fn collection_status(&self) -> Option<&'static str> {
+        self.usage_source
+            .as_ref()
+            .filter(|s| s.configured())
+            .map(|s| s.status())
+    }
+
     fn harness_id(&self) -> &str {
         HARNESS_ID
     }
 
     fn discover(&self, budget: DiscoveryBudget) -> Result<Vec<SourceSpec>, RunnerError> {
+        if let Some(source) = self.usage_source.as_ref().filter(|s| s.configured()) {
+            let locator = source.locator();
+            return Ok(vec![SourceSpec {
+                harness_id: HARNESS_ID.into(),
+                source_key: source_key(&self.identity_secret, HARNESS_ID, &locator),
+                source_kind: SourceKind::Other,
+                locator_ref: locator,
+                stream_key: STREAM_USAGE.into(),
+                cursor_kind: CursorKind::Opaque,
+                initial_cursor_json: json!({}),
+                initial_decoder_state_json: json!({}),
+                observed_boundary_json: json!({}),
+            }]);
+        }
         let (files, _cursor) = discover_jsonl_files(
             &self.transcripts_root,
             ".jsonl",
@@ -85,6 +124,13 @@ impl HarnessStrategy for CursorStrategy {
         committed: &CheckpointView,
         budget: ReadBudget,
     ) -> Result<RawBatch, RunnerError> {
+        if stream_key == STREAM_USAGE {
+            return self
+                .usage_source
+                .as_ref()
+                .ok_or_else(|| RunnerError::InvalidArgument("CURSOR_SOURCE_MISSING".into()))?
+                .read(&self.transcripts_root, committed, budget);
+        }
         if stream_key == STREAM_REMOTE
             || capability::stream_level(HARNESS_ID, stream_key)
                 == Some(CapabilityLevel::Unavailable)
@@ -111,6 +157,21 @@ impl HarnessStrategy for CursorStrategy {
             Ok(v) => v,
             Err(o) => return Ok(o),
         };
+        if value["cursor_usage"].as_bool() == Some(true) {
+            let mut fact = decode_usage(&self.identity_secret, &value)?;
+            if let (Some(allocate), Some(model)) = (
+                &self.model_allocator,
+                value["model"].as_str().filter(|s| !s.is_empty()),
+            ) {
+                fact.model_key = allocate("cursor", model)?;
+                fact.model_identity = Some(("cursor".into(), model.into()));
+            }
+            return Ok(DecodeOutcome::Emit(vec![fact]));
+        }
+        // Production token usage has one authority; transcript content cannot duplicate API facts.
+        if self.usage_source.is_some() {
+            return Ok(DecodeOutcome::ContextOnly);
+        }
         let Some(o) = json_obj(&value) else {
             return Ok(DecodeOutcome::Ignore(IgnoreCode::MalformedRecord));
         };

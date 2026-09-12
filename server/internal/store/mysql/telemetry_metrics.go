@@ -24,7 +24,7 @@ func SumTrustedTokensForWindow(ctx context.Context, tx *sql.Tx, userID string, f
 	var raw sql.NullString
 	if err := tx.QueryRowContext(ctx, `
 		SELECT CAST(COALESCE(SUM(exact_token_total + derived_token_total), 0) AS CHAR)
-		FROM telemetry_model_metrics
+		FROM bound_telemetry_model_metrics
 		WHERE user_id = ?
 		  AND grain = 'day'
 		  AND delete_at IS NULL
@@ -54,10 +54,10 @@ func ApplyHarnessMetricDeltaTx(ctx context.Context, tx *sql.Tx, userID, installa
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO telemetry_harness_metrics (
-			created_at, updated_at, user_id, installation_id, grain, bucket_start, harness_id, metric_semantics_version
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			created_at, updated_at, installation_id, grain, bucket_start, harness_id, metric_semantics_version
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at)`,
-		nowMs, nowMs, userID, installationID, grain, bucketStart, harnessID, semantics,
+		nowMs, nowMs, installationID, grain, bucketStart, harnessID, semantics,
 	); err != nil {
 		return fmt.Errorf("ensure harness metric row: %w", err)
 	}
@@ -81,11 +81,11 @@ func ApplyHarnessMetricDeltaTx(ctx context.Context, tx *sql.Tx, userID, installa
 	if len(args) == 1 {
 		return nil
 	}
-	args = append(args, userID, grain, bucketStart, installationID, harnessID)
+	args = append(args, grain, bucketStart, installationID, harnessID)
 	query := fmt.Sprintf(`
 		UPDATE telemetry_harness_metrics
 		SET %s
-		WHERE user_id = ? AND grain = ? AND bucket_start = ? AND installation_id = ? AND harness_id = ?`,
+		WHERE grain = ? AND bucket_start = ? AND installation_id = ? AND harness_id = ?`,
 		strings.Join(setParts, ", "))
 	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("apply harness metric delta: %w", err)
@@ -108,10 +108,10 @@ func ApplyModelMetricDeltaTx(ctx context.Context, tx *sql.Tx, userID, installati
 		"reasoning_known_count", "tool_extra_known_count",
 		"cache_eligible_input_tokens", "cache_eligible_read_tokens", "cache_pair_known_count",
 	}
-	args := []interface{}{nowMs, nowMs, userID, installationID, grain, bucketStart, harnessID, modelKey, semantics}
-	placeholders := "?, ?, ?, ?, ?, ?, ?, ?, ?"
+	args := []interface{}{nowMs, nowMs, installationID, grain, bucketStart, harnessID, modelKey, semantics}
+	placeholders := "?, ?, ?, ?, ?, ?, ?, ?"
 	updates := "updated_at = VALUES(updated_at)"
-	insertCols := "created_at, updated_at, user_id, installation_id, grain, bucket_start, harness_id, model_key, metric_semantics_version"
+	insertCols := "created_at, updated_at, installation_id, grain, bucket_start, harness_id, model_key, metric_semantics_version"
 	for _, col := range cols {
 		v := d[col]
 		insertCols += ", " + col
@@ -140,10 +140,10 @@ func ApplySkillMetricDeltaTx(ctx context.Context, tx *sql.Tx, userID, installati
 		"use_count", "exact_use_count", "derived_use_count", "correlated_use_count",
 		"success_count", "failure_count", "duration_ms", "duration_known_count",
 	}
-	args := []interface{}{nowMs, nowMs, userID, installationID, grain, bucketStart, harnessID, skillID, semantics}
-	placeholders := "?, ?, ?, ?, ?, ?, ?, ?, ?"
+	args := []interface{}{nowMs, nowMs, installationID, grain, bucketStart, harnessID, skillID, semantics}
+	placeholders := "?, ?, ?, ?, ?, ?, ?, ?"
 	updates := "updated_at = VALUES(updated_at)"
-	insertCols := "created_at, updated_at, user_id, installation_id, grain, bucket_start, harness_id, skill_id, metric_semantics_version"
+	insertCols := "created_at, updated_at, installation_id, grain, bucket_start, harness_id, skill_id, metric_semantics_version"
 	for _, col := range cols {
 		v := d[col]
 		insertCols += ", " + col
@@ -170,11 +170,11 @@ func ApplyCostMetricDeltaTx(ctx context.Context, tx *sql.Tx, userID, installatio
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO telemetry_cost_metrics (
-			created_at, updated_at, user_id, installation_id, grain, bucket_start, harness_id,
+			created_at, updated_at, installation_id, grain, bucket_start, harness_id,
 			model_key, currency, metric_semantics_version
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at)`,
-		nowMs, nowMs, userID, installationID, grain, bucketStart, harnessID, modelKey, currency, semantics,
+		nowMs, nowMs, installationID, grain, bucketStart, harnessID, modelKey, currency, semantics,
 	); err != nil {
 		return fmt.Errorf("ensure cost metric row: %w", err)
 	}
@@ -194,11 +194,11 @@ func ApplyCostMetricDeltaTx(ctx context.Context, tx *sql.Tx, userID, installatio
 	if len(args) == 1 {
 		return nil
 	}
-	args = append(args, userID, grain, bucketStart, installationID, harnessID, modelKey, currency)
+	args = append(args, grain, bucketStart, installationID, harnessID, modelKey, currency)
 	query := fmt.Sprintf(`
 		UPDATE telemetry_cost_metrics
 		SET %s
-		WHERE user_id = ? AND grain = ? AND bucket_start = ? AND installation_id = ?
+		WHERE grain = ? AND bucket_start = ? AND installation_id = ?
 		  AND harness_id = ? AND model_key = ? AND currency = ?`, strings.Join(setParts, ", "))
 	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 		return fmt.Errorf("apply cost metric delta: %w", err)
@@ -232,10 +232,10 @@ func UpsertBucketEntityTx(ctx context.Context, tx *sql.Tx, userID, installationI
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO telemetry_bucket_entities (
-			created_at, updated_at, user_id, installation_id, grain, bucket_start, harness_id,
+			created_at, updated_at, installation_id, grain, bucket_start, harness_id,
 			entity_kind, entity_key, parent_key, has_started, has_completed, has_user_start,
 			session_duration_ms, turn_duration_ms
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			parent_key = COALESCE(VALUES(parent_key), parent_key),
 			has_started = GREATEST(has_started, VALUES(has_started)),
@@ -244,7 +244,7 @@ func UpsertBucketEntityTx(ctx context.Context, tx *sql.Tx, userID, installationI
 			session_duration_ms = COALESCE(VALUES(session_duration_ms), session_duration_ms),
 			turn_duration_ms = COALESCE(VALUES(turn_duration_ms), turn_duration_ms),
 			updated_at = VALUES(updated_at)`,
-		nowMs, nowMs, userID, installationID, grain, bucketStart, harnessID,
+		nowMs, nowMs, installationID, grain, bucketStart, harnessID,
 		kind, key, parent, started, completed, userStart, sess, turn,
 	); err != nil {
 		return fmt.Errorf("upsert bucket entity: %w", err)
@@ -256,21 +256,21 @@ func UpsertBucketEntityTx(ctx context.Context, tx *sql.Tx, userID, installationI
 func LockBucketEntityTx(ctx context.Context, tx *sql.Tx, userID, installationID, grain string, bucketStart int64, harnessID, kind string, key []byte, nowMs int64) error {
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO telemetry_bucket_entities (
-			created_at, updated_at, user_id, installation_id, grain, bucket_start, harness_id,
+			created_at, updated_at, installation_id, grain, bucket_start, harness_id,
 			entity_kind, entity_key, has_started, has_completed, has_user_start
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)
 		ON DUPLICATE KEY UPDATE id = id`,
-		nowMs, nowMs, userID, installationID, grain, bucketStart, harnessID, kind, key,
+		nowMs, nowMs, installationID, grain, bucketStart, harnessID, kind, key,
 	); err != nil {
 		return fmt.Errorf("ensure bucket entity: %w", err)
 	}
 	var id uint64
 	if err := tx.QueryRowContext(ctx, `
 		SELECT id FROM telemetry_bucket_entities
-		WHERE user_id = ? AND installation_id = ? AND grain = ? AND bucket_start = ?
+		WHERE installation_id = ? AND grain = ? AND bucket_start = ?
 		  AND harness_id = ? AND entity_kind = ? AND entity_key = ?
 		FOR UPDATE`,
-		userID, installationID, grain, bucketStart, harnessID, kind, key,
+		installationID, grain, bucketStart, harnessID, kind, key,
 	).Scan(&id); err != nil {
 		return fmt.Errorf("lock bucket entity: %w", err)
 	}
@@ -288,9 +288,9 @@ func LoadBucketEntityTx(ctx context.Context, tx *sql.Tx, userID, installationID,
 	err = tx.QueryRowContext(ctx, `
 		SELECT has_started, has_completed, has_user_start, session_duration_ms, turn_duration_ms, parent_key
 		FROM telemetry_bucket_entities
-		WHERE user_id = ? AND installation_id = ? AND grain = ? AND bucket_start = ?
+		WHERE installation_id = ? AND grain = ? AND bucket_start = ?
 		  AND harness_id = ? AND entity_kind = ? AND entity_key = ?`,
-		userID, installationID, grain, bucketStart, harnessID, kind, key,
+		installationID, grain, bucketStart, harnessID, kind, key,
 	).Scan(&started, &completed, &userStart, &sessionDur, &turnDur, &parentKey)
 	if err != nil {
 		return

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { usageTokens, usageCosts, annualUsage, usageTrend, quotaStale, quotaStatusText, quotaWindowLabel } from '../src/usage-analytics.ts';
+import { collectionStatusText, usageTokens, usageCosts, annualUsage, usageTrend, quotaStale, quotaStatusText, quotaWindowLabel } from '../src/usage-analytics.ts';
 import { lastSevenDays } from '../src/weekly-usage.ts';
 const now = new Date(2026, 8, 5, 12);
 const dates = lastSevenDays(now);
@@ -133,4 +133,13 @@ test('pipeline pricing preserves currencies and does not count the legacy USD mi
   const free = usageCosts([{ ...agent, totalCosts: {}, pricing: { ...pricing,
     estimatedUsd: 0, estimatedCosts: { CNY: 0 }, estimatedRequests: 1 } }], 'all', now);
   assert.deepEqual(free.currencies, { CNY: 0 });
+});
+
+test('collector status follows the actual feed without asking for unspecified configuration', () => {
+  const agent = {name:'Cursor',enabled:true,status:'ACTIVE'};
+  assert.equal(collectionStatusText(agent,'today',false,true),'今日暂无用量');
+  assert.equal(collectionStatusText({...agent,status:'CONNECTING'},'today',false,true),'正在连接用量来源');
+  assert.equal(collectionStatusText({...agent,status:'AUTH_REQUIRED'},'today',false,true),'请在 Cursor 重新登录');
+  assert.equal(collectionStatusText({...agent,status:'ERROR'},'today',false,true),'用量读取失败，将自动重试');
+  assert.equal(collectionStatusText({...agent,status:'AUTH_REQUIRED'},'today',true,true),'已暂停');
 });
