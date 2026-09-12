@@ -13,6 +13,7 @@ struct Presentation {
     /// `show()` often fails `SetForegroundWindow`, and WebView2 then emits a
     /// stale `Focused(false)` that would otherwise hide the panel immediately.
     held_focus: bool,
+    blur_generation: u64,
 }
 
 #[derive(Default)]
@@ -22,6 +23,7 @@ impl WindowPresentation {
     fn request(&self, label: &str, request: OpenRequest) -> bool {
         let mut entries = self.0.lock().expect("window presentation lock");
         let entry = entries.entry(label.into()).or_default();
+        entry.blur_generation = entry.blur_generation.wrapping_add(1);
         if entry.ready { true } else { entry.pending = Some(request); false }
     }
     fn ready(&self, label: &str) -> Option<OpenRequest> {
@@ -41,12 +43,17 @@ impl WindowPresentation {
         if let Some(entry) = self.0.lock().expect("window presentation lock").get_mut(label) {
             entry.pending = None;
             entry.held_focus = false;
+            entry.blur_generation = entry.blur_generation.wrapping_add(1);
         }
+    }
+    pub(crate) fn blur_generation(&self, label: &str) -> Option<u64> {
+        self.0.lock().expect("window presentation lock").get(label).map(|entry| entry.blur_generation)
     }
     /// Returns true when a delayed hide-on-blur should be scheduled.
     pub fn on_focus_change(&self, label: &str, focused: bool) -> bool {
         let mut entries = self.0.lock().expect("window presentation lock");
         let entry = entries.entry(label.into()).or_default();
+        entry.blur_generation = entry.blur_generation.wrapping_add(1);
         if focused {
             entry.held_focus = true;
             false
@@ -303,6 +310,11 @@ pub async fn hide_window(window: WebviewWindow) -> Result<(), String> {
 /// Reuse the existing settings window when it is open; otherwise show usage.
 /// Going through presentation preserves loading, focus and orb visibility rules.
 pub(crate) fn activate_primary_window(app: &AppHandle) -> Result<(), String> {
+    // Recovery can be minimized before AppState exists. Restore it without
+    // creating normal windows or requesting credentials in the background.
+    if let Some(recovery) = app.get_webview_window("startup-error") {
+        return present(&recovery).map_err(|error| error.to_string());
+    }
     if let Some(settings) = app.get_webview_window("settings") {
         if settings.is_visible().unwrap_or(false)
             || settings.is_minimized().unwrap_or(false)
@@ -329,6 +341,30 @@ pub async fn quit_app(app: AppHandle, state: State<'_, AppState>) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_restore_invalidates_a_pending_blur_hide() {
+        let state = WindowPresentation::default();
+        state.ready("main");
+        assert!(!state.on_focus_change("main", true));
+        assert!(state.on_focus_change("main", false));
+        let before = state.blur_generation("main");
+        state.request("main", OpenRequest::Panel(PhysicalPosition::new(0.0, 0.0)));
+        assert_ne!(before, state.blur_generation("main"));
+    }
+
+    #[test]
+    fn regained_focus_and_close_invalidate_old_blur_callbacks() {
+        let state = WindowPresentation::default();
+        state.on_focus_change("main", true);
+        state.on_focus_change("main", false);
+        let before = state.blur_generation("main");
+        state.on_focus_change("main", true);
+        assert_ne!(before, state.blur_generation("main"));
+        let focused = state.blur_generation("main");
+        state.mark_hidden("main");
+        assert_ne!(focused, state.blur_generation("main"));
+    }
 
     #[test]
     fn primary_window_startup_minimize_restore_blocks_orb() {

@@ -12,6 +12,8 @@ pub mod rebuild;
 mod single_instance;
 pub mod state;
 mod startup_recovery;
+#[cfg(all(target_os = "macos", debug_assertions))]
+mod reopen_smoke;
 pub mod tray_state;
 pub mod updates;
 pub mod upload_pipeline;
@@ -280,6 +282,8 @@ pub fn run() {
                 commands::window::page_loaded(webview.app_handle(), webview.label());
                 if startup_error_smoke() && webview.label() == "main" {
                     println!("TOKENDANCE_DESKTOP_READY");
+                    #[cfg(all(target_os = "macos", debug_assertions))]
+                    reopen_smoke::start(webview.app_handle());
                 }
             }
         })
@@ -294,7 +298,13 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             // Closing recovery must quit, not hide an app with no usable windows.
-            if window.label() == "startup-error" { return; }
+            if window.label() == "startup-error" {
+                if matches!(event, WindowEvent::CloseRequested { .. })
+                    && !window.state::<DesktopStarted>().0.load(std::sync::atomic::Ordering::Acquire) {
+                    window.app_handle().exit(0);
+                }
+                return;
+            }
             if commands::orb::is_orb_window(window.label()) {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
@@ -310,17 +320,21 @@ pub fn run() {
                     if *focused {
                         presentation.on_focus_change(window.label(), true);
                     } else if presentation.on_focus_change(window.label(), false) {
+                        let generation = presentation.blur_generation(window.label());
                         let window = window.clone();
+                        let handle = window.app_handle().clone();
                         tauri::async_runtime::spawn(async move {
                             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                            if window.is_visible().unwrap_or(false)
-                                && !window.is_focused().unwrap_or(true)
-                            {
-                                window
-                                    .state::<commands::window::WindowPresentation>()
-                                    .mark_hidden(window.label());
-                                let _ = window.hide();
-                            }
+                            let _ = handle.run_on_main_thread(move || {
+                                let presentation = window.state::<commands::window::WindowPresentation>();
+                                if presentation.blur_generation(window.label()) != generation { return; }
+                                if window.is_visible().unwrap_or(false)
+                                    && !window.is_minimized().unwrap_or(true)
+                                    && !window.is_focused().unwrap_or(true) {
+                                    presentation.mark_hidden(window.label());
+                                    let _ = window.hide();
+                                }
+                            });
                         });
                     }
                 }
@@ -345,9 +359,20 @@ pub fn run() {
             Ok(())
         });
 
-    if let Err(error) = builder.run(recovery_context()) {
-        write_crash_log(&format!("run TokenDance desktop application: {error}"));
-        panic!("run TokenDance desktop application: {error}");
+    match builder.build(recovery_context()) {
+        Ok(app) => app.run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                // AppKit may report a minimized window as visible. Handle
+                // every explicit Dock reopen, irrespective of that flag.
+                if let Err(error) = commands::window::activate_primary_window(app) {
+                    write_crash_log(&format!("reopen TokenDance: {error}"));
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        }),
+        Err(error) => write_crash_log(&format!("run TokenDance desktop application: {error}")),
     }
 }
 
