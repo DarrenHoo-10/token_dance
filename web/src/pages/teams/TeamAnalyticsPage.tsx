@@ -116,6 +116,7 @@ export const TeamAnalyticsPage: React.FC = () => {
   return (
     <div>
       <TeamDateRangeBar timezone={scope.team.timezone} />
+      {analysis.quality.hasLegacyAggregates && <p className="team-status-banner">{t('teams.quality.legacySummary')}</p>}
       <p className="text-muted" style={{ fontSize: 12, margin: '12px 0' }}>
         {t('teams.overview.updatedAt', { time: formatInTimezone(analysis.snapshot.asOf, analysis.range.timezone, locale) })}
         {analysis.snapshot.refreshing ? ` · ${t('teams.analytics.refreshing')}` : ''}

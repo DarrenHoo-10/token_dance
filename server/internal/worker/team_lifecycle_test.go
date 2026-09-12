@@ -73,8 +73,8 @@ func TestTeamAnalysisClaimAuthDiscardAndSourceRefreshMySQL(t *testing.T) {
 			rule_version, status, active_request_key, as_of, next_attempt_at, expires_at
 		) VALUES (
 			'tas_team_analysis_00000000001', ?, '2026-09-01', '2026-09-07', 1, 0,
-			'2', 'queued', 'analysis-key-1', ?, ?, ?
-		)`, teamID, now, now, now.Add(30*time.Minute)); err != nil {
+			?, 'queued', 'analysis-key-1', ?, ?, ?
+		)`, teamID, domain.TeamAnalysisRuleVersion, now, now, now.Add(30*time.Minute)); err != nil {
 		t.Fatalf("seed snapshot: %v", err)
 	}
 
@@ -106,8 +106,8 @@ func TestTeamAnalysisClaimAuthDiscardAndSourceRefreshMySQL(t *testing.T) {
 			rule_version, status, active_request_key, as_of, next_attempt_at, expires_at
 		) VALUES (
 			'tas_team_analysis_00000000002', ?, '2026-09-01', '2026-09-07', 1, 0,
-			'2', 'queued', 'analysis-key-stale', ?, ?, ?
-		)`, teamID, now, now, now.Add(30*time.Minute)); err != nil {
+			?, 'queued', 'analysis-key-stale', ?, ?, ?
+		)`, teamID, domain.TeamAnalysisRuleVersion, now, now, now.Add(30*time.Minute)); err != nil {
 		t.Fatalf("seed stale snapshot: %v", err)
 	}
 	if _, err := w.ProcessTeamAnalysis(ctx); err != nil {

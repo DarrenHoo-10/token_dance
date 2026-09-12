@@ -19,7 +19,7 @@ import { useLocale } from '@/context/LocaleContext';
 import { useNotification } from '@/context/NotificationContext';
 import { useTeam } from '@/context/TeamContext';
 import { createIdempotencyKey, formatDecimalAmount, formatTokenCompact, metricDisplay } from './teamUtils';
-import { AnalysisSkeleton, RoleBadge, TeamAvatar, teamErrorMessage, useTeamSearchFilters } from './TeamShared';
+import { AnalysisSkeleton, RoleBadge, TeamAvatar, TeamDateRangeBar, teamErrorMessage, useTeamSearchFilters } from './TeamShared';
 import { useTeamAnalysis } from './useTeamAnalysis';
 
 type MemberTab = 'joined' | 'pending' | 'links';
@@ -29,7 +29,7 @@ export const TeamMembersPage: React.FC = () => {
   const { showToast } = useNotification();
   const { scope, authRevision, refresh, applyScope } = useTeam();
   const { range, from, to, agent, provider, model } = useTeamSearchFilters();
-  const { analysis, updating } = useTeamAnalysis({
+  const { analysis, updating, waitingForDates, error: analysisError } = useTeamAnalysis({
     teamId: scope?.team.id,
     authRevision,
     range,
@@ -80,7 +80,9 @@ export const TeamMembersPage: React.FC = () => {
   }, [canManage, query, scope, snapshotId]);
 
   if (!scope) return null;
-  if (updating && !analysis) return <AnalysisSkeleton />;
+  if (waitingForDates) return <div><TeamDateRangeBar timezone={scope.team.timezone} /><p role="status">{t('teams.range.chooseDates')}</p></div>;
+  if (analysisError) return <div><TeamDateRangeBar timezone={scope.team.timezone} /><ErrorState error={analysisError} description={teamErrorMessage(t, analysisError)} /></div>;
+  if (updating && !analysis) return <div><TeamDateRangeBar timezone={scope.team.timezone} /><AnalysisSkeleton /></div>;
   if (error) return <ErrorState error={error} description={teamErrorMessage(t, error)} />;
 
   const openDetail = async (member: TeamMember) => {
@@ -107,6 +109,8 @@ export const TeamMembersPage: React.FC = () => {
 
   return (
     <div>
+      <TeamDateRangeBar timezone={scope.team.timezone} />
+      {analysis?.quality.hasLegacyAggregates && <p className="team-status-banner">{t('teams.quality.legacySummary')}</p>}
       <div className="segmented-control" role="tablist" style={{ marginBottom: 16 }}>
         <button type="button" className={`segmented-item ${tab === 'joined' ? 'active' : ''}`} onClick={() => setTab('joined')}>
           {t('teams.members.joined', { count: members.length })}

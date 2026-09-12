@@ -474,6 +474,7 @@ export const enUS = {
     },
     quality: {
       unsupported: 'Unsupported events',
+      legacySummary: 'Includes historical daily summaries on their original UTC dates: token totals and tool breakdowns are available; historical costs, models and event coverage cannot be reconstructed. New records take precedence for the same member, tool and UTC day.',
       hint: 'Events with unclear token parts are not counted as zero',
     },
     settings: {

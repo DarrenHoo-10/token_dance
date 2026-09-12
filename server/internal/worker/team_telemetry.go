@@ -13,8 +13,8 @@ import (
 	v2 "tokendance/internal/protocol/v2"
 )
 
-// Team analysis reads the same immutable v2 facts as personal aggregation.
-// Legacy usage_events are deliberately not combined with this stream.
+// Read immutable v2 facts. The separate daily-summary compatibility reader
+// never fabricates legacy usage_events or mixes them into this fact stream.
 func readTeamTelemetry(ctx context.Context, tx *sql.Tx, userID string, from, to, asOf time.Time) ([]teamFactEvent, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT e.id, e.user_id, e.installation_id, e.harness_id, m.provider_id, m.model_id,

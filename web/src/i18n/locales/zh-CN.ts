@@ -474,6 +474,7 @@ export const zhCN = {
     },
     quality: {
       unsupported: '未支持事件',
+      legacySummary: '包含历史日汇总（按原始 UTC 日期）：提供 Token 总量和工具分布；历史费用、模型和事件覆盖率不可还原。同一成员、工具、UTC 日有新版记录时，以新版记录为准。',
       hint: '分项语义不明的事件不按 0 Token 计',
     },
     settings: {

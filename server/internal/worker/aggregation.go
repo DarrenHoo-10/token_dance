@@ -273,7 +273,12 @@ func rebuildUserAggregates(ctx context.Context, tx *sql.Tx, userID string, affec
 			return fmt.Errorf("rebuild user aggregates: %w", err)
 		}
 	}
-	return applyDeviceAggregates(ctx, tx, userID, affectedDates)
+	if err := applyDeviceAggregates(ctx, tx, userID, affectedDates); err != nil {
+		return err
+	}
+	// Team snapshots now consume these summaries. Invalidate after projection,
+	// not only on ingest, or a snapshot built between the two can stay stale.
+	return bumpSourceRevisionsForUsers(ctx, tx, map[string]struct{}{userID: {}}, time.Now().UTC())
 }
 
 func (w *Worker) ProcessAggregates(ctx context.Context) (int, error) {

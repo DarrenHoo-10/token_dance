@@ -88,6 +88,7 @@ type teamFactEvent struct {
 }
 
 type analysisAggRow struct {
+	legacyAggregate     bool
 	membershipID        *string
 	metricDate          *string
 	visibilityMask      uint32
@@ -436,7 +437,35 @@ func aggregateMemberAnalysis(ctx context.Context, tx *sql.Tx, member teamMemberS
 	if err != nil {
 		return nil, err
 	}
-	return buildMemberAnalysisRows(member, grants, events, loc), nil
+	legacy, err := readTeamLegacyRows(ctx, tx, member, grants, from, toExclusive, asOf)
+	if err != nil {
+		return nil, err
+	}
+	// Visibility can collapse distinct sources into the same row key.
+	out := buildMemberAnalysisRows(member, grants, events, loc)
+	keyFor := func(row analysisAggRow) string {
+		return analysisRowKey(deref(row.membershipID), deref(row.metricDate), row.visibilityMask, deref(row.agentID), deref(row.providerID), deref(row.modelID), deref(row.currency))
+	}
+	index := make(map[string]int, len(out)+len(legacy))
+	for i, row := range out {
+		index[keyFor(row)] = i
+	}
+	for _, row := range legacy {
+		key := keyFor(row)
+		if i, exists := index[key]; exists {
+			dst := &out[i]
+			dst.tokenExact.Add(dst.tokenExact, row.tokenExact)
+			dst.tokenDerived.Add(dst.tokenDerived, row.tokenDerived)
+			dst.legacyAggregate = true
+			if row.maxReceivedAt != nil {
+				touchReceived(dst, *row.maxReceivedAt)
+			}
+		} else {
+			index[key] = len(out)
+			out = append(out, row)
+		}
+	}
+	return out, nil
 }
 
 func buildMemberAnalysisRows(member teamMemberSource, grants []teamGrantWindow, events []teamFactEvent, loc *time.Location) []analysisAggRow {
@@ -725,14 +754,14 @@ func (w *Worker) insertTeamAnalysisRowBatch(ctx context.Context, claim *teamAnal
 		agent_id, provider_id, model_id, currency, token_exact_total, token_derived_total,
 		usage_event_count, token_supported_event_count, reported_cost_amount, estimated_cost_amount,
 		reported_cost_event_count, estimated_cost_event_count, reported_covered_usage_count,
-		estimated_covered_usage_count, unattributed_cost_count, max_received_at
+		estimated_covered_usage_count, unattributed_cost_count, max_received_at, legacy_aggregate
 	) VALUES `)
-	args := make([]interface{}, 0, len(rows)*22)
+	args := make([]interface{}, 0, len(rows)*23)
 	for i, row := range rows {
 		if i > 0 {
 			b.WriteString(",")
 		}
-		b.WriteString("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+		b.WriteString("(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
 		args = append(args,
 			claim.snapshotID,
 			claim.leaseGeneration,
@@ -756,6 +785,7 @@ func (w *Worker) insertTeamAnalysisRowBatch(ctx context.Context, claim *teamAnal
 			formatBigInt(row.estimatedCovered),
 			formatBigInt(row.unattributedCost),
 			nullTimePtr(row.maxReceivedAt),
+			row.legacyAggregate,
 		)
 	}
 	if _, err := w.db.ExecContext(ctx, b.String(), args...); err != nil {

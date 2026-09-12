@@ -48,7 +48,9 @@ func loadTableMeta(ctx context.Context, db columnQuerier, schema, table string) 
 			return tableMeta{}, fmt.Errorf("unsafe column %q", name)
 		}
 		upper := strings.ToUpper(extra)
-		if strings.Contains(upper, "GENERATED") || strings.Contains(upper, "AUTO_INCREMENT") {
+		// DEFAULT_GENERATED (e.g. CURRENT_TIMESTAMP) is writable. Omitting it
+		// changes source timestamps on every replacement and invalidates caches.
+		if strings.Contains(upper, "VIRTUAL GENERATED") || strings.Contains(upper, "STORED GENERATED") || strings.Contains(upper, "AUTO_INCREMENT") {
 			continue
 		}
 		meta.columns = append(meta.columns, name)

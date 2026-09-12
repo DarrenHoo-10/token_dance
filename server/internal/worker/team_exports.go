@@ -310,7 +310,7 @@ func (w *Worker) buildTeamExportCSV(ctx context.Context, claim *teamExportClaim)
 	query := `
 		SELECT membership_id, metric_date, visibility_mask, agent_id, provider_id, model_id, currency,
 		       token_exact_total, token_derived_total, usage_event_count,
-		       reported_cost_amount, estimated_cost_amount
+		       reported_cost_amount, estimated_cost_amount, legacy_aggregate
 		FROM team_analysis_rows
 		WHERE snapshot_id = ? AND build_generation = ?
 		ORDER BY metric_date ASC, membership_id ASC, agent_id ASC, provider_id ASC, model_id ASC`
@@ -322,12 +322,13 @@ func (w *Worker) buildTeamExportCSV(ctx context.Context, claim *teamExportClaim)
 
 	buf := new(bytes.Buffer)
 	cw := csv.NewWriter(buf)
-	header := teamExportHeader(claim.kind)
+	header := append(teamExportHeader(claim.kind), "data_source")
 	if err := cw.Write(header); err != nil {
 		return nil, err
 	}
 
 	acc := make(map[string][]string)
+	legacySources := make(map[string]bool)
 	order := make([]string, 0)
 	for rows.Next() {
 		var (
@@ -343,10 +344,11 @@ func (w *Worker) buildTeamExportCSV(ctx context.Context, claim *teamExportClaim)
 			usageCount   string
 			reported     string
 			estimated    string
+			legacy       bool
 		)
 		if err := rows.Scan(
 			&membershipID, &metricDate, &mask, &agentID, &providerID, &modelID, &currency,
-			&tokenExact, &tokenDerived, &usageCount, &reported, &estimated,
+			&tokenExact, &tokenDerived, &usageCount, &reported, &estimated, &legacy,
 		); err != nil {
 			return nil, fmt.Errorf("scan team export row: %w", err)
 		}
@@ -367,6 +369,7 @@ func (w *Worker) buildTeamExportCSV(ctx context.Context, claim *teamExportClaim)
 			}
 		}
 		key, record := teamExportRecord(claim.kind, membershipID, metricDate, agent, providerID.String, modelID.String, currency.String, tokenExact, tokenDerived, usageCount, reported, estimated)
+		legacySources[key] = legacySources[key] || legacy
 		if existing, ok := acc[key]; ok {
 			acc[key] = addExportNumeric(existing, record)
 			continue
@@ -378,7 +381,11 @@ func (w *Worker) buildTeamExportCSV(ctx context.Context, claim *teamExportClaim)
 		return nil, err
 	}
 	for _, key := range order {
-		if err := cw.Write(escapeCSVRecord(acc[key])); err != nil {
+		source := "telemetry_v2"
+		if legacySources[key] {
+			source = "includes_legacy_daily_utc"
+		}
+		if err := cw.Write(escapeCSVRecord(append(acc[key], source))); err != nil {
 			return nil, err
 		}
 	}

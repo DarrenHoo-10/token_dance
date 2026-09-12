@@ -52,9 +52,9 @@ func TestTeamCR015V2UploadReachesTeamAnalysis(t *testing.T) {
 	if _, err := st.DB().Exec(`INSERT INTO team_analysis_snapshots
 		(snapshot_id, team_id, from_date, to_date_exclusive, auth_revision, source_revision,
 		 rule_version, status, active_request_key, as_of, next_attempt_at, expires_at)
-		VALUES ('tas_cr015', ?, ?, ?, 1, 0, '2', 'queued', 'cr015', ?, ?, ?)`, team,
+		VALUES ('tas_cr015', ?, ?, ?, 1, 0, ?, 'queued', 'cr015', ?, ?, ?)`, team,
 		now.Add(-time.Hour).UTC().Format("2006-01-02"), now.AddDate(0, 0, 1).UTC().Format("2006-01-02"),
-		now, now, now.Add(30*time.Minute)); err != nil {
+		domain.TeamAnalysisRuleVersion, now, now, now.Add(30*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := w.ProcessTeamAnalysis(ctx); err != nil || n != 2 {

@@ -150,10 +150,11 @@ func TestTeamTelemetrySharingCostExportMySQL(t *testing.T) {
 	}
 	from, to := now.AddDate(0, 0, -3), now.AddDate(0, 0, 1)
 	snap := queue(from, to)
-	assertTotals(snap, "10", "2", "0")
+	// Current sharing includes history; the earlier independent bill is visible.
+	assertTotals(snap, "10", "1001", "0")
 	// Querying an earlier day must not bring back the replaced estimate.
 	earlier := queue(from, domain.StartOfDay(now.Add(-time.Minute)))
-	assertTotals(earlier, "0", "0", "0")
+	assertTotals(earlier, "0", "999", "0")
 
 	claim := &teamExportClaim{teamID: team, snapshotID: snap.SnapshotID, requesterUserID: user, requesterMembershipID: membership, authRevision: snap.AuthRevision, kind: string(domain.TeamExportDaily)}
 	auth, err := w.authorizeTeamExport(ctx, claim)
@@ -165,8 +166,8 @@ func TestTeamTelemetrySharingCostExportMySQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	records, err := csv.NewReader(strings.NewReader(string(payload))).ReadAll()
-	if err != nil || len(records) < 2 || strings.Contains(string(payload), "999.") {
-		t.Fatalf("CSV must contain current metrics and exclude private cost: rows=%d err=%v", len(records), err)
+	if err != nil || len(records) < 2 || !strings.Contains(string(payload), "999.") {
+		t.Fatalf("CSV must include currently shared historical cost: rows=%d err=%v", len(records), err)
 	}
 	job, err := st.Teams().QueueTeamExportTx(ctx, store.QueueTeamExportTxInput{ActorUserID: user,
 		Job:         domain.TeamExportJob{TeamID: team, SnapshotID: snap.SnapshotID, Kind: domain.TeamExportDaily},
@@ -213,7 +214,7 @@ func TestTeamTelemetrySharingCostExportMySQL(t *testing.T) {
 	if _, err := st.Teams().UpdateSharingTx(ctx, store.UpdateSharingTxInput{ActorUserID: user, TeamID: team, ExpectedVersion: sharing.SharingVersion, Sharing: domain.SharingFlags{Base: true, Named: true, Classification: true, Cost: true}, Now: now}); err != nil {
 		t.Fatal(err)
 	}
-	assertTotals(queue(from, to), "10", "0", "0")
+	assertTotals(queue(from, to), "10", "1001", "0")
 	// A tombstone cannot reappear in a newly computed snapshot.
 	if _, err := st.DB().Exec(`UPDATE telemetry_events SET delete_at = ? WHERE user_id = ? AND event_type = 'model_usage_recorded'`, now.UnixMilli(), user); err != nil {
 		t.Fatal(err)
@@ -221,5 +222,5 @@ func TestTeamTelemetrySharingCostExportMySQL(t *testing.T) {
 	if _, err := st.DB().Exec(`UPDATE team_analysis_snapshots SET status = 'obsolete' WHERE team_id = ?`, team); err != nil {
 		t.Fatal(err)
 	}
-	assertTotals(queue(from, to), "0", "0", "0")
+	assertTotals(queue(from, to), "0", "1001", "0")
 }

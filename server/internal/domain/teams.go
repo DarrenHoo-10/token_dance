@@ -6,7 +6,7 @@ import (
 )
 
 // TeamAnalysisRuleVersion invalidates snapshots and exports built under older disclosure rules.
-const TeamAnalysisRuleVersion = "3"
+const TeamAnalysisRuleVersion = "4"
 
 const (
 	TeamIDPrefix           = "tem_"
@@ -327,6 +327,7 @@ type TeamAnalysisSnapshot struct {
 }
 
 type TeamAnalysisRow struct {
+	LegacyAggregate            bool      `json:"legacyAggregate,omitempty"`
 	SnapshotID                 string    `json:"-"`
 	BuildGeneration            uint64    `json:"-"`
 	RowKey                     string    `json:"-"`
@@ -520,6 +521,7 @@ type TeamPagedItems struct {
 }
 
 type TeamAnalysisQuality struct {
+	HasLegacyAggregates bool `json:"hasLegacyAggregates,omitempty"`
 	UnsupportedEvents string `json:"unsupportedEvents"`
 	EstimatedEvents   string `json:"estimatedEvents"`
 }

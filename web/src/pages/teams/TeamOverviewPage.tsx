@@ -86,6 +86,8 @@ export const TeamOverviewPage: React.FC = () => {
 
       <TeamDateRangeBar timezone={scope.team.timezone} />
 
+      {analysis?.quality.hasLegacyAggregates && <p className="team-status-banner">{t('teams.quality.legacySummary')}</p>}
+
       {analysis && (
         <p className="text-muted" style={{ fontSize: 12, margin: '12px 0 20px' }}>
           {t('teams.overview.updatedAt', { time: formatInTimezone(analysis.snapshot.asOf, analysis.range.timezone, locale) })}

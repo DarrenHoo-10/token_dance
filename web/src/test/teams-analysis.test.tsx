@@ -4,6 +4,7 @@ import { api } from '@/api/client';
 import { teamsApi, type TeamAnalysisReady, type TeamAnalysisUpdating } from '@/api/teams';
 import { TeamAnalyticsPage } from '@/pages/teams/TeamAnalyticsPage';
 import { TeamOverviewPage } from '@/pages/teams/TeamOverviewPage';
+import { TeamMembersPage } from '@/pages/teams/TeamMembersPage';
 import { useTeamAnalysis } from '@/pages/teams/useTeamAnalysis';
 import { renderTeams, sampleScope, signedInUser } from './teams-test-helpers';
 
@@ -54,11 +55,15 @@ describe('Team analysis updating state', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.useRealTimers();
+    vi.spyOn(teamsApi, 'getMembers').mockResolvedValue({ members: [], nextCursor: null });
+    vi.spyOn(teamsApi, 'getInvitations').mockResolvedValue({ invitations: [], nextCursor: null });
+    vi.spyOn(teamsApi, 'getInviteLinks').mockResolvedValue({ links: [], nextCursor: null });
   });
 
   it.each([
     ['overview', <TeamOverviewPage />, ''],
     ['analytics', <TeamAnalyticsPage />, '/analytics'],
+    ['members', <TeamMembersPage />, '/members'],
   ] as const)('keeps custom dates editable on a %s deep link without sending an incomplete query', async (_name, page, suffix) => {
     vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
@@ -81,6 +86,23 @@ describe('Team analysis updating state', () => {
     expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '7 天' }));
     await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: '7d' }), expect.any(AbortSignal)));
+  });
+
+  it.each([
+    ['overview', <TeamOverviewPage />, ''],
+    ['analytics', <TeamAnalyticsPage />, '/analytics'],
+    ['members', <TeamMembersPage />, '/members'],
+  ] as const)('discloses legacy summary limits on %s', async (_name, page, suffix) => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    vi.spyOn(teamsApi, 'getExports').mockResolvedValue({ exports: [] });
+    vi.spyOn(teamsApi, 'getFilterOptions').mockResolvedValue({ agents: [], providers: [], models: [] });
+    const result = readyAnalysis('1', '120000');
+    result.quality.hasLegacyAggregates = true;
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
+    renderTeams(page, `/teams/tem_0123456789abcdefghijklmnop${suffix}?range=7d`);
+    expect(await screen.findByText(/包含历史日汇总/)).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '7 天' })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('shows a skeleton and never fakes 0 while the snapshot is updating', async () => {

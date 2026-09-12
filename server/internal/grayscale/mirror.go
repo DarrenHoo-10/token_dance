@@ -52,7 +52,7 @@ func (m *Mirror) RunLoop(ctx context.Context) error {
 		for i, user := range result.Users {
 			ids[i] = user.UserID
 		}
-		log.Printf("grayscale mirror copied %d users [%s] since %s: %v", len(result.Users), printableSummary(ids), result.Since, result.Copied)
+		log.Printf("grayscale mirror copied %d users [%s] summary_history=full community_since=%s: %v", len(result.Users), printableSummary(ids), result.Since, result.Copied)
 		if !m.cfg.Loop {
 			return nil
 		}
@@ -100,6 +100,10 @@ func (m *Mirror) Run(ctx context.Context) (Result, error) {
 		return Result{}, err
 	}
 	result.Copied["users"] = int64(len(handles))
+	before, err := m.teamSummaryDigest(ctx, tx, ids)
+	if err != nil {
+		return Result{}, err
+	}
 
 	for _, spec := range []copySpec{
 		{table: "user_privacy_settings"},
@@ -122,11 +126,29 @@ func (m *Mirror) Run(ctx context.Context) (Result, error) {
 			result.Copied[spec.table] = written
 			continue
 		}
-		written, err := copyTable(ctx, m.source, tx, m.cfg, spec, ids, sinceFor(spec, since))
+		copySince := sinceFor(spec, since)
+		if spec.dateColumn != "" {
+			// The mirrored cohort is small. Reconcile its complete summaries on
+			// every run, including missing history and source-side removals.
+			copySince = ""
+			if _, err := tx.ExecContext(ctx, "DELETE FROM "+quote(m.cfg.TargetSchema)+"."+quote(spec.table)+" WHERE user_id IN "+inClause(len(ids)), anyStrings(ids)...); err != nil {
+				return Result{}, fmt.Errorf("replace mirrored summaries: %w", err)
+			}
+		}
+		written, err := copyTable(ctx, m.source, tx, m.cfg, spec, ids, copySince)
 		if err != nil {
 			return Result{}, err
 		}
 		result.Copied[spec.table] = written
+	}
+	after, err := m.teamSummaryDigest(ctx, tx, ids)
+	if err != nil {
+		return Result{}, err
+	}
+	if before != after {
+		if err := m.invalidateTeamSummaries(ctx, tx, ids, now); err != nil {
+			return Result{}, err
+		}
 	}
 
 	if err := m.copyPublicProfiles(ctx, tx, ids, handles); err != nil {

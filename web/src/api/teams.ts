@@ -243,6 +243,7 @@ export interface CursorPage<T> {
 }
 
 export interface AnalysisQuality {
+  hasLegacyAggregates?: boolean;
   unsupportedEvents: string;
   estimatedEvents: string;
 }

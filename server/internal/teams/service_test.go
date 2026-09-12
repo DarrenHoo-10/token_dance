@@ -335,6 +335,18 @@ func TestAssembleAnalysisPreservesEstimatedCostAndCoverage(t *testing.T) {
 	}
 }
 
+func TestAssembleAnalysisLegacySummaryProvenance(t *testing.T) {
+	mem, day, agent := "tmb_legacy", "2026-09-06", "codex"
+	row := domain.TeamAnalysisRow{MembershipID: &mem, MetricDate: &day, AgentID: &agent,
+		TokenExactTotal: "100", TokenDerivedTotal: "50", UsageEventCount: "0", TokenSupportedEventCount: "0",
+		VisibilityMask: VisibilityNamed | VisibilityClassification, LegacyAggregate: true}
+	snap := &domain.TeamAnalysisSnapshot{AsOf: time.Date(2026, 9, 6, 8, 0, 0, 0, time.UTC)}
+	dto := assembleAnalysis(&domain.Team{TimezoneName: "UTC"}, snap, []domain.TeamAnalysisRow{row}, nil, nil, 1, snap.AsOf, snap.AsOf.Add(time.Hour), domain.TeamAnalysisFilters{}, AnalysisQuery{})
+	if dto.Summary.Tokens.Value != "150" || !dto.Quality.HasLegacyAggregates || dto.Costs.Coverage.EligibleUsageEvents != "0" || len(dto.Costs.Reported) != 0 || len(dto.Models.Items) != 0 {
+		t.Fatalf("legacy totals/provenance: %+v", dto)
+	}
+}
+
 func TestAssembleAnalysisCollectionsMatchWeb(t *testing.T) {
 	mem, agent, provider, model, date := "tmb_1", "codex", "openai", "gpt-test", "2026-09-06"
 	row := domain.TeamAnalysisRow{
@@ -376,10 +388,10 @@ func TestAssembleMemberDetailPreservesCosts(t *testing.T) {
 	user := &domain.User{UserID: "usr_1", DisplayName: "Ada"}
 	team := &domain.Team{TimezoneName: "UTC", OwnerUserID: "usr_1"}
 	snap := &domain.TeamAnalysisSnapshot{
-		SnapshotID: "tas_1",
-		FromDate: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+		SnapshotID:      "tas_1",
+		FromDate:        time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
 		ToDateExclusive: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC),
-		AsOf: time.Date(2026, 9, 6, 8, 0, 0, 0, time.UTC),
+		AsOf:            time.Date(2026, 9, 6, 8, 0, 0, 0, time.UTC),
 	}
 	got := assembleMemberDetail(target, user, team, snap, []domain.TeamAnalysisRow{row}, domain.SharingFlags{Base: true, Named: true, Classification: true, Cost: true})
 	costs := got["costs"].(domain.TeamAnalysisCosts)

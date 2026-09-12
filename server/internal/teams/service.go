@@ -2030,6 +2030,7 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 	filtered := filterRows(rows, filters)
 	tokenTotal := "0"
 	unsupported, estimated := uint64(0), uint64(0)
+	hasLegacy := false
 	active := map[string]struct{}{}
 	byDate := map[string]string{}
 	agentTok := map[string]string{}
@@ -2040,6 +2041,7 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 	unattributed := "0"
 	reportedUsage, eligibleUsage := uint64(0), uint64(0)
 	for _, row := range filtered {
+		hasLegacy = hasLegacy || row.LegacyAggregate
 		tokenTotal = AddIntDecimal(tokenTotal, emptyZero(row.TokenExactTotal))
 		tokenTotal = AddIntDecimal(tokenTotal, emptyZero(row.TokenDerivedTotal))
 		if row.MembershipID != nil && (row.TokenExactTotal != "0" || row.TokenDerivedTotal != "0" || row.UsageEventCount != "0") {
@@ -2132,7 +2134,7 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 		},
 		Trend: trend,
 		Agents: agents, Models: models, Contributions: contribs,
-		Quality: &domain.TeamAnalysisQuality{UnsupportedEvents: formatUint(unsupported), EstimatedEvents: formatUint(estimated)},
+		Quality: &domain.TeamAnalysisQuality{UnsupportedEvents: formatUint(unsupported), EstimatedEvents: formatUint(estimated), HasLegacyAggregates: hasLegacy},
 		FiltersHash: analysisFiltersHash(filters),
 	}
 }

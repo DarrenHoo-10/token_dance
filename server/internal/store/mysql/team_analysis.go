@@ -325,7 +325,7 @@ func (s *teamsStore) ListAnalysisRows(ctx context.Context, snapshotID string, ge
 		       agent_id, provider_id, model_id, currency, token_exact_total, token_derived_total,
 		       usage_event_count, token_supported_event_count, reported_cost_amount, estimated_cost_amount,
 		       reported_cost_event_count, estimated_cost_event_count, reported_covered_usage_count,
-		       estimated_covered_usage_count, unattributed_cost_count, max_received_at
+		       estimated_covered_usage_count, unattributed_cost_count, max_received_at, legacy_aggregate
 		FROM team_analysis_rows
 		WHERE snapshot_id = ? AND build_generation = ?`, snapshotID, generation)
 	if err != nil {
@@ -342,7 +342,7 @@ func (s *teamsStore) ListAnalysisRows(ctx context.Context, snapshotID string, ge
 			&agent, &provider, &model, &currency, &row.TokenExactTotal, &row.TokenDerivedTotal,
 			&row.UsageEventCount, &row.TokenSupportedEventCount, &row.ReportedCostAmount, &row.EstimatedCostAmount,
 			&row.ReportedCostEventCount, &row.EstimatedCostEventCount, &row.ReportedCoveredUsageCount,
-			&row.EstimatedCoveredUsageCount, &row.UnattributedCostCount, &maxRecv,
+			&row.EstimatedCoveredUsageCount, &row.UnattributedCostCount, &maxRecv, &row.LegacyAggregate,
 		); err != nil {
 			return nil, err
 		}
