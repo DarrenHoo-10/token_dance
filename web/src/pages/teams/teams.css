@@ -86,6 +86,7 @@
   .team-date-hint { margin-left: 0; }
 }
 
-.team-chart-controls { margin: 16px 0 24px; }
-.team-chart-controls .team-date-toolbar { margin-bottom: 0; }
-.team-chart-range { margin: 0 0 8px; color: #6d786f; font-size: 12px; }
+.team-chart-controls { margin-top: 20px; padding-top: 16px; border-top: 1px solid #e8ece6; }
+.team-chart-controls .team-date-toolbar { margin-bottom: 0; gap: 12px 16px; }
+.team-chart-controls .team-date-toolbar.is-custom { padding: 0; border: 0; border-radius: 0; background: transparent; }
+.team-chart-controls .team-date-presets .segmented-item { padding: 0 12px; }
