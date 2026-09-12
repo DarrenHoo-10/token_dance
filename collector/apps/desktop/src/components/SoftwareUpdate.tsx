@@ -63,24 +63,116 @@ export function SoftwareUpdateCard({ zh }: { zh: boolean }) {
   </section>;
 }
 
-function RequiredUpdate({zh}: {zh:boolean}) {
-  const status=useUpdates();
-  const [busy,setBusy]=useState(false);
-  const [error,setError]=useState('');
+function RequiredUpdate({ zh }: { zh: boolean }) {
+  const status = useUpdates();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   useEffect(() => {
-    const onKey=(event:KeyboardEvent) => { if(event.key==='Escape') { event.preventDefault(); event.stopImmediatePropagation(); } };
-    window.addEventListener('keydown',onKey,true);
-    return () => window.removeEventListener('keydown',onKey,true);
-  },[]);
-  if(!status?.required) return null;
-  const run=async(action:()=>Promise<unknown>)=>{setBusy(true);setError('');try{await action();}catch(e){setError(updateError(String(e),zh));}finally{setBusy(false);}};
-  return <div className="required-update-backdrop"><section role="alertdialog" aria-modal="true" aria-labelledby="required-update-title" className="required-update-dialog">
-    <h2 id="required-update-title">{zh?'请更新 TokenDance':'Update TokenDance'}</h2>
-    <p>{zh?`当前版本 ${status.currentVersion} 已低于最低支持版本 ${status.minimumVersion}，请更新后继续使用在线服务。`:`Version ${status.minimumVersion} or later is required to use online services.`}</p>
-    <p>{zh?'本机采集继续运行，数据会保留。':'Local collection continues and your data is retained.'}</p>
-    <p role="status">{updateStatusText(status,zh)}</p>
-    {error&&<p role="alert">{error}</p>}
-    <button autoFocus disabled={busy||updateBusy(status)} onClick={()=>void run(status.supported ? installUpdate : openUpdateDownloads)}>{status.supported ? (zh?'立即更新':'Update now') : (zh?'下载安装包':'Download installer')}</button>
-    <button disabled={busy||updateBusy(status)} onClick={()=>void run(checkUpdates)}>{zh?'重新检查':'Check again'}</button>
-  </section></div>;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, []);
+  if (!status?.required) return null;
+  const t = (cn: string, en: string) => zh ? cn : en;
+  const run = async (action: () => Promise<unknown>) => {
+    setBusy(true); setError('');
+    try { await action(); } catch (e) { setError(updateError(String(e), zh)); }
+    finally { setBusy(false); }
+  };
+  const updating = busy || updateBusy(status);
+  const failure = error || (status.phase === 'error' ? updateError(status.error, zh) : '');
+  const showFailure = Boolean(failure);
+  const showReady = status.phase === 'ready' && !showFailure;
+  const downloading = status.phase === 'downloading' || status.phase === 'installing';
+  const current = status.currentVersion;
+  const minimum = status.minimumVersion || '—';
+  const target = status.version;
+
+  let title = t('必须更新才能继续', 'Update required to continue');
+  if (showFailure) title = t('更新失败', 'Update failed');
+  else if (showReady) title = t('更新已就绪', 'Update ready');
+
+  return <div className="required-update-backdrop">
+    <section role="alertdialog" aria-modal="true" aria-labelledby="required-update-title" className="required-update-dialog">
+      {!showReady && !showFailure && <div className="required-update-icon" aria-hidden="true">!</div>}
+      <h2 id="required-update-title">{title}</h2>
+
+      {showReady ? (
+        <p className="required-update-versions">
+          {t(`当前 v${current} → 将安装 v${target} (最低要求 v${minimum})`, `Current v${current} → Installing v${target} (minimum v${minimum})`)}
+        </p>
+      ) : showFailure ? (
+        <p className="required-update-versions">
+          {t(`当前 v${current} · 最低要求 v${minimum}${target ? ` · 目标 v${target}` : ''}`, `Current v${current} · Minimum v${minimum}${target ? ` · Target v${target}` : ''}`)}
+        </p>
+      ) : (
+        <p className="required-update-versions">
+          {t(`当前版本 v${current} 最低支持版本 v${minimum}`, `Current v${current} · Minimum supported v${minimum}`)}
+        </p>
+      )}
+
+      {showReady ? (
+        <>
+          <p className="required-update-copy">{t('版本过旧，必须更新后才能继续使用在线服务', 'This version is too old. Update to keep using online services.')}</p>
+          <p className="required-update-copy" role="status">{t('已下载完成，可立即安装', 'Download complete. Ready to install.')}</p>
+        </>
+      ) : showFailure ? (
+        <p className="required-update-error" role="alert">{failure}</p>
+      ) : (
+        <>
+          <p className="required-update-copy">{t('请更新后继续使用在线服务。本机采集已在运行，数据会保留。', 'Update to keep using online services. Local collection is running and your data is retained.')}</p>
+          {target && <p className="required-update-target">{t(`目标版本 v${target}`, `Target version v${target}`)}</p>}
+          <p className="required-update-status" role="status">
+            {downloading
+              ? t(`正在下载更新 · ${status.progress}%`, `Downloading update · ${status.progress}%`)
+              : updateStatusText(status, zh)}
+          </p>
+          {downloading && (
+            <progress className="required-update-progress" aria-label={t('更新下载进度', 'Update download progress')} max={100} value={status.progress} />
+          )}
+        </>
+      )}
+
+      {showFailure || !status.supported ? (
+        <div className="required-update-actions">
+          <button type="button" className="required-update-primary" autoFocus disabled={updating} onClick={() => void run(status.supported ? installUpdate : openUpdateDownloads)}>
+            {status.supported ? t('重试更新', 'Retry update') : t('下载安装包', 'Download installer')}
+          </button>
+          <button type="button" className="required-update-secondary" disabled={updating} onClick={() => void run(checkUpdates)}>
+            {t('重新检查', 'Check again')}
+          </button>
+        </div>
+      ) : showReady ? (
+        <button type="button" className="required-update-ready" autoFocus disabled={updating} onClick={() => void run(installUpdate)}>
+          {updating ? t('更新中...', 'Updating...') : t('重启并更新', 'Restart and update')}
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="required-update-busy"
+          autoFocus={!updating}
+          disabled={updating}
+          onClick={() => void run(installUpdate)}
+        >
+          {updating ? t('更新中...', 'Updating...') : t('立即更新', 'Update now')}
+        </button>
+      )}
+
+      {showReady ? (
+        <>
+          <p className="required-update-footer">{t('更新完成后将重新启动 TokenDance；本机数据保留', 'TokenDance will restart after updating; local data is retained')}</p>
+          <p className="required-update-footer">{t('主界面已锁定，请完成更新后继续', 'The main interface is locked until you finish updating')}</p>
+        </>
+      ) : showFailure ? (
+        <>
+          <p className="required-update-footer">{t('本机采集继续运行，数据仍保留', 'Local collection keeps running; your data is retained')}</p>
+          <p className="required-update-footer">{t('必须更新后才能继续使用，无法跳过', 'You must update to continue. This cannot be skipped.')}</p>
+        </>
+      ) : (
+        <p className="required-update-footer">{t('无法关闭此窗口，更新完成前无法使用主界面', 'This window cannot be closed. The main interface stays locked until the update finishes.')}</p>
+      )}
+    </section>
+  </div>;
 }

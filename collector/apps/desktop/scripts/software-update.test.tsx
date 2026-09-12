@@ -21,6 +21,8 @@ describe('update notice', () => {
     mock.status = { ...mock.status!, supported: false, required: true, minimumVersion: '0.1.28', version: null, phase: 'idle' };
     render(<UpdateNotice zh />);
     expect(screen.getByRole('alertdialog')).toBeTruthy();
+    expect(screen.getByText('必须更新才能继续')).toBeTruthy();
+    expect(screen.getByText(/本机采集已在运行/)).toBeTruthy();
     await userEvent.click(screen.getByRole('button', { name: '下载安装包' }));
     expect(mock.download).toHaveBeenCalledTimes(1);
     expect(mock.install).not.toHaveBeenCalled();
@@ -33,6 +35,35 @@ describe('update notice', () => {
     await userEvent.click(screen.getByRole('button', { name: '立即更新' }));
     expect(mock.install).toHaveBeenCalledTimes(1);
     expect(mock.download).not.toHaveBeenCalled();
+  });
+  it('blocks the UI while a required update downloads', () => {
+    mock.status = { ...mock.status!, required: true, minimumVersion: '0.1.27', version: '0.1.31', phase: 'downloading', progress: 62 };
+    render(<UpdateNotice zh />);
+    expect(screen.getByRole('alertdialog').textContent).toContain('正在下载更新 · 62%');
+    expect((screen.getByRole('button', { name: '更新中...' }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('progressbar').getAttribute('value')).toBe('62');
+    expect(screen.getByText(/无法关闭此窗口/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: '重新检查' })).toBeNull();
+  });
+  it('offers restart once a required update is ready', async () => {
+    mock.status = { ...mock.status!, required: true, minimumVersion: '0.1.27', version: '0.1.31', phase: 'ready', progress: 100 };
+    render(<UpdateNotice zh />);
+    expect(screen.getByText('更新已就绪')).toBeTruthy();
+    expect(screen.getByText(/当前 v0.1.12 → 将安装 v0.1.31/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: '重启并更新' }));
+    expect(mock.install).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/本机数据保留/)).toBeTruthy();
+  });
+  it('lets users retry a failed required update without dismissing it', async () => {
+    mock.status = { ...mock.status!, required: true, minimumVersion: '0.1.27', version: '0.1.31', phase: 'error', error: 'download_network' };
+    render(<UpdateNotice zh />);
+    expect(screen.getByText('更新失败')).toBeTruthy();
+    expect(screen.getByRole('alert').textContent).toContain('安装包下载失败');
+    expect(screen.getByText(/无法跳过/)).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: '重试更新' }));
+    expect(mock.install).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole('button', { name: '重新检查' }));
+    expect(mock.check).toHaveBeenCalledTimes(1);
   });
   it('stays hidden without a newer version and appears without opening itself', () => {
     mock.status!.version = null;
