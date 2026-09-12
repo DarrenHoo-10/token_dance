@@ -281,6 +281,11 @@ jobs:
           cp -R "$native_app" collector/packaging/macos/release/TokenDance.app
           cp "collector/apps/desktop/release/build-info-${{ matrix.architecture }}.json" collector/packaging/macos/release/build-info.json
           cat collector/packaging/macos/release/build-info.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Recovery window starts without production credentials
+        if: env.BUILD_PROFILE == 'debug' && matrix.architecture == 'arm64'
+        run: |
+          python3 collector/apps/desktop/scripts/startup-recovery-smoke.py \
+            collector/apps/desktop/src-tauri/target/${{ matrix.target }}/debug/bundle/macos/TokenDance.app/Contents/MacOS/tokendance-desktop
       - name: Stage free unnotarized DMG
         if: github.event_name == 'workflow_dispatch' && inputs.unnotarized_macos_release
         run: |
