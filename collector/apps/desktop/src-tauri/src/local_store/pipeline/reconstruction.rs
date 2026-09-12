@@ -128,6 +128,10 @@ mod tests {
     use crate::local_store::pipeline::PipelineStore;
     #[test]
     fn release_jump_and_resume() {
+        // The old Mac 0.1.27 package predates reconstruction; 0.1.29 must
+        // reconstruct it, while keeping progress from Windows 0.1.27 tests.
+        assert_eq!(required_release("0.1.29", "").as_deref(), Some("0.1.27"));
+        assert_eq!(required_release("0.1.29", "0.1.27"), None);
         assert_eq!(
             required_release("0.2.0", "0.1.26").as_deref(),
             Some("0.1.27")

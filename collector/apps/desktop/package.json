@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "test:updates": "vitest run scripts/software-update.test.tsx --environment jsdom",
+    "test:updates": "vitest run scripts/software-update.test.tsx scripts/update-download.test.tsx --environment jsdom",
     "dev": "vite",
     "build": "tsc && vite build",
     "build:windows": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows.ps1",

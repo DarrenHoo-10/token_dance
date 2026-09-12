@@ -1,6 +1,6 @@
 import { createPortal } from 'react-dom';
 import { useEffect, useId, useRef, useState } from 'react';
-import { checkUpdates, installUpdate, setAutoUpdate, updateBusy, updateError, updateStatusText, useUpdates } from '../update-state';
+import { checkUpdates, installUpdate, openUpdateDownloads, setAutoUpdate, updateBusy, updateError, updateStatusText, useUpdates } from '../update-state';
 import '../styles/updates.css';
 
 export function UpdateNotice({ zh }: { zh: boolean }) {
@@ -49,13 +49,13 @@ export function SoftwareUpdateCard({ zh }: { zh: boolean }) {
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true); setError(''); try { await action(); } catch (err) { setError(updateError(String(err), zh)); } finally { setBusy(false); }
   };
-  const disabled = busy || !status || !status.supported || updateBusy(status);
+  const disabled = busy || !status || updateBusy(status);
   const failure = error || (status?.phase === 'error' ? updateError(status.error, zh) : '');
   return <section className="settings-section settings-updates" aria-labelledby="software-update-heading">
     <div className="settings-section-heading"><h2 id="software-update-heading">{t('软件更新', 'Software updates')}</h2><span>{status ? `v${status.currentVersion}` : '—'}</span></div>
     <div className="settings-sheet">
       <div className="settings-row"><div><h3>{t('检查更新', 'Check for updates')}</h3><p role={failure ? 'alert' : 'status'} className={failure ? 'desktop-update-error' : undefined}>{failure || (status ? updateStatusText(status, zh) : t('正在读取更新状态…', 'Loading update status…'))}</p>{status?.checkedAt && <p>{t('上次检查：', 'Last checked: ')}{new Date(status.checkedAt).toLocaleString(zh ? 'zh-CN' : 'en-US')}</p>}</div>
-        <div className="desktop-update-buttons"><button type="button" className="desktop-update-action" disabled={disabled} onClick={() => void run(checkUpdates)}>{status?.phase === 'checking' ? t('检查中…', 'Checking…') : t('检查更新', 'Check for updates')}</button>{status?.version && <button type="button" className="desktop-update-action" disabled={disabled} onClick={() => void run(installUpdate)}>{status.phase === 'ready' ? t('重启并更新', 'Restart and update') : t('立即更新', 'Update now')}</button>}</div>
+        <div className="desktop-update-buttons"><button type="button" className="desktop-update-action" disabled={disabled} onClick={() => void run(checkUpdates)}>{status?.phase === 'checking' ? t('检查中…', 'Checking…') : t('检查更新', 'Check for updates')}</button>{status?.supported && status.version && <button type="button" className="desktop-update-action" disabled={disabled} onClick={() => void run(installUpdate)}>{status.phase === 'ready' ? t('重启并更新', 'Restart and update') : t('立即更新', 'Update now')}</button>}{status && !status.supported && <button type="button" className="desktop-update-action" disabled={disabled} onClick={() => void run(openUpdateDownloads)}>{t('下载安装包', 'Download installer')}</button>}</div>
       </div>
       {status?.phase === 'downloading' && <progress aria-label={t('更新下载进度', 'Update download progress')} max={100} value={status.progress} />}
       <div className="settings-row"><div><h3>{t('自动更新', 'Automatic updates')}</h3><p>{t('后台下载，下次启动时安装', 'Download in the background. Install on next launch.')}</p></div><button type="button" className="settings-toggle" role="switch" aria-checked={status?.autoUpdate ?? false} aria-label={t('自动更新', 'Automatic updates')} disabled={busy || !status || !status.supported || status.phase === 'installing'} onClick={() => void run(() => setAutoUpdate(!status?.autoUpdate))}><span /></button></div>
@@ -80,7 +80,7 @@ function RequiredUpdate({zh}: {zh:boolean}) {
     <p>{zh?'本机采集继续运行，数据会保留。':'Local collection continues and your data is retained.'}</p>
     <p role="status">{updateStatusText(status,zh)}</p>
     {error&&<p role="alert">{error}</p>}
-    <button autoFocus disabled={busy||updateBusy(status)} onClick={()=>void run(installUpdate)}>{zh?'立即更新':'Update now'}</button>
+    <button autoFocus disabled={busy||updateBusy(status)} onClick={()=>void run(status.supported ? installUpdate : openUpdateDownloads)}>{status.supported ? (zh?'立即更新':'Update now') : (zh?'下载安装包':'Download installer')}</button>
     <button disabled={busy||updateBusy(status)} onClick={()=>void run(checkUpdates)}>{zh?'重新检查':'Check again'}</button>
   </section></div>;
 }

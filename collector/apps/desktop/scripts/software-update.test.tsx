@@ -4,18 +4,36 @@ import userEvent from '@testing-library/user-event';
 import { SoftwareUpdateCard, UpdateNotice } from '../src/components/SoftwareUpdate';
 import type { UpdateStatus } from '../src/update-state';
 
-const mock = vi.hoisted(() => ({ status: null as UpdateStatus | null, install: vi.fn(), check: vi.fn(), toggle: vi.fn() }));
+const mock = vi.hoisted(() => ({ status: null as UpdateStatus | null, install: vi.fn(), check: vi.fn(), toggle: vi.fn(), download: vi.fn() }));
 vi.mock('../src/update-state', async importOriginal => ({
   ...await importOriginal<typeof import('../src/update-state')>(),
-  useUpdates: () => mock.status, installUpdate: mock.install, checkUpdates: mock.check, setAutoUpdate: mock.toggle,
+  useUpdates: () => mock.status, installUpdate: mock.install, checkUpdates: mock.check, setAutoUpdate: mock.toggle, openUpdateDownloads: mock.download,
 }));
 beforeEach(() => {
   vi.clearAllMocks();
   mock.status = { currentVersion: '0.1.12', version: '0.1.13', notes: '修复额度展示\n<script>alert(1)</script>', publishedAt: '2026-09-06T00:00:00Z', phase: 'available', autoUpdate: true, progress: 0, checkedAt: null, error: null, supported: true };
   mock.install.mockResolvedValue(undefined); mock.check.mockResolvedValue(undefined); mock.toggle.mockResolvedValue(undefined);
+  mock.download.mockResolvedValue(undefined);
 });
 afterEach(cleanup);
 describe('update notice', () => {
+  it('offers a working manual download when macOS requires an update', async () => {
+    mock.status = { ...mock.status!, supported: false, required: true, minimumVersion: '0.1.28', version: null, phase: 'idle' };
+    render(<UpdateNotice zh />);
+    expect(screen.getByRole('alertdialog')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: '下载安装包' }));
+    expect(mock.download).toHaveBeenCalledTimes(1);
+    expect(mock.install).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: '重新检查' }));
+    expect(mock.check).toHaveBeenCalledTimes(1);
+  });
+  it('keeps the native installer for required Windows updates', async () => {
+    mock.status = { ...mock.status!, required: true, minimumVersion: '0.1.28' };
+    render(<UpdateNotice zh />);
+    await userEvent.click(screen.getByRole('button', { name: '立即更新' }));
+    expect(mock.install).toHaveBeenCalledTimes(1);
+    expect(mock.download).not.toHaveBeenCalled();
+  });
   it('stays hidden without a newer version and appears without opening itself', () => {
     mock.status!.version = null;
     const { rerender } = render(<UpdateNotice zh />);
@@ -93,9 +111,13 @@ describe('settings updates', () => {
     await waitFor(() => expect(screen.getByRole('alert').textContent).toContain('无法保存'));
     expect(screen.getByRole('switch').getAttribute('aria-checked')).toBe('true');
   });
-  it('supports English and disables unsupported platforms', () => {
+  it('keeps policy checks and manual downloads available without a native updater', async () => {
     mock.status!.supported = false; render(<SoftwareUpdateCard zh={false} />);
     expect((screen.getByRole('switch', { name: 'Automatic updates' }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole('button', { name: 'Check for updates' }) as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.click(screen.getByRole('button', { name: 'Check for updates' }));
+    expect(mock.check).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole('button', { name: 'Download installer' }));
+    expect(mock.download).toHaveBeenCalledTimes(1);
+    expect(mock.install).not.toHaveBeenCalled();
   });
 });

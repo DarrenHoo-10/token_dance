@@ -54,6 +54,47 @@ fn cli(paths: &CursorUsagePaths) {
 }
 
 #[test]
+fn cli_ownership_is_usable_before_the_ide_creates_its_conversation_table() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = paths(dir.path());
+    cli(&p);
+    let db = rusqlite::Connection::open(&p.database).unwrap();
+    db.execute_batch("CREATE TABLE ItemTable(key TEXT PRIMARY KEY, value TEXT);").unwrap();
+    assert_eq!(local_conversations(&p, &dir.path().join("transcripts")).unwrap(), local());
+    // A missing optional table contributes no IDE ownership. It must not import account totals.
+    let batch = project_page(
+        &page(vec![row(99, LOCAL), row(98, REMOTE)], 2),
+        &local_conversations(&p, &dir.path().join("transcripts")).unwrap(),
+        &mut cursor(),
+    ).unwrap();
+    assert_eq!(batch.records.len(), 1);
+}
+
+#[test]
+fn corrupt_ide_database_is_still_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = paths(dir.path());
+    cli(&p);
+    std::fs::write(&p.database, b"not a database").unwrap();
+    assert!(local_conversations(&p, &dir.path().join("transcripts")).is_err());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_cursor_paths_use_application_support_with_spaces() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = CursorUsagePaths::for_home(dir.path());
+    let config = dir.path().join("Library/Application Support/Cursor");
+    assert_eq!(p.database, config.join("User/globalStorage/state.vscdb"));
+    assert_eq!(p.auth, config.join("auth.json"));
+    std::fs::create_dir_all(&config).unwrap();
+    auth(&p, "fixture-user");
+    cli(&p);
+    assert!(load_token(&p).is_ok());
+    assert_eq!(local_conversations(&p, &dir.path().join(".cursor/projects")).unwrap(), local());
+}
+
+#[test]
 fn exact_usage_is_local_only_and_contains_no_account_fields() {
     let batch = project_page(
         &page(vec![row(99, LOCAL), row(98, REMOTE)], 2),
