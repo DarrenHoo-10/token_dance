@@ -778,6 +778,9 @@ func TestUSR011_TenMetricsMySQLSupportedVsZero(t *testing.T) {
 	if !sumA.Metrics.CacheHitRate.Supported || sumA.Metrics.CacheHitRate.Value == nil || *sumA.Metrics.CacheHitRate.Value != "0.273" { // 300000 / 1100000 = 0.2727... -> 0.273
 		t.Errorf("expected user A cacheHitRate 0.273, got %+v", sumA.Metrics.CacheHitRate)
 	}
+	if sumA.Metrics.CacheHitRate.Coverage == nil || *sumA.Metrics.CacheHitRate.Coverage != domain.MetricCoverageComplete {
+		t.Errorf("expected user A cacheHitRate coverage complete, got %+v", sumA.Metrics.CacheHitRate)
+	}
 	if !sumA.Metrics.ActiveDurationMs.Supported || sumA.Metrics.ActiveDurationMs.Value == nil || *sumA.Metrics.ActiveDurationMs.Value != "3600000" {
 		t.Errorf("expected user A activeDurationMs 3600000, got %+v", sumA.Metrics.ActiveDurationMs)
 	}
