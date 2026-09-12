@@ -1,0 +1,245 @@
+[
+  {
+    "name": "chinese_and_escapes",
+    "description": "chinese_and_escapes",
+    "event": {
+      "eventId": "ZXZlbnQtY2hpbmVzZQAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "factKey": "ZmFjdC1jaGluZXNlAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "factRevision": "1",
+      "schemaVersion": 2,
+      "metricSemanticsVersion": 1,
+      "harnessId": "codex",
+      "eventType": "model_usage_recorded",
+      "occurredAt": "1789099200000",
+      "model": {
+        "providerId": "openai",
+        "modelId": "gpt-test-model"
+      },
+      "sessionKey": "c2Vzc2lvbi1jaGluZXNlAAAAAAAAAAAAAAAAAAAAAAA",
+      "payload": {
+        "usage": {
+          "token_total": "1100",
+          "input_context_tokens": "1000",
+          "output_tokens": "100"
+        },
+        "meta": {
+          "accuracy": "exact",
+          "time_source": "source_record",
+          "safe_tags": [
+            "中文标签",
+            "line\nbreak",
+            "quote\"here"
+          ]
+        }
+      }
+    },
+    "canonical_json": "{\"eventId\":\"ZXZlbnQtY2hpbmVzZQAAAAAAAAAAAAAAAAAAAAAAAAA\",\"eventType\":\"model_usage_recorded\",\"factKey\":\"ZmFjdC1jaGluZXNlAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"factRevision\":\"1\",\"harnessId\":\"codex\",\"metricSemanticsVersion\":1,\"model\":{\"modelId\":\"gpt-test-model\",\"providerId\":\"openai\"},\"occurredAt\":\"1789099200000\",\"payload\":{\"meta\":{\"accuracy\":\"exact\",\"safe_tags\":[\"中文标签\",\"line\\nbreak\",\"quote\\\"here\"],\"time_source\":\"source_record\"},\"usage\":{\"input_context_tokens\":\"1000\",\"output_tokens\":\"100\",\"token_total\":\"1100\"}},\"schemaVersion\":2,\"sessionKey\":\"c2Vzc2lvbi1jaGluZXNlAAAAAAAAAAAAAAAAAAAAAAA\"}",
+    "content_hash": "pHb0C6GGH9rHDt8f8M2cF7k4Yka0gxb_7d_4hC9MfAU"
+  },
+  {
+    "name": "skill_public_name_excluded",
+    "description": "skill_public_name_excluded",
+    "event": {
+      "eventId": "ZXZlbnQtZXNjYXBlcwAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "factKey": "ZmFjdC1lc2NhcGVzAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "factRevision": "1",
+      "schemaVersion": 2,
+      "metricSemanticsVersion": 1,
+      "harnessId": "claude",
+      "eventType": "skill_invoked",
+      "occurredAt": "1700000000000",
+      "skill": {
+        "skillKey": "c2tpbGwta2V5LWVzY2FwZXMAAAAAAAAAAAAAAAAAAAA",
+        "publicName": "展示名-不应进入hash"
+      },
+      "sessionKey": "c2Vzc2lvbi1lc2NhcGVzAAAAAAAAAAAAAAAAAAAAAAA",
+      "payload": {
+        "activity": {
+          "duration_ms": "0",
+          "success": true,
+          "trigger": "user"
+        },
+        "context": {
+          "parent_session_key": "cGFyZW50LXNlc3Npb24AAAAAAAAAAAAAAAAAAAAAAAA",
+          "coverage": "path\\with\\slash\tand\ttab"
+        },
+        "meta": {
+          "accuracy": "derived",
+          "time_source": "prior_record"
+        }
+      }
+    },
+    "canonical_json": "{\"eventId\":\"ZXZlbnQtZXNjYXBlcwAAAAAAAAAAAAAAAAAAAAAAAAA\",\"eventType\":\"skill_invoked\",\"factKey\":\"ZmFjdC1lc2NhcGVzAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"factRevision\":\"1\",\"harnessId\":\"claude\",\"metricSemanticsVersion\":1,\"occurredAt\":\"1700000000000\",\"payload\":{\"activity\":{\"duration_ms\":\"0\",\"success\":true,\"trigger\":\"user\"},\"context\":{\"coverage\":\"path\\\\with\\\\slash\\tand\\ttab\",\"parent_session_key\":\"cGFyZW50LXNlc3Npb24AAAAAAAAAAAAAAAAAAAAAAAA\"},\"meta\":{\"accuracy\":\"derived\",\"time_source\":\"prior_record\"}},\"schemaVersion\":2,\"sessionKey\":\"c2Vzc2lvbi1lc2NhcGVzAAAAAAAAAAAAAAAAAAAAAAA\",\"skill\":{\"skillKey\":\"c2tpbGwta2V5LWVzY2FwZXMAAAAAAAAAAAAAAAAAAAA\"}}",
+    "content_hash": "Jtqop-4plHRsgjpUd7ibSSJR6vg6eIJaHCQ1aWly6sw"
+  },
+  {
+    "name": "large_integers",
+    "description": "large_integers",
+    "event": {
+      "eventId": "ZXZlbnQtbGFyZ2UtaW50AAAAAAAAAAAAAAAAAAAAAAA",
+      "factKey": "ZmFjdC1sYXJnZS1pbnQAAAAAAAAAAAAAAAAAAAAAAAA",
+      "factRevision": "1",
+      "schemaVersion": 2,
+      "metricSemanticsVersion": 1,
+      "harnessId": "cursor",
+      "eventType": "cost_recorded",
+      "occurredAt": "9223372036854775807",
+      "costScopeKey": "Y29zdC1zY29wZS1sYXJnZQAAAAAAAAAAAAAAAAAAAAA",
+      "model": {
+        "providerId": "openrouter",
+        "modelId": "x"
+      },
+      "payload": {
+        "cost": {
+          "units": "9007199254740993",
+          "currency": "USD",
+          "source": "provider_reported",
+          "price_basis_id": "basis-1"
+        },
+        "usage": {
+          "token_total": "9223372036854775807",
+          "request_count": "9007199254740993"
+        },
+        "meta": {
+          "accuracy": "exact",
+          "time_source": "source_record"
+        }
+      }
+    },
+    "canonical_json": "{\"costScopeKey\":\"Y29zdC1zY29wZS1sYXJnZQAAAAAAAAAAAAAAAAAAAAA\",\"eventId\":\"ZXZlbnQtbGFyZ2UtaW50AAAAAAAAAAAAAAAAAAAAAAA\",\"eventType\":\"cost_recorded\",\"factKey\":\"ZmFjdC1sYXJnZS1pbnQAAAAAAAAAAAAAAAAAAAAAAAA\",\"factRevision\":\"1\",\"harnessId\":\"cursor\",\"metricSemanticsVersion\":1,\"model\":{\"modelId\":\"x\",\"providerId\":\"openrouter\"},\"occurredAt\":\"9223372036854775807\",\"payload\":{\"cost\":{\"currency\":\"USD\",\"price_basis_id\":\"basis-1\",\"source\":\"provider_reported\",\"units\":\"9007199254740993\"},\"meta\":{\"accuracy\":\"exact\",\"time_source\":\"source_record\"},\"usage\":{\"request_count\":\"9007199254740993\",\"token_total\":\"9223372036854775807\"}},\"schemaVersion\":2}",
+    "content_hash": "ir-kOCgYA1luBkDg6lG18zXdwHxTyy4wiWWtflYM-6s"
+  },
+  {
+    "name": "omitted_optional_nulls",
+    "description": "omitted_optional_nulls",
+    "event": {
+      "eventId": "ZXZlbnQtbnVsbHMAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "factKey": "ZmFjdC1udWxscwAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "factRevision": "1",
+      "schemaVersion": 2,
+      "metricSemanticsVersion": 1,
+      "harnessId": "opencode",
+      "eventType": "code_changed",
+      "occurredAt": "1710000000000",
+      "payload": {
+        "code": {
+          "generated": "10",
+          "accepted": "0",
+          "added": "4",
+          "removed": "1",
+          "file_touch_count": "2"
+        },
+        "meta": {
+          "accuracy": "correlated",
+          "time_source": "file_mtime"
+        }
+      }
+    },
+    "canonical_json": "{\"eventId\":\"ZXZlbnQtbnVsbHMAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"eventType\":\"code_changed\",\"factKey\":\"ZmFjdC1udWxscwAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\",\"factRevision\":\"1\",\"harnessId\":\"opencode\",\"metricSemanticsVersion\":1,\"occurredAt\":\"1710000000000\",\"payload\":{\"code\":{\"accepted\":\"0\",\"added\":\"4\",\"file_touch_count\":\"2\",\"generated\":\"10\",\"removed\":\"1\"},\"meta\":{\"accuracy\":\"correlated\",\"time_source\":\"file_mtime\"}},\"schemaVersion\":2}",
+    "content_hash": "C_GEMQ2mbVh-T6la9nE4BtSsnYx1MNMjNJkWvYzSvrw"
+  },
+  {
+    "name": "ack_duplicate_vs_conflict",
+    "description": "same event_id same hash => duplicate; same event_id different hash => conflict",
+    "base_event": {
+      "eventId": "ZXZlbnQtY2hpbmVzZQAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "factKey": "ZmFjdC1jaGluZXNlAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "factRevision": "1",
+      "schemaVersion": 2,
+      "metricSemanticsVersion": 1,
+      "harnessId": "codex",
+      "eventType": "model_usage_recorded",
+      "occurredAt": "1789099200000",
+      "model": {
+        "providerId": "openai",
+        "modelId": "gpt-test-model"
+      },
+      "sessionKey": "c2Vzc2lvbi1jaGluZXNlAAAAAAAAAAAAAAAAAAAAAAA",
+      "payload": {
+        "usage": {
+          "token_total": "1100",
+          "input_context_tokens": "1000",
+          "output_tokens": "100"
+        },
+        "meta": {
+          "accuracy": "exact",
+          "time_source": "source_record",
+          "safe_tags": [
+            "中文标签",
+            "line\nbreak",
+            "quote\"here"
+          ]
+        }
+      }
+    },
+    "base_hash": "pHb0C6GGH9rHDt8f8M2cF7k4Yka0gxb_7d_4hC9MfAU",
+    "duplicate_event": {
+      "eventId": "ZXZlbnQtY2hpbmVzZQAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "factKey": "ZmFjdC1jaGluZXNlAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "factRevision": "1",
+      "schemaVersion": 2,
+      "metricSemanticsVersion": 1,
+      "harnessId": "codex",
+      "eventType": "model_usage_recorded",
+      "occurredAt": "1789099200000",
+      "model": {
+        "providerId": "openai",
+        "modelId": "gpt-test-model"
+      },
+      "sessionKey": "c2Vzc2lvbi1jaGluZXNlAAAAAAAAAAAAAAAAAAAAAAA",
+      "payload": {
+        "usage": {
+          "token_total": "1100",
+          "input_context_tokens": "1000",
+          "output_tokens": "100"
+        },
+        "meta": {
+          "accuracy": "exact",
+          "time_source": "source_record",
+          "safe_tags": [
+            "中文标签",
+            "line\nbreak",
+            "quote\"here"
+          ]
+        }
+      }
+    },
+    "conflict_event": {
+      "eventId": "ZXZlbnQtY2hpbmVzZQAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "factKey": "ZmFjdC1jaGluZXNlAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "factRevision": "1",
+      "schemaVersion": 2,
+      "metricSemanticsVersion": 1,
+      "harnessId": "codex",
+      "eventType": "model_usage_recorded",
+      "occurredAt": "1789099200000",
+      "model": {
+        "providerId": "openai",
+        "modelId": "gpt-test-model"
+      },
+      "sessionKey": "c2Vzc2lvbi1jaGluZXNlAAAAAAAAAAAAAAAAAAAAAAA",
+      "payload": {
+        "usage": {
+          "token_total": "1101",
+          "input_context_tokens": "1000",
+          "output_tokens": "100"
+        },
+        "meta": {
+          "accuracy": "exact",
+          "time_source": "source_record",
+          "safe_tags": [
+            "中文标签",
+            "line\nbreak",
+            "quote\"here"
+          ]
+        }
+      }
+    },
+    "conflict_hash": "R8evRONZmaPyYKHk1UYWTrqZYcsF5obnIr2hmLABR2U",
+    "expected": {
+      "duplicate": "duplicate",
+      "conflict": "conflict",
+      "fresh": "accepted"
+    }
+  }
+]

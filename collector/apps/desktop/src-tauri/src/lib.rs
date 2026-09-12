@@ -10,6 +10,7 @@ mod single_instance;
 pub mod state;
 pub mod tray_state;
 pub mod updates;
+pub mod upload_pipeline;
 pub mod usage_ledger;
 
 use std::fs;
@@ -411,7 +412,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sqlite_usage_survives_restart_without_json_or_upload_wal() {
+    async fn legacy_sqlite_usage_survives_restart_without_leaking_into_pipeline_ui() {
         let root = tempfile::tempdir().unwrap();
         let mut event = crate::auto_sync::tests::event('B');
         event.agent_id = "codex".into();
@@ -423,8 +424,16 @@ mod tests {
             assert!(state.record_usage(&[event.clone()]));
             let agents = state.get_agents().await;
             let codex = agents.iter().find(|agent| agent.id == "codex").unwrap();
-            assert_eq!(codex.today_tokens, 15);
-            assert_eq!(codex.total_tokens, 15);
+            assert_eq!(codex.today_tokens, 0);
+            assert_eq!(codex.total_tokens, 0);
+            assert_eq!(
+                state
+                    .lock_store()
+                    .agent_usage("codex", chrono::Local::now().date_naive())
+                    .unwrap()
+                    .total_tokens,
+                15
+            );
             assert!(!root.path().join("usage-ledger.json").exists());
             assert!(root.path().join("tokendance.sqlite3").exists());
             assert!(state.get_outbox().await.is_empty());
@@ -434,11 +443,19 @@ mod tests {
             .unwrap();
         let agents = state.get_agents().await;
         let codex = agents.iter().find(|agent| agent.id == "codex").unwrap();
-        assert_eq!(codex.total_tokens, 15);
-        assert_eq!(codex.today_tokens, 15);
+        assert_eq!(codex.total_tokens, 0);
+        assert_eq!(
+            state
+                .lock_store()
+                .agent_usage("codex", chrono::Local::now().date_naive())
+                .unwrap()
+                .total_tokens,
+            15
+        );
+        assert_eq!(codex.today_tokens, 0);
         let orb = state.get_usage_summary(chrono::Local::now().date_naive());
-        assert_eq!(orb.today_tokens.as_deref(), Some("15"));
-        assert_eq!(orb.known_source_count, 1);
+        assert_eq!(orb.today_tokens, None);
+        assert_eq!(orb.known_source_count, 0);
         let sources = state.orb_today_sources();
         assert_eq!(
             sources
@@ -447,7 +464,7 @@ mod tests {
                 .unwrap()
                 .today_tokens
                 .as_deref(),
-            Some("15")
+            None
         );
         assert!(state.get_outbox().await.is_empty());
         assert!(!state.record_usage(&[event]));

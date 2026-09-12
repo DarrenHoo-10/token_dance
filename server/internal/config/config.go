@@ -118,6 +118,11 @@ type Config struct {
 	SMTPTLSMode      string `json:"smtpTlsMode,omitempty"`
 	SMTPEHLOName     string `json:"smtpEhloName,omitempty"`
 	TestAuthCode     string `json:"-"`
+
+	// Event pipeline v2 rollout switches (P8). Closing these pauses the new
+	// path; legacy upload endpoints stay closed (CLIENT_UPGRADE_REQUIRED).
+	EventPipelineV2Ingest  bool `json:"eventPipelineV2Ingest"`
+	EventPipelineV2Workers bool `json:"eventPipelineV2Workers"`
 }
 
 func deriveDevKey(purpose string) []byte {
@@ -167,6 +172,9 @@ func DefaultConfig() *Config {
 		EmailProvider: "sink",
 		SMTPPort:      587,
 		SMTPTLSMode:   "starttls",
+		// Closed-beta default: new ingest/workers on; flip false to pause without reopening legacy.
+		EventPipelineV2Ingest:  true,
+		EventPipelineV2Workers: true,
 	}
 }
 
@@ -458,6 +466,22 @@ func LoadFromEnv() (*Config, error) {
 			return nil, fmt.Errorf("invalid TOKENDANCE_OBJECT_USE_PATH_STYLE: %w", e)
 		}
 		cfg.ObjectUsePathStyle = b
+	}
+	parseBool := func(name string, dst *bool) error {
+		if v := os.Getenv(name); v != "" {
+			b, e := strconv.ParseBool(v)
+			if e != nil {
+				return fmt.Errorf("invalid %s: %w", name, e)
+			}
+			*dst = b
+		}
+		return nil
+	}
+	if err := parseBool("TOKENDANCE_EVENT_PIPELINE_V2_INGEST", &cfg.EventPipelineV2Ingest); err != nil {
+		return nil, err
+	}
+	if err := parseBool("TOKENDANCE_EVENT_PIPELINE_V2_WORKERS", &cfg.EventPipelineV2Workers); err != nil {
+		return nil, err
 	}
 
 	if err := cfg.Validate(); err != nil {

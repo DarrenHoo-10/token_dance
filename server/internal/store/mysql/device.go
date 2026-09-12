@@ -270,8 +270,22 @@ func (s *deviceStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 	)
 
 	if err == nil {
-		if existing.UserID == userID && existing.InstallationStatus == domain.InstallationStatusActive {
-			// Idempotent return
+		existing.DevicePublicKey = scanBytes32(pubKey)
+		existing.DeviceName = ptrFromNullString(devName)
+		existing.OSVersion = ptrFromNullString(osVer)
+		existing.DisabledReason = ptrFromNullString(disReason)
+		existing.DisabledAt = ptrFromNullTime(disAt)
+		existing.LastSeenAt = ptrFromNullTime(lastSeen)
+		existing.RevokedAt = ptrFromNullTime(revokedAt)
+
+		if existing.InstallationStatus == domain.InstallationStatusActive {
+			if existing.UserID != userID {
+				rebound, rebindErr := s.rebindInstallationInTx(ctx, tx, existing.InstallationID, userID, &inst, now)
+				if rebindErr != nil {
+					return nil, rebindErr
+				}
+				existing = *rebound
+			}
 			consumeSQL := `
 				UPDATE device_binding_challenges
 				SET challenge_status = 'consumed', consumed_installation_id = ?, consumed_at = ?,
@@ -281,15 +295,6 @@ func (s *deviceStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 			if err := tx.Commit(); err != nil {
 				return nil, err
 			}
-
-			existing.DevicePublicKey = scanBytes32(pubKey)
-			existing.DeviceName = ptrFromNullString(devName)
-			existing.OSVersion = ptrFromNullString(osVer)
-			existing.DisabledReason = ptrFromNullString(disReason)
-			existing.DisabledAt = ptrFromNullTime(disAt)
-			existing.LastSeenAt = ptrFromNullTime(lastSeen)
-			existing.RevokedAt = ptrFromNullTime(revokedAt)
-
 			return &existing, nil
 		}
 		return nil, domain.ErrPublicKeyConflict
@@ -369,9 +374,22 @@ func (s *deviceStore) RegisterInstallationTx(ctx context.Context, inst domain.In
 		       status_version, registered_at, last_seen_at, revoked_at, updated_at
 		FROM installations WHERE device_public_key = ? FOR UPDATE`, bytes32Slice(inst.DevicePublicKey)))
 	if err == nil {
-		if existing.UserID == inst.UserID && existing.InstallationStatus == domain.InstallationStatusActive {
+		if existing.InstallationStatus == domain.InstallationStatusActive {
+			if existing.UserID != inst.UserID {
+				rebound, rebindErr := s.rebindInstallationInTx(ctx, tx, existing.InstallationID, inst.UserID, &inst, now)
+				if rebindErr != nil {
+					return nil, rebindErr
+				}
+				if err := tx.Commit(); err != nil {
+					return nil, err
+				}
+				return rebound, nil
+			}
 			// Re-registration must return the persisted identity, not the fresh
 			// candidate ID, which was never inserted and cannot authenticate.
+			if err := tx.Commit(); err != nil {
+				return nil, err
+			}
 			return existing, nil
 		}
 		return nil, domain.ErrPublicKeyConflict
@@ -417,6 +435,102 @@ func (s *deviceStore) RegisterInstallationTx(ctx context.Context, inst domain.In
 	instCopy.UpdatedAt = now
 
 	return &instCopy, nil
+}
+
+func (s *deviceStore) RebindInstallationTx(ctx context.Context, installationID, newUserID string, now time.Time) (*domain.Installation, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to begin rebind installation tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var accountStatus string
+	if err := tx.QueryRowContext(ctx, "SELECT account_status FROM users WHERE user_id = ? FOR UPDATE", newUserID).Scan(&accountStatus); err != nil || accountStatus != string(domain.AccountStatusActive) {
+		return nil, domain.ErrForbidden
+	}
+
+	existing, err := s.scanInstallationRow(tx.QueryRowContext(ctx, `
+		SELECT installation_id, user_id, device_public_key, device_name,
+		       os_type, os_version, architecture, collector_version,
+		       installation_status, disabled_at, disabled_reason,
+		       status_version, registered_at, last_seen_at, revoked_at, updated_at
+		FROM installations WHERE installation_id = ? FOR UPDATE`, installationID))
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+	if existing.InstallationStatus == domain.InstallationStatusRevoked {
+		return nil, domain.ErrDeviceRevoked
+	}
+	if existing.InstallationStatus == domain.InstallationStatusDisabled {
+		return nil, domain.ErrDeviceDisabled
+	}
+	if existing.UserID == newUserID {
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return existing, nil
+	}
+
+	rebound, err := s.rebindInstallationInTx(ctx, tx, installationID, newUserID, nil, now)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return rebound, nil
+}
+
+// rebindInstallationInTx updates the installation owner and bumps status_version.
+// optionalMeta, when non-nil, refreshes device metadata from the claim/register input.
+func (s *deviceStore) rebindInstallationInTx(ctx context.Context, tx *sql.Tx, installationID, newUserID string, optionalMeta *domain.Installation, now time.Time) (*domain.Installation, error) {
+	osType := ""
+	architecture := ""
+	collectorVersion := ""
+	var deviceName, osVersion interface{}
+	if optionalMeta != nil {
+		osType = optionalMeta.OSType
+		if osType != "windows" && osType != "macos" {
+			osType = "windows"
+		}
+		architecture = optionalMeta.Architecture
+		collectorVersion = optionalMeta.CollectorVersion
+		deviceName = nullStringFromPtr(optionalMeta.DeviceName)
+		osVersion = nullStringFromPtr(optionalMeta.OSVersion)
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE installations
+			SET user_id = ?, status_version = status_version + 1, updated_at = ?,
+			    device_name = ?, os_type = ?, os_version = ?, architecture = ?, collector_version = ?,
+			    installation_status = 'active', disabled_at = NULL, disabled_reason = NULL, revoked_at = NULL
+			WHERE installation_id = ?`,
+			newUserID, now, deviceName, osType, osVersion, architecture, collectorVersion, installationID,
+		); err != nil {
+			return nil, fmt.Errorf("rebind installation metadata: %w", err)
+		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE installations
+			SET user_id = ?, status_version = status_version + 1, updated_at = ?
+			WHERE installation_id = ?`,
+			newUserID, now, installationID,
+		); err != nil {
+			return nil, fmt.Errorf("rebind installation: %w", err)
+		}
+	}
+
+	updated, err := s.scanInstallationRow(tx.QueryRowContext(ctx, `
+		SELECT installation_id, user_id, device_public_key, device_name,
+		       os_type, os_version, architecture, collector_version,
+		       installation_status, disabled_at, disabled_reason,
+		       status_version, registered_at, last_seen_at, revoked_at, updated_at
+		FROM installations WHERE installation_id = ?`, installationID))
+	if err != nil {
+		return nil, fmt.Errorf("reload rebound installation: %w", err)
+	}
+	return updated, nil
 }
 
 func (s *deviceStore) UpdateInstallationName(ctx context.Context, installationID, userID string, name string, now time.Time) (*domain.Installation, error) {

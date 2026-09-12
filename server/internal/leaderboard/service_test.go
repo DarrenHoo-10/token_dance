@@ -122,6 +122,40 @@ func TestGetCommunityStatsServesPrecomputedRowsWithDeltas(t *testing.T) {
 	}
 }
 
+func TestGetCommunityStatsOmitsMixedCurrencyScalar(t *testing.T) {
+	ctx := context.Background()
+	st := memory.NewMemoryStore()
+	svc := NewService(st)
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+
+	if err := st.CommunityStats().UpsertCommunityDailyStats(ctx, store.CommunityDailyTotals{
+		MetricDate: "2026-09-08", TokensTotal: 100, Developers: 4, CodeLines: 200, Interactions: 40,
+		Costs: []store.CommunityCost{{Currency: "USD", Amount: 1}, {Currency: "CNY", Amount: 7}},
+	}); err != nil {
+		t.Fatalf("seed yesterday: %v", err)
+	}
+	if err := st.CommunityStats().UpsertCommunityDailyStats(ctx, store.CommunityDailyTotals{
+		MetricDate: "2026-09-09", TokensTotal: 112, Developers: 5, CodeLines: 100, Interactions: 50,
+		Costs: []store.CommunityCost{{Currency: "CNY", Amount: 7}, {Currency: "USD", Amount: 1}},
+	}); err != nil {
+		t.Fatalf("seed today: %v", err)
+	}
+
+	res, err := svc.GetCommunityStats(ctx, now)
+	if err != nil {
+		t.Fatalf("community stats: %v", err)
+	}
+	if res.CostAmount != nil {
+		t.Fatalf("mixed currencies must not return costAmount=8, got %v", *res.CostAmount)
+	}
+	if len(res.Costs) != 2 {
+		t.Fatalf("expected per-currency costs, got %+v", res.Costs)
+	}
+	if res.Deltas != nil && res.Deltas.CostAmount != nil {
+		t.Fatalf("mixed currencies must not invent a cost delta: %+v", res.Deltas)
+	}
+}
+
 func TestGetCommunityStatsWithoutPrecomputedRowsStaysEmpty(t *testing.T) {
 	st := memory.NewMemoryStore()
 	svc := NewService(st)

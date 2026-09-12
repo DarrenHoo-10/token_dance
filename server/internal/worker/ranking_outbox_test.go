@@ -39,8 +39,19 @@ func TestProcessRankingOutboxAppliesAbsoluteScores(t *testing.T) {
 		t.Fatalf("seed user: %v", err)
 	}
 	if _, err := db.ExecContext(ctx, `
-		INSERT INTO daily_user_agent_metrics (metric_date, user_id, agent_id, exact_token_total, derived_token_total, aggregation_version)
-		VALUES ('2026-09-06', 'usr_rank_a', 'codex', 40, 2, 2)`); err != nil {
+		INSERT INTO installations (installation_id, user_id, device_public_key, os_type, architecture, collector_version, installation_status, registered_at, updated_at)
+		VALUES ('ins_rank_a', 'usr_rank_a', UNHEX(SHA2('pk-rank', 256)), 'windows', 'x86_64', '1.0.0', 'active', ?, ?)`,
+		now, now); err != nil {
+		t.Fatalf("seed installation: %v", err)
+	}
+	dayBucket := time.Date(2026, 9, 6, 0, 0, 0, 0, time.FixedZone("UTC+8", 8*3600)).UnixMilli()
+	nowMs := now.UnixMilli()
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO telemetry_model_metrics (
+			created_at, updated_at, user_id, installation_id, grain, bucket_start, harness_id, model_key,
+			exact_token_total, derived_token_total, metric_semantics_version
+		) VALUES (?, ?, 'usr_rank_a', 'ins_rank_a', 'day', ?, 'codex', 1, 40, 2, 1)`,
+		nowMs, nowMs, dayBucket); err != nil {
 		t.Fatalf("seed metrics: %v", err)
 	}
 

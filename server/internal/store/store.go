@@ -86,6 +86,7 @@ type DeviceStore interface {
 	CancelBindingChallenge(ctx context.Context, challengeID, userID string) error
 	ClaimInstallationTx(ctx context.Context, codeHash [32]byte, inst domain.Installation, now time.Time) (*domain.Installation, error)
 	RegisterInstallationTx(ctx context.Context, inst domain.Installation, now time.Time) (*domain.Installation, error)
+	RebindInstallationTx(ctx context.Context, installationID, newUserID string, now time.Time) (*domain.Installation, error)
 	UpdateInstallationName(ctx context.Context, installationID, userID string, name string, now time.Time) (*domain.Installation, error)
 	PauseInstallation(ctx context.Context, installationID, userID string, reason string, now time.Time) (*domain.Installation, error)
 	ResumeInstallation(ctx context.Context, installationID, userID string, now time.Time) (*domain.Installation, error)
@@ -96,6 +97,7 @@ type DeviceStore interface {
 type IngestStore interface {
 	GetIngestInstallation(ctx context.Context, installationID string) (*domain.Installation, error)
 	CommitIngest(ctx context.Context, batch domain.IngestBatch) (*domain.IngestResult, error)
+	CommitTelemetryEventsV2(ctx context.Context, in domain.TelemetryEventsV2Input) (*domain.TelemetryEventsV2Result, error)
 	GetIngestCursor(ctx context.Context, installationID string) (domain.TelemetryCursor, error)
 }
 
@@ -128,18 +130,26 @@ type LeaderboardStore interface {
 	GetLeaderboardView(ctx context.Context, q LeaderboardQuery) (*domain.LeaderboardResponse, error)
 }
 
+// CommunityCost is one currency's community total in major units.
+// Distinct currencies are never FX-merged into CostAmount.
+type CommunityCost struct {
+	Currency string  `json:"currency"`
+	Amount   float64 `json:"amount"`
+}
+
 // CommunityDailyTotals is one precomputed day of whole-community aggregates.
-// The stats worker recomputes a day from daily_user_agent_metrics and
-// overwrites the row; request paths only read these rows, never aggregate.
+// The stats worker recomputes a day from telemetry_* tables and overwrites
+// the row; request paths only read these rows, never aggregate.
 type CommunityDailyTotals struct {
-	MetricDate   string    `json:"metricDate"`
-	TokensTotal  uint64    `json:"tokensTotal"`
-	Developers   uint64    `json:"developers"`
-	CodeLines    uint64    `json:"codeLines"`
-	Interactions uint64    `json:"interactions"`
-	CostAmount   float64   `json:"costAmount"`
-	IsFinal      bool      `json:"isFinal"`
-	ComputedAt   time.Time `json:"computedAt"`
+	MetricDate   string          `json:"metricDate"`
+	TokensTotal  uint64          `json:"tokensTotal"`
+	Developers   uint64          `json:"developers"`
+	CodeLines    uint64          `json:"codeLines"`
+	Interactions uint64          `json:"interactions"`
+	CostAmount   float64         `json:"costAmount"`
+	Costs        []CommunityCost `json:"costs,omitempty"`
+	IsFinal      bool            `json:"isFinal"`
+	ComputedAt   time.Time       `json:"computedAt"`
 }
 
 type CommunityStatsStore interface {

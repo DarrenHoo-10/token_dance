@@ -69,6 +69,17 @@ describe('Live leaderboard', () => {
     expect(screen.getByText('64%')).toBeInTheDocument();
     expect(screen.getByText('社区今日 Token 占比 · 按 harness')).toBeInTheDocument();
   });
+  it('lists community multi-currency costs instead of a fake $8.00', async () => {
+    vi.mocked(api.getCommunityStats).mockResolvedValue({
+      metricDate:'2026-09-09', timezone:'UTC',
+      tokens:'1215', developers:1, codeLines:'0', interactions:'6',
+      costAmount: null,
+      costs: [{ amount: 1, currency: 'USD' }, { amount: 7, currency: 'CNY' }],
+    });
+    showPage();
+    expect(await screen.findByText('USD 1.00 · CNY 7.00')).toBeInTheDocument();
+    expect(screen.queryByText('$8.00')).not.toBeInTheDocument();
+  });
   it('shows personal today tokens from the live board entry, not an empty event sum', async () => {
     vi.mocked(api.getActivityCalendar).mockResolvedValue({ days: [], currentStreak: 1, longestStreak: 1, totalActiveDays: 0 });
     vi.mocked(api.getPersonalSummary).mockImplementation(async (range) => {

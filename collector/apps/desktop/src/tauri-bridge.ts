@@ -23,7 +23,7 @@ export {
   websiteLoginUrl,
 } from "./website";
 
-export interface CostCoverage { estimatedUsd: number; estimatedRequests: number; unpricedRequests: number; detailedTokens: number; }
+export interface CostCoverage { estimatedUsd: number; estimatedCosts?: Record<string, number>; estimatedRequests: number; unpricedRequests: number; detailedTokens: number; }
 
 export interface AgentConfig {
   id: string;

@@ -280,6 +280,36 @@ func (w *Worker) ProcessAggregates(ctx context.Context) (int, error) {
 	if w.db == nil {
 		return 0, nil
 	}
+	if !w.eventPipelineV2Workers {
+		// P8 rollback: pause new aggregation without falling back to legacy usage_events.
+		return 0, nil
+	}
+	// P6: new event pipeline uses SKIP LOCKED task consumers + dirty version confirm.
+	// No global GET_LOCK for telemetry projection.
+	nTasks, err := w.ProcessTelemetryAggregation(ctx)
+	if err != nil {
+		return nTasks, err
+	}
+	nDirty, err := w.ProcessDirtyDayRefresh(ctx)
+	if err != nil {
+		return nTasks + nDirty, err
+	}
+	if _, err := mysqlstore.BackfillWindowScores(ctx, w.db, w.clk.Now(), 100); err != nil {
+		return nTasks + nDirty, err
+	}
+	return nTasks + nDirty, nil
+}
+
+// ProcessLegacyUsageAggregates rebuilds daily_* from usage_events under GET_LOCK.
+// Retained for transitional tests / cutover tooling; RunPass uses ProcessAggregates (P6).
+func (w *Worker) ProcessLegacyUsageAggregates(ctx context.Context) (int, error) {
+	return w.processLegacyUsageAggregates(ctx)
+}
+
+func (w *Worker) processLegacyUsageAggregates(ctx context.Context) (int, error) {
+	if w.db == nil {
+		return 0, nil
+	}
 	conn, err := w.db.Conn(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("open aggregate connection: %w", err)
@@ -382,8 +412,6 @@ func (w *Worker) ProcessAggregates(ctx context.Context) (int, error) {
 	if err := rebuildPublishedLeaderboards(ctx, tx, mapKeys(allDates), now); err != nil {
 		return 0, err
 	}
-	// Same-transaction signal: these days' community totals are stale and the
-	// stats worker should recompute them from the settled daily aggregates.
 	if err := mysqlstore.EnqueueCommunityStatsOutboxTx(ctx, tx, mapKeys(allDates), now); err != nil {
 		return 0, err
 	}

@@ -1,7 +1,9 @@
-//! TokenShow collector protocol types generated from `schemas/protocol/v1`.
+//! TokenShow collector protocol types generated from `schemas/protocol/v1`,
+//! plus frozen v2 event/content-hash contracts under [`v2`].
 
 #[rustfmt::skip]
 mod generated;
+pub mod v2;
 
 pub use generated::*;
 

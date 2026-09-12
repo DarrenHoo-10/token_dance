@@ -3120,7 +3120,11 @@ dependencies = [
 name = "protocol"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -4491,6 +4495,7 @@ dependencies = [
  "acquisition",
  "adapter-grok-build",
  "adapter-sdk",
+ "async-trait",
  "base64 0.22.1",
  "chrono",
  "collector-core",

@@ -1,6 +1,7 @@
 import React from 'react';
 import { useLocale } from '@/context/LocaleContext';
 import type { PersonalSummaryMetrics } from '@/types/api';
+import { formatPersonalCost } from '@/utils/cost';
 import { MetricCard } from './MetricCard';
 
 export interface MetricGridProps {
@@ -33,25 +34,17 @@ function formatPercentage(val: string | null | undefined): string | null {
   return `${pct}%`;
 }
 
-function formatCost(amount: string | null | undefined, currency: string | null | undefined = 'USD'): string | null {
-  if (!amount) return null;
-  const num = parseFloat(amount);
-  if (isNaN(num)) return null;
-  const curr = currency || 'USD';
-  const formatted = num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return curr === 'USD' ? `$${formatted}` : `${formatted} ${curr}`;
-}
-
 export const MetricGrid: React.FC<MetricGridProps> = ({ metrics }) => {
   const { t } = useLocale();
+  const cost = formatPersonalCost(metrics.estimatedCost, metrics.estimatedCosts);
 
   return (
     <div className="metric-grid-10" aria-label={t('dashboard.coreMetricsLabel')}>
       {/* 1. Estimated Cost */}
       <MetricCard
         label={t('metrics.estimatedCost')}
-        value={formatCost(metrics.estimatedCost?.amount, metrics.estimatedCost?.currency)}
-        supported={metrics.estimatedCost?.supported}
+        value={cost.value}
+        supported={cost.supported}
       />
 
       {/* 2. Total Tokens */}

@@ -2,6 +2,7 @@ package ranking
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -14,6 +15,11 @@ const CommunityStatsKeyPrefix = "community:stats:"
 
 const CommunityStatsTTL = 48 * time.Hour
 
+type CommunityCost struct {
+	Currency string  `json:"currency"`
+	Amount   float64 `json:"amount"`
+}
+
 type CommunityStatsSnapshot struct {
 	Date         string
 	Tokens       uint64
@@ -21,6 +27,7 @@ type CommunityStatsSnapshot struct {
 	CodeLines    uint64
 	Interactions uint64
 	CostAmount   float64
+	Costs        []CommunityCost
 	ComputedAt   time.Time
 }
 
@@ -31,13 +38,27 @@ func (idx *Index) PublishCommunityStats(ctx context.Context, snapshot CommunityS
 		return nil
 	}
 	key := CommunityStatsKeyPrefix + snapshot.Date
+	costsJSON, err := json.Marshal(snapshot.Costs)
+	if err != nil {
+		return fmt.Errorf("marshal community costs %s: %w", snapshot.Date, err)
+	}
+	if snapshot.Costs == nil {
+		costsJSON = []byte("[]")
+	}
+	costAmount := ""
+	if len(snapshot.Costs) == 1 {
+		costAmount = strconv.FormatFloat(snapshot.Costs[0].Amount, 'f', -1, 64)
+	} else if len(snapshot.Costs) == 0 {
+		costAmount = strconv.FormatFloat(snapshot.CostAmount, 'f', -1, 64)
+	}
 	fields := map[string]interface{}{
-		"tokens":      strconv.FormatUint(snapshot.Tokens, 10),
-		"developers":  strconv.FormatUint(snapshot.Developers, 10),
-		"codeLines":   strconv.FormatUint(snapshot.CodeLines, 10),
+		"tokens":       strconv.FormatUint(snapshot.Tokens, 10),
+		"developers":   strconv.FormatUint(snapshot.Developers, 10),
+		"codeLines":    strconv.FormatUint(snapshot.CodeLines, 10),
 		"interactions": strconv.FormatUint(snapshot.Interactions, 10),
-		"costAmount":  strconv.FormatFloat(snapshot.CostAmount, 'f', -1, 64),
-		"computedAt":  snapshot.ComputedAt.UTC().Format(time.RFC3339Nano),
+		"costAmount":   costAmount,
+		"costs":        string(costsJSON),
+		"computedAt":   snapshot.ComputedAt.UTC().Format(time.RFC3339Nano),
 	}
 	if err := idx.rdb.HSet(ctx, key, fields).Err(); err != nil {
 		return fmt.Errorf("publish community stats %s: %w", snapshot.Date, err)

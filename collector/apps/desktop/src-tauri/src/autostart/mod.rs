@@ -1,6 +1,6 @@
 #[cfg(not(target_os = "windows"))]
 use std::fs;
-#[cfg(target_os = "macos")]
+#[cfg(not(target_os = "windows"))]
 use std::path::Path;
 use std::path::PathBuf;
 #[cfg(target_os = "windows")]
