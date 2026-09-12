@@ -22,3 +22,8 @@ test("rejected records are retained and are not reported as a connection failure
   assert.match(syncStatusText("DATA_REJECTED", 78, false), /Kept locally/);
   assert.doesNotMatch(syncStatusText("RETRYING", 78, true), /连接异常/);
 });
+
+test("update and device ownership explain why online sync is blocked", () => {
+  assert.match(syncStatusText("CLIENT_UPGRADE_REQUIRED", 3, true), /本机采集继续/);
+  assert.match(syncStatusText("DEVICE_BOUND_ELSEWHERE", 3, true), /原账号解绑/);
+});

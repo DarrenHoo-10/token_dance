@@ -584,6 +584,9 @@
             "$ref": "#/$defs/EventEnvelope"
           },
           "maxItems": 500
+        },
+        "reconstruction": {
+          "type": "boolean"
         }
       },
       "required": [

@@ -146,7 +146,7 @@ func TestTelemetryAggregationReplayNoDoubleAdd(t *testing.T) {
 	}
 	var exact string
 	if err := st.DB().QueryRow(`
-		SELECT CAST(exact_token_total AS CHAR) FROM telemetry_model_metrics
+		SELECT CAST(exact_token_total AS CHAR) FROM bound_telemetry_model_metrics
 		WHERE user_id=? AND grain='day'`, userID).Scan(&exact); err != nil {
 		t.Fatalf("read metrics: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestTelemetryAggregationReplayNoDoubleAdd(t *testing.T) {
 		t.Fatalf("expected exact 10, got %s", exact)
 	}
 	var tasks int
-	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM telemetry_tasks WHERE event_row_id IN (SELECT id FROM telemetry_events WHERE user_id=?)`, userID).Scan(&tasks); err != nil {
+	if err := st.DB().QueryRow(`SELECT COUNT(*) FROM telemetry_tasks WHERE event_row_id IN (SELECT id FROM telemetry_events WHERE installation_id IN (SELECT installation_id FROM installations WHERE user_id=?))`, userID).Scan(&tasks); err != nil {
 		t.Fatal(err)
 	}
 	if tasks != 0 {
@@ -163,7 +163,7 @@ func TestTelemetryAggregationReplayNoDoubleAdd(t *testing.T) {
 
 	// Re-insert a duplicate task against already-applied day status must not double-add.
 	var eventID uint64
-	if err := st.DB().QueryRow(`SELECT id FROM telemetry_events WHERE user_id=?`, userID).Scan(&eventID); err != nil {
+	if err := st.DB().QueryRow(`SELECT id FROM telemetry_events WHERE installation_id IN (SELECT installation_id FROM installations WHERE user_id=?)`, userID).Scan(&eventID); err != nil {
 		t.Fatal(err)
 	}
 	nowMs := now.UnixMilli()
@@ -176,7 +176,7 @@ func TestTelemetryAggregationReplayNoDoubleAdd(t *testing.T) {
 		t.Fatalf("second aggregate: %v", err)
 	}
 	if err := st.DB().QueryRow(`
-		SELECT CAST(exact_token_total AS CHAR) FROM telemetry_model_metrics
+		SELECT CAST(exact_token_total AS CHAR) FROM bound_telemetry_model_metrics
 		WHERE user_id=? AND grain='day'`, userID).Scan(&exact); err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestTelemetryAggregationConcurrentDevices(t *testing.T) {
 	var sum string
 	if err := st.DB().QueryRow(`
 		SELECT CAST(COALESCE(SUM(exact_token_total),0) AS CHAR)
-		FROM telemetry_model_metrics WHERE user_id=? AND grain='day'`, userID).Scan(&sum); err != nil {
+		FROM bound_telemetry_model_metrics WHERE user_id=? AND grain='day'`, userID).Scan(&sum); err != nil {
 		t.Fatal(err)
 	}
 	if sum != "17" {

@@ -14,12 +14,6 @@ function titleFor(range: UsageRange, zh: boolean) {
   return zh ? "近 7 日趋势" : "7-day trend";
 }
 
-function hintFor(range: UsageRange, zh: boolean) {
-  if (range === "today") return zh ? "含此刻 · 今日持续更新" : "Includes now · Live";
-  if (range === "all") return zh ? "从首次用量起 · 最多 12 个月" : "From first usage · Up to 12 months";
-  return zh ? "含今日 · 今日持续更新" : "Includes today · Live";
-}
-
 function showAxisLabel(range: UsageRange, point: TrendPoint, index: number, points: TrendPoint[]) {
   if (range === "week" || points.length <= 12) return true;
   if (range === "today") return index % 3 === 0 || index === points.length - 1;
@@ -79,7 +73,7 @@ export function WeeklyTrend({ points, range, lang }: { points: TrendPoint[]; ran
     <div className="usage-section-title">
       <h2>{titleFor(range, zh)}</h2>
       <span className="usage-trend-caption" aria-live="polite">
-        <small>{selected ? selected.label : hintFor(range, zh)}</small>
+        {selected && <small>{selected.label}</small>}
         <strong>{captionValue === null ? "—" : format(captionValue)}</strong>
       </span>
     </div>

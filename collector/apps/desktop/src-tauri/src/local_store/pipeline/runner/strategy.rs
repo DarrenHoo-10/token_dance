@@ -132,6 +132,8 @@ pub struct FactDraft {
     pub occurred_at: i64,
     pub time_source: super::admission::TimeSource,
     pub model_key: i64,
+    /// Public identity used in the canonical upload hash when model_key is nonzero.
+    pub model_identity: Option<(String, String)>,
     pub skill_id: Option<i64>,
     /// Wire skill identity (anonymous key). Required when skill_id is set for P0 hash.
     pub skill_key: Option<[u8; 32]>,
@@ -155,16 +157,9 @@ impl FactDraft {
         let mut local_payload = match sections {
             Value::Object(map) => Value::Object(map),
             other if other.is_null() => Value::Object(Default::default()),
-            other => {
-                return Err(format!(
-                    "payload_sections must be object, got {}",
-                    other
-                ))
-            }
+            other => return Err(format!("payload_sections must be object, got {}", other)),
         };
-        let obj = local_payload
-            .as_object_mut()
-            .expect("payload object");
+        let obj = local_payload.as_object_mut().expect("payload object");
         obj.insert(
             "meta".into(),
             serde_json::json!({
@@ -173,12 +168,11 @@ impl FactDraft {
             }),
         );
 
-        let content_hash =
-            crate::local_store::pipeline::content_hash::compute_p0_content_hash(
-                harness_id,
-                &self,
-                &local_payload,
-            )?;
+        let content_hash = crate::local_store::pipeline::content_hash::compute_p0_content_hash(
+            harness_id,
+            &self,
+            &local_payload,
+        )?;
 
         Ok(EventCandidate {
             event_id: self.event_id,
@@ -213,8 +207,17 @@ pub struct NativeFactKey {
     pub fact_revision: i64,
 }
 
+pub type ModelAllocator =
+    std::sync::Arc<dyn Fn(&str, &str) -> Result<i64, RunnerError> + Send + Sync>;
+
 /// Harness-owned strategy. Public runner owns lease, budget, admission, CAS.
 pub trait HarnessStrategy: Send + Sync {
+    fn set_model_allocator(&mut self, _allocator: ModelAllocator) {}
+    /// Actual collector health when independent of the legacy adapter runtime.
+    fn collection_status(&self) -> Option<&'static str> {
+        None
+    }
+
     fn harness_id(&self) -> &str;
 
     fn discover(&self, budget: DiscoveryBudget) -> Result<Vec<SourceSpec>, RunnerError>;

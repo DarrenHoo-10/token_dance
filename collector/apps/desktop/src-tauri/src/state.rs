@@ -9,9 +9,9 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Instant;
 
 use acquisition::SecretResolver;
+use adapter_grok_build::{hook_auth_token, write_session_end_hook};
 use adapter_sdk::{ConfigMutation, SetupPlan};
 use chrono::{Local, Utc};
-use adapter_grok_build::{hook_auth_token, write_session_end_hook};
 use collector_service::{
     detect_local, grok_user_home, start_listener, AppPaths, InstanceLock, DetectionSnapshot, ProductionService,
 };
@@ -440,7 +440,17 @@ impl AppState {
         let control = load_control(&root)?
             .unwrap_or_else(|| PersistedControl::initial(&installation_id, autostart_enabled));
         let pipeline_writer = match PipelineStore::open(&root) {
-            Ok(store) => {
+            Ok(mut store) => {
+                if !cfg!(test) {
+                    store
+                        .with_connection(|c| {
+                            crate::local_store::pipeline::reconstruction::ensure(
+                                c,
+                                env!("CARGO_PKG_VERSION"),
+                            )
+                        })
+                        .map_err(|e| e.to_string())?;
+                }
                 match store.workers_allowed() {
                     Ok(true) => Some(Arc::new(PipelineWriter::start(store))),
                     Ok(false) => {
@@ -688,6 +698,11 @@ impl AppState {
         Ok(())
     }
 
+    /// Lightweight worker gate; does not query legacy stores or take the service lock.
+    pub async fn collection_paused(&self) -> bool {
+        self.control.read().await.global_paused
+    }
+
     pub async fn get_daemon_status(&self) -> DaemonStatus {
         let control = self.control.read().await;
         let sync_status = self.sync_status.read().await.clone();
@@ -742,7 +757,9 @@ impl AppState {
         }
     }
 
-    pub async fn is_global_paused(&self) -> bool { self.control.read().await.global_paused }
+    pub async fn is_global_paused(&self) -> bool {
+        self.control.read().await.global_paused
+    }
 
     pub async fn set_global_pause(
         &self,
@@ -810,7 +827,16 @@ impl AppState {
                     name: name.into(),
                     adapter_id: runtime.adapter_id.clone(),
                     adapter_version: runtime.adapter_version.clone(),
-                    status: runtime_status(runtime, control.global_paused, enabled),
+                    status: if pipeline_enabled && enabled && !control.global_paused {
+                        self.pipeline_runtime()
+                            .and_then(|r| r.collection_status(id))
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| {
+                                runtime_status(runtime, control.global_paused, enabled)
+                            })
+                    } else {
+                        runtime_status(runtime, control.global_paused, enabled)
+                    },
                     setup_plan_status: runtime
                         .setup_plan_status
                         .map(|status| format!("{status:?}").to_uppercase())

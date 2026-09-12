@@ -11,6 +11,11 @@ use tauri::{AppHandle, Manager, State};
 use tokio::sync::{Mutex, RwLock};
 
 const RELEASES: &str = "https://www.nexorai.com.cn/token-dance/releases/stable.json";
+const UPDATE_POLICY: &str = "https://www.nexorai.com.cn/token-dance/v1/update-policy";
+static REQUIRED_UNTIL: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+pub fn upgrade_required() -> bool {
+    REQUIRED_UNTIL.load(std::sync::atomic::Ordering::Acquire) > chrono::Utc::now().timestamp()
+}
 const MAX_DOWNLOAD: u64 = 150 * 1024 * 1024;
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 const SUPPORTED: bool = cfg!(all(target_os = "windows", target_arch = "x86_64"));
@@ -18,6 +23,8 @@ const SUPPORTED: bool = cfg!(all(target_os = "windows", target_arch = "x86_64"))
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateStatus {
+    minimum_version: Option<String>,
+    required: bool,
     current_version: String,
     version: Option<String>,
     notes: String,
@@ -81,6 +88,12 @@ struct Candidate {
     notes: String,
     published_at: Option<String>,
     asset: Asset,
+}
+
+fn below_minimum(current: &str, minimum: &str) -> bool {
+    parse_version(current)
+        .zip(parse_version(minimum))
+        .is_some_and(|(current, minimum)| current < minimum)
 }
 
 fn parse_version(value: &str) -> Option<semver::Version> {
@@ -265,6 +278,8 @@ impl Default for UpdateState {
     fn default() -> Self {
         Self {
             snapshot: RwLock::new(UpdateStatus {
+                minimum_version: None,
+                required: false,
                 current_version: CURRENT.into(),
                 version: None,
                 notes: String::new(),
@@ -282,6 +297,57 @@ impl Default for UpdateState {
     }
 }
 impl UpdateState {
+    async fn refresh_policy(&self) {
+        let policy = async {
+            let response = client(8)
+                .map_err(|_| "network")?
+                .get(UPDATE_POLICY)
+                .header("Cache-Control", "no-cache")
+                .send()
+                .await
+                .map_err(|_| "network")?;
+            if !response.status().is_success()
+                || response.content_length().is_some_and(|n| n > 4096)
+            {
+                return Err("policy");
+            }
+            let mut response = response;
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await.map_err(|_| "network")? {
+                if bytes.len() + chunk.len() > 4096 {
+                    return Err("policy");
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| "policy")?;
+            let minimum = value["minimumVersion"].as_str().ok_or("policy")?;
+            if !minimum.is_empty() && parse_version(minimum).is_none() {
+                return Err("policy");
+            }
+            Ok::<_, &str>(minimum.to_owned())
+        }
+        .await;
+        self.apply_policy(policy.ok()).await;
+    }
+
+    async fn apply_policy(&self, minimum: Option<String>) {
+        let minimum = minimum.filter(|v| parse_version(v).is_some());
+        let required = minimum
+            .as_deref()
+            .is_some_and(|min| below_minimum(CURRENT, min));
+        REQUIRED_UNTIL.store(
+            if required {
+                chrono::Utc::now().timestamp() + 90
+            } else {
+                0
+            },
+            std::sync::atomic::Ordering::Release,
+        );
+        let mut view = self.snapshot.write().await;
+        view.minimum_version = minimum;
+        view.required = required;
+    }
+
     async fn failed(&self, error: String) {
         let mut view = self.snapshot.write().await;
         view.phase = "error".into();
@@ -314,6 +380,16 @@ impl UpdateState {
     }
     async fn download(&self) -> Result<(), String> {
         let candidate = self.candidate.read().await.clone().ok_or("no_update")?;
+        if self
+            .snapshot
+            .read()
+            .await
+            .minimum_version
+            .as_deref()
+            .is_some_and(|min| below_minimum(&candidate.version, min))
+        {
+            return Err("minimum_unavailable".into());
+        }
         if verified_cache(&candidate) {
             self.snapshot.write().await.phase = "ready".into();
             return Ok(());
@@ -368,10 +444,13 @@ impl UpdateState {
 
 #[tauri::command]
 pub async fn get_update_status(state: State<'_, Arc<UpdateState>>) -> Result<UpdateStatus, String> {
-    Ok(state.snapshot.read().await.clone())
+    let mut status = state.snapshot.read().await.clone();
+    status.required &= upgrade_required();
+    Ok(status)
 }
 #[tauri::command]
 pub async fn check_for_updates(state: State<'_, Arc<UpdateState>>) -> Result<UpdateStatus, String> {
+    state.refresh_policy().await;
     state.background_check().await;
     Ok(state.snapshot.read().await.clone())
 }
@@ -507,10 +586,20 @@ pub fn apply_pending_before_start(release_instance: impl FnOnce()) -> bool {
 pub fn start(app: &AppHandle) {
     let state = app.state::<Arc<UpdateState>>().inner().clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        let mut last_check: Option<std::time::Instant> = None;
         loop {
-            state.background_check().await;
-            tokio::time::sleep(Duration::from_secs(4 * 60 * 60)).await;
+            state.refresh_policy().await;
+            if upgrade_required()
+                || last_check.is_none_or(|t| t.elapsed() >= Duration::from_secs(4 * 60 * 60))
+            {
+                // A slow package download must not delay the next policy refresh.
+                let updates = Arc::clone(&state);
+                tauri::async_runtime::spawn(async move {
+                    updates.background_check().await;
+                });
+                last_check = Some(std::time::Instant::now());
+            }
+            tokio::time::sleep(Duration::from_secs(60)).await;
         }
     });
 }
@@ -636,6 +725,23 @@ mod tests {
         let state = UpdateState::default();
         let _first = state.operation.lock().await;
         assert!(state.operation.try_lock().is_err());
+    }
+
+    #[tokio::test]
+    async fn minimum_policy_is_numeric_and_network_failure_releases_requirement() {
+        assert!(below_minimum("0.1.9", "0.1.27"));
+        assert!(!below_minimum("0.2.0", "0.1.27"));
+        assert!(!below_minimum("0.1.27", "0.1.27"));
+        let state = UpdateState::default();
+        // Do not activate the process-wide gate while other upload tests run.
+        state.snapshot.write().await.required = true;
+        state.apply_policy(None).await;
+        assert!(!state.snapshot.read().await.required);
+        assert!(!upgrade_required());
+        state.apply_policy(Some("invalid".into())).await;
+        assert!(!state.snapshot.read().await.required);
+        state.apply_policy(Some(String::new())).await;
+        assert!(!state.snapshot.read().await.required);
     }
     #[test]
     fn failed_replacement_restores_original_without_touching_settings() {

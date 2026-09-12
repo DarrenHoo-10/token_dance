@@ -1,17 +1,27 @@
 //! Single-writer command channel for the event pipeline store.
 
+use super::reconstruction::RebuildAction;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender, TrySendError};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use super::store::{DrainStats, PipelineStore};
 use super::types::{
-    PipelineError, SourceCheckpointSnapshot, SourceCommitBatch, SourceCommitResult, TaskComplete,
-    TaskRetry, LeasedTask, Consumer, RenewLease, UploadWireEvent, WRITER_QUEUE_BATCHES,
-    WRITER_QUEUE_BYTES, COMPENSATION_INTERVAL_MS,
+    Consumer, LeasedTask, PipelineError, RenewLease, SourceCheckpointSnapshot, SourceCommitBatch,
+    SourceCommitResult, TaskComplete, TaskRetry, UploadWireEvent, COMPENSATION_INTERVAL_MS,
+    WRITER_QUEUE_BATCHES, WRITER_QUEUE_BYTES,
 };
 
 enum WriterCommand {
+    Rebuild {
+        action: RebuildAction,
+        reply: Sender<Result<super::reconstruction::RebuildStatus, PipelineError>>,
+    },
+    UpsertModel {
+        provider: String,
+        model: String,
+        reply: Sender<Result<i64, PipelineError>>,
+    },
     LeaseSource {
         source_id: i64,
         lease_ms: i64,
@@ -73,6 +83,10 @@ enum WriterCommand {
     RegisterSource {
         source: crate::local_store::pipeline::types::RegisterSource,
         reply: Sender<Result<i64, PipelineError>>,
+    },
+    RegisterSources {
+        sources: Vec<super::types::RegisterSource>,
+        reply: Sender<Result<Vec<i64>, PipelineError>>,
     },
     RegisterSkill {
         skill_key: [u8; 32],
@@ -167,9 +181,9 @@ impl PipelineWriter {
         match self.tx.try_send(QueuedBatch { cmd, approx_bytes }) {
             Ok(()) => Ok(()),
             Err(TrySendError::Full(_)) => Err(PipelineError::WriterBackpressure),
-            Err(TrySendError::Disconnected(_)) => Err(PipelineError::Sqlite(
-                "pipeline writer disconnected".into(),
-            )),
+            Err(TrySendError::Disconnected(_)) => {
+                Err(PipelineError::Sqlite("pipeline writer disconnected".into()))
+            }
         }
     }
 
@@ -188,7 +202,17 @@ impl PipelineWriter {
             .map_err(|_| PipelineError::Sqlite("pipeline writer dropped reply".into()))?
     }
 
-    pub fn commit_source(&self, batch: SourceCommitBatch) -> Result<SourceCommitResult, PipelineError> {
+    pub fn rebuild(
+        &self,
+        action: RebuildAction,
+    ) -> Result<super::reconstruction::RebuildStatus, PipelineError> {
+        self.request(0, |reply| WriterCommand::Rebuild { action, reply })
+    }
+
+    pub fn commit_source(
+        &self,
+        batch: SourceCommitBatch,
+    ) -> Result<SourceCommitResult, PipelineError> {
         let bytes = estimate_batch_bytes(&batch);
         self.request(bytes, |reply| WriterCommand::CommitSource { batch, reply })
     }
@@ -290,6 +314,30 @@ impl PipelineWriter {
         source: crate::local_store::pipeline::types::RegisterSource,
     ) -> Result<i64, PipelineError> {
         self.request(0, |reply| WriterCommand::RegisterSource { source, reply })
+    }
+
+    pub fn register_sources(
+        &self,
+        sources: Vec<super::types::RegisterSource>,
+    ) -> Result<Vec<i64>, PipelineError> {
+        let bytes = sources
+            .iter()
+            .map(|s| s.locator_ref.len() + s.cursor_json.len() + s.decoder_state_json.len() + 256)
+            .sum();
+        self.request(bytes, |reply| WriterCommand::RegisterSources {
+            sources,
+            reply,
+        })
+    }
+
+    pub fn upsert_model(&self, provider: &str, model: &str) -> Result<i64, PipelineError> {
+        self.request(provider.len() + model.len(), |reply| {
+            WriterCommand::UpsertModel {
+                provider: provider.into(),
+                model: model.into(),
+                reply,
+            }
+        })
     }
 
     pub fn register_skill(
@@ -394,10 +442,7 @@ impl PipelineWriter {
 
     pub fn shutdown(mut self) {
         let (reply_tx, reply_rx) = mpsc::channel();
-        let _ = self.enqueue(
-            WriterCommand::Shutdown { reply: reply_tx },
-            0,
-        );
+        let _ = self.enqueue(WriterCommand::Shutdown { reply: reply_tx }, 0);
         let _ = reply_rx.recv_timeout(Duration::from_secs(5));
         if let Some(join) = self.join.take() {
             let _ = join.join();
@@ -458,6 +503,25 @@ fn writer_loop(store: &mut PipelineStore, rx: Receiver<QueuedBatch>, compensatio
 
         pending_bytes = pending_bytes.saturating_add(queued.approx_bytes);
         let done = match queued.cmd {
+            WriterCommand::Rebuild { action, reply } => {
+                let result = store.with_connection(|conn| match action {
+                    RebuildAction::Begin(version) => super::reconstruction::begin(conn, &version),
+                    RebuildAction::Reconcile { discovery_ok } => {
+                        super::reconstruction::reconcile(conn, discovery_ok)
+                    }
+                    RebuildAction::Status => super::reconstruction::status(conn),
+                });
+                let _ = reply.send(result);
+                false
+            }
+            WriterCommand::UpsertModel {
+                provider,
+                model,
+                reply,
+            } => {
+                let _ = reply.send(store.upsert_model(&provider, &model));
+                false
+            }
             WriterCommand::LeaseSource {
                 source_id,
                 lease_ms,
@@ -539,6 +603,10 @@ fn writer_loop(store: &mut PipelineStore, rx: Receiver<QueuedBatch>, compensatio
             }
             WriterCommand::RegisterSource { source, reply } => {
                 let _ = reply.send(store.register_source(&source));
+                false
+            }
+            WriterCommand::RegisterSources { sources, reply } => {
+                let _ = reply.send(store.register_sources(&sources));
                 false
             }
             WriterCommand::RegisterSkill {

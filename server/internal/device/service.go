@@ -2,6 +2,7 @@ package device
 
 import (
 	"context"
+	"crypto/ed25519"
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
@@ -208,6 +209,8 @@ func (s *Service) CancelBindingChallenge(ctx context.Context, challengeID, userI
 }
 
 type ClaimInput struct {
+	ProofTimestamp   string  `json:"proofTimestamp,omitempty"`
+	ProofSignature   string  `json:"proofSignature,omitempty"`
 	Code             string  `json:"code"`
 	PublicKey        string  `json:"publicKey"`
 	DeviceName       *string `json:"deviceName,omitempty"`
@@ -241,17 +244,18 @@ func (s *Service) ClaimInstallation(ctx context.Context, in ClaimInput) (*domain
 	instID := "ins_" + instIDToken
 
 	inst := domain.Installation{
-		InstallationID:     instID,
-		DevicePublicKey:    pubKey,
-		DeviceName:         in.DeviceName,
-		OSType:             in.OSType,
-		OSVersion:          in.OSVersion,
-		Architecture:       in.Architecture,
-		CollectorVersion:   in.CollectorVersion,
-		InstallationStatus: domain.InstallationStatusActive,
-		StatusVersion:      1,
-		RegisteredAt:       now,
-		UpdatedAt:          now,
+		InstallationID:       instID,
+		BindingProofVerified: verifyBindingProof(in, "claim:"+normCode, now),
+		DevicePublicKey:      pubKey,
+		DeviceName:           in.DeviceName,
+		OSType:               in.OSType,
+		OSVersion:            in.OSVersion,
+		Architecture:         in.Architecture,
+		CollectorVersion:     in.CollectorVersion,
+		InstallationStatus:   domain.InstallationStatusActive,
+		StatusVersion:        1,
+		RegisteredAt:         now,
+		UpdatedAt:            now,
 	}
 
 	var claimed *domain.Installation
@@ -293,18 +297,19 @@ func (s *Service) RegisterInstallation(ctx context.Context, userID string, in Cl
 	instID := "ins_" + instIDToken
 
 	inst := domain.Installation{
-		InstallationID:     instID,
-		UserID:             userID,
-		DevicePublicKey:    pubKey,
-		DeviceName:         in.DeviceName,
-		OSType:             in.OSType,
-		OSVersion:          in.OSVersion,
-		Architecture:       in.Architecture,
-		CollectorVersion:   in.CollectorVersion,
-		InstallationStatus: domain.InstallationStatusActive,
-		StatusVersion:      1,
-		RegisteredAt:       now,
-		UpdatedAt:          now,
+		InstallationID:       instID,
+		BindingProofVerified: verifyBindingProof(in, "register:"+userID, now),
+		UserID:               userID,
+		DevicePublicKey:      pubKey,
+		DeviceName:           in.DeviceName,
+		OSType:               in.OSType,
+		OSVersion:            in.OSVersion,
+		Architecture:         in.Architecture,
+		CollectorVersion:     in.CollectorVersion,
+		InstallationStatus:   domain.InstallationStatusActive,
+		StatusVersion:        1,
+		RegisteredAt:         now,
+		UpdatedAt:            now,
 	}
 
 	registered, err := s.store.RegisterInstallationTx(ctx, inst, now)
@@ -436,6 +441,8 @@ func (s *Service) RebindInstallation(ctx context.Context, installationID, userID
 		switch err {
 		case domain.ErrNotFound:
 			return nil, domain.NewAppError(404, "RESOURCE_NOT_FOUND", "device.notFound", "device not found", nil, err)
+		case domain.ErrPublicKeyConflict:
+			return nil, domain.NewAppError(409, "DEVICE_PUBLIC_KEY_CONFLICT", "device.publicKeyConflict", "unbind the device before binding to another user; device proof is required", nil, err)
 		case domain.ErrDeviceRevoked:
 			return nil, domain.NewAppError(403, "DEVICE_REVOKED", "device.revoked", "device is revoked", nil, err)
 		case domain.ErrDeviceDisabled:
@@ -496,4 +503,22 @@ func aggregateCollectorVersionSupported(version string) bool {
 		}
 	}
 	return true
+}
+
+// A proof is tied to the intended user/code, public key and a five-minute timestamp.
+func verifyBindingProof(in ClaimInput, subject string, now time.Time) bool {
+	ts, err := strconv.ParseInt(in.ProofTimestamp, 10, 64)
+	if err != nil || ts < now.Unix()-300 || ts > now.Unix()+300 {
+		return false
+	}
+	pub, err := hex.DecodeString(in.PublicKey)
+	if err != nil || len(pub) != ed25519.PublicKeySize {
+		return false
+	}
+	sig, err := hex.DecodeString(in.ProofSignature)
+	if err != nil || len(sig) != ed25519.SignatureSize {
+		return false
+	}
+	message := "tokendance-device-binding\n" + subject + "\n" + strings.ToLower(in.PublicKey) + "\n" + in.ProofTimestamp
+	return ed25519.Verify(ed25519.PublicKey(pub), []byte(message), sig)
 }

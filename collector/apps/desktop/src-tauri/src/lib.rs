@@ -280,6 +280,8 @@ pub fn run() {
             updates::set_auto_update,
             updates::install_update,
             commands::daemon::get_daemon_status,
+            commands::daemon::rebuild_local_data,
+            commands::daemon::get_rebuild_status,
             commands::daemon::toggle_global_pause,
             commands::daemon::set_global_pause,
             commands::daemon::get_collector_metrics,

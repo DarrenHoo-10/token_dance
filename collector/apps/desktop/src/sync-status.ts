@@ -9,6 +9,8 @@ export function syncStatusText(status: string | undefined, pending: number, zh: 
     case "PAUSED": return t("同步已暂停", "Sync paused");
     case "NEEDS_PROFILE": return t("完善网站资料后同步", "Complete your web profile to sync");
     case "NEEDS_ATTENTION": return t("同步受阻，请检查网站设备状态", "Sync blocked · Check device on web");
+    case "CLIENT_UPGRADE_REQUIRED": return t("更新后恢复同步，本机采集继续", "Update to resume sync · Local collection continues");
+    case "DEVICE_BOUND_ELSEWHERE": return t("此设备已绑定其他账号，请先在原账号解绑", "Unbind this device from its previous account first");
     default: return t("登录后自动同步", "Sign in to sync automatically");
   }
 }

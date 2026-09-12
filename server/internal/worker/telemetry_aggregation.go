@@ -228,10 +228,11 @@ func (w *Worker) executeTelemetryTask(ctx context.Context, claim mysqlstore.Tele
 	var ev telemetryEventRow
 	var statusRaw []byte
 	err = tx.QueryRowContext(ctx, `
-		SELECT e.id, e.user_id, e.installation_id, e.harness_id, e.event_type, e.occurred_at,
+		SELECT e.id, i.user_id, e.installation_id, e.harness_id, e.event_type, e.occurred_at,
 		       e.model_key, e.skill_id, e.session_key, e.turn_key, e.cost_scope_key,
 		       e.payload_json, e.status_json, e.metric_semantics_version
 		FROM telemetry_events e
+        JOIN installations i ON i.installation_id=e.installation_id
 		INNER JOIN telemetry_tasks t ON t.event_row_id = e.id AND t.id = ?
 		WHERE e.id = ?
 		  AND e.delete_at IS NULL

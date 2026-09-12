@@ -152,7 +152,10 @@ fn secret() -> Vec<u8> {
     b"p3-test-identity-secret".to_vec()
 }
 
-fn skill_allocator(book: &SkillBook, store: Arc<std::sync::Mutex<PipelineStore>>) -> Arc<dyn Fn([u8; 32], &str) -> i64 + Send + Sync> {
+fn skill_allocator(
+    book: &SkillBook,
+    store: Arc<std::sync::Mutex<PipelineStore>>,
+) -> Arc<dyn Fn([u8; 32], &str) -> i64 + Send + Sync> {
     let book = book.clone();
     Arc::new(move |key, name| {
         if let Some(id) = book.get(&key) {
@@ -256,6 +259,7 @@ fn registry_covers_all_ten_harnesses() {
     let book = SkillBook::new();
     let alloc = skill_allocator(&book, store);
     let roots = AdapterRoots {
+        cursor_usage: None,
         identity_secret: secret(),
         codex_roots: vec![("codex-sessions".into(), dir.path().join("codex"))],
         claude_projects: dir.path().join("claude"),
@@ -435,10 +439,7 @@ fn zcode_late_small_rowid_not_lost_when_large_completes_first() {
 
     let mut store = store_arc.lock().unwrap();
     let specs = strategy.discover(DiscoveryBudget::new(8, 200)).unwrap();
-    let usage_spec = specs
-        .iter()
-        .find(|s| s.stream_key == STREAM_USAGE)
-        .unwrap();
+    let usage_spec = specs.iter().find(|s| s.stream_key == STREAM_USAGE).unwrap();
     let source_id = register_source(
         &mut store,
         "zcode",
@@ -600,11 +601,18 @@ fn cursor_missing_timestamp_uses_previous_or_mtime() {
         byte_start: Some(0),
         byte_end: Some(10),
         native_rowid: None,
-        payload: json!({"api_aggregate":true,"totalTokens":999}).to_string().into_bytes(),
+        payload: json!({"api_aggregate":true,"totalTokens":999})
+            .to_string()
+            .into_bytes(),
         file_mtime_ms: Some(now),
     };
-    let out = strategy.decode(&agg, &mut state, path.to_str().unwrap()).unwrap();
-    assert!(matches!(out, DecodeOutcome::Ignore(IgnoreCode::EstimatedOnly)));
+    let out = strategy
+        .decode(&agg, &mut state, path.to_str().unwrap())
+        .unwrap();
+    assert!(matches!(
+        out,
+        DecodeOutcome::Ignore(IgnoreCode::EstimatedOnly)
+    ));
 }
 
 #[test]
@@ -629,8 +637,14 @@ fn skill_same_key_shared_across_harnesses() {
     let store_arc = Arc::new(std::sync::Mutex::new(store));
     let alloc = skill_allocator(&book, store_arc.clone());
     let dir = tempfile::tempdir().unwrap();
-    let claude = JsonlHarnessStrategy::new(CLAUDE, secret(), dir.path(), book.clone(), alloc.clone());
-    let zcode = ZcodeStrategy::new(secret(), dir.path().join("missing.sqlite"), book.clone(), alloc);
+    let claude =
+        JsonlHarnessStrategy::new(CLAUDE, secret(), dir.path(), book.clone(), alloc.clone());
+    let zcode = ZcodeStrategy::new(
+        secret(),
+        dir.path().join("missing.sqlite"),
+        book.clone(),
+        alloc,
+    );
 
     let mut state = DecoderState {
         version: 1,
@@ -818,8 +832,7 @@ fn cross_midnight_first_seen_ignored_but_baseline_advances() {
     }
     assert_eq!(count_events(&store), 0);
     let cursor = store.source_cursor_json(source_id).unwrap();
-    let offset: u64 = serde_json::from_str::<serde_json::Value>(&cursor)
-        .unwrap()["offset"]
+    let offset: u64 = serde_json::from_str::<serde_json::Value>(&cursor).unwrap()["offset"]
         .as_u64()
         .unwrap();
     assert!(offset > 0);
@@ -1019,7 +1032,10 @@ fn review_dual_sqlite_same_rowid_distinct_event_ids() {
     let mut store = store_arc.lock().unwrap();
     let ids = event_ids(&mut store);
     assert_eq!(ids.len(), 2);
-    assert_ne!(ids[0], ids[1], "same rowid across sqlite files must not collide");
+    assert_ne!(
+        ids[0], ids[1],
+        "same rowid across sqlite files must not collide"
+    );
 }
 
 #[test]
@@ -1053,7 +1069,9 @@ fn review_codex_native_token_count_last_and_total_semantics() {
         .into_bytes(),
         file_mtime_ms: None,
     };
-    let out = strategy.decode(&baseline, &mut state, "/tmp/a.jsonl").unwrap();
+    let out = strategy
+        .decode(&baseline, &mut state, "/tmp/a.jsonl")
+        .unwrap();
     assert!(
         matches!(out, DecodeOutcome::ContextOnly | DecodeOutcome::Ignore(_)),
         "first cumulative total must baseline without inventing a request: {out:?}"
@@ -1108,7 +1126,9 @@ fn review_codex_native_token_count_last_and_total_semantics() {
         .into_bytes(),
         file_mtime_ms: None,
     };
-    let out = strategy.decode(&delta_only, &mut state, "/tmp/a.jsonl").unwrap();
+    let out = strategy
+        .decode(&delta_only, &mut state, "/tmp/a.jsonl")
+        .unwrap();
     let DecodeOutcome::Emit(facts) = out else {
         panic!("expected cumulative delta emit, got {out:?}");
     };
@@ -1117,8 +1137,8 @@ fn review_codex_native_token_count_last_and_total_semantics() {
 
 #[test]
 fn review_pipeline_runtime_raw_to_metrics_to_upload_pending() {
-    use crate::local_store::pipeline::runtime::{adapter_roots_for_fixture, PipelineRuntime};
     use crate::local_store::pipeline::adapters::HarnessRegistry;
+    use crate::local_store::pipeline::runtime::{adapter_roots_for_fixture, PipelineRuntime};
     use crate::local_store::pipeline::{Consumer, PipelineWriter};
 
     // Writer sink uses wall-clock admission; keep fixture on "today" (Beijing).
@@ -1142,7 +1162,8 @@ fn review_pipeline_runtime_raw_to_metrics_to_upload_pending() {
     )
     .unwrap();
 
-    let store = open_store(now);
+    // Writer timestamps use the wall clock, so task claiming must use it too.
+    let store = PipelineStore::open_in_memory().unwrap();
     let writer = Arc::new(PipelineWriter::start(store));
     let roots = adapter_roots_for_fixture(secret(), dir.path());
     let writer_skills = Arc::clone(&writer);
@@ -1235,7 +1256,9 @@ fn review2_cumulative_token_components_are_differenced() {
         .into_bytes(),
         file_mtime_ms: None,
     };
-    let out = strategy.decode(&baseline, &mut state, "/tmp/cum.jsonl").unwrap();
+    let out = strategy
+        .decode(&baseline, &mut state, "/tmp/cum.jsonl")
+        .unwrap();
     assert!(
         matches!(out, DecodeOutcome::ContextOnly | DecodeOutcome::Ignore(_)),
         "baseline must not invent a request: {out:?}"
@@ -1264,7 +1287,9 @@ fn review2_cumulative_token_components_are_differenced() {
         .into_bytes(),
         file_mtime_ms: None,
     };
-    let out = strategy.decode(&next, &mut state, "/tmp/cum.jsonl").unwrap();
+    let out = strategy
+        .decode(&next, &mut state, "/tmp/cum.jsonl")
+        .unwrap();
     let DecodeOutcome::Emit(facts) = out else {
         panic!("expected per-field cumulative delta emit, got {out:?}");
     };
@@ -1278,8 +1303,8 @@ fn review2_cumulative_token_components_are_differenced() {
 
 #[test]
 fn review2_codex_keeps_sessions_and_archived_roots() {
-    use collector_service::{DetectedSourceConfig, DetectionSnapshot, OfficialAgent};
     use crate::local_store::pipeline::runtime::adapter_roots_from_detection;
+    use collector_service::{DetectedSourceConfig, DetectionSnapshot, OfficialAgent};
 
     let mut snap = DetectionSnapshot::default();
     // archived sorts before sessions in BTreeMap — must not replace live sessions.
@@ -1340,7 +1365,10 @@ fn review2_discover_rotates_past_64_cap() {
     let (page2, _) = discover_jsonl_files(dir.path(), ".jsonl", 64, Some(&cursor1));
     assert_eq!(page2.len(), 64);
     // Second page must include files beyond the first 64 lexicographic slice.
-    let p1: std::collections::HashSet<_> = page1.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    let p1: std::collections::HashSet<_> = page1
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
     let new_on_page2 = page2
         .iter()
         .filter(|p| !p1.contains(p.to_string_lossy().as_ref()))
@@ -1460,12 +1488,14 @@ fn review2_harness_disable_stops_discover_and_claim() {
     let due = writer.list_due_sources(now, 32).unwrap();
     for id in &due {
         let snap = writer.load_source_checkpoint(*id).unwrap();
-        assert_ne!(snap.harness_id, "codex", "disabled harness must not be claimable");
+        assert_ne!(
+            snap.harness_id, "codex",
+            "disabled harness must not be claimable"
+        );
     }
     assert!(
-        due.iter().any(|id| {
-            writer.load_source_checkpoint(*id).unwrap().harness_id == "claude-code"
-        }),
+        due.iter()
+            .any(|id| { writer.load_source_checkpoint(*id).unwrap().harness_id == "claude-code" }),
         "other harnesses must remain claimable"
     );
     let _ = (due_before, PipelineRuntime::start);
@@ -1474,8 +1504,8 @@ fn review2_harness_disable_stops_discover_and_claim() {
 
 #[test]
 fn review2_slow_source_does_not_block_other_harness_acquire() {
-    use crate::local_store::pipeline::runtime::{adapter_roots_for_fixture, PipelineRuntime};
     use crate::local_store::pipeline::runner::{AcquisitionScheduler, ReadBudget};
+    use crate::local_store::pipeline::runtime::{adapter_roots_for_fixture, PipelineRuntime};
     use crate::local_store::pipeline::PipelineWriter;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Duration;
@@ -1595,7 +1625,13 @@ fn review2_pipeline_query_facade_returns_tokens_when_legacy_empty() {
     let day_start = crate::local_store::pipeline::beijing_day_start(now);
     let summary = store
         .with_connection(|conn| {
-            query_usage_summary(conn, Grain::Day, day_start, day_start + 86_400_000, Some("codex"))
+            query_usage_summary(
+                conn,
+                Grain::Day,
+                day_start,
+                day_start + 86_400_000,
+                Some("codex"),
+            )
         })
         .unwrap();
     assert_eq!(summary.total_tokens.value, Some(42));

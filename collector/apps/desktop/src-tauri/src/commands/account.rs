@@ -240,7 +240,11 @@ impl Connection {
 }
 
 impl Connection {
-    async fn register_sync_device(&mut self, signer: Arc<dyn DeviceSigner>) -> Result<(), String> {
+    async fn register_sync_device(
+        &mut self,
+        signer: Arc<dyn DeviceSigner>,
+        user_id: &str,
+    ) -> Result<(), String> {
         let grant = self
             .request(Method::POST, "/api/v1/me/device-grants", Some(json!({})))
             .await?
@@ -249,6 +253,16 @@ impl Connection {
             .ok_or("INVALID_RESPONSE")?;
         let public_key = signer
             .public_key()
+            .map_err(|_| "DEVICE_KEY_ERROR")?
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let proof_timestamp = chrono::Utc::now().timestamp().to_string();
+        let proof_message = format!(
+            "tokendance-device-binding\nregister:{user_id}\n{public_key}\n{proof_timestamp}"
+        );
+        let proof_signature = signer
+            .sign(proof_message.as_bytes())
             .map_err(|_| "DEVICE_KEY_ERROR")?
             .iter()
             .map(|byte| format!("{byte:02x}"))
@@ -262,7 +276,7 @@ impl Connection {
             )
             .bearer_auth(grant)
             .json(&json!({
-                "publicKey": public_key, "deviceName": "TokenDance Desktop",
+                "publicKey": public_key, "proofTimestamp": proof_timestamp, "proofSignature": proof_signature, "deviceName": "TokenDance Desktop",
                 "osType": std::env::consts::OS, "architecture": std::env::consts::ARCH,
                 "collectorVersion": env!("CARGO_PKG_VERSION")
             }))
@@ -271,7 +285,8 @@ impl Connection {
             .map_err(|_| "NETWORK_ERROR")?;
         if !response.status().is_success() {
             return Err(match response.status().as_u16() {
-                401 | 403 | 409 => "DEVICE_UNAVAILABLE",
+                409 => "DEVICE_BOUND_ELSEWHERE",
+                401 | 403 => "DEVICE_UNAVAILABLE",
                 _ => "NETWORK_ERROR",
             }
             .into());
@@ -307,6 +322,9 @@ impl Connection {
     }
 
     async fn sync_once(&mut self, app: &AppState) -> Result<&'static str, String> {
+        if crate::updates::upgrade_required() {
+            return Ok("CLIENT_UPGRADE_REQUIRED");
+        }
         if self.cookies.is_empty() {
             let _ = app.deactivate_sync_account();
             return Ok("LOGIN_REQUIRED");
@@ -342,8 +360,11 @@ impl Connection {
             let seed = OsKeyProvider::device_seed(create)
                 .data_key()
                 .map_err(|_| "DEVICE_KEY_ERROR")?;
-            self.register_sync_device(Arc::new(InMemoryDeviceSigner::from_seed(seed)))
-                .await?;
+            self.register_sync_device(
+                Arc::new(InMemoryDeviceSigner::from_seed(seed)),
+                &user.user_id,
+            )
+            .await?;
             collector_service::platform::write_private_file(
                 &app.control_dir_path().join("device-registered"),
                 b"1",
@@ -357,10 +378,8 @@ impl Connection {
             return Ok("WAITING");
         };
         if self.upload_consumer.is_none() {
-            let transport = self
-                .telemetry_v2
-                .clone()
-                .ok_or("DEVICE_UNAVAILABLE")? as Arc<dyn TelemetryV2Transport>;
+            let transport = self.telemetry_v2.clone().ok_or("DEVICE_UNAVAILABLE")?
+                as Arc<dyn TelemetryV2Transport>;
             self.upload_consumer = Some(UploadConsumer::new(writer, transport));
         }
         let creds = UploadCredentials {
@@ -386,6 +405,28 @@ impl Connection {
 }
 
 impl AccountState {
+    pub async fn rebuild_local_data(
+        &self,
+        app: &AppState,
+    ) -> Result<crate::local_store::pipeline::reconstruction::RebuildStatus, String> {
+        let mut guard = self.0.lock().await;
+        if let Some(connection) = guard.as_mut() {
+            if let Some(mut uploader) = connection.upload_consumer.take() {
+                uploader.finish_in_flight().await;
+            }
+        }
+        let runtime = app.pipeline_runtime().ok_or("PIPELINE_UNAVAILABLE")?;
+        app.set_rebuilding(true);
+        let result = tauri::async_runtime::spawn_blocking(move || runtime.rebuild())
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|result| result);
+        if result.is_err() {
+            app.set_rebuilding(false);
+        }
+        result
+    }
+
     async fn auto_sync_tick(&self, app: &AppState) {
         // Keep one batch serialized with login/logout; after sign-out completes
         // no request can use an old account or device transport.
@@ -416,6 +457,7 @@ impl AccountState {
                 current.blocked = matches!(
                     error.as_str(),
                     "DEVICE_UNAVAILABLE"
+                        | "DEVICE_BOUND_ELSEWHERE"
                         | "DEVICE_KEY_ERROR"
                         | "REJECTED_EVENTS"
                         | "EVENT_TOO_LARGE"
@@ -427,6 +469,8 @@ impl AccountState {
                     current.retry_at = Some(Instant::now() + Duration::from_secs(300));
                     if matches!(error.as_str(), "REJECTED_EVENTS" | "EVENT_TOO_LARGE") {
                         "DATA_REJECTED"
+                    } else if error == "DEVICE_BOUND_ELSEWHERE" {
+                        "DEVICE_BOUND_ELSEWHERE"
                     } else {
                         "NEEDS_ATTENTION"
                     }
@@ -1133,7 +1177,10 @@ mod tests {
             .insert("tokendance_session".into(), "fixture-session".into());
         client.csrf = "fixture-csrf".into();
         client
-            .register_sync_device(Arc::new(InMemoryDeviceSigner::from_seed([7; 32])))
+            .register_sync_device(
+                Arc::new(InMemoryDeviceSigner::from_seed([7; 32])),
+                "usr_fixture",
+            )
             .await
             .unwrap();
         let account = AccountState(Mutex::new(Some(client)), Mutex::new(()), AtomicU64::new(0));

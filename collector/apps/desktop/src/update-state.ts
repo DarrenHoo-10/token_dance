@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import { isTauriEnvironment } from './tauri-bridge';
 
 export interface UpdateStatus {
+  minimumVersion?: string | null;
+  required?: boolean;
   currentVersion: string;
   version: string | null;
   notes: string;
@@ -27,13 +29,14 @@ async function refresh() {
   catch { /* Update polling must never prevent first paint or collector use. */ }
   finally { reading = false; }
 }
+const onOnline = () => { void checkUpdates().catch(() => {}); };
 export function useUpdates() {
   const [status, setStatus] = useState(current);
   useEffect(() => {
     subscribers.add(setStatus);
     setStatus(current);
-    if (!timer) { void refresh(); timer = setInterval(() => void refresh(), 1000); }
-    return () => { subscribers.delete(setStatus); if (!subscribers.size) { clearInterval(timer); timer = undefined; } };
+    if (!timer) { window.addEventListener("online", onOnline); void refresh(); timer = setInterval(() => void refresh(), 1000); }
+    return () => { subscribers.delete(setStatus); if (!subscribers.size) { window.removeEventListener("online", onOnline); clearInterval(timer); timer = undefined; } };
   }, []);
   return status;
 }
@@ -55,6 +58,7 @@ export function updateError(code: string | null, zh: boolean): string {
     download_failed: ['下载服务暂不可用，请稍后重试', 'The download service is unavailable. Try again later.'],
     rate_limited: ['检查过于频繁，请稍后重试', 'Too many requests. Try again later.'],
     asset_missing: ['新版安装包尚未就绪，请稍后重试', 'The new package is not ready yet.'],
+    minimum_unavailable: ['满足最低版本要求的安装包尚未发布，请稍后重试', 'The required update package is not published yet. Please try again later.'],
     unverified_release: ['新版校验信息不完整，暂不能更新', 'Release verification is unavailable.'],
     integrity: ['安装包校验未通过，请重试', 'Package verification failed. Please retry.'],
     storage: ['无法保存更新，请检查磁盘空间和目录权限', 'Cannot save update. Check disk space and permissions.'],

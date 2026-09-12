@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { useEffect, useId, useRef, useState } from 'react';
 import { checkUpdates, installUpdate, setAutoUpdate, updateBusy, updateError, updateStatusText, useUpdates } from '../update-state';
 import '../styles/updates.css';
@@ -20,6 +21,7 @@ export function UpdateNotice({ zh }: { zh: boolean }) {
     window.addEventListener('keydown', escape, true);
     return () => { document.removeEventListener('pointerdown', outside); window.removeEventListener('keydown', escape, true); };
   }, [open]);
+  if (status?.required) return createPortal(<RequiredUpdate zh={zh} />, document.body);
   if (!status?.version || !status.supported || status.phase === 'latest') return null;
   const t = (cn: string, en: string) => zh ? cn : en;
   const updating = busy || updateBusy(status);
@@ -59,4 +61,26 @@ export function SoftwareUpdateCard({ zh }: { zh: boolean }) {
       <div className="settings-row"><div><h3>{t('自动更新', 'Automatic updates')}</h3><p>{t('后台下载，下次启动时安装', 'Download in the background. Install on next launch.')}</p></div><button type="button" className="settings-toggle" role="switch" aria-checked={status?.autoUpdate ?? false} aria-label={t('自动更新', 'Automatic updates')} disabled={busy || !status || !status.supported || status.phase === 'installing'} onClick={() => void run(() => setAutoUpdate(!status?.autoUpdate))}><span /></button></div>
     </div>
   </section>;
+}
+
+function RequiredUpdate({zh}: {zh:boolean}) {
+  const status=useUpdates();
+  const [busy,setBusy]=useState(false);
+  const [error,setError]=useState('');
+  useEffect(() => {
+    const onKey=(event:KeyboardEvent) => { if(event.key==='Escape') { event.preventDefault(); event.stopImmediatePropagation(); } };
+    window.addEventListener('keydown',onKey,true);
+    return () => window.removeEventListener('keydown',onKey,true);
+  },[]);
+  if(!status?.required) return null;
+  const run=async(action:()=>Promise<unknown>)=>{setBusy(true);setError('');try{await action();}catch(e){setError(updateError(String(e),zh));}finally{setBusy(false);}};
+  return <div className="required-update-backdrop"><section role="alertdialog" aria-modal="true" aria-labelledby="required-update-title" className="required-update-dialog">
+    <h2 id="required-update-title">{zh?'请更新 TokenDance':'Update TokenDance'}</h2>
+    <p>{zh?`当前版本 ${status.currentVersion} 已低于最低支持版本 ${status.minimumVersion}，请更新后继续使用在线服务。`:`Version ${status.minimumVersion} or later is required to use online services.`}</p>
+    <p>{zh?'本机采集继续运行，数据会保留。':'Local collection continues and your data is retained.'}</p>
+    <p role="status">{updateStatusText(status,zh)}</p>
+    {error&&<p role="alert">{error}</p>}
+    <button autoFocus disabled={busy||updateBusy(status)} onClick={()=>void run(installUpdate)}>{zh?'立即更新':'Update now'}</button>
+    <button disabled={busy||updateBusy(status)} onClick={()=>void run(checkUpdates)}>{zh?'重新检查':'Check again'}</button>
+  </section></div>;
 }

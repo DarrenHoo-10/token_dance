@@ -111,6 +111,7 @@ pub struct RunStats {
     pub ignored: usize,
     pub context_only: usize,
     pub has_more: bool,
+    pub cursor_advanced: bool,
     pub commit_seq: Option<i64>,
     pub last_ignored_code: Option<String>,
     pub checkpoint_delay_ms: u64,
@@ -202,6 +203,8 @@ pub fn run_source_once(
         commit_seq,
     };
 
+    let rebuilding = committed.observed_boundary_json["_rebuild_pending"].as_bool() == Some(true);
+
     // Source I/O and decode: no writer / store write transaction held.
     let batch = match strategy.read(
         &snapshot.locator_ref,
@@ -274,6 +277,7 @@ pub fn run_source_once(
                         ignored,
                         context_only,
                         has_more: batch.has_more,
+                        cursor_advanced: batch.next_cursor_json != committed.cursor_json,
                         commit_seq: None,
                         last_ignored_code: last_ignored,
                         checkpoint_delay_ms: 0,
@@ -301,7 +305,11 @@ pub fn run_source_once(
             DecodeOutcome::Emit(facts) => {
                 for fact in facts {
                     let _native = strategy.native_identity(record, &fact);
-                    match admit_occurred_at(fact.occurred_at, admission_now) {
+                    match if rebuilding {
+                        AdmissionDecision::Admit
+                    } else {
+                        admit_occurred_at(fact.occurred_at, admission_now)
+                    } {
                         AdmissionDecision::Admit => {
                             if fact.occurred_at <= 0 {
                                 ignored += 1;
@@ -331,6 +339,8 @@ pub fn run_source_once(
                                             ignored,
                                             context_only,
                                             has_more: batch.has_more,
+                                            cursor_advanced: batch.next_cursor_json
+                                                != committed.cursor_json,
                                             commit_seq: None,
                                             last_ignored_code: last_ignored,
                                             checkpoint_delay_ms: 0,
@@ -362,11 +372,17 @@ pub fn run_source_once(
         ignored,
         context_only,
         has_more: batch.has_more,
+        cursor_advanced: batch.next_cursor_json != committed.cursor_json,
         commit_seq: None,
         last_ignored_code: last_ignored.clone(),
         checkpoint_delay_ms: lease_started.elapsed().as_millis() as u64,
     };
 
+    let mut next_boundary = batch.next_observed_boundary_json.clone();
+    if rebuilding {
+        next_boundary["_rebuild_pending"] =
+            serde_json::json!(batch.has_more && !batch.ignored_incomplete_tail);
+    }
     let commit = SourceCommitBatch {
         source_id,
         expected_commit_seq: commit_seq,
@@ -374,13 +390,13 @@ pub fn run_source_once(
         cursor_json: batch.next_cursor_json.to_string(),
         decoder_state_version: decoder.version.max(1),
         decoder_state_json: decoder.json.to_string(),
-        observed_boundary_json: batch.next_observed_boundary_json.to_string(),
+        observed_boundary_json: next_boundary.to_string(),
         ignored_record_count_delta: ignored as i64,
         last_ignored_code: last_ignored,
-        next_poll_at: if batch.has_more {
+        next_poll_at: if batch.has_more && batch.next_cursor_json != committed.cursor_json {
             Some(admission_now)
         } else {
-            Some(admission_now + 1_000)
+            Some(admission_now + 5_000)
         },
         events,
         created_at_override: Some(admission_now),

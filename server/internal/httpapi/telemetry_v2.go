@@ -159,6 +159,7 @@ func (h *Handlers) IngestTelemetryEventsV2(w http.ResponseWriter, r *http.Reques
 	now := time.Now().UTC()
 	nonceHash := stdsha256.Sum256([]byte(nonce))
 	result, err := h.device.CommitTelemetryEventsV2(r.Context(), domain.TelemetryEventsV2Input{
+		Reconstruction:       in.Reconstruction != nil && *in.Reconstruction,
 		InstallationID:       installationID,
 		UserID:               user.UserID,
 		BindingStatusVersion: bindingVersion,

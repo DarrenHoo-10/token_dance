@@ -11,12 +11,12 @@ use super::admission::{
     admit_occurred_at, beijing_day_key, beijing_wall_to_utc_ms, resolve_event_time,
     AdmissionDecision, TimeSource,
 };
+use super::budget::DiscoveryBudget;
 use super::budget::ReadBudget;
 use super::engine::{run_source_once, RunOutcome, StoreSinkMut};
 use super::jsonl::{read_jsonl_budgeted, SourceChange};
 use super::scheduler::AcquisitionScheduler;
 use super::sqlite_stream::{read_sqlite_change_stream, PendingSet, SqliteChangeMode};
-use super::budget::DiscoveryBudget;
 use super::strategy::{
     CheckpointView, DecodeOutcome, DecoderState, FactDraft, HarnessStrategy, IgnoreCode,
     NativeFactKey, RawBatch, RawRecord, RunnerError, SourceSpec, TokenAccuracy,
@@ -125,10 +125,7 @@ impl HarnessStrategy for FixtureJsonlStrategy {
             return Ok(DecodeOutcome::ContextOnly);
         }
 
-        let last_source = state
-            .json
-            .get("last_source_time")
-            .and_then(|v| v.as_i64());
+        let last_source = state.json.get("last_source_time").and_then(|v| v.as_i64());
         let source_time = match value.get("ts") {
             None => None,
             Some(v) if v.is_null() => None,
@@ -154,14 +151,8 @@ impl HarnessStrategy for FixtureJsonlStrategy {
             state.json["last_source_time"] = json!(resolved.occurred_at);
         }
 
-        let id = value
-            .get("id")
-            .and_then(|v| v.as_str())
-            .unwrap_or("anon");
-        let tokens = value
-            .get("tokens")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1);
+        let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("anon");
+        let tokens = value.get("tokens").and_then(|v| v.as_u64()).unwrap_or(1);
         let fact_key = blob_from(&format!("fact:{id}"));
         let event_id = blob_from(&format!("evt:{id}:{}", resolved.occurred_at));
         let content_hash = blob_from(&format!("hash:{id}:{tokens}"));
@@ -177,6 +168,7 @@ impl HarnessStrategy for FixtureJsonlStrategy {
             occurred_at: resolved.occurred_at,
             time_source: resolved.time_source,
             model_key: 0,
+            model_identity: None,
             skill_id: None,
             skill_key: None,
             session_key: None,
@@ -220,10 +212,34 @@ fn register_jsonl(store: &mut PipelineStore, path: &str, now: i64) -> i64 {
 }
 
 #[test]
+fn reconstruction_restart_preserves_committed_progress_and_pending_sources() {
+    use crate::local_store::pipeline::reconstruction;
+    let directory = tempfile::tempdir().unwrap();
+    let mut store = PipelineStore::open(directory.path()).unwrap();
+    store.with_connection(|c| reconstruction::ensure(c,"0.1.27")).unwrap();
+    let source = register_jsonl(&mut store,"resume-fixture.jsonl",1);
+    store.with_connection(|c| {
+        c.execute("UPDATE collection_sources SET cursor_json='{}',commit_seq=9 WHERE id=?1",[source])?;
+        Ok(())
+    }).unwrap();
+    drop(store);
+    let mut reopened = PipelineStore::open(directory.path()).unwrap();
+    assert!(reopened.with_connection(|c| reconstruction::ensure(c,"0.1.27")).unwrap().active);
+    assert_eq!(reopened.load_source_checkpoint(source).unwrap().commit_seq,9);
+    let progress = reopened.with_connection(|c| reconstruction::reconcile(c,true)).unwrap();
+    assert!(progress.active,"an unfinished source cannot complete reconstruction");
+    assert_eq!((progress.total_sources,progress.completed_sources),(1,0));
+}
+
+#[test]
 fn jsonl_incomplete_tail_does_not_advance_offset() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("s.jsonl");
-    std::fs::write(&path, b"{\"id\":\"a\",\"ts\":1000}\n{\"id\":\"b\",\"ts\":2000").unwrap();
+    std::fs::write(
+        &path,
+        b"{\"id\":\"a\",\"ts\":1000}\n{\"id\":\"b\",\"ts\":2000",
+    )
+    .unwrap();
     let budget = ReadBudget::new(32, 1024 * 1024, 1_000);
     let result = read_jsonl_budgeted(&path, 0, None, budget).unwrap();
     assert_eq!(result.records.len(), 1);
@@ -244,7 +260,10 @@ fn jsonl_record_budget_has_more_by_raw_boundary() {
     let budget = ReadBudget::new(3, 1024 * 1024, 1_000);
     let first = read_jsonl_budgeted(&path, 0, None, budget).unwrap();
     assert_eq!(first.records.len(), 3);
-    assert!(first.has_more, "EOF must follow raw bytes, not decode count");
+    assert!(
+        first.has_more,
+        "EOF must follow raw bytes, not decode count"
+    );
     let second = read_jsonl_budgeted(&path, first.next_offset, None, budget).unwrap();
     assert_eq!(second.records.len(), 3);
 }
@@ -279,15 +298,106 @@ fn three_time_sources_and_no_epoch_fallback() {
 fn beijing_day_admission_ignores_yesterday() {
     let today = beijing_wall_to_utc_ms(2026, 9, 11, 10, 0, 0);
     let yesterday = beijing_wall_to_utc_ms(2026, 9, 10, 23, 59, 0);
-    assert_eq!(
-        admit_occurred_at(today, today),
-        AdmissionDecision::Admit
-    );
+    assert_eq!(admit_occurred_at(today, today), AdmissionDecision::Admit);
     assert_eq!(
         admit_occurred_at(yesterday, today),
         AdmissionDecision::IgnoreOutsideDay
     );
     assert_eq!(beijing_day_key(today), "2026-09-11");
+}
+
+#[test]
+fn reconstruction_admits_history_then_returns_to_daily_filter_without_changing_identity() {
+    use crate::local_store::pipeline::reconstruction;
+    use std::io::Write;
+    let now = beijing_wall_to_utc_ms(2026, 9, 12, 12, 0, 0);
+    let yesterday = now - 86_400_000;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.jsonl");
+    std::fs::write(
+        &path,
+        format!("{{\"id\":\"history\",\"ts\":{yesterday},\"tokens\":3}}\n"),
+    )
+    .unwrap();
+    let strategy = FixtureJsonlStrategy {
+        harness: "fixture".into(),
+        path: path.clone(),
+        fail_on_truncate: true,
+        io_entered: Arc::new(AtomicBool::new(false)),
+    };
+    let mut store = open_store(now);
+    store
+        .with_connection(|c| reconstruction::begin(c, "0.1.27"))
+        .unwrap();
+    let source = register_jsonl(&mut store, path.to_str().unwrap(), now);
+    let run = |store: &mut PipelineStore, source| {
+        run_source_once(
+            &StoreSinkMut::new(store),
+            &strategy,
+            source,
+            ReadBudget::new(32, 1024 * 1024, 1000),
+            DEFAULT_LEASE_MS,
+            &Consumer::ALL,
+            None,
+        )
+        .unwrap()
+    };
+    assert!(matches!(run(&mut store,source),RunOutcome::Committed(s) if s.emitted==1));
+    let original = store
+        .with_connection(|c| {
+            Ok(c.query_row(
+                "SELECT event_id,content_hash,created_at,occurred_at FROM events",
+                [],
+                |r| {
+                    Ok((
+                        r.get::<_, Vec<u8>>(0)?,
+                        r.get::<_, Vec<u8>>(1)?,
+                        r.get::<_, i64>(2)?,
+                        r.get::<_, i64>(3)?,
+                    ))
+                },
+            )?)
+        })
+        .unwrap();
+    assert_eq!((original.2, original.3), (now, yesterday));
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(format!("{{\"id\":\"late\",\"ts\":{yesterday},\"tokens\":9}}\n").as_bytes())
+        .unwrap();
+    store.set_clock_ms(now + 5001);
+    assert!(
+        matches!(run(&mut store,source),RunOutcome::Committed(s) if s.emitted==0 && s.ignored==1)
+    );
+    // Finish all local lanes, then explicitly request another full reconstruction.
+    for lane in [Consumer::Hour, Consumer::Day, Consumer::Month] {
+        store
+            .drain_metrics_consumer(lane, 64, DEFAULT_LEASE_MS)
+            .unwrap();
+    }
+    store
+        .with_connection(|c| reconstruction::reconcile(c, true))
+        .unwrap();
+    store
+        .with_connection(|c| reconstruction::begin(c, "0.1.27"))
+        .unwrap();
+    let source = register_jsonl(&mut store, path.to_str().unwrap(), now + 5001);
+    assert!(matches!(run(&mut store,source),RunOutcome::Committed(s) if s.emitted==2));
+    store
+        .with_connection(|c| {
+            let count: i64 = c.query_row(
+                "SELECT count(*) FROM events WHERE event_id=?1 AND content_hash=?2",
+                rusqlite::params![original.0, original.1],
+                |r| r.get(0),
+            )?;
+            assert_eq!(
+                count, 1,
+                "reconstruction must preserve immutable event identity"
+            );
+            Ok(())
+        })
+        .unwrap();
 }
 
 #[test]
@@ -297,9 +407,8 @@ fn runner_emits_with_time_sources_and_advances_cursor() {
     let path = dir.path().join("session.jsonl");
     let t1 = beijing_wall_to_utc_ms(2026, 9, 11, 10, 0, 0);
     // line1 has ts; line2 inherits previous; line3 uses file mtime path via missing ts after reset
-    let body = format!(
-        "{{\"id\":\"a\",\"ts\":{t1},\"tokens\":3}}\n{{\"id\":\"b\",\"tokens\":2}}\n"
-    );
+    let body =
+        format!("{{\"id\":\"a\",\"ts\":{t1},\"tokens\":3}}\n{{\"id\":\"b\",\"tokens\":2}}\n");
     std::fs::write(&path, body).unwrap();
 
     let mut store = open_store(now);
@@ -330,7 +439,8 @@ fn runner_emits_with_time_sources_and_advances_cursor() {
         other => panic!("unexpected {other:?}"),
     }
     assert_eq!(store.event_count().unwrap(), 2);
-    let cursor: Value = serde_json::from_str(&store.source_cursor_json(source_id).unwrap()).unwrap();
+    let cursor: Value =
+        serde_json::from_str(&store.source_cursor_json(source_id).unwrap()).unwrap();
     assert!(cursor["offset"].as_u64().unwrap() > 0);
 
     // Inspect payloads for time_source variety.
@@ -394,7 +504,8 @@ fn runner_ignores_outside_admission_day_but_advances_cursor() {
         other => panic!("unexpected {other:?}"),
     }
     assert_eq!(store.event_count().unwrap(), 0);
-    let cursor: Value = serde_json::from_str(&store.source_cursor_json(source_id).unwrap()).unwrap();
+    let cursor: Value =
+        serde_json::from_str(&store.source_cursor_json(source_id).unwrap()).unwrap();
     assert!(cursor["offset"].as_u64().unwrap() > 0);
 }
 
@@ -698,7 +809,10 @@ fn file_mtime_time_source_fixture_roundtrip() {
                     .unwrap();
             } else {
                 assert_eq!(stats.ignored, 1);
-                assert_ne!(stats.last_ignored_code.as_deref(), Some("missing_event_time"));
+                assert_ne!(
+                    stats.last_ignored_code.as_deref(),
+                    Some("missing_event_time")
+                );
             }
         }
         other => panic!("unexpected {other:?}"),
@@ -756,4 +870,142 @@ fn malformed_jsonl_line_is_ignored_and_offset_advances() {
         other => panic!("unexpected {other:?}"),
     }
     assert_eq!(store.event_count().unwrap(), 1);
+}
+
+#[test]
+fn jsonl_large_complete_lines_cross_byte_budget_without_stalling() {
+    use super::budget::DEFAULT_READ_BUDGET;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("large.jsonl");
+    for size in [
+        1024 * 1024 - 1,
+        1024 * 1024,
+        3 * 1024 * 1024,
+        4 * 1024 * 1024,
+    ] {
+        let mut data = vec![b'x'; size];
+        data.extend_from_slice(b"\n{}\n");
+        std::fs::write(&path, &data).unwrap();
+        let first = read_jsonl_budgeted(&path, 0, None, DEFAULT_READ_BUDGET).unwrap();
+        assert_eq!(first.records.len(), 1, "size={size}");
+        assert_eq!(first.records[0].payload.len(), size);
+        assert_eq!(first.next_offset, size as u64 + 1);
+        let next =
+            read_jsonl_budgeted(&path, first.next_offset, None, DEFAULT_READ_BUDGET).unwrap();
+        assert_eq!(next.records[0].payload, b"{}");
+        assert!(!next.has_more);
+    }
+}
+
+#[test]
+fn jsonl_oversized_discard_cursor_survives_batches_and_tail_append() {
+    use super::budget::DEFAULT_READ_BUDGET;
+    use super::jsonl::{read_jsonl_budgeted_with_state, MAX_LINE_BYTES};
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("oversized.jsonl");
+    std::fs::write(&path, vec![b'x'; MAX_LINE_BYTES * 3]).unwrap();
+    let mut offset = 0;
+    let mut skipping = false;
+    loop {
+        let batch =
+            read_jsonl_budgeted_with_state(&path, offset, None, DEFAULT_READ_BUDGET, skipping)
+                .unwrap();
+        assert!(batch.records.is_empty());
+        assert!(batch.next_offset > offset);
+        assert!(batch.bytes_read <= MAX_LINE_BYTES + 65536);
+        offset = batch.next_offset;
+        skipping = batch.skipping_oversized;
+        if !batch.has_more {
+            break;
+        }
+    }
+    assert!(skipping);
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    file.write_all(b"suffix\n{}\n").unwrap();
+    let batch =
+        read_jsonl_budgeted_with_state(&path, offset, None, DEFAULT_READ_BUDGET, skipping).unwrap();
+    assert_eq!(batch.records.len(), 1);
+    assert_eq!(batch.records[0].payload, b"{}");
+    assert!(!batch.skipping_oversized);
+    assert!(!batch.has_more);
+}
+
+#[test]
+fn jsonl_large_incomplete_tail_keeps_original_offset_until_newline() {
+    use super::budget::DEFAULT_READ_BUDGET;
+    use std::io::Write;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tail.jsonl");
+    std::fs::write(&path, vec![b'x'; 3 * 1024 * 1024]).unwrap();
+    let batch = read_jsonl_budgeted(&path, 0, None, DEFAULT_READ_BUDGET).unwrap();
+    assert_eq!(batch.next_offset, 0);
+    assert!(batch.ignored_incomplete_tail);
+    let mut f = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    f.write_all(b"\n").unwrap();
+    let batch = read_jsonl_budgeted(&path, 0, None, DEFAULT_READ_BUDGET).unwrap();
+    assert_eq!(batch.records.len(), 1);
+    assert_eq!(batch.next_offset, 3 * 1024 * 1024 + 1);
+}
+
+/// Opt-in, read-only diagnostic: no event payloads, paths or identifiers are printed.
+#[test]
+#[ignore = "requires TOKENDANCE_PIPELINE_PROBE_DB pointing to a local collector database"]
+fn local_large_line_read_only_probe() {
+    use super::budget::DEFAULT_READ_BUDGET;
+    use std::io::{BufRead, Read, Seek};
+    let db = std::env::var("TOKENDANCE_PIPELINE_PROBE_DB").unwrap();
+    let conn =
+        rusqlite::Connection::open_with_flags(db, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .unwrap();
+    let rows: Vec<(String, String)> = conn.prepare(
+        "SELECT locator_ref,cursor_json FROM collection_sources WHERE source_kind='jsonl' AND commit_seq>0"
+    ).unwrap().query_map([], |row| Ok((row.get(0)?, row.get(1)?))).unwrap().collect::<Result<_, _>>().unwrap();
+    drop(conn);
+    let mut checked = 0;
+    let mut advanced = 0;
+    let started = std::time::Instant::now();
+    for (path, cursor) in rows {
+        let cursor: serde_json::Value = serde_json::from_str(&cursor).unwrap();
+        let offset = cursor["offset"].as_u64().unwrap_or(0);
+        let Ok(mut file) = std::fs::File::open(&path) else {
+            continue;
+        };
+        file.seek(std::io::SeekFrom::Start(offset)).unwrap();
+        let mut line = Vec::new();
+        std::io::BufReader::new(file.take(4 * 1024 * 1024 + 1))
+            .read_until(b'\n', &mut line)
+            .unwrap();
+        if line.len() < 1024 * 1024 || line.last() != Some(&b'\n') {
+            continue;
+        }
+        let result = read_jsonl_budgeted(
+            std::path::Path::new(&path),
+            offset,
+            None,
+            DEFAULT_READ_BUDGET,
+        )
+        .unwrap();
+        assert!(
+            result.next_offset > offset,
+            "complete large record must advance"
+        );
+        assert!(!result.records.is_empty());
+        checked += 1;
+        advanced += result.next_offset - offset;
+    }
+    assert!(
+        checked > 0,
+        "no matching large-line fixture at current committed cursors"
+    );
+    eprintln!(
+        "read-only probe: {checked} large-line sources, {advanced} bytes advanced in {:?}",
+        started.elapsed()
+    );
 }

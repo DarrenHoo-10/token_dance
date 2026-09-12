@@ -188,6 +188,7 @@ type TelemetryEventsRequest struct {
 	ProtocolVersion uint32          `json:"protocolVersion"`
 	RequestID       string          `json:"requestId"`
 	Events          []EventEnvelope `json:"events"`
+	Reconstruction  *bool           `json:"reconstruction,omitempty"`
 }
 
 type EventAck struct {

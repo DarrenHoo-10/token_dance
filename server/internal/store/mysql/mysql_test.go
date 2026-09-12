@@ -869,13 +869,13 @@ func TestUSR012_TokenTrendFiltersAndBreakdownsMySQL(t *testing.T) {
 		}
 		_, err = db.ExecContext(ctx, `
 			INSERT INTO telemetry_model_metrics (
-				created_at, updated_at, user_id, installation_id, grain, bucket_start,
+				created_at, updated_at, installation_id, grain, bucket_start,
 				harness_id, model_key, exact_token_total, derived_token_total,
 				input_context_tokens, output_tokens, cache_read_tokens,
 				model_request_count, usage_observed_count, token_total_known_count,
 				metric_semantics_version
-			) VALUES (?, ?, ?, ?, 'day', ?, ?, ?, ?, 0, 0, 0, 0, 1, 1, 1, 1)`,
-			nowMs, nowMs, userID, installID, bucket, harness, modelKey, exact)
+			) VALUES (?, ?, ?, 'day', ?, ?, ?, ?, 0, 0, 0, 0, 1, 1, 1, 1)`,
+			nowMs, nowMs, installID, bucket, harness, modelKey, exact)
 		if err != nil {
 			t.Fatalf("insert model metric: %v", err)
 		}
@@ -1001,11 +1001,11 @@ func TestUSR014_PersonalSkillRankingAcrossDaysAndAgentsMySQL(t *testing.T) {
 		}
 		if _, err := db.ExecContext(ctx, `
 			INSERT INTO telemetry_skill_metrics (
-				created_at, updated_at, user_id, installation_id, grain, bucket_start,
+				created_at, updated_at, installation_id, grain, bucket_start,
 				harness_id, skill_id, use_count, exact_use_count, success_count, failure_count,
 				duration_ms, metric_semantics_version
-			) VALUES (?, ?, ?, ?, 'day', ?, ?, ?, ?, ?, ?, 1, 100, 1)`,
-			nowMs, nowMs, userID, installID, bucket, agent, publicSkillID,
+			) VALUES (?, ?, ?, 'day', ?, ?, ?, ?, ?, ?, 1, 100, 1)`,
+			nowMs, nowMs, installID, bucket, agent, publicSkillID,
 			10+index, 10+index, 9+index); err != nil {
 			t.Fatal(err)
 		}
@@ -1013,11 +1013,11 @@ func TestUSR014_PersonalSkillRankingAcrossDaysAndAgentsMySQL(t *testing.T) {
 	bucket29, _ := domain.DayBucketStartMs("2026-08-29")
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO telemetry_skill_metrics (
-			created_at, updated_at, user_id, installation_id, grain, bucket_start,
+			created_at, updated_at, installation_id, grain, bucket_start,
 			harness_id, skill_id, use_count, exact_use_count, success_count, failure_count,
 			duration_ms, metric_semantics_version
-		) VALUES (?, ?, ?, ?, 'day', ?, 'cursor', ?, 5, 5, 5, 0, 50, 1)`,
-		nowMs, nowMs, userID, installID, bucket29, privateSkillID); err != nil {
+		) VALUES (?, ?, ?, 'day', ?, 'cursor', ?, 5, 5, 5, 0, 50, 1)`,
+		nowMs, nowMs, installID, bucket29, privateSkillID); err != nil {
 		t.Fatal(err)
 	}
 	range30d := domain.TimeRange{Key: domain.TimeRange30d, From: now.AddDate(0, 0, -29), To: now, Timezone: "UTC"}
@@ -1511,9 +1511,9 @@ func TestMySQL_NonUTCBoundaryCorrectionAsiaShanghai(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-		if summary.Metrics.TotalTokens.Value == nil || *summary.Metrics.TotalTokens.Value != "330" {
-			t.Fatalf("expected Beijing metric_date total 330 without live event SUM, got %+v", summary.Metrics.TotalTokens)
-		}
+	if summary.Metrics.TotalTokens.Value == nil || *summary.Metrics.TotalTokens.Value != "330" {
+		t.Fatalf("expected Beijing metric_date total 330 without live event SUM, got %+v", summary.Metrics.TotalTokens)
+	}
 	breakdown, err := st.Analytics().GetAgentBreakdown(context.Background(), userID, r)
 	if err != nil {
 		t.Fatal(err)
@@ -1535,46 +1535,46 @@ func TestMySQL_NonUTCBoundaryCorrectionAsiaShanghai(t *testing.T) {
 	}
 }
 
-	func TestMySQL_TodayUsesBeijingMetricDateNotLiveEvents(t *testing.T) {
-		st, db, cleanup := getTestStore(t)
-		defer cleanup()
-		now := time.Date(2026, 9, 10, 1, 51, 0, 0, time.UTC)
-		userID := "usr_bj_morning"
-		seedBoundaryAnalyticsFixture(t, db, st, userID, now,
-			[]string{"2026-09-10"}, []uint64{218700000},
-			[]struct {
-				at     time.Time
-				tokens uint64
-				agent  string
-			}{
-				{time.Date(2026, 9, 9, 18, 0, 0, 0, time.UTC), 159100000, "codex"},
-			})
-		r := domain.TimeRange{
-			Key:      domain.TimeRangeToday,
-			From:     time.Date(2026, 9, 9, 16, 0, 0, 0, time.UTC),
-			To:       now,
-			Timezone: domain.DayTZName,
-		}
+func TestMySQL_TodayUsesBeijingMetricDateNotLiveEvents(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+	now := time.Date(2026, 9, 10, 1, 51, 0, 0, time.UTC)
+	userID := "usr_bj_morning"
+	seedBoundaryAnalyticsFixture(t, db, st, userID, now,
+		[]string{"2026-09-10"}, []uint64{218700000},
+		[]struct {
+			at     time.Time
+			tokens uint64
+			agent  string
+		}{
+			{time.Date(2026, 9, 9, 18, 0, 0, 0, time.UTC), 159100000, "codex"},
+		})
+	r := domain.TimeRange{
+		Key:      domain.TimeRangeToday,
+		From:     time.Date(2026, 9, 9, 16, 0, 0, 0, time.UTC),
+		To:       now,
+		Timezone: domain.DayTZName,
+	}
 
-		summary, err := st.Analytics().GetPersonalSummary(context.Background(), userID, r)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if summary.Metrics.TotalTokens.Value == nil || *summary.Metrics.TotalTokens.Value != "218700000" {
-			t.Fatalf("expected Beijing metric_date total 218700000 without live event SUM, got %+v", summary.Metrics.TotalTokens)
-		}
-		trend, err := st.Analytics().GetTokenTrend(context.Background(), userID, r, "total", nil, nil, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var trendTotal uint64
-		for _, point := range trend.Points {
-			if point.TokenTotal != nil {
-				value, _ := strconv.ParseUint(*point.TokenTotal, 10, 64)
-				trendTotal += value
-			}
-		}
-		if trendTotal != 218700000 {
-			t.Fatalf("expected Beijing metric_date trend 218700000, got %d (%+v)", trendTotal, trend.Points)
+	summary, err := st.Analytics().GetPersonalSummary(context.Background(), userID, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Metrics.TotalTokens.Value == nil || *summary.Metrics.TotalTokens.Value != "218700000" {
+		t.Fatalf("expected Beijing metric_date total 218700000 without live event SUM, got %+v", summary.Metrics.TotalTokens)
+	}
+	trend, err := st.Analytics().GetTokenTrend(context.Background(), userID, r, "total", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var trendTotal uint64
+	for _, point := range trend.Points {
+		if point.TokenTotal != nil {
+			value, _ := strconv.ParseUint(*point.TokenTotal, 10, 64)
+			trendTotal += value
 		}
 	}
+	if trendTotal != 218700000 {
+		t.Fatalf("expected Beijing metric_date trend 218700000, got %d (%+v)", trendTotal, trend.Points)
+	}
+}

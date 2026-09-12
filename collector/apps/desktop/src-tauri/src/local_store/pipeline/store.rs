@@ -11,8 +11,8 @@ use super::schema::{self, BUSINESS_TABLES};
 use super::types::{
     Consumer, ConsumerStatus, CursorKind, EventCandidate, LeasedTask, PipelineError,
     RegisterSource, RenewLease, SourceCheckpointSnapshot, SourceCommitBatch, SourceCommitResult,
-    SourceKind, TaskComplete, TaskRetry, UploadWireEvent, MAX_BATCH_BYTES, MAX_BATCH_EVENTS,
-    DB_FILE,
+    SourceKind, TaskComplete, TaskRetry, UploadWireEvent, DB_FILE, MAX_BATCH_BYTES,
+    MAX_BATCH_EVENTS,
 };
 
 #[derive(Debug, Clone, Default)]
@@ -136,7 +136,11 @@ impl PipelineStore {
 
     // ── dimensions ──────────────────────────────────────────────────────────
 
-    pub fn upsert_model(&mut self, provider_id: &str, model_id: &str) -> Result<i64, PipelineError> {
+    pub fn upsert_model(
+        &mut self,
+        provider_id: &str,
+        model_id: &str,
+    ) -> Result<i64, PipelineError> {
         schema::assert_ready(&self.conn)?;
         if provider_id.is_empty() || model_id.is_empty() {
             return Err(PipelineError::InvalidArgument(
@@ -200,57 +204,79 @@ impl PipelineStore {
     // ── sources ─────────────────────────────────────────────────────────────
 
     pub fn register_source(&mut self, src: &RegisterSource) -> Result<i64, PipelineError> {
+        Ok(self.register_sources(std::slice::from_ref(src))?[0])
+    }
+
+    /// One short transaction per discovery page, preserving existing checkpoints.
+    pub fn register_sources(
+        &mut self,
+        sources: &[RegisterSource],
+    ) -> Result<Vec<i64>, PipelineError> {
         schema::assert_ready(&self.conn)?;
-        validate_json_object(&src.cursor_json, "cursor_json")?;
-        validate_json_object(&src.decoder_state_json, "decoder_state_json")?;
-        validate_json_object(&src.observed_boundary_json, "observed_boundary_json")?;
-        if src.decoder_state_version <= 0 {
+        if sources.len() > 64 {
             return Err(PipelineError::InvalidArgument(
-                "decoder_state_version must be > 0".into(),
+                "discovery page exceeds 64 sources".into(),
             ));
         }
+        for src in sources {
+            validate_json_object(&src.cursor_json, "cursor_json")?;
+            validate_json_object(&src.decoder_state_json, "decoder_state_json")?;
+            validate_json_object(&src.observed_boundary_json, "observed_boundary_json")?;
+            if src.decoder_state_version <= 0 {
+                return Err(PipelineError::InvalidArgument(
+                    "decoder_state_version must be > 0".into(),
+                ));
+            }
+        }
         let now = self.now_ms();
+        let rebuilding = super::reconstruction::status(&self.conn)?.active;
         let tx = self.conn.transaction()?;
-        let existing: Option<i64> = tx
-            .query_row(
-                "SELECT id FROM collection_sources
-                 WHERE harness_id=?1 AND source_key=?2 AND stream_key=?3",
+        let mut ids = Vec::with_capacity(sources.len());
+        for src in sources {
+            let existing: Option<i64> = tx
+                .query_row(
+                    "SELECT id FROM collection_sources
+                     WHERE harness_id=?1 AND source_key=?2 AND stream_key=?3",
+                    params![src.harness_id, src.source_key.as_slice(), src.stream_key],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(id) = existing {
+                ids.push(id);
+                continue;
+            }
+            tx.execute(
+                "INSERT INTO collection_sources (
+                    created_at, updated_at, harness_id, source_key, source_kind, locator_ref,
+                    stream_key, cursor_kind, cursor_json, decoder_state_version, decoder_state_json,
+                    observed_boundary_json, next_poll_at
+                 ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
+                    now,
                     src.harness_id,
                     src.source_key.as_slice(),
-                    src.stream_key
+                    src.source_kind.as_str(),
+                    src.locator_ref,
+                    src.stream_key,
+                    src.cursor_kind.as_str(),
+                    src.cursor_json,
+                    src.decoder_state_version,
+                    src.decoder_state_json,
+                    if rebuilding {
+                        let mut boundary: serde_json::Value =
+                            serde_json::from_str(&src.observed_boundary_json).unwrap();
+                        boundary["_rebuild_pending"] = serde_json::json!(true);
+                        boundary.to_string()
+                    } else {
+                        src.observed_boundary_json.clone()
+                    },
+                    src.next_poll_at,
                 ],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if let Some(id) = existing {
-            tx.commit()?;
-            return Ok(id);
+            )?;
+            ids.push(tx.last_insert_rowid());
         }
-        tx.execute(
-            "INSERT INTO collection_sources (
-                created_at, updated_at, harness_id, source_key, source_kind, locator_ref,
-                stream_key, cursor_kind, cursor_json, decoder_state_version, decoder_state_json,
-                observed_boundary_json, next_poll_at
-             ) VALUES (?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            params![
-                now,
-                src.harness_id,
-                src.source_key.as_slice(),
-                src.source_kind.as_str(),
-                src.locator_ref,
-                src.stream_key,
-                src.cursor_kind.as_str(),
-                src.cursor_json,
-                src.decoder_state_version,
-                src.decoder_state_json,
-                src.observed_boundary_json,
-                src.next_poll_at,
-            ],
-        )?;
-        let id = tx.last_insert_rowid();
         tx.commit()?;
-        Ok(id)
+        Ok(ids)
     }
 
     /// Acquire a collection-source lease (CAS). Clears next_poll_at while leased.
@@ -662,10 +688,7 @@ impl PipelineStore {
 
     /// Apply hour/day/month metrics and mark the lane applied in one transaction.
     /// Upload must use `complete_task` (P7).
-    pub fn apply_and_complete_metrics(
-        &mut self,
-        task: &LeasedTask,
-    ) -> Result<(), PipelineError> {
+    pub fn apply_and_complete_metrics(&mut self, task: &LeasedTask) -> Result<(), PipelineError> {
         schema::assert_ready(&self.conn)?;
         if matches!(task.consumer, Consumer::Upload) {
             return Err(PipelineError::InvalidArgument(
@@ -751,12 +774,7 @@ impl PipelineStore {
              SET lease_token=NULL, lease_until=NULL, runnable_at=?1,
                  last_error_code=?2, updated_at=?3
              WHERE id=?4",
-            params![
-                retry.runnable_at,
-                retry.error_code,
-                now,
-                retry.task_id
-            ],
+            params![retry.runnable_at, retry.error_code, now, retry.task_id],
         )?;
         tx.commit()?;
         Ok(())
@@ -1048,7 +1066,10 @@ impl PipelineStore {
         )?)
     }
 
-    pub fn event_row_id_by_event_id(&self, event_id: &[u8; 32]) -> Result<Option<i64>, PipelineError> {
+    pub fn event_row_id_by_event_id(
+        &self,
+        event_id: &[u8; 32],
+    ) -> Result<Option<i64>, PipelineError> {
         Ok(self
             .conn
             .query_row(
@@ -1188,9 +1209,7 @@ fn validate_event_candidate(event: &EventCandidate) -> Result<(), PipelineError>
         ));
     }
     if event.event_type.is_empty() {
-        return Err(PipelineError::InvalidArgument(
-            "event_type required".into(),
-        ));
+        return Err(PipelineError::InvalidArgument("event_type required".into()));
     }
     validate_json_object(&event.payload_json, "payload_json")?;
     let mut seen = HashSet::new();
@@ -1204,7 +1223,10 @@ fn validate_event_candidate(event: &EventCandidate) -> Result<(), PipelineError>
     Ok(())
 }
 
-fn load_source_for_commit(tx: &Transaction<'_>, source_id: i64) -> Result<SourceRow, PipelineError> {
+fn load_source_for_commit(
+    tx: &Transaction<'_>,
+    source_id: i64,
+) -> Result<SourceRow, PipelineError> {
     tx.query_row(
         "SELECT harness_id, commit_seq, lease_token, enabled, delete_at, ignored_record_count
          FROM collection_sources WHERE id=?1",
@@ -1237,9 +1259,7 @@ fn build_status_json(applicable: &[Consumer]) -> String {
             Consumer::Upload => upload = ConsumerStatus::Pending as u8,
         }
     }
-    format!(
-        r#"{{"hour":{hour},"day":{day},"month":{month},"upload":{upload}}}"#
-    )
+    format!(r#"{{"hour":{hour},"day":{day},"month":{month},"upload":{upload}}}"#)
 }
 
 fn insert_event_with_tasks(
@@ -1358,10 +1378,7 @@ fn verify_task_lease(
     let Some((row_event_id, row_consumer, token, lease_until, delete_at)) = row else {
         return Err(PipelineError::TaskNotRunnable);
     };
-    if delete_at.is_some()
-        || row_event_id != event_row_id
-        || row_consumer != consumer.as_str()
-    {
+    if delete_at.is_some() || row_event_id != event_row_id || row_consumer != consumer.as_str() {
         return Err(PipelineError::TaskNotRunnable);
     }
     match (token.as_deref(), lease_until) {
@@ -1390,8 +1407,8 @@ fn verify_task_lease(
 }
 
 fn event_has_incomplete_work(status_json: &str) -> Result<bool, PipelineError> {
-    let v: serde_json::Value = serde_json::from_str(status_json)
-        .map_err(|e| PipelineError::Sqlite(e.to_string()))?;
+    let v: serde_json::Value =
+        serde_json::from_str(status_json).map_err(|e| PipelineError::Sqlite(e.to_string()))?;
     for key in ["hour", "day", "month", "upload"] {
         let status = v
             .get(key)

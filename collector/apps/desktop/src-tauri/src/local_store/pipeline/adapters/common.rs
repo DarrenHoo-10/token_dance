@@ -10,8 +10,8 @@ use super::identity::{
     event_id, fact_key, session_key as sess_hmac, skill_key, turn_key, TypedNativeKey,
 };
 use crate::local_store::pipeline::runner::{
-    resolve_event_time, DecodeOutcome, DecoderState, FactDraft, IgnoreCode, RawRecord,
-    TimeSource, TokenAccuracy,
+    resolve_event_time, DecodeOutcome, DecoderState, FactDraft, IgnoreCode, RawRecord, TimeSource,
+    TokenAccuracy,
 };
 
 /// In-memory skill registry shared across harness strategies for a device.
@@ -157,11 +157,7 @@ pub fn cumulative_delta(
 ) -> Result<u64, IgnoreCode> {
     let key = format!("cum::{series_id}");
     let had_prev = state.json.get(&key).and_then(|v| v.as_u64()).is_some();
-    let prev = state
-        .json
-        .get(&key)
-        .and_then(|v| v.as_u64())
-        .unwrap_or(0);
+    let prev = state.json.get(&key).and_then(|v| v.as_u64()).unwrap_or(0);
     state.json[key] = json!(cumulative);
     if !had_prev {
         // First observation of a cumulative series: baseline only.
@@ -314,6 +310,7 @@ pub fn emit_usage_fact(args: UsageFactArgs<'_>) -> FactDraft {
         occurred_at: args.occurred_at,
         time_source: args.time_source,
         model_key: args.model_key,
+        model_identity: None,
         skill_id: args.skill_id,
         skill_key: args.skill_key,
         session_key: args
@@ -355,6 +352,7 @@ pub fn emit_skill_fact(
         occurred_at,
         time_source,
         model_key: 0,
+        model_identity: None,
         skill_id: Some(skill_id),
         skill_key: Some(sk),
         session_key: session_id.map(|s| sess_hmac(secret, harness, s)),
@@ -393,6 +391,7 @@ pub fn emit_code_fact(
         occurred_at,
         time_source,
         model_key: 0,
+        model_identity: None,
         skill_id: None,
         skill_key: None,
         session_key: session_id.map(|s| sess_hmac(secret, harness, s)),
