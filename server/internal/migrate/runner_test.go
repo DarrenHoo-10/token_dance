@@ -23,11 +23,11 @@ func TestMigrationEmbedLoading(t *testing.T) {
 	}
 
 	migs := runner.GetMigrations()
-	if len(migs) != 7 {
-		t.Fatalf("expected 7 migrations, got %d", len(migs))
+	if len(migs) != 13 {
+		t.Fatalf("expected 13 migrations, got %d", len(migs))
 	}
 
-	expected := []string{"0001", "0002", "0003", "0004", "0005", "0006", "0007"}
+	expected := []string{"0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009", "0010", "0011", "0012", "0013"}
 	for i, m := range migs {
 		if m.Version != expected[i] {
 			t.Errorf("migration %d: expected version %s, got %s", i, expected[i], m.Version)
@@ -101,7 +101,46 @@ func getTestMySQLDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// Path 1: Clean Install (0001 -> 0002 -> 0003)
+func TestMigrationRunnerResetRemovesTeamTables(t *testing.T) {
+	db := getTestMySQLDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	lockConn, err := db.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lockConn.Close()
+	var locked int
+	if err := lockConn.QueryRowContext(ctx, "SELECT GET_LOCK('tokendance_global_test_lock', 60)").Scan(&locked); err != nil || locked != 1 {
+		t.Fatalf("cannot lock test schema: locked=%d err=%v", locked, err)
+	}
+	defer lockConn.ExecContext(ctx, "SELECT RELEASE_LOCK('tokendance_global_test_lock')")
+	runner := NewRunner(db)
+	if err := runner.ResetCleanSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.RunMigrations(ctx); err != nil {
+		t.Fatal(err)
+	}
+	const countTeamsSQL = `SELECT COUNT(*) FROM information_schema.tables
+		WHERE table_schema = DATABASE()
+		AND (table_name IN ('teams', 'user_current_teams') OR LEFT(table_name, 5) = 'team_')`
+	var count int
+	if err := db.QueryRowContext(ctx, countTeamsSQL).Scan(&count); err != nil || count != 15 {
+		t.Fatalf("expected 15 migrated team tables, got %d (err=%v)", count, err)
+	}
+	if err := runner.ResetCleanSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRowContext(ctx, countTeamsSQL).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("team tables survived reset: %d (err=%v)", count, err)
+	}
+	if err := runner.RunMigrations(ctx); err != nil {
+		t.Fatalf("cannot migrate again after reset: %v", err)
+	}
+}
+
+// Path 1: Clean Install
 func TestMigrationRunnerIntegration_CleanInstall(t *testing.T) {
 	db := getTestMySQLDB(t)
 	_, _ = db.Exec("SELECT GET_LOCK('tokendance_global_test_lock', 60)")
@@ -124,8 +163,8 @@ func TestMigrationRunnerIntegration_CleanInstall(t *testing.T) {
 	// Verify all migrations recorded in schema_migrations
 	var count int
 	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count)
-	if err != nil || count != 7 {
-		t.Fatalf("expected 7 applied migrations, got %d (err: %v)", count, err)
+	if err != nil || count != 13 {
+		t.Fatalf("expected 13 applied migrations, got %d (err: %v)", count, err)
 	}
 
 	// Verify idempotency

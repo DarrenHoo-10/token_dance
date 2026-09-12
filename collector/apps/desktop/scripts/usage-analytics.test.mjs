@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { usageTokens, usageCosts, annualUsage, quotaStale, quotaStatusText, quotaWindowLabel } from '../src/usage-analytics.ts';
+import { usageTokens, usageCosts, annualUsage, usageTrend, quotaStale, quotaStatusText, quotaWindowLabel } from '../src/usage-analytics.ts';
 import { lastSevenDays } from '../src/weekly-usage.ts';
 const now = new Date(2026, 8, 5, 12);
 const dates = lastSevenDays(now);
@@ -39,6 +39,43 @@ test('annual calendar does not fill unrecorded history with zeros', () => {
   assert.equal(year.days.at(-1).tokens, 7);
   const oldZero = { ...agent, dailyUsage: [{ date: '2026-08-01', tokens: 0 }, ...agent.dailyUsage] };
   assert.equal(annualUsage([oldZero], now).days.find(day => day.date === '2026-08-01').tokens, null);
+});
+test('today trend uses 24 local hours and hides future hours', () => {
+  const noon = new Date(2026, 8, 10, 10, 30);
+  const hourly = Array.from({ length: 24 }, (_, hour) => ({ hour, tokens: hour + 1 }));
+  const points = usageTrend([{ ...agent, hourlyUsage: hourly }], 'today', noon);
+  assert.equal(points.length, 24);
+  assert.equal(points[0].label, '0:00');
+  assert.equal(points[9].tokens, 10);
+  assert.equal(points[10].tokens, 11);
+  assert.equal(points[11].tokens, null);
+  assert.equal(usageTrend([agent], 'today', noon).every(point => point.tokens === null), true);
+});
+test('week and all-time trends follow the selected range', () => {
+  const points = usageTrend([agent], 'week', now);
+  assert.equal(points.length, 7);
+  assert.deepEqual(points.map(point => point.tokens), [1, 2, 3, 4, 5, 6, 7]);
+  const year = usageTrend([agent], 'all', now);
+  assert.equal(year.length, 7);
+  assert.equal(year[0].key, dates[0]);
+  assert.equal(year[0].tokens, 1);
+  assert.equal(year.at(-1).tokens, 7);
+});
+test('all-time trend starts at first usage day and caps at one year', () => {
+  const long = [];
+  for (let i = 400; i >= 0; i--) {
+    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - i, 12);
+    const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+    long.push({ date, tokens: i === 400 ? 9 : i === 0 ? 3 : 0 });
+  }
+  const points = usageTrend([{ ...agent, dailyUsage: long, historyStart: long[0].date }], 'all', now);
+  assert.equal(points.length, 365);
+  assert.equal(points.at(-1).tokens, 3);
+  assert.equal(points[0].tokens, 0);
+  const short = usageTrend([{ ...agent, dailyUsage: [{ date: dates[5], tokens: 4 }, { date: dates[6], tokens: 5 }], historyStart: dates[5] }], 'all', now);
+  assert.equal(short.length, 2);
+  assert.equal(short[0].key, dates[5]);
+  assert.equal(short[0].tokens, 4);
 });
 test('annual calendar includes leap day and local date boundaries', () => {
   const year = annualUsage([], new Date(2024, 2, 1, 0, 1));
@@ -79,4 +116,21 @@ test('estimates combine with recorded currencies, preserve free models and revea
   const recent = { ...a, dailyUsage: dates.map((date, i) => ({ date, tokens: 100, pricing: { ...p, estimatedUsd: (i+1)*100000000, detailedTokens: 100 } })) };
   assert.equal(usageCosts([recent], 'today', now).currencies.USD, 7);
   assert.equal(usageCosts([recent], 'week', now).currencies.USD, 28);
+});
+
+test('pipeline pricing preserves currencies and does not count the legacy USD mirror twice', () => {
+  const pricing = { estimatedUsd: 50000000, estimatedCosts: { USD: 50000000, CNY: 700000000 },
+    estimatedRequests: 2, unpricedRequests: 1, detailedTokens: 1000 };
+  const a = { ...agent, pricing, dailyUsage: [{ date: dates.at(-1), tokens: 7,
+    costs: { USD: 200000000 }, pricing: { ...pricing, detailedTokens: 7 } }] };
+  for (const range of ['today', 'week', 'all']) {
+    const costs = usageCosts([a], range, now);
+    assert.deepEqual(costs.currencies, { USD: 2.5, CNY: 7 });
+    assert.equal(costs.estimatedRequests, 2);
+    assert.equal(costs.unpricedRequests, 1);
+    assert.equal(costs.historyIncomplete, false);
+  }
+  const free = usageCosts([{ ...agent, totalCosts: {}, pricing: { ...pricing,
+    estimatedUsd: 0, estimatedCosts: { CNY: 0 }, estimatedRequests: 1 } }], 'all', now);
+  assert.deepEqual(free.currencies, { CNY: 0 });
 });

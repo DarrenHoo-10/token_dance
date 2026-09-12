@@ -17,6 +17,7 @@ type Store interface {
 	Export() ExportStore
 	Search() SearchStore
 	Leaderboard() LeaderboardStore
+	CommunityStats() CommunityStatsStore
 	Media() MediaStore
 	Teams() TeamsStore
 }
@@ -86,6 +87,7 @@ type DeviceStore interface {
 	CancelBindingChallenge(ctx context.Context, challengeID, userID string) error
 	ClaimInstallationTx(ctx context.Context, codeHash [32]byte, inst domain.Installation, now time.Time) (*domain.Installation, error)
 	RegisterInstallationTx(ctx context.Context, inst domain.Installation, now time.Time) (*domain.Installation, error)
+	RebindInstallationTx(ctx context.Context, installationID, newUserID string, now time.Time) (*domain.Installation, error)
 	UpdateInstallationName(ctx context.Context, installationID, userID string, name string, now time.Time) (*domain.Installation, error)
 	PauseInstallation(ctx context.Context, installationID, userID string, reason string, now time.Time) (*domain.Installation, error)
 	ResumeInstallation(ctx context.Context, installationID, userID string, now time.Time) (*domain.Installation, error)
@@ -96,6 +98,8 @@ type DeviceStore interface {
 type IngestStore interface {
 	GetIngestInstallation(ctx context.Context, installationID string) (*domain.Installation, error)
 	CommitIngest(ctx context.Context, batch domain.IngestBatch) (*domain.IngestResult, error)
+	CommitTelemetryEventsV2(ctx context.Context, in domain.TelemetryEventsV2Input) (*domain.TelemetryEventsV2Result, error)
+	GetIngestCursor(ctx context.Context, installationID string) (domain.TelemetryCursor, error)
 }
 
 type ExportStore interface {
@@ -125,6 +129,50 @@ type LeaderboardStore interface {
 	PublishSnapshot(ctx context.Context, snapshotID string, boardKey, window, metric string, entries []domain.LeaderboardEntry, now time.Time) error
 	GetLeaderboard(ctx context.Context, boardKey, window, metric string, cursor *string, limit int) (*domain.LeaderboardResponse, error)
 	GetLeaderboardView(ctx context.Context, q LeaderboardQuery) (*domain.LeaderboardResponse, error)
+}
+
+// CommunityCost is one currency's community total in major units.
+// Distinct currencies are never FX-merged into CostAmount.
+type CommunityCost struct {
+	Currency string  `json:"currency"`
+	Amount   float64 `json:"amount"`
+}
+
+// CommunityDailyTotals is one precomputed day of whole-community aggregates.
+// The stats worker recomputes a day from telemetry_* tables and overwrites
+// the row; request paths only read these rows, never aggregate.
+type CommunityDailyTotals struct {
+	MetricDate   string          `json:"metricDate"`
+	TokensTotal  uint64          `json:"tokensTotal"`
+	Developers   uint64          `json:"developers"`
+	CodeLines    uint64          `json:"codeLines"`
+	Interactions uint64          `json:"interactions"`
+	CostAmount   float64         `json:"costAmount"`
+	Costs        []CommunityCost `json:"costs,omitempty"`
+	IsFinal      bool            `json:"isFinal"`
+	ComputedAt   time.Time       `json:"computedAt"`
+}
+
+type CommunityStatsStore interface {
+	SumCommunityDay(ctx context.Context, date string) (CommunityDailyTotals, error)
+	UpsertCommunityDailyStats(ctx context.Context, totals CommunityDailyTotals) error
+	GetCommunityDailyStats(ctx context.Context, date string) (*CommunityDailyTotals, error)
+	ReplaceCommunityAgentDay(ctx context.Context, date string, rows []CommunityAgentTokens) error
+	GetCommunityHarnessShares(ctx context.Context, date string, limit int) ([]CommunityHarness, error)
+}
+
+// CommunityAgentTokens is one harness's token total inside a metric day.
+type CommunityAgentTokens struct {
+	AgentID     string
+	TokensTotal uint64
+}
+
+// CommunityHarness is a display-ready harness row: tokens plus the agent
+// display name resolved by the store implementation.
+type CommunityHarness struct {
+	AgentID     string
+	Label       string
+	TokensTotal uint64
 }
 
 type AvatarReadyMeta struct {

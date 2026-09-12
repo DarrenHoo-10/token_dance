@@ -1,0 +1,728 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.tokenshow.dev/protocol/v2.json",
+  "title": "TokenShow Collector Protocol v2",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/EventEnvelope"
+    },
+    {
+      "$ref": "#/$defs/TelemetryEventsRequest"
+    },
+    {
+      "$ref": "#/$defs/TelemetryEventsResponse"
+    },
+    {
+      "$ref": "#/$defs/TelemetryCapabilities"
+    },
+    {
+      "$ref": "#/$defs/EventAck"
+    }
+  ],
+  "$defs": {
+    "EventType": {
+      "type": "string",
+      "enum": [
+        "model_usage_recorded",
+        "cost_recorded",
+        "session_started",
+        "session_ended",
+        "turn_started",
+        "turn_completed",
+        "tool_invoked",
+        "skill_invoked",
+        "code_changed"
+      ]
+    },
+    "AckResult": {
+      "type": "string",
+      "enum": [
+        "accepted",
+        "duplicate",
+        "discarded",
+        "retry",
+        "blocked",
+        "conflict",
+        "invalid"
+      ]
+    },
+    "Accuracy": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "derived",
+        "correlated",
+        "estimated"
+      ]
+    },
+    "TimeSource": {
+      "type": "string",
+      "enum": [
+        "source_record",
+        "prior_record",
+        "file_mtime",
+        "unknown"
+      ]
+    },
+    "CostSource": {
+      "type": "string",
+      "enum": [
+        "provider_reported",
+        "calculated_price"
+      ]
+    },
+    "TurnTrigger": {
+      "type": "string",
+      "enum": [
+        "user",
+        "system",
+        "scheduled",
+        "subagent"
+      ]
+    },
+    "SessionEndReason": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "cancelled",
+        "error",
+        "timeout",
+        "unknown"
+      ]
+    },
+    "AckErrorCode": {
+      "type": "string",
+      "enum": [
+        "outside_window",
+        "deleted",
+        "future_event_time",
+        "unsupported_version",
+        "schema_invalid",
+        "hash_mismatch",
+        "negative_count",
+        "unknown_field",
+        "duplicate_key",
+        "dependency_expired",
+        "internal_retryable"
+      ]
+    },
+    "ModelRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "providerId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "modelId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "providerId",
+        "modelId"
+      ]
+    },
+    "SkillRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "skillKey": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "minLength": 43,
+          "maxLength": 43
+        },
+        "publicName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "skillKey"
+      ]
+    },
+    "UsagePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "token_total": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "input_context_tokens": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "output_tokens": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "cache_read_tokens": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "cache_write_tokens": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "reasoning_tokens": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "request_count": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        }
+      },
+      "required": []
+    },
+    "CostPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "units": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "currency": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$",
+          "minLength": 3,
+          "maxLength": 3
+        },
+        "source": {
+          "$ref": "#/$defs/CostSource"
+        },
+        "price_basis_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "coverage": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": [
+        "units",
+        "currency",
+        "source"
+      ]
+    },
+    "CodePayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "generated": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "accepted": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "added": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "removed": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "file_touch_count": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        }
+      },
+      "required": []
+    },
+    "ActivityPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "duration_ms": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "trigger": {
+          "$ref": "#/$defs/TurnTrigger"
+        },
+        "reason": {
+          "$ref": "#/$defs/SessionEndReason"
+        },
+        "tool_category": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": []
+    },
+    "ContextPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "parent_session_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "minLength": 43,
+          "maxLength": 43
+        },
+        "tool_call_key": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "minLength": 43,
+          "maxLength": 43
+        },
+        "scope_started_at": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "coverage": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        }
+      },
+      "required": []
+    },
+    "MetaPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "accuracy": {
+          "$ref": "#/$defs/Accuracy"
+        },
+        "time_source": {
+          "$ref": "#/$defs/TimeSource"
+        },
+        "safe_tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "accuracy",
+        "time_source"
+      ]
+    },
+    "EventPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "usage": {
+          "$ref": "#/$defs/UsagePayload"
+        },
+        "cost": {
+          "$ref": "#/$defs/CostPayload"
+        },
+        "code": {
+          "$ref": "#/$defs/CodePayload"
+        },
+        "activity": {
+          "$ref": "#/$defs/ActivityPayload"
+        },
+        "context": {
+          "$ref": "#/$defs/ContextPayload"
+        },
+        "meta": {
+          "$ref": "#/$defs/MetaPayload"
+        }
+      },
+      "required": []
+    },
+    "EventEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "minLength": 43,
+          "maxLength": 43
+        },
+        "factKey": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "minLength": 43,
+          "maxLength": 43
+        },
+        "factRevision": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "metricSemanticsVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "harnessId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "eventType": {
+          "$ref": "#/$defs/EventType"
+        },
+        "occurredAt": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "model": {
+          "$ref": "#/$defs/ModelRef"
+        },
+        "skill": {
+          "$ref": "#/$defs/SkillRef"
+        },
+        "sessionKey": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "minLength": 43,
+          "maxLength": 43
+        },
+        "turnKey": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "minLength": 43,
+          "maxLength": 43
+        },
+        "costScopeKey": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "minLength": 43,
+          "maxLength": 43
+        },
+        "payload": {
+          "$ref": "#/$defs/EventPayload"
+        },
+        "contentHash": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "minLength": 43,
+          "maxLength": 43
+        }
+      },
+      "required": [
+        "eventId",
+        "factKey",
+        "factRevision",
+        "schemaVersion",
+        "metricSemanticsVersion",
+        "harnessId",
+        "eventType",
+        "occurredAt",
+        "payload",
+        "contentHash"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "eventType": {
+                "const": "model_usage_recorded"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "required": [
+              "model"
+            ],
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": [
+                  "usage",
+                  "meta"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "eventType": {
+                "const": "cost_recorded"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": [
+                  "cost",
+                  "meta"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "eventType": {
+                "const": "skill_invoked"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "required": [
+              "skill"
+            ],
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": [
+                  "activity",
+                  "meta"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "eventType": {
+                "const": "code_changed"
+              }
+            },
+            "required": [
+              "eventType"
+            ]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "required": [
+                  "code",
+                  "meta"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "type": "object",
+            "properties": {
+              "schemaVersion": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "schemaVersion"
+            ]
+          },
+          "then": {
+            "properties": {
+              "schemaVersion": {
+                "const": 2
+              }
+            }
+          }
+        }
+      ]
+    },
+    "TelemetryEventsRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocolVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295,
+          "const": 2
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EventEnvelope"
+          },
+          "maxItems": 500
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "requestId",
+        "events"
+      ]
+    },
+    "EventAck": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "eventId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "minLength": 43,
+          "maxLength": 43
+        },
+        "contentHash": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{43}$",
+          "minLength": 43,
+          "maxLength": 43
+        },
+        "result": {
+          "$ref": "#/$defs/AckResult"
+        },
+        "code": {
+          "$ref": "#/$defs/AckErrorCode"
+        }
+      },
+      "required": [
+        "eventId",
+        "contentHash",
+        "result"
+      ]
+    },
+    "TelemetryEventsResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "serverTimeMs": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "acks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EventAck"
+          },
+          "maxItems": 256
+        }
+      },
+      "required": [
+        "requestId",
+        "serverTimeMs",
+        "acks"
+      ]
+    },
+    "TelemetryCapabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protocolVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "supportedSchemaVersions": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "maxItems": 256
+        },
+        "supportedMetricSemanticsVersions": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4294967295
+          },
+          "maxItems": 256
+        },
+        "maxBatchEvents": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500
+        },
+        "maxBatchBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1048576
+        },
+        "serverTimeMs": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        },
+        "eventReceiveLowerBoundMs": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)$",
+          "maxLength": 20
+        }
+      },
+      "required": [
+        "protocolVersion",
+        "supportedSchemaVersions",
+        "supportedMetricSemanticsVersions",
+        "maxBatchEvents",
+        "maxBatchBytes",
+        "serverTimeMs",
+        "eventReceiveLowerBoundMs"
+      ]
+    }
+  }
+}

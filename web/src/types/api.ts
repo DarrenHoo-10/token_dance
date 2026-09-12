@@ -194,6 +194,8 @@ export interface CostMetricValue {
 
 export interface PersonalSummaryMetrics {
   estimatedCost: CostMetricValue;
+  /** Per-currency totals. Present when the API refuses a single FX-merged scalar. */
+  estimatedCosts?: CostMetricValue[];
   totalTokens: MetricValue;
   generatedCodeLines: MetricValue;
   tokensPerCodeLine: MetricValue;
@@ -534,4 +536,39 @@ export interface LeaderboardResponse {
   totalParticipants?: number;
   totalTokens?: string;
   timezone?: string;
+}
+
+export interface CommunityStatsDeltas {
+  tokens?: number | null;
+  developers?: number | null;
+  codeLines?: number | null;
+  interactions?: number | null;
+  costAmount?: number | null;
+}
+
+export interface CommunityHarness {
+  agentId: string;
+  label: string;
+  tokens?: string | null;
+  sharePct?: number | null;
+}
+
+export interface CommunityCostAmount {
+  amount: number;
+  currency: string;
+}
+
+export interface CommunityStatsResponse {
+  metricDate: string;
+  timezone: string;
+  tokens?: string | null;
+  developers?: number | null;
+  codeLines?: string | null;
+  interactions?: string | null;
+  costAmount?: number | null;
+  /** Per-currency totals. When length > 1, costAmount is omitted (no FX merge). */
+  costs?: CommunityCostAmount[] | null;
+  deltas?: CommunityStatsDeltas | null;
+  harnesses?: CommunityHarness[] | null;
+  computedAt?: string | null;
 }

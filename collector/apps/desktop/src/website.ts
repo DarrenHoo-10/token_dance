@@ -34,3 +34,11 @@ export function websiteLoginUrl(origin: string, returnTo: string): string {
   url.searchParams.set("return_to", returnTo);
   return url.href;
 }
+
+export function websiteAvatarUrl(origin: string, avatar: string | null | undefined): string | null {
+  if (!avatar) return null;
+  try {
+    const url = new URL(websitePageUrl(origin, avatar));
+    return ["https:", "http:"].includes(url.protocol) ? url.href : null;
+  } catch { return null; }
+}

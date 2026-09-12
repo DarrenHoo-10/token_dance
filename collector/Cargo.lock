@@ -84,6 +84,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "adapter-doubao-work"
+version = "0.1.0"
+dependencies = [
+ "adapter-host",
+ "adapter-sdk",
+ "async-trait",
+ "privacy",
+ "protocol",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "adapter-grok-build"
 version = "0.1.0"
 dependencies = [
@@ -125,6 +138,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "adapter-opencode"
+version = "0.1.0"
+dependencies = [
+ "adapter-host",
+ "adapter-sdk",
+ "async-trait",
+ "privacy",
+ "protocol",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "adapter-pi"
 version = "0.1.0"
 dependencies = [
@@ -149,6 +175,19 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
+name = "adapter-workbuddy"
+version = "0.1.0"
+dependencies = [
+ "adapter-host",
+ "adapter-sdk",
+ "async-trait",
+ "privacy",
+ "protocol",
+ "serde_json",
  "tokio",
 ]
 
@@ -386,9 +425,12 @@ dependencies = [
  "adapter-codex",
  "adapter-cursor",
  "adapter-deepseek-harness",
+ "adapter-doubao-work",
  "adapter-grok-build",
+ "adapter-opencode",
  "adapter-pi",
  "adapter-sdk",
+ "adapter-workbuddy",
  "adapter-zcode",
  "async-trait",
  "collector-core",
@@ -1382,8 +1424,11 @@ dependencies = [
 name = "protocol"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "serde",
  "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
 ]
 
 [[package]]

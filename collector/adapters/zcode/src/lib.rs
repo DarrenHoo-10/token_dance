@@ -7,10 +7,10 @@ use adapter_sdk::{
     SetupContext, SetupPlan, SourceContext, SourceKind, SourceSpec, TokenUsage,
 };
 use async_trait::async_trait;
-use protocol::{
-    ModelUsageRecordedPayload, SessionStartedPayload, SkillInvokeType, SkillInvokedPayload,
-    ToolInvokedPayload, TurnCompletedPayload,
-};
+	use protocol::{
+	    CodeChangedPayload, ModelUsageRecordedPayload, SessionStartedPayload, SkillInvokeType,
+	    SkillInvokedPayload, ToolInvokedPayload, TurnCompletedPayload,
+	};
 use serde_json::{Map, Value};
 
 pub const ADAPTER_ID: &str = "dev.tokenshow.adapter.zcode";
@@ -24,7 +24,12 @@ pub const FINGERPRINT_V2: &str = "zcode-sqlite-v2-uv9";
 pub const FINGERPRINT_V3: &str = "zcode-sqlite-v3-uv0";
 const V1_QUERIES: &[&str] = &["SELECT id, created_at, model FROM sessions WHERE id > ? ORDER BY id", "SELECT id, session_id, finished_at, input_tokens, output_tokens, tool_count FROM steps WHERE id > ? ORDER BY id"];
 const V2_QUERIES: &[&str] = &["SELECT id, created_at, model FROM sessions WHERE id > ? ORDER BY id", "SELECT id, session_id, finished_at, input_tokens, output_tokens, total_tokens, tool_count, skill_name FROM step_metrics WHERE id > ? ORDER BY id"];
-const V3_QUERIES: &[&str] = &["SELECT rowid AS id, id AS session_ref, time_created FROM session WHERE rowid > ? ORDER BY rowid", "SELECT rowid AS id, session_id, provider_id, model_id, input_tokens, output_tokens, computed_total_tokens, tool_call_count, completed_at FROM model_usage WHERE rowid > ? AND status = 'completed' ORDER BY rowid"];
+	const V3_QUERIES: &[&str] = &[
+	    "SELECT rowid AS id, id AS session_ref, time_created FROM session WHERE rowid > ? ORDER BY rowid",
+	    "SELECT rowid AS id, session_id, provider_id, model_id, input_tokens, output_tokens, computed_total_tokens, tool_call_count, completed_at FROM model_usage WHERE rowid > ? AND status = 'completed' ORDER BY rowid",
+	    "SELECT COALESCE(time_updated, time_created) AS id, id AS session_ref, time_created, summary_additions, summary_deletions, summary_files, 'code_changed' AS event_type FROM session WHERE COALESCE(time_updated, time_created) > ? AND (IFNULL(summary_additions,0) > 0 OR IFNULL(summary_deletions,0) > 0) ORDER BY COALESCE(time_updated, time_created), rowid",
+	    "SELECT time_updated AS id, session_id, time_updated AS time_created, json_extract(data, '$.callID') AS callId, CASE json_extract(data, '$.tool') WHEN 'Write' THEN CASE WHEN IFNULL(json_extract(data, '$.state.input.content'), '') = '' THEN 0 ELSE 1 + LENGTH(json_extract(data, '$.state.input.content')) - LENGTH(REPLACE(json_extract(data, '$.state.input.content'), CHAR(10), '')) END ELSE CASE WHEN IFNULL(json_extract(data, '$.state.input.new_string'), '') = '' THEN 0 ELSE 1 + LENGTH(json_extract(data, '$.state.input.new_string')) - LENGTH(REPLACE(json_extract(data, '$.state.input.new_string'), CHAR(10), '')) END END AS addedLines, CASE json_extract(data, '$.tool') WHEN 'Edit' THEN CASE WHEN IFNULL(json_extract(data, '$.state.input.old_string'), '') = '' THEN 0 ELSE 1 + LENGTH(json_extract(data, '$.state.input.old_string')) - LENGTH(REPLACE(json_extract(data, '$.state.input.old_string'), CHAR(10), '')) END ELSE 0 END AS removedLines, 1 AS fileCount, 'code_changed' AS event_type FROM part WHERE time_updated > ? AND json_extract(data, '$.type') = 'tool' AND json_extract(data, '$.tool') IN ('Edit', 'Write') AND json_extract(data, '$.state.status') = 'completed' ORDER BY time_updated, rowid",
+	];
 
 pub fn load_manifest() -> AdapterManifest {
     serde_json::from_str(MANIFEST_JSON).expect("ZCode manifest")
@@ -217,17 +222,18 @@ fn decode_records(
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
-    records
+    let events: Vec<NormalizedEvent> = records
         .iter()
         .enumerate()
-        .filter_map(
-            |(i, r)| match decode_record(manifest, version, hmac_key, frame, r, i + 1) {
-                Ok(Some(e)) => Some(Ok(e)),
-                Ok(None) => None,
-                Err(e) => Some(Err(e)),
-            },
-        )
-        .collect()
+        // One malformed record must not void its whole frame: skip it and
+        // keep decoding, or a single bad row silently loses every other row
+        // in the batch (the cursor still advances).
+        .filter_map(|(i, r)| match decode_record(manifest, version, hmac_key, frame, r, i + 1) {
+            Ok(Some(e)) => Some(e),
+            Ok(None) | Err(_) => None,
+        })
+        .collect();
+    Ok(events)
 }
 
 fn decode_record(
@@ -243,7 +249,10 @@ fn decode_record(
     };
     let kind = o.get("type").and_then(Value::as_str).unwrap_or("");
     let session = string(o, "sessionId");
-    let turn = string(o, "stepId");
+    // Row ids from the sqlite snapshot arrive as JSON numbers; identity must
+    // accept them or it degrades to the batch sequence and dedupe eats every
+    // incremental poll after the initial rescan.
+    let turn = id_string(o, "stepId").or_else(|| id_string(o, "id"));
     let (payload, accuracy) = match kind {
         "session" => (
             EventPayload::SessionStarted(SessionStartedPayload {
@@ -308,9 +317,54 @@ fn decode_record(
                 Accuracy::Exact,
             )
         }
+        "code_changed" => {
+            let added = number(o, "addedLines").unwrap_or_else(|| "0".into());
+            let removed = number(o, "removedLines").unwrap_or_else(|| "0".into());
+            if added == "0" && removed == "0" {
+                return Ok(None);
+            }
+            let files = o
+                .get("fileCount")
+                .and_then(Value::as_u64)
+                .or_else(|| number(o, "fileCount")?.parse().ok())
+                .unwrap_or(1)
+                .max(1) as u32;
+            (
+                EventPayload::CodeChanged(CodeChangedPayload {
+                    added_lines: added.clone(),
+                    removed_lines: removed,
+                    generated_lines: Some(added),
+                    accepted_lines: None,
+                    file_count: files,
+                    language: None,
+                }),
+                Accuracy::Derived,
+            )
+        }
         _ => return Ok(None),
     };
     let cursor = format!("{}:{sequence}", frame.cursor);
+    let identity = match kind {
+        "session" => session
+            .clone()
+            .unwrap_or_else(|| sequence.to_string()),
+        "step_finish" | "turn_finish" | "skill" | "tool" => turn
+            .clone()
+            .or_else(|| id_string(o, "toolCallId"))
+            .unwrap_or_else(|| sequence.to_string()),
+        "code_changed" => id_string(o, "callId")
+            .or_else(|| id_string(o, "call_id"))
+            .or_else(|| {
+                session.as_deref().map(|id| {
+                    format!(
+                        "code:{id}:{}",
+                        string(o, "timestamp").unwrap_or_default()
+                    )
+                })
+            })
+            .unwrap_or_else(|| sequence.to_string()),
+        _ => sequence.to_string(),
+    };
     let raw = serde_json::to_vec(value).map_err(|e| AdapterError::decode_failed(e.to_string()))?;
     Ok(Some(EventEnvelope {
         schema_version: "1.0".into(),
@@ -318,10 +372,10 @@ fn decode_record(
             hmac_key,
             &frame.installation_id,
             &manifest.id,
-            &frame.source_id,
-            &cursor,
+            "zcode-row",
+            &identity,
             kind,
-            &sequence.to_string(),
+            "1",
         ),
         adapter_id: manifest.id.clone(),
         adapter_version: manifest.version.clone(),
@@ -366,6 +420,16 @@ fn hash(hmac_key: &[u8], value: &str) -> String {
 }
 fn string(o: &Map<String, Value>, key: &str) -> Option<String> {
     o.get(key).and_then(Value::as_str).map(str::to_owned)
+}
+
+/// Reads an id that may be stored as a JSON string or number; sqlite row ids
+/// arrive as numbers and must still yield a stable identity string.
+fn id_string(o: &Map<String, Value>, key: &str) -> Option<String> {
+    match o.get(key) {
+        Some(Value::String(value)) => Some(value.clone()),
+        Some(Value::Number(number)) => Some(number.to_string()),
+        _ => None,
+    }
 }
 fn number(o: &Map<String, Value>, key: &str) -> Option<String> {
     match o.get(key)? {

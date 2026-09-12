@@ -1,6 +1,6 @@
 use collector_service::{
-    enumerate_all_source_files, DecodedSourceBatch, DetectionSnapshot, EnumeratedSourceKind,
-    ProductionService,
+    decode_pending_session_ends, enumerate_all_source_files, grok_sessions_root, DecodedSourceBatch,
+    DetectionSnapshot, EnumeratedSourceKind, ProductionService,
 };
 
 use crate::local_store::{DiscoveredSource, LocalStore, RebuildFileProgress, ScanWorkItem};
@@ -81,7 +81,12 @@ pub async fn decode_tick(service: &mut ProductionService, prepared: PreparedTick
                     file_len: batch.next.file_len as i64,
                     status: if !item.path.exists() {
                         "skipped".into()
-                    } else if caught_up {
+                    } else if caught_up || item.kind == "sqlite" {
+                        // SQLite snapshot sources are cursor-incremental, not a
+                        // bounded scan: a poll that moved the checkpoint is
+                        // caught up. Counting frames keeps the job "running"
+                        // forever while the agent's own database is hot and
+                        // blocks aggregate upload the whole time.
                         "caught_up".into()
                     } else {
                         "in_progress".into()
@@ -92,13 +97,39 @@ pub async fn decode_tick(service: &mut ProductionService, prepared: PreparedTick
                 }
                 events.extend(batch.events);
             }
-            Err(error) => report.errors.push(format!(
-                "{}/{} {}: {error}",
-                item.adapter_id,
-                item.source_id,
-                item.path.display()
-            )),
+            Err(error) => {
+                if item.kind == "sqlite" {
+                    // A persistently failing snapshot (schema drift, busy file)
+                    // must not hold the aggregate queue hostage: leaving the
+                    // file pending keeps its job running forever. Mark it
+                    // skipped; discovery re-queues it when the file changes.
+                    progress.push(RebuildFileProgress {
+                        job_id: item.job_id,
+                        file_path: item.path.to_string_lossy().into_owned(),
+                        file_identity: item
+                            .checkpoint
+                            .as_ref()
+                            .map(|checkpoint| checkpoint.file_identity.clone())
+                            .unwrap_or_default(),
+                        mtime_unix: item.mtime_unix,
+                        file_len: item.file_len,
+                        status: "skipped".into(),
+                    });
+                }
+                report.errors.push(format!(
+                    "{}/{} {}: {error}",
+                    item.adapter_id,
+                    item.source_id,
+                    item.path.display()
+                ))
+            }
         }
+    }
+    if let Some(sessions_root) = grok_sessions_root() {
+        let extra =
+            decode_pending_session_ends(service, &service.grok_hooks, &sessions_root).await;
+        report.accepted_events += extra.len();
+        events.extend(extra);
     }
     DecodedTick {
         events,

@@ -2,19 +2,21 @@
 
 [package]
 name = "tokendance-desktop"
-version = "0.1.13"
+version = "0.1.25"
 edition = "2021"
 authors = ["TokenDance Team"]
-description = "TokenDance Desktop Collector Settings Shell"
+description = "TokenDance Desktop"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]
 
 [dependencies]
+async-trait = "0.1"
 acquisition = { path = "../../../crates/acquisition" }
 adapter-sdk = { path = "../../../crates/adapter-sdk" }
 collector-core = { path = "../../../crates/collector-core" }
 collector-service = { path = "../../service" }
+adapter-grok-build = { path = "../../../adapters/grok-build" }
 config-executor = { path = "../../../crates/config-executor" }
 protocol = { path = "../../../crates/protocol" }
 wal-spool = { path = "../../../crates/wal-spool" }
@@ -38,7 +40,10 @@ semver = "1"
 tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Security", "Win32_System_Threading"] }
 
 [build-dependencies]
 tauri-build = "2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }

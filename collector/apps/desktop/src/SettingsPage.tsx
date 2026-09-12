@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { brandLogo } from "./brand";
 import { DesktopAccountCard } from "./DesktopAccountCard";
-import { getAgentConfigs, getAutostartStatus, getDaemonStatus, getWebsiteUrl, hideWindow, isTauriEnvironment, openWebsite, quitApp, setAgentStatus, setAutostart, setGlobalPause } from "./tauri-bridge";
+import { getAgentConfigs, getAutostartStatus, getDaemonStatus, getWebsiteUrl, hideWindow, isTauriEnvironment, openWebsite, setAgentStatus, setAutostart, setGlobalPause } from "./tauri-bridge";
 import { resolveWebsiteOrigin } from "./website";
 import type { AgentConfig, AutostartInfo, DaemonStatus } from "./tauri-bridge";
 import "./styles/settings.css";
@@ -76,7 +76,7 @@ export function SettingsPage() {
     finally { mutating.current = false; setBusy(false); }
   };
   const disabled = busy || !data || error;
-  const collecting = data?.status.status === "RUNNING" && !data.status.globalPaused;
+  const collecting = !!data && !data.status.globalPaused && (data.status.status === "RUNNING" || data.status.status === "REBUILDING");
   const statusLabel = error ? t("连接中断", "Disconnected") : !data ? t("连接中", "Connecting") : data.status.globalPaused ? t("已暂停", "Paused") : collecting ? t("采集中", "Collecting") : t("需要检查", "Needs attention");
 
   return <div className="settings-page">
@@ -85,11 +85,11 @@ export function SettingsPage() {
       <div className="usage-controls"><div className="usage-window-controls" role="group" aria-label={t("语言与窗口控制", "Language and window controls")}>
         <button className="usage-language" onClick={() => changeLanguage(zh ? "en" : "zh")} aria-label={t("切换到英文", "Switch to Chinese")}>{zh ? "EN" : "中"}</button>
         <button className="usage-minimize" onClick={() => void perform(hideWindow)} aria-label={t("最小化到托盘", "Minimize to tray")} title={t("最小化到托盘", "Minimize to tray")}><span aria-hidden="true">−</span></button>
-        <button className="usage-close" onClick={() => void perform(quitApp)} aria-label={t("退出 TokenDance", "Quit TokenDance")} title={t("退出 TokenDance", "Quit TokenDance")}><span aria-hidden="true">×</span></button>
+        <button className="usage-close" onClick={() => void hideWindow().catch(err => setNotice(String(err)))} aria-label={t("关闭窗口", "Close window")} title={t("关闭窗口", "Close window")}><span aria-hidden="true">×</span></button>
       </div></div>
     </header>
     <main className="settings-main">
-      <div className="settings-intro"><div><h1>{t("桌面设置", "Desktop settings")}</h1><p>{t("仅设置这台设备的采集与运行方式。", "Collection and preferences for this device.")}</p></div><span className={`settings-status ${collecting && !error ? "active" : ""}`}><i />{statusLabel}</span></div>
+      <div className="settings-intro"><h1>{t("桌面设置", "Desktop settings")}</h1><span className={`settings-status ${collecting && !error ? "active" : ""}`}><i />{statusLabel}</span></div>
       {error && <div className="settings-error" role="alert">{t("无法读取本机设置，已保留上次状态。", "Unable to refresh settings. Showing the last known state.")}<button onClick={() => void refresh()}>{t("重试", "Retry")}</button></div>}
       <DesktopAccountCard key={website} zh={zh} />
       <section className="settings-section" aria-labelledby="preferences-heading">

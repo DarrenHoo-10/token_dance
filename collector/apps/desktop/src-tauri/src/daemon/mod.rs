@@ -1,3 +1,4 @@
+use crate::local_store::pipeline::event_pipeline_v2_client_enabled;
 use crate::rebuild;
 use crate::state::AppState;
 use collector_service::runtime;
@@ -44,6 +45,32 @@ impl CollectorDaemon {
                 if state.get_daemon_status().await.global_paused {
                     continue;
                 }
+
+                // P0–P8 pipeline path: discover → acquire → metrics. Stop legacy rebuild writes.
+                if event_pipeline_v2_client_enabled() {
+                    if let Some(runtime) = state.pipeline_runtime() {
+                        let stats = runtime.tick();
+                        state.clear_storage_error();
+                        state.set_rebuilding(false);
+                        runtime::append_log(
+                            &state.control_dir_path(),
+                            &format!(
+                                "pipeline discover={} acquire={} metrics={} pending={}",
+                                stats.discovered,
+                                stats.acquired,
+                                stats.metrics,
+                                state.pending_sync_count(),
+                            ),
+                        );
+                    } else {
+                        runtime::append_log(
+                            &state.control_dir_path(),
+                            "pipeline workers paused or store unavailable",
+                        );
+                    }
+                    continue;
+                }
+
                 let snapshot = Arc::clone(&state.detection);
                 let prepared = {
                     let mut store = state.lock_store();

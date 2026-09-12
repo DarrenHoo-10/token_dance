@@ -6,9 +6,11 @@ pub mod local_store;
 pub mod orb;
 pub mod pricing;
 pub mod rebuild;
+mod single_instance;
 pub mod state;
 pub mod tray_state;
 pub mod updates;
+pub mod upload_pipeline;
 pub mod usage_ledger;
 
 use std::fs;
@@ -150,10 +152,17 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
 
 pub fn run() {
     install_panic_hook();
-    if commands::window::activate_existing_instance() {
-        return;
-    }
-    if updates::apply_pending_before_start() {
+    let instance = match single_instance::InstanceGuard::acquire(
+        !std::env::args().any(|arg| arg == "--minimized"),
+    ) {
+        Ok(Some(instance)) => instance,
+        Ok(None) => return,
+        Err(error) => {
+            write_crash_log(&format!("failed to claim desktop instance: {error}"));
+            return;
+        }
+    };
+    if updates::apply_pending_before_start(|| instance.release()) {
         return;
     }
 
@@ -168,6 +177,7 @@ pub fn run() {
     };
 
     let builder = tauri::Builder::default()
+        .manage(instance)
         .manage(app_state)
         .manage(commands::account::AccountState::default())
         .manage(commands::window::WindowPresentation::default())
@@ -287,6 +297,7 @@ pub fn run() {
             if let Err(error) = install_tray(app) {
                 write_crash_log(&format!("tray setup failed: {error}"));
             }
+            single_instance::listen(app.handle());
             Ok(())
         });
 
@@ -401,7 +412,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sqlite_usage_survives_restart_without_json_or_upload_wal() {
+    async fn legacy_sqlite_usage_survives_restart_without_leaking_into_pipeline_ui() {
         let root = tempfile::tempdir().unwrap();
         let mut event = crate::auto_sync::tests::event('B');
         event.agent_id = "codex".into();
@@ -413,8 +424,16 @@ mod tests {
             assert!(state.record_usage(&[event.clone()]));
             let agents = state.get_agents().await;
             let codex = agents.iter().find(|agent| agent.id == "codex").unwrap();
-            assert_eq!(codex.today_tokens, 15);
-            assert_eq!(codex.total_tokens, 15);
+            assert_eq!(codex.today_tokens, 0);
+            assert_eq!(codex.total_tokens, 0);
+            assert_eq!(
+                state
+                    .lock_store()
+                    .agent_usage("codex", chrono::Local::now().date_naive())
+                    .unwrap()
+                    .total_tokens,
+                15
+            );
             assert!(!root.path().join("usage-ledger.json").exists());
             assert!(root.path().join("tokendance.sqlite3").exists());
             assert!(state.get_outbox().await.is_empty());
@@ -424,11 +443,19 @@ mod tests {
             .unwrap();
         let agents = state.get_agents().await;
         let codex = agents.iter().find(|agent| agent.id == "codex").unwrap();
-        assert_eq!(codex.total_tokens, 15);
-        assert_eq!(codex.today_tokens, 15);
+        assert_eq!(codex.total_tokens, 0);
+        assert_eq!(
+            state
+                .lock_store()
+                .agent_usage("codex", chrono::Local::now().date_naive())
+                .unwrap()
+                .total_tokens,
+            15
+        );
+        assert_eq!(codex.today_tokens, 0);
         let orb = state.get_usage_summary(chrono::Local::now().date_naive());
-        assert_eq!(orb.today_tokens.as_deref(), Some("15"));
-        assert_eq!(orb.known_source_count, 1);
+        assert_eq!(orb.today_tokens, None);
+        assert_eq!(orb.known_source_count, 0);
         let sources = state.orb_today_sources();
         assert_eq!(
             sources
@@ -437,7 +464,7 @@ mod tests {
                 .unwrap()
                 .today_tokens
                 .as_deref(),
-            Some("15")
+            None
         );
         assert!(state.get_outbox().await.is_empty());
         assert!(!state.record_usage(&[event]));

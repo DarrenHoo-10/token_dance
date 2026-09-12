@@ -7,6 +7,7 @@ import {
   websiteHomeUrl,
   websiteLoginUrl,
   websitePageUrl,
+  websiteAvatarUrl,
 } from "../src/website.ts";
 
 test("empty stored URL falls back to the built-in origin", () => {
@@ -44,4 +45,12 @@ test("credentialed and non-http URLs are rejected", () => {
   for (const value of ["file:///C:/Windows", "javascript:alert(1)", "https://user:secret@example.com"]) {
     assert.throws(() => parseWebsiteOrigin(value));
   }
+});
+
+test("account avatars preserve the application prefix and allow external image URLs", () => {
+  assert.equal(websiteAvatarUrl("", "/api/v1/public/avatars/current"), "https://www.nexorai.com.cn/token-dance/api/v1/public/avatars/current");
+  assert.equal(websiteAvatarUrl("", "/images/avatars/fox.png"), "https://www.nexorai.com.cn/token-dance/images/avatars/fox.png");
+  assert.equal(websiteAvatarUrl("", "https://images.example/avatar.png"), "https://images.example/avatar.png");
+  assert.equal(websiteAvatarUrl("", null), null);
+  assert.equal(websiteAvatarUrl("", "javascript:alert(1)"), null);
 });

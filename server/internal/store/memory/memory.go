@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"tokendance/internal/domain"
+	v2 "tokendance/internal/protocol/v2"
 	"tokendance/internal/store"
 )
 
@@ -64,47 +65,53 @@ type MemoryStore struct {
 
 	FaultInjector func(operation string) error
 
-	users              map[string]*domain.User
-	userCredentials    map[string]*domain.UserPasswordCredential
-	sessions           map[string]*domain.UserSession
-	emailChallenges    map[string]*domain.EmailChallenge
-	emailOutbox        map[string]*domain.EmailOutbox
-	privacySettings    map[string]*domain.UserPrivacySettings
-	publicProfiles     map[string]*domain.PublicUserProfile
-	handleHistory      map[string]*domain.UserHandleHistory
-	uploadObjects      map[string]*domain.UserUploadObject
-	bindingChallenges  map[string]*domain.DeviceBindingChallenge
-	installations      map[string]*domain.Installation
-	ingestNonces       map[string]time.Time
-	ingestBatches      map[string]*domain.IngestResult
-	ingestBatchHashes  map[string][32]byte
-	usageEvents        map[string]domain.UsageEvent
-	securityEvents     []domain.UserSecurityEvent
-	exportJobs         map[string]*domain.DataExportJob
-	deletionRequests   map[string]*domain.DataDeletionRequest
-	userMetricFixtures map[string]UserMetricFixture
-	userSkillFixtures  map[string][]UserSkillFixture
-	userTrendFixtures  map[string][]UserTrendFixture
-	publishedSnapshots map[string]*domain.LeaderboardResponse
-	buildingSnapshots  map[string]*domain.LeaderboardResponse
+	users                    map[string]*domain.User
+	userCredentials          map[string]*domain.UserPasswordCredential
+	sessions                 map[string]*domain.UserSession
+	emailChallenges          map[string]*domain.EmailChallenge
+	emailOutbox              map[string]*domain.EmailOutbox
+	privacySettings          map[string]*domain.UserPrivacySettings
+	publicProfiles           map[string]*domain.PublicUserProfile
+	handleHistory            map[string]*domain.UserHandleHistory
+	uploadObjects            map[string]*domain.UserUploadObject
+	bindingChallenges        map[string]*domain.DeviceBindingChallenge
+	installations            map[string]*domain.Installation
+	ingestNonces             map[string]time.Time
+	ingestBatches            map[string]*domain.IngestResult
+	ingestBatchHashes        map[string][32]byte
+	usageEvents              map[string]domain.UsageEvent
+	securityEvents           []domain.UserSecurityEvent
+	exportJobs               map[string]*domain.DataExportJob
+	deletionRequests         map[string]*domain.DataDeletionRequest
+	userMetricFixtures       map[string]UserMetricFixture
+	userSkillFixtures        map[string][]UserSkillFixture
+	userTrendFixtures        map[string][]UserTrendFixture
+	publishedSnapshots       map[string]*domain.LeaderboardResponse
+	buildingSnapshots        map[string]*domain.LeaderboardResponse
+	windowScores             map[string][]WindowScore
+	rankingOutbox            []RankingOutboxTask
+	communityDailyStats      map[string]store.CommunityDailyTotals
+	communityAgentDailyStats map[communityAgentKey]store.CommunityAgentTokens
+	teams                    map[string]*domain.Team
+	teamMemberships          map[string]*domain.TeamMembership
+	userCurrentTeams         map[string]*domain.UserCurrentTeam
+	teamGrants               map[string]*domain.TeamSharingGrant
+	teamInvitations          map[string]*domain.TeamInvitation
+	teamInviteLinks          map[string]*domain.TeamInviteLink
+	teamInviteLinkJoins      map[string]*domain.TeamInviteLinkJoin
+	teamReceipts             map[string]*domain.TeamCommandReceipt
+	teamRevisions            map[string]*domain.TeamSourceRevision
+	teamSnapshots            map[string]*domain.TeamAnalysisSnapshot
+	teamAnalysisRows         map[string][]domain.TeamAnalysisRow
+	teamExports              map[string]*domain.TeamExportJob
+	teamAudits               map[string]*domain.TeamAuditEvent
+	teamUploadObjects        map[string]*domain.TeamUploadObject
+	teamBarriers             map[string]*domain.TeamDeletionBarrier
+}
 
-	teams               map[string]*domain.Team
-	teamMemberships     map[string]*domain.TeamMembership
-	userCurrentTeams    map[string]*domain.UserCurrentTeam
-	teamGrants          map[string]*domain.TeamSharingGrant
-	teamInvitations     map[string]*domain.TeamInvitation
-	teamInviteLinks     map[string]*domain.TeamInviteLink
-	teamInviteLinkJoins map[string]*domain.TeamInviteLinkJoin
-	teamReceipts        map[string]*domain.TeamCommandReceipt
-	teamRevisions       map[string]*domain.TeamSourceRevision
-	teamSnapshots       map[string]*domain.TeamAnalysisSnapshot
-	teamAnalysisRows    map[string][]domain.TeamAnalysisRow
-	teamExports         map[string]*domain.TeamExportJob
-	teamAudits          map[string]*domain.TeamAuditEvent
-	teamUploadObjects   map[string]*domain.TeamUploadObject
-	teamBarriers        map[string]*domain.TeamDeletionBarrier
-	windowScores        map[string][]WindowScore
-	rankingOutbox       []RankingOutboxTask
+type communityAgentKey struct {
+	date    string
+	agentID string
 }
 
 type WindowScore struct {
@@ -130,46 +137,48 @@ type RankingOutboxTask struct {
 
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		users:               make(map[string]*domain.User),
-		userCredentials:     make(map[string]*domain.UserPasswordCredential),
-		sessions:            make(map[string]*domain.UserSession),
-		emailChallenges:     make(map[string]*domain.EmailChallenge),
-		emailOutbox:         make(map[string]*domain.EmailOutbox),
-		privacySettings:     make(map[string]*domain.UserPrivacySettings),
-		publicProfiles:      make(map[string]*domain.PublicUserProfile),
-		handleHistory:       make(map[string]*domain.UserHandleHistory),
-		uploadObjects:       make(map[string]*domain.UserUploadObject),
-		bindingChallenges:   make(map[string]*domain.DeviceBindingChallenge),
-		installations:       make(map[string]*domain.Installation),
-		ingestNonces:        make(map[string]time.Time),
-		ingestBatches:       make(map[string]*domain.IngestResult),
-		ingestBatchHashes:   make(map[string][32]byte),
-		usageEvents:         make(map[string]domain.UsageEvent),
-		securityEvents:      make([]domain.UserSecurityEvent, 0),
-		exportJobs:          make(map[string]*domain.DataExportJob),
-		deletionRequests:    make(map[string]*domain.DataDeletionRequest),
-		userMetricFixtures:  make(map[string]UserMetricFixture),
-		userSkillFixtures:   make(map[string][]UserSkillFixture),
-		userTrendFixtures:   make(map[string][]UserTrendFixture),
-		publishedSnapshots:  make(map[string]*domain.LeaderboardResponse),
-		buildingSnapshots:   make(map[string]*domain.LeaderboardResponse),
-		teams:               make(map[string]*domain.Team),
-		teamMemberships:     make(map[string]*domain.TeamMembership),
-		userCurrentTeams:    make(map[string]*domain.UserCurrentTeam),
-		teamGrants:          make(map[string]*domain.TeamSharingGrant),
-		teamInvitations:     make(map[string]*domain.TeamInvitation),
-		teamInviteLinks:     make(map[string]*domain.TeamInviteLink),
-		teamInviteLinkJoins: make(map[string]*domain.TeamInviteLinkJoin),
-		teamReceipts:        make(map[string]*domain.TeamCommandReceipt),
-		teamRevisions:       make(map[string]*domain.TeamSourceRevision),
-		teamSnapshots:       make(map[string]*domain.TeamAnalysisSnapshot),
-		teamAnalysisRows:    make(map[string][]domain.TeamAnalysisRow),
-		teamExports:         make(map[string]*domain.TeamExportJob),
-		teamAudits:          make(map[string]*domain.TeamAuditEvent),
-		teamUploadObjects:   make(map[string]*domain.TeamUploadObject),
-		teamBarriers:        make(map[string]*domain.TeamDeletionBarrier),
-		windowScores:        make(map[string][]WindowScore),
-		rankingOutbox:       make([]RankingOutboxTask, 0),
+		users:                    make(map[string]*domain.User),
+		userCredentials:          make(map[string]*domain.UserPasswordCredential),
+		sessions:                 make(map[string]*domain.UserSession),
+		emailChallenges:          make(map[string]*domain.EmailChallenge),
+		emailOutbox:              make(map[string]*domain.EmailOutbox),
+		privacySettings:          make(map[string]*domain.UserPrivacySettings),
+		publicProfiles:           make(map[string]*domain.PublicUserProfile),
+		handleHistory:            make(map[string]*domain.UserHandleHistory),
+		uploadObjects:            make(map[string]*domain.UserUploadObject),
+		bindingChallenges:        make(map[string]*domain.DeviceBindingChallenge),
+		installations:            make(map[string]*domain.Installation),
+		ingestNonces:             make(map[string]time.Time),
+		ingestBatches:            make(map[string]*domain.IngestResult),
+		ingestBatchHashes:        make(map[string][32]byte),
+		usageEvents:              make(map[string]domain.UsageEvent),
+		securityEvents:           make([]domain.UserSecurityEvent, 0),
+		exportJobs:               make(map[string]*domain.DataExportJob),
+		deletionRequests:         make(map[string]*domain.DataDeletionRequest),
+		userMetricFixtures:       make(map[string]UserMetricFixture),
+		userSkillFixtures:        make(map[string][]UserSkillFixture),
+		userTrendFixtures:        make(map[string][]UserTrendFixture),
+		publishedSnapshots:       make(map[string]*domain.LeaderboardResponse),
+		buildingSnapshots:        make(map[string]*domain.LeaderboardResponse),
+		windowScores:             make(map[string][]WindowScore),
+		rankingOutbox:            make([]RankingOutboxTask, 0),
+		communityDailyStats:      make(map[string]store.CommunityDailyTotals),
+		communityAgentDailyStats: make(map[communityAgentKey]store.CommunityAgentTokens),
+		teams:                    make(map[string]*domain.Team),
+		teamMemberships:          make(map[string]*domain.TeamMembership),
+		userCurrentTeams:         make(map[string]*domain.UserCurrentTeam),
+		teamGrants:               make(map[string]*domain.TeamSharingGrant),
+		teamInvitations:          make(map[string]*domain.TeamInvitation),
+		teamInviteLinks:          make(map[string]*domain.TeamInviteLink),
+		teamInviteLinkJoins:      make(map[string]*domain.TeamInviteLinkJoin),
+		teamReceipts:             make(map[string]*domain.TeamCommandReceipt),
+		teamRevisions:            make(map[string]*domain.TeamSourceRevision),
+		teamSnapshots:            make(map[string]*domain.TeamAnalysisSnapshot),
+		teamAnalysisRows:         make(map[string][]domain.TeamAnalysisRow),
+		teamExports:              make(map[string]*domain.TeamExportJob),
+		teamAudits:               make(map[string]*domain.TeamAuditEvent),
+		teamUploadObjects:        make(map[string]*domain.TeamUploadObject),
+		teamBarriers:             make(map[string]*domain.TeamDeletionBarrier),
 	}
 }
 
@@ -1479,10 +1488,7 @@ func (m *MemoryStore) GetSkillRanking(ctx context.Context, userID string, r doma
 }
 
 func (m *MemoryStore) GetActivityCalendar(ctx context.Context, userID string, r domain.TimeRange) (*domain.CalendarResponse, error) {
-	loc, err := time.LoadLocation(r.Timezone)
-	if err != nil {
-		loc = time.UTC
-	}
+	loc := domain.DayTZ
 	from, to := r.From.In(loc), r.To.In(loc)
 	start := time.Date(from.Year(), from.Month(), from.Day(), 0, 0, 0, 0, loc)
 	end := time.Date(to.Year(), to.Month(), to.Day(), 0, 0, 0, 0, loc)
@@ -1606,7 +1612,27 @@ func (m *MemoryStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 
 	for _, existing := range m.installations {
 		if existing.DevicePublicKey == inst.DevicePublicKey {
-			if existing.UserID == challenge.UserID && existing.InstallationStatus == domain.InstallationStatusActive {
+			if existing.InstallationStatus == domain.InstallationStatusActive {
+				if existing.UserID != challenge.UserID {
+					existing.UserID = challenge.UserID
+					existing.StatusVersion++
+					existing.UpdatedAt = now
+					if inst.DeviceName != nil {
+						existing.DeviceName = inst.DeviceName
+					}
+					if inst.OSVersion != nil {
+						existing.OSVersion = inst.OSVersion
+					}
+					if inst.OSType != "" {
+						existing.OSType = inst.OSType
+					}
+					if inst.Architecture != "" {
+						existing.Architecture = inst.Architecture
+					}
+					if inst.CollectorVersion != "" {
+						existing.CollectorVersion = inst.CollectorVersion
+					}
+				}
 				challenge.ChallengeStatus = domain.ChallengeStatusConsumed
 				challenge.ConsumedInstallationID = &existing.InstallationID
 				challenge.ConsumedAt = &now
@@ -1641,7 +1667,27 @@ func (m *MemoryStore) RegisterInstallationTx(ctx context.Context, inst domain.In
 
 	for _, existing := range m.installations {
 		if existing.DevicePublicKey == inst.DevicePublicKey {
-			if existing.UserID == inst.UserID && existing.InstallationStatus == domain.InstallationStatusActive {
+			if existing.InstallationStatus == domain.InstallationStatusActive {
+				if existing.UserID != inst.UserID {
+					existing.UserID = inst.UserID
+					existing.StatusVersion++
+					existing.UpdatedAt = now
+					if inst.DeviceName != nil {
+						existing.DeviceName = inst.DeviceName
+					}
+					if inst.OSVersion != nil {
+						existing.OSVersion = inst.OSVersion
+					}
+					if inst.OSType != "" {
+						existing.OSType = inst.OSType
+					}
+					if inst.Architecture != "" {
+						existing.Architecture = inst.Architecture
+					}
+					if inst.CollectorVersion != "" {
+						existing.CollectorVersion = inst.CollectorVersion
+					}
+				}
 				eCopy := *existing
 				return &eCopy, nil
 			}
@@ -1652,6 +1698,33 @@ func (m *MemoryStore) RegisterInstallationTx(ctx context.Context, inst domain.In
 	instCopy := inst
 	m.installations[inst.InstallationID] = &instCopy
 	return &instCopy, nil
+}
+
+func (m *MemoryStore) RebindInstallationTx(ctx context.Context, installationID, newUserID string, now time.Time) (*domain.Installation, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	u, ok := m.users[newUserID]
+	if !ok || u.AccountStatus != domain.AccountStatusActive {
+		return nil, domain.ErrForbidden
+	}
+	inst, ok := m.installations[installationID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	if inst.InstallationStatus == domain.InstallationStatusRevoked {
+		return nil, domain.ErrDeviceRevoked
+	}
+	if inst.InstallationStatus == domain.InstallationStatusDisabled {
+		return nil, domain.ErrDeviceDisabled
+	}
+	if inst.UserID != newUserID {
+		inst.UserID = newUserID
+		inst.StatusVersion++
+		inst.UpdatedAt = now
+	}
+	copy := *inst
+	return &copy, nil
 }
 
 func (m *MemoryStore) UpdateInstallationName(ctx context.Context, installationID, userID string, name string, now time.Time) (*domain.Installation, error) {
@@ -1778,6 +1851,26 @@ func (m *MemoryStore) GetIngestInstallation(ctx context.Context, installationID 
 	return &copy, nil
 }
 
+func (m *MemoryStore) GetIngestCursor(ctx context.Context, installationID string) (domain.TelemetryCursor, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	cursor := domain.TelemetryCursor{InstallationID: installationID}
+	for key, batch := range m.ingestBatches {
+		if key[:len(installationID)] != installationID {
+			continue
+		}
+		cursor.MaxEventPk++
+		received := batch.CommittedAt
+		if cursor.LastOccurredAt == nil || received.After(*cursor.LastOccurredAt) {
+			cursor.LastOccurredAt = &received
+		}
+	}
+	if cursor.LastOccurredAt != nil {
+		cursor.Day = domain.DayDate(*cursor.LastOccurredAt)
+	}
+	return cursor, nil
+}
+
 func (m *MemoryStore) CommitIngest(ctx context.Context, batch domain.IngestBatch) (*domain.IngestResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1835,6 +1928,52 @@ func (m *MemoryStore) CommitIngest(ctx context.Context, batch domain.IngestBatch
 	inst.LastSeenAt = &batch.ReceivedAt
 	copy := *result
 	return &copy, nil
+}
+
+func (m *MemoryStore) CommitTelemetryEventsV2(ctx context.Context, in domain.TelemetryEventsV2Input) (*domain.TelemetryEventsV2Result, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	user, ok := m.users[in.UserID]
+	if !ok || user.AccountStatus != domain.AccountStatusActive {
+		return nil, domain.ErrAccountSuspended
+	}
+	inst, ok := m.installations[in.InstallationID]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	if inst.InstallationStatus == domain.InstallationStatusRevoked {
+		return nil, domain.ErrDeviceRevoked
+	}
+	if inst.InstallationStatus == domain.InstallationStatusDisabled {
+		return nil, domain.ErrDeviceDisabled
+	}
+	if inst.UserID != in.UserID {
+		return nil, domain.ErrInstallationUserMismatch
+	}
+	if inst.StatusVersion != in.BindingStatusVersion {
+		return nil, domain.ErrBindingVersionMismatch
+	}
+
+	nonceKey := in.InstallationID + ":" + string(in.NonceHash[:])
+	if _, exists := m.ingestNonces[nonceKey]; exists {
+		return nil, domain.ErrNonceReplay
+	}
+	m.ingestNonces[nonceKey] = in.NonceExpiresAt
+
+	acks := make([]v2.EventAck, 0, len(in.Events))
+	for _, event := range in.Events {
+		acks = append(acks, v2.EventAck{
+			EventID:     event.EventID,
+			ContentHash: event.ContentHash,
+			Result:      v2.AckResultAccepted,
+		})
+	}
+	return &domain.TelemetryEventsV2Result{
+		RequestID:    in.RequestID,
+		ServerTimeMs: uint64(in.ReceivedAt.UnixMilli()),
+		Acks:         acks,
+	}, nil
 }
 
 // --- ExportStore Implementation ---
@@ -2058,6 +2197,76 @@ func (m *MemoryStore) GetLeaderboardView(ctx context.Context, q store.Leaderboar
 	return m.GetLeaderboard(ctx, q.BoardKey, q.Window, q.Metric, q.Cursor, q.Limit)
 }
 
+// --- CommunityStatsStore Implementation ---
+
+func (m *MemoryStore) CommunityStats() store.CommunityStatsStore { return m }
+
+func (m *MemoryStore) SumCommunityDay(ctx context.Context, date string) (store.CommunityDailyTotals, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	totals, ok := m.communityDailyStats[date]
+	if !ok {
+		totals = store.CommunityDailyTotals{MetricDate: date, ComputedAt: time.Now().UTC()}
+	}
+	totals.MetricDate = date
+	return totals, nil
+}
+
+func (m *MemoryStore) UpsertCommunityDailyStats(ctx context.Context, totals store.CommunityDailyTotals) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.communityDailyStats[totals.MetricDate] = totals
+	return nil
+}
+
+func (m *MemoryStore) GetCommunityDailyStats(ctx context.Context, date string) (*store.CommunityDailyTotals, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if totals, ok := m.communityDailyStats[date]; ok {
+		return &totals, nil
+	}
+	return nil, nil
+}
+
+func (m *MemoryStore) ReplaceCommunityAgentDay(ctx context.Context, date string, rows []store.CommunityAgentTokens) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for key := range m.communityAgentDailyStats {
+		if key.date == date {
+			delete(m.communityAgentDailyStats, key)
+		}
+	}
+	for _, row := range rows {
+		m.communityAgentDailyStats[communityAgentKey{date: date, agentID: row.AgentID}] = row
+	}
+	return nil
+}
+
+func (m *MemoryStore) GetCommunityHarnessShares(ctx context.Context, date string, limit int) ([]store.CommunityHarness, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var rows []store.CommunityAgentTokens
+	for key, row := range m.communityAgentDailyStats {
+		if key.date == date {
+			rows = append(rows, store.CommunityAgentTokens{AgentID: key.agentID, TokensTotal: row.TokensTotal})
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].TokensTotal != rows[j].TokensTotal {
+			return rows[i].TokensTotal > rows[j].TokensTotal
+		}
+		return rows[i].AgentID < rows[j].AgentID
+	})
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	harnesses := make([]store.CommunityHarness, 0, len(rows))
+	for _, row := range rows {
+		harnesses = append(harnesses, store.CommunityHarness{AgentID: row.AgentID, Label: row.AgentID, TokensTotal: row.TokensTotal})
+	}
+	return harnesses, nil
+}
+
 func (m *MemoryStore) GetLeaderboard(ctx context.Context, boardKey, window, metric string, cursor *string, limit int) (*domain.LeaderboardResponse, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -2196,7 +2405,7 @@ func (m *MemoryStore) liveMemoryLeaderboardLocked(window string, cursor *string,
 		BoardKey:          "global",
 		Window:            window,
 		Metric:            "tokens",
-		Timezone:          "UTC",
+		Timezone:          domain.DayTZName,
 		Generation:        generation,
 		Entries:           entries,
 		TotalEntries:      &count,
@@ -2233,7 +2442,7 @@ func (m *MemoryStore) GetUploadObject(ctx context.Context, objectID, userID stri
 	return &objCopy, nil
 }
 
-func (m *MemoryStore) GetVisibleAvatar(ctx context.Context, objectID, viewerID string) (*domain.UserUploadObject, error) {
+func (m *MemoryStore) GetVisibleAvatar(ctx context.Context, objectID, _ string) (*domain.UserUploadObject, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	obj := m.uploadObjects[objectID]
@@ -2243,12 +2452,6 @@ func (m *MemoryStore) GetVisibleAvatar(ctx context.Context, objectID, viewerID s
 	u := m.users[obj.UserID]
 	if u == nil || u.AccountStatus != domain.AccountStatusActive || u.AvatarObjectID == nil || *u.AvatarObjectID != objectID {
 		return nil, domain.ErrNotFound
-	}
-	if viewerID != u.UserID {
-		priv, pub := m.privacySettings[u.UserID], m.publicProfiles[u.UserID]
-		if u.LeaderboardVisibility != domain.LeaderboardVisibilityPublic || priv == nil || !priv.PublicProfileEnabled || pub == nil || pub.ProfileStatus != "published" {
-			return nil, domain.ErrNotFound
-		}
 	}
 	copy := *obj
 	return &copy, nil

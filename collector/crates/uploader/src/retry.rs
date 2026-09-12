@@ -14,9 +14,10 @@ pub struct RetryPolicy {
 
 impl Default for RetryPolicy {
     fn default() -> Self {
+        // P7: first retry at 5s, exponential up to 5 minutes with jitter.
         Self {
-            initial: Duration::from_secs(2),
-            max: Duration::from_secs(15 * 60),
+            initial: Duration::from_secs(5),
+            max: Duration::from_secs(5 * 60),
             max_attempts: 12,
             jitter: true,
         }

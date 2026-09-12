@@ -364,14 +364,7 @@ fn decode_record(
         "code_changed" => {
             let record: CodeRecord =
                 serde_json::from_value(value).map_err(decode_error(line_no))?;
-            EventPayload::CodeChanged(CodeChangedPayload {
-                added_lines: record.added.to_string(),
-                removed_lines: record.removed.to_string(),
-                generated_lines: record.generated.map(|v| v.to_string()),
-                accepted_lines: record.accepted.map(|v| v.to_string()),
-                file_count: record.file_count,
-                language: record.language,
-            })
+            EventPayload::CodeChanged(code_changed_payload(record))
         }
         "agent_spawned" => {
             let record: AgentRecord =
@@ -427,7 +420,7 @@ fn decode_record(
             raw_fingerprint_hmac: hmac(hmac_key, &[&raw_fingerprint(raw_line.as_bytes())]),
         },
         accuracy: if record_type == "code_changed" {
-            Accuracy::Correlated
+            Accuracy::Derived
         } else {
             Accuracy::Exact
         },
@@ -786,15 +779,30 @@ struct SkillRecord {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CodeRecord {
+    #[serde(default)]
     added: u64,
+    #[serde(default)]
     removed: u64,
     #[serde(default)]
     generated: Option<u64>,
     #[serde(default)]
     accepted: Option<u64>,
+    #[serde(default)]
     file_count: u32,
     #[serde(default)]
     language: Option<String>,
+}
+
+fn code_changed_payload(record: CodeRecord) -> CodeChangedPayload {
+    let generated = record.generated.unwrap_or(record.added);
+    CodeChangedPayload {
+        added_lines: record.added.to_string(),
+        removed_lines: record.removed.to_string(),
+        generated_lines: Some(generated.to_string()),
+        accepted_lines: record.accepted.map(|v| v.to_string()),
+        file_count: record.file_count.max(1),
+        language: record.language,
+    }
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"strconv"
 	"strings"
 	"time"
 
@@ -401,6 +402,53 @@ func (s *Service) CommitIngest(ctx context.Context, batch domain.IngestBatch) (*
 	}
 }
 
+func (s *Service) CommitTelemetryEventsV2(ctx context.Context, in domain.TelemetryEventsV2Input) (*domain.TelemetryEventsV2Result, error) {
+	result, err := s.ingestStore.CommitTelemetryEventsV2(ctx, in)
+	if err == nil {
+		return result, nil
+	}
+	switch err {
+	case domain.ErrNotFound:
+		return nil, domain.NewAppError(401, "DEVICE_AUTH_INVALID", "device.invalidSignature", "invalid device authentication", nil, domain.ErrUnauthorized)
+	case domain.ErrDeviceRevoked:
+		return nil, domain.NewAppError(403, "DEVICE_REVOKED", "device.revoked", "device is revoked", nil, err)
+	case domain.ErrDeviceDisabled:
+		return nil, domain.NewAppError(403, "DEVICE_DISABLED", "device.disabled", "device is disabled", nil, err)
+	case domain.ErrAccountSuspended:
+		return nil, domain.NewAppError(403, "ACCOUNT_ACTION_NOT_ALLOWED", "auth.accountSuspended", "user account is not active", nil, err)
+	case domain.ErrNonceReplay:
+		return nil, domain.NewAppError(409, "INGEST_NONCE_REPLAY", "ingest.nonceReplay", "telemetry nonce has already been used", nil, err)
+	case domain.ErrBindingVersionMismatch:
+		return nil, domain.NewAppError(409, "DEVICE_BINDING_VERSION_MISMATCH", "device.bindingVersionMismatch", "installation binding status version mismatch", nil, err)
+	case domain.ErrInstallationUserMismatch:
+		return nil, domain.NewAppError(403, "DEVICE_USER_MISMATCH", "device.userMismatch", "installation is bound to a different user", nil, err)
+	case domain.ErrInvalidArgument:
+		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidArgument", "invalid telemetry event payload", nil, err)
+	default:
+		return nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to commit telemetry events", nil, err)
+	}
+}
+
+func (s *Service) RebindInstallation(ctx context.Context, installationID, userID string) (*domain.Installation, error) {
+	now := s.clk.Now()
+	inst, err := s.store.RebindInstallationTx(ctx, installationID, userID, now)
+	if err != nil {
+		switch err {
+		case domain.ErrNotFound:
+			return nil, domain.NewAppError(404, "RESOURCE_NOT_FOUND", "device.notFound", "device not found", nil, err)
+		case domain.ErrDeviceRevoked:
+			return nil, domain.NewAppError(403, "DEVICE_REVOKED", "device.revoked", "device is revoked", nil, err)
+		case domain.ErrDeviceDisabled:
+			return nil, domain.NewAppError(403, "DEVICE_DISABLED", "device.disabled", "device is disabled", nil, err)
+		case domain.ErrForbidden:
+			return nil, domain.NewAppError(403, "ACCOUNT_ACTION_NOT_ALLOWED", "auth.accountSuspended", "user account is not active", nil, err)
+		default:
+			return nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to rebind installation", nil, err)
+		}
+	}
+	return inst, nil
+}
+
 func (s *Service) AuthorizeIngest(ctx context.Context, installationID string) (*domain.Installation, *domain.User, error) {
 	inst, user, err := s.store.AuthorizeIngest(ctx, installationID)
 	if err != nil {
@@ -419,4 +467,33 @@ func (s *Service) AuthorizeIngest(ctx context.Context, installationID string) (*
 		return nil, nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to authorize ingest", nil, err)
 	}
 	return inst, user, nil
+}
+
+// minimumAggregateCollectorVersion is the oldest desktop build whose daily
+// aggregate uploads are still accepted. Older builds double-counted ZCode
+// usage (fixed in 0.1.22) and must not keep feeding the leaderboard.
+var minimumAggregateCollectorVersion = [3]int{0, 1, 22}
+
+func aggregateCollectorVersionSupported(version string) bool {
+	parts := strings.Split(strings.TrimPrefix(strings.TrimSpace(version), "v"), ".")
+	if len(parts) != len(minimumAggregateCollectorVersion) {
+		return false
+	}
+	parsed := make([]int, len(parts))
+	for index, part := range parts {
+		if part == "" || len(part) > 9 {
+			return false
+		}
+		value, err := strconv.Atoi(part)
+		if err != nil || value < 0 {
+			return false
+		}
+		parsed[index] = value
+	}
+	for index := range parsed {
+		if parsed[index] != minimumAggregateCollectorVersion[index] {
+			return parsed[index] > minimumAggregateCollectorVersion[index]
+		}
+	}
+	return true
 }

@@ -1,0 +1,31 @@
+{
+  "eventId": "ZXZlbnQtY2hpbmVzZQAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "factKey": "ZmFjdC1jaGluZXNlAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "factRevision": "1",
+  "schemaVersion": 2,
+  "metricSemanticsVersion": 1,
+  "harnessId": "codex",
+  "eventType": "model_usage_recorded",
+  "occurredAt": "1789099200000",
+  "model": {
+    "providerId": "openai",
+    "modelId": "gpt-test-model"
+  },
+  "sessionKey": "c2Vzc2lvbi1jaGluZXNlAAAAAAAAAAAAAAAAAAAAAAA",
+  "payload": {
+    "usage": {
+      "token_total": "-1",
+      "input_context_tokens": "1",
+      "output_tokens": "1"
+    },
+    "meta": {
+      "accuracy": "exact",
+      "time_source": "source_record",
+      "safe_tags": [
+        "中文标签",
+        "line\nbreak",
+        "quote\"here"
+      ]
+    }
+  }
+}

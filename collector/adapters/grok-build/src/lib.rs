@@ -1,5 +1,7 @@
 #![forbid(unsafe_code)]
 
+mod hook;
+
 use std::collections::HashSet;
 
 use adapter_sdk::{
@@ -22,6 +24,11 @@ use time::OffsetDateTime;
 pub const ADAPTER_ID: &str = "dev.tokenshow.adapter.grok-build";
 pub const OTLP_SOURCE_ID: &str = "grok-build-otlp";
 pub const HISTORY_SOURCE_ID: &str = "grok-build-history";
+pub use hook::{
+    code_record_from_signals, find_signals_json, hook_auth_token, parse_session_end,
+    session_end_hook_document, write_session_end_hook, SessionEndNotice, HOOK_PATH, HOOK_PORT,
+    HOOK_SOURCE_ID,
+};
 pub const MANIFEST_JSON: &str = include_str!("../fixtures/manifest.json");
 pub const COMPATIBILITY_JSON: &str = include_str!("../fixtures/compatibility-matrix.json");
 pub const COMPATIBILITY_MARKDOWN: &str = include_str!("../fixtures/compatibility-matrix.md");
@@ -143,30 +150,39 @@ impl AgentAdapter for GrokBuildAdapter {
 
     async fn setup_plan(&self, _ctx: SetupContext) -> Result<SetupPlan, AdapterError> {
         Ok(SetupPlan {
-            plan_id: "setup-grok-build-otlp-v1".into(),
+            plan_id: "setup-grok-build-hooks-v1".into(),
             adapter_id: self.manifest.id.clone(),
-            summary: "Enable local Grok Build OTLP without prompt, tool-detail, or content logging"
-                .into(),
-            mutations: vec![ConfigMutation::JsonMergePatch {
-                path_template: "${USER_HOME}/.grok/settings.json".into(),
-                patch: serde_json::json!({
-                    "env": {
-                        "GROK_TELEMETRY_ENABLED": "1",
-                        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
-                        "GROK_OTEL_LOG_PROMPTS": "0",
-                        "GROK_OTEL_LOG_TOOL_DETAILS": "0",
-                        "GROK_OTEL_LOG_TOOL_CONTENT": "0"
-                    }
-                }),
-            }],
+            summary: "Register a loopback SessionEnd hook and keep Grok content logging off".into(),
+            mutations: vec![
+                ConfigMutation::DirectoryCreate {
+                    path_template: "${USER_HOME}/.grok/hooks".into(),
+                },
+                ConfigMutation::JsonMergePatch {
+                    path_template: "${USER_HOME}/.grok/hooks/tokendance.json".into(),
+                    patch: hook::session_end_hook_document(&self.hmac_key),
+                },
+                ConfigMutation::JsonMergePatch {
+                    path_template: "${USER_HOME}/.grok/settings.json".into(),
+                    patch: serde_json::json!({
+                        "env": {
+                            "GROK_TELEMETRY_ENABLED": "1",
+                            "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:4318",
+                            "GROK_OTEL_LOG_PROMPTS": "0",
+                            "GROK_OTEL_LOG_TOOL_DETAILS": "0",
+                            "GROK_OTEL_LOG_TOOL_CONTENT": "0"
+                        }
+                    }),
+                },
+            ],
             required_permissions: vec![],
             verify: vec![VerifyStep {
-                id: "grok-build-otlp-safe".into(),
-                summary: "OTLP is loopback and content logging remains disabled".into(),
+                id: "grok-build-hook-loopback".into(),
+                summary: "SessionEnd hook stays on 127.0.0.1 and does not log prompts or tool content"
+                    .into(),
             }],
             rollback: vec![RollbackStep {
-                id: "restore-grok-build-settings".into(),
-                summary: "Restore the previous Grok Build settings".into(),
+                id: "restore-grok-build-hook".into(),
+                summary: "Restore the previous Grok hook and settings files".into(),
             }],
         })
     }
@@ -178,6 +194,10 @@ impl AgentAdapter for GrokBuildAdapter {
                 id: OTLP_SOURCE_ID.into(),
                 bind_host: "127.0.0.1".into(),
                 bind_port: Some(4318),
+            });
+            sources.push(SourceSpec::RuntimeStream {
+                id: HOOK_SOURCE_ID.into(),
+                stream_id: "grok.session.end.v1".into(),
             });
         }
         sources.push(SourceSpec::JsonlTail {
@@ -220,7 +240,9 @@ impl AgentAdapter for GrokBuildAdapter {
 fn validate_frame(frame: &RawFrame) -> Result<(), AdapterError> {
     let valid = matches!(
         (frame.source_kind, frame.source_id.as_str()),
-        (SourceKind::Otlp, OTLP_SOURCE_ID) | (SourceKind::JsonlTail, HISTORY_SOURCE_ID)
+        (SourceKind::Otlp, OTLP_SOURCE_ID)
+            | (SourceKind::JsonlTail, HISTORY_SOURCE_ID)
+            | (SourceKind::RuntimeStream, HOOK_SOURCE_ID)
     );
     if valid {
         Ok(())
@@ -377,14 +399,7 @@ fn decode_record(
         "code_changed" => {
             let record: CodeRecord =
                 serde_json::from_value(value).map_err(decode_error(line_no))?;
-            EventPayload::CodeChanged(CodeChangedPayload {
-                added_lines: record.added.to_string(),
-                removed_lines: record.removed.to_string(),
-                generated_lines: record.generated.map(|v| v.to_string()),
-                accepted_lines: record.accepted.map(|v| v.to_string()),
-                file_count: record.file_count,
-                language: record.language,
-            })
+            EventPayload::CodeChanged(code_changed_payload(record))
         }
         "agent_spawned" => {
             let record: AgentRecord =
@@ -479,6 +494,12 @@ fn version_major(version: &str) -> Option<u64> {
 }
 
 fn normalize_records(value: Value, source_kind: SourceKind) -> Result<Vec<Value>, AdapterError> {
+    if source_kind == SourceKind::RuntimeStream {
+        if value.get("type").and_then(Value::as_str) == Some("code_changed") {
+            return Ok(vec![value]);
+        }
+        return Ok(Vec::new());
+    }
     if source_kind == SourceKind::JsonlTail {
         if let Some(records) = session_update_records(&value) {
             return Ok(records);
@@ -608,6 +629,85 @@ fn parse_temporality(value: &Value) -> Option<Temporality> {
     }
 }
 
+fn line_count(text: &str) -> u64 {
+    if text.is_empty() {
+        0
+    } else {
+        u64::try_from(text.lines().count()).unwrap_or(0)
+    }
+}
+
+fn json_string<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    let object = value.as_object()?;
+    keys.iter()
+        .find_map(|key| object.get(*key).and_then(Value::as_str))
+}
+
+fn code_changed_from_tool_update(
+    update: &Map<String, Value>,
+    session_id: Option<&str>,
+    occurred_at: Option<&str>,
+) -> Option<Value> {
+    let status = update.get("status").and_then(Value::as_str).unwrap_or("");
+    if status != "completed" {
+        return None;
+    }
+    let output = update.get("rawOutput").or_else(|| update.get("raw_output"));
+    let input = update.get("rawInput").or_else(|| update.get("raw_input"));
+    let applied = output
+        .and_then(|value| value.get("EditsApplied"))
+        .or_else(|| output.and_then(|value| value.get("editsApplied")));
+    let tool = update
+        .get("_meta")
+        .and_then(Value::as_object)
+        .and_then(|meta| meta.get("x.ai/tool"))
+        .and_then(Value::as_object)
+        .and_then(|tool| tool.get("name"))
+        .and_then(Value::as_str)
+        .or_else(|| update.get("kind").and_then(Value::as_str))
+        .or_else(|| output.and_then(|value| value.get("type")).and_then(Value::as_str))
+        .unwrap_or("");
+    if applied.is_none()
+        && !matches!(
+            tool,
+            "search_replace" | "write" | "edit" | "SearchReplace" | "Write" | "CreateFile"
+        )
+    {
+        return None;
+    }
+    let old_text = applied
+        .and_then(|value| json_string(value, &["old_string", "oldString"]))
+        .or_else(|| input.and_then(|value| json_string(value, &["old_string", "oldString"])))
+        .unwrap_or("");
+    let new_text = applied
+        .and_then(|value| json_string(value, &["new_string", "newString"]))
+        .or_else(|| input.and_then(|value| json_string(value, &["new_string", "newString", "contents", "content"])))
+        .unwrap_or("");
+    if old_text.is_empty() && new_text.is_empty() {
+        return None;
+    }
+    let added = line_count(new_text);
+    let removed = line_count(old_text);
+    if added == 0 && removed == 0 {
+        return None;
+    }
+    let call_id = update
+        .get("toolCallId")
+        .or_else(|| update.get("tool_call_id"))
+        .and_then(Value::as_str)?;
+    Some(serde_json::json!({
+        "type": "code_changed",
+        "occurredAt": occurred_at.unwrap_or("1970-01-01T00:00:00Z"),
+        "sessionId": session_id.unwrap_or(""),
+        "toolCallId": call_id,
+        "semanticEventId": format!("grok-edit:{call_id}"),
+        "added": added,
+        "removed": removed,
+        "generated": added,
+        "fileCount": 1
+    }))
+}
+
 fn session_update_records(value: &Value) -> Option<Vec<Value>> {
     let source = value.as_object()?;
     if !is_session_update(source) {
@@ -623,13 +723,21 @@ fn session_update_records(value: &Value) -> Option<Vec<Value>> {
         })
         .map(str::to_owned);
     let update = nested_session_update(source, params)?;
+    let occurred_at = occurred_at_from(source).or_else(|| occurred_at_from(update));
+    if session_update_name(update) == Some("tool_call_update") {
+        return Some(
+            code_changed_from_tool_update(update, session_id.as_deref(), occurred_at.as_deref())
+                .into_iter()
+                .collect(),
+        );
+    }
     if session_update_name(update) != Some("turn_completed") {
         return Some(Vec::new());
     }
     let Some(usage) = update.get("usage").and_then(Value::as_object) else {
         return Some(Vec::new());
     };
-    let Some(occurred_at) = occurred_at_from(source).or_else(|| occurred_at_from(update)) else {
+    let Some(occurred_at) = occurred_at else {
         return Some(Vec::new());
     };
     let turn_id = update
@@ -1187,15 +1295,30 @@ struct SkillRecord {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CodeRecord {
+    #[serde(default)]
     added: u64,
+    #[serde(default)]
     removed: u64,
     #[serde(default)]
     generated: Option<u64>,
     #[serde(default)]
     accepted: Option<u64>,
+    #[serde(default)]
     file_count: u32,
     #[serde(default)]
     language: Option<String>,
+}
+
+fn code_changed_payload(record: CodeRecord) -> CodeChangedPayload {
+    let generated = record.generated.unwrap_or(record.added);
+    CodeChangedPayload {
+        added_lines: record.added.to_string(),
+        removed_lines: record.removed.to_string(),
+        generated_lines: Some(generated.to_string()),
+        accepted_lines: record.accepted.map(|v| v.to_string()),
+        file_count: record.file_count.max(1),
+        language: record.language,
+    }
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -119,12 +119,16 @@ type Config struct {
 	SMTPEHLOName     string `json:"smtpEhloName,omitempty"`
 	TestAuthCode     string `json:"-"`
 
-	TeamsEnabled         bool   `json:"teamsEnabled"`
-	TeamsCreateEnabled   bool   `json:"teamsCreateEnabled"`
-	TeamsJoinEnabled     bool   `json:"teamsJoinEnabled"`
-	TeamsAnalysisEnabled bool   `json:"teamsAnalysisEnabled"`
-	TeamsExportEnabled   bool   `json:"teamsExportEnabled"`
-	TeamsPublicBaseURL   string `json:"teamsPublicBaseUrl,omitempty"`
+	// Event pipeline v2 rollout switches (P8). Closing these pauses the new
+	// path; legacy upload endpoints stay closed (CLIENT_UPGRADE_REQUIRED).
+	EventPipelineV2Ingest  bool   `json:"eventPipelineV2Ingest"`
+	EventPipelineV2Workers bool   `json:"eventPipelineV2Workers"`
+	TeamsEnabled           bool   `json:"teamsEnabled"`
+	TeamsCreateEnabled     bool   `json:"teamsCreateEnabled"`
+	TeamsJoinEnabled       bool   `json:"teamsJoinEnabled"`
+	TeamsAnalysisEnabled   bool   `json:"teamsAnalysisEnabled"`
+	TeamsExportEnabled     bool   `json:"teamsExportEnabled"`
+	TeamsPublicBaseURL     string `json:"teamsPublicBaseUrl,omitempty"`
 }
 
 func deriveDevKey(purpose string) []byte {
@@ -171,15 +175,18 @@ func DefaultConfig() *Config {
 		AEADKeys: VersionedKeyring{CurrentVersion: 1, Keys: map[uint16][]byte{
 			1: []byte(DefaultDevEncryptionKey),
 		}},
-		EmailProvider:        "sink",
-		SMTPPort:             587,
-		SMTPTLSMode:          "starttls",
-		TeamsEnabled:         false,
-		TeamsCreateEnabled:   false,
-		TeamsJoinEnabled:     false,
-		TeamsAnalysisEnabled: false,
-		TeamsExportEnabled:   false,
-		TeamsPublicBaseURL:   "",
+		EmailProvider: "sink",
+		SMTPPort:      587,
+		SMTPTLSMode:   "starttls",
+		// Closed-beta default: new ingest/workers on; flip false to pause without reopening legacy.
+		EventPipelineV2Ingest:  true,
+		EventPipelineV2Workers: true,
+		TeamsEnabled:           false,
+		TeamsCreateEnabled:     false,
+		TeamsJoinEnabled:       false,
+		TeamsAnalysisEnabled:   false,
+		TeamsExportEnabled:     false,
+		TeamsPublicBaseURL:     "",
 	}
 }
 
@@ -482,6 +489,12 @@ func LoadFromEnv() (*Config, error) {
 			*dst = b
 		}
 		return nil
+	}
+	if err := parseBool("TOKENDANCE_EVENT_PIPELINE_V2_INGEST", &cfg.EventPipelineV2Ingest); err != nil {
+		return nil, err
+	}
+	if err := parseBool("TOKENDANCE_EVENT_PIPELINE_V2_WORKERS", &cfg.EventPipelineV2Workers); err != nil {
+		return nil, err
 	}
 	if err := parseBool("TOKENDANCE_TEAMS_ENABLED", &cfg.TeamsEnabled); err != nil {
 		return nil, err

@@ -1,5 +1,5 @@
 import type { AgentConfig } from './tauri-bridge.ts';
-import { lastSevenDays } from './weekly-usage.ts';
+import { lastSevenDays, weeklyUsage } from './weekly-usage.ts';
 
 export type UsageRange = 'today' | 'week' | 'all';
 export interface AgentQuota {
@@ -23,7 +23,7 @@ export function quotaWindowLabel(window: AgentQuota['windows'][number], zh: bool
 }
 
 export function quotaStatusText(quota: AgentQuota | undefined, zh: boolean): string | null {
-  const names: Record<string, string> = { 'grok-build': 'Grok Build', cursor: 'Cursor', zcode: 'ZCode', codex: 'Codex', 'claude-code': 'Claude Code', pi: 'Pi', 'deepseek-harness': 'DeepSeek Harness' };
+  const names: Record<string, string> = { 'grok-build': 'Grok Build', cursor: 'Cursor', zcode: 'ZCode', codex: 'Codex', 'claude-code': 'Claude Code', pi: 'Pi', 'deepseek-harness': 'DeepSeek Harness', opencode: 'OpenCode', workbuddy: 'WorkBuddy', 'doubao-work': 'Doubao Work' };
   const name = names[quota?.agentId ?? ''] ?? quota?.agentId ?? '';
   switch (quota?.status) {
     case 'not_connected': return zh ? `请在 ${name} 登录` : `Sign in to ${name}`;
@@ -61,10 +61,15 @@ export function usageCosts(agents: AgentConfig[], range: UsageRange, now = new D
         known = true;
       }
       const p = row.pricing;
-      if (p?.estimatedRequests && Number.isFinite(p.estimatedUsd) && p.estimatedUsd >= 0) {
-        currencies.USD = (currencies.USD ?? 0) + p.estimatedUsd / 1e8;
+      if (p?.estimatedRequests) {
+        const estimates = p.estimatedCosts && Object.keys(p.estimatedCosts).length > 0
+          ? p.estimatedCosts : { USD: p.estimatedUsd };
+        for (const [currency, units] of Object.entries(estimates)) {
+          if (!/^[A-Z]{3}$/.test(currency) || !Number.isFinite(units) || units < 0) continue;
+          currencies[currency] = (currencies[currency] ?? 0) + units / 1e8;
+          known = true;
+        }
         estimatedRequests += p.estimatedRequests;
-        known = true;
       }
       unpricedRequests += p?.unpricedRequests ?? 0;
       if (row.tokens > (p?.detailedTokens ?? 0)) historyIncomplete = true;
@@ -72,6 +77,50 @@ export function usageCosts(agents: AgentConfig[], range: UsageRange, now = new D
     if (known) covered++;
   }
   return { currencies, covered, estimatedRequests, unpricedRequests, historyIncomplete };
+}
+
+export type TrendPoint = { key: string; label: string; tokens: number | null };
+
+function localDateKey(now: Date) {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function monthDay(date: string) {
+  return `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
+}
+
+export function usageTrend(agents: AgentConfig[], range: UsageRange, now = new Date()): TrendPoint[] {
+  if (range === 'today') {
+    const date = localDateKey(now);
+    const currentHour = now.getHours();
+    const hourlyAgents = agents.filter(agent => (agent.hourlyUsage?.length ?? 0) > 0);
+    return Array.from({ length: 24 }, (_, hour) => {
+      const tokens = hourlyAgents.length && hour <= currentHour
+        ? hourlyAgents.reduce((sum, agent) => sum + (agent.hourlyUsage?.find(item => item.hour === hour)?.tokens ?? 0), 0)
+        : null;
+      return { key: `${date}T${String(hour).padStart(2, '0')}`, label: `${hour}:00`, tokens };
+    });
+  }
+  if (range === 'week') {
+    return weeklyUsage(agents, now).points.map(point => ({ key: point.date, label: monthDay(point.date), tokens: point.tokens }));
+  }
+  const year = annualUsage(agents, now);
+  let firstUsage: string | null = null;
+  for (const agent of agents) {
+    if (agent.accuracy === 'unknown') continue;
+    for (const day of agent.dailyUsage ?? []) {
+      if (agent.historyStart && day.date < agent.historyStart) continue;
+      if (!Number.isFinite(day.tokens) || day.tokens <= 0) continue;
+      if (!firstUsage || day.date < firstUsage) firstUsage = day.date;
+    }
+  }
+  if (!firstUsage || year.days.length === 0) {
+    return year.days.map(point => ({ key: point.date, label: monthDay(point.date), tokens: point.tokens }));
+  }
+  const startKey = firstUsage < year.days[0].date ? year.days[0].date : firstUsage;
+  const startIndex = year.days.findIndex(day => day.date >= startKey);
+  const days = startIndex < 0 ? year.days : year.days.slice(startIndex);
+  return days.map(point => ({ key: point.date, label: monthDay(point.date), tokens: point.tokens }));
 }
 
 export function annualUsage(agents: AgentConfig[], now = new Date()) {

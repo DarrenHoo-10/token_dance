@@ -2,8 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { getAgentConfigs, getAgentQuotas, getDaemonStatus, hideWindow, isTauriEnvironment, openSettings, openWebsite, toggleGlobalPause } from './tauri-bridge';
 import { syncStatusText } from './sync-status';
 import type { AgentConfig, DaemonStatus } from './tauri-bridge';
-import { weeklyUsage } from './weekly-usage';
-import { usageTokens, usageCosts, type UsageRange, type AgentQuota } from './usage-analytics';
+import { usageTokens, usageCosts, usageTrend, type UsageRange, type AgentQuota } from './usage-analytics';
 import { WeeklyTrend } from './components/WeeklyTrend';
 import { AnnualActivity, QuotaRings } from './components/UsageDetails';
 import { brandLogo } from './brand';
@@ -72,10 +71,10 @@ export function UsagePanel() {
   const agents = [...(data?.agents ?? [])].sort((a, b) => (usageTokens(b, range) ?? -1) - (usageTokens(a, range) ?? -1));
   const active = agents.filter(agent => usageTokens(agent, range) !== null).slice(0, 3);
   const others = agents.filter(agent => !active.includes(agent));
-  const week = weeklyUsage(agents);
+  const trend = usageTrend(agents, range);
   const status = data?.status;
   const paused = status?.globalPaused;
-  const healthy = status?.status === 'RUNNING' && !error;
+  const healthy = (status?.status === 'RUNNING' || status?.status === 'REBUILDING') && !error;
   const periods: { key: UsageRange; label: string }[] = [{ key: 'today', label: text('今日', 'Today') }, { key: 'week', label: text('近 7 日', '7 days') }, { key: 'all', label: text('全部时间', 'All time') }];
   const costLabel = (items: AgentConfig[], key: UsageRange) => {
     const costs = usageCosts(items, key);
@@ -97,7 +96,7 @@ export function UsagePanel() {
           <span>{period.label}</span><strong>{values.length ? format(values.reduce((a, b) => a + b, 0)) : '—'}</strong><small>tokens</small><div className="usage-cost"><b>{costLabel(agents, period.key)}</b></div>
         </button>;
       })}</div>
-      <WeeklyTrend points={week.points} lang={lang} />
+      <WeeklyTrend key={range} points={trend} range={range} lang={lang} />
       <section className="usage-agents" aria-label={text('Agent 用量与额度', 'Agent usage and quotas')}>
         <div className="usage-section-title"><h2>{text('Agent 用量与额度', 'Agent usage & quotas')}</h2><span>{text('用量前 3 · ', 'Top 3 · ')}{periods.find(period => period.key === range)?.label} · {text('额度独立周期', 'Separate quota windows')}</span></div>
         {active.map(agent => {

@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { lastSevenDays } from "./weekly-usage.ts";
 import type { AgentQuota } from "./usage-analytics";
 
 export async function getAgentQuotas(): Promise<AgentQuota[]> {
@@ -24,7 +23,7 @@ export {
   websiteLoginUrl,
 } from "./website";
 
-export interface CostCoverage { estimatedUsd: number; estimatedRequests: number; unpricedRequests: number; detailedTokens: number; }
+export interface CostCoverage { estimatedUsd: number; estimatedCosts?: Record<string, number>; estimatedRequests: number; unpricedRequests: number; detailedTokens: number; }
 
 export interface AgentConfig {
   id: string;
@@ -41,6 +40,7 @@ export interface AgentConfig {
   totalTokens: number;
   // Local calendar-day aggregates. Omitted when the native collector has no history yet.
   dailyUsage?: { date: string; tokens: number; costs?: Record<string, number>; pricing?: CostCoverage }[];
+  hourlyUsage?: { hour: number; tokens: number }[];
   totalCosts?: Record<string, number>;
   pricing?: CostCoverage;
   historyStart?: string | null;
@@ -103,7 +103,7 @@ export interface UploadBatchPreview {
 export interface DaemonStatus {
   syncStatus?: "LOGIN_REQUIRED" | "WAITING" | "SYNCING" | "SYNCED" | "RETRYING" | "PAUSED" | "NEEDS_PROFILE" | "NEEDS_ATTENTION";
   lastSyncAt?: string | null;
-  status: "RUNNING" | "PAUSED" | "DEGRADED" | "STOPPED";
+  status: "RUNNING" | "PAUSED" | "DEGRADED" | "STOPPED" | "REBUILDING" | "STORAGE_ERROR";
   globalPaused: boolean;
   pid: number;
   uptimeSecs: number;
@@ -452,12 +452,24 @@ export async function getAgentConfigs(): Promise<AgentConfig[]> {
   if (isTauriEnvironment()) {
     return await invoke<AgentConfig[]>("get_agent_configs");
   }
-  // Browser preview only: seven explicit daily samples, never lifetime totals.
-  const weights = [0.54, 0.72, 0.61, 0.88, 0.69, 0.93, 1];
-  return mockState.agents.map(agent => ({
-    ...agent,
-    dailyUsage: lastSevenDays().map((date, index) => ({ date, tokens: Math.round(agent.todayTokens * weights[index]) })),
-  }));
+  // Browser preview: hourly today, plus enough daily history for the year trend.
+  const now = new Date();
+  const hour = now.getHours();
+  return mockState.agents.map(agent => {
+    const hourWeights = Array.from({ length: 24 }, (_, index) => index > hour ? 0 : Math.max(0.12, Math.sin((index - 5) / 18 * Math.PI)));
+    const hourSum = hourWeights.reduce((sum, value) => sum + value, 0) || 1;
+    const dailyUsage = Array.from({ length: 120 }, (_, index) => {
+      const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (119 - index), 12);
+      const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+      const wave = 0.45 + ((index * 13) % 9) / 18;
+      return { date, tokens: Math.round(agent.todayTokens * wave * (index === 119 ? 1 : 0.72)) };
+    });
+    return {
+      ...agent,
+      hourlyUsage: hourWeights.map((weight, index) => ({ hour: index, tokens: Math.round(agent.todayTokens * weight / hourSum) })),
+      dailyUsage,
+    };
+  });
 }
 
 export async function toggleAgent(agentId: string): Promise<AgentConfig> {
@@ -629,10 +641,10 @@ export async function getAutostartStatus(): Promise<AutostartInfo> {
     platform: isWin ? "windows" : "macos",
     method: isWin ? "HKCU_Registry_Run" : "LaunchAgents_Plist",
     targetPath: isWin
-      ? "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\TokenDanceCollector"
+      ? "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\TokenDance"
       : "~/Library/LaunchAgents/io.tokendance.collector.plist",
     details: isWin
-      ? 'Command: "tokendance-collector.exe" --minimized'
+      ? 'Command: "TokenDance.exe" --minimized'
       : "User-level LaunchAgents plist",
   };
 }

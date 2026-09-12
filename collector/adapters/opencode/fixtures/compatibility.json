@@ -1,0 +1,9 @@
+[
+  {
+    "versionRange": ">=1.0.0 <3.0.0",
+    "userVersion": 0,
+    "fingerprint": "opencode-sqlite-v1-uv0",
+    "eventSchemaHash": "sha256:opencode-sqlite-v1",
+    "result": "supported"
+  }
+]

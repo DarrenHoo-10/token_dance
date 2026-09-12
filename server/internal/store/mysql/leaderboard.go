@@ -27,18 +27,17 @@ func (s *leaderboardStore) PublishSnapshot(ctx context.Context, snapshotID strin
 	}
 	defer tx.Rollback()
 
-	// Calculate window dates
-	var windowStart, windowEnd time.Time
-	windowEnd = now
+	windowEnd := now
+	var windowStart time.Time
 	switch window {
 	case "today":
-		windowStart = now.AddDate(0, 0, -1)
+		windowStart = domain.StartOfDay(now)
 	case "7d":
-		windowStart = now.AddDate(0, 0, -7)
+		windowStart = domain.StartOfDay(now).AddDate(0, 0, -6)
 	case "30d":
-		windowStart = now.AddDate(0, 0, -30)
+		windowStart = domain.StartOfDay(now).AddDate(0, 0, -29)
 	default:
-		windowStart = now.AddDate(0, 0, -30)
+		windowStart = domain.StartOfDay(now).AddDate(0, 0, -29)
 	}
 
 	snapSQL := `
@@ -259,7 +258,7 @@ func (s *leaderboardStore) hydrateRankingView(ctx context.Context, q store.Leade
 	resp := &domain.LeaderboardResponse{
 		TotalEntries:      &participants,
 		TotalParticipants: &participants,
-		Timezone:          "UTC",
+		Timezone:          domain.DayTZName,
 		Generation:        view.Generation,
 		SnapshotID:        view.SnapshotID,
 		Revision:          view.Revision,

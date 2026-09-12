@@ -26,7 +26,7 @@ assert(fs.existsSync(tauriConfPath), "tauri.conf.json exists");
 
 const tauriConf = JSON.parse(fs.readFileSync(tauriConfPath, "utf-8"));
 assert(tauriConf.$schema?.includes("schema.tauri.app/config/2"), "Tauri v2 schema URL is used");
-assert(tauriConf.productName === "tokendance-desktop", "Product name configured");
+assert(tauriConf.productName === "TokenDance", "Product name configured");
 assert(tauriConf.identifier === "io.tokendance.desktop", "Bundle identifier configured");
 assert(tauriConf.app?.windows?.[0]?.label === "main", "Main window defined");
 assert(tauriConf.app?.trayIcon?.id === "main-tray", "Tray icon configured for persistent background daemon");

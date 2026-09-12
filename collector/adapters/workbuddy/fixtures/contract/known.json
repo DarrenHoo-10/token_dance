@@ -1,0 +1,2 @@
+{"type":"session","timestamp":"2026-09-10T02:00:00Z","sessionId":"WORKBUDDY_SESSION_CANARY","model":"doubao-seed"}
+{"type":"step_finish","timestamp":"2026-09-10T02:00:01Z","sessionId":"WORKBUDDY_SESSION_CANARY","stepId":"1","provider":"bytedance","model":"doubao-seed","inputTokens":80,"outputTokens":20,"prompt":"WORKBUDDY_PROMPT_CANARY"}

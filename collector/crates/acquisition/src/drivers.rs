@@ -113,6 +113,30 @@ impl DriverRegistry {
             .map(|entry| entry.driver.kind())
     }
 
+    /// Rewinds every driver for `source_id` back to the start of its source
+    /// so the next poll re-reads all rows. Stable event ids dedupe the re-read;
+    /// used after migrations that invalidate stored checkpoints.
+    pub fn reset_source(&mut self, source_id: &str) -> usize {
+        let keys: Vec<(String, String)> = self
+            .sources
+            .keys()
+            .filter(|(_, sid)| sid == source_id)
+            .cloned()
+            .collect();
+        let mut reset = 0;
+        for key in keys {
+            if let Some(entry) = self.sources.get_mut(&key) {
+                match &mut entry.driver {
+                    DriverInstance::SqliteSnapshot(driver) => driver.reset_to_start(),
+                    DriverInstance::JsonlTail(driver) => driver.reset_for_rescan(),
+                    _ => {}
+                }
+                reset += 1;
+            }
+        }
+        reset
+    }
+
     pub fn len(&self) -> usize {
         self.sources.len()
     }
@@ -304,6 +328,7 @@ pub enum SqliteAdapterPlan {
     ZcodeV1,
     ZcodeV2,
     ZcodeV3,
+    OpenCodeV1,
 }
 
 impl SqliteAdapterPlan {
@@ -313,6 +338,7 @@ impl SqliteAdapterPlan {
             Self::ZcodeV1 => "zcode-sqlite-v1-uv7",
             Self::ZcodeV2 => "zcode-sqlite-v2-uv9",
             Self::ZcodeV3 => "zcode-sqlite-v3-uv0",
+            Self::OpenCodeV1 => "opencode-sqlite-v1-uv0",
         }
     }
 
@@ -322,6 +348,7 @@ impl SqliteAdapterPlan {
             Self::ZcodeV1 => 7,
             Self::ZcodeV2 => 9,
             Self::ZcodeV3 => 0,
+            Self::OpenCodeV1 => 0,
         }
     }
 
@@ -435,6 +462,53 @@ impl SqliteAdapterPlan {
                     ],
                 ),
             ],
+            Self::OpenCodeV1 => &[
+                (
+                    "session",
+                    &[
+                        "id",
+                        "project_id",
+                        "workspace_id",
+                        "parent_id",
+                        "slug",
+                        "directory",
+                        "path",
+                        "title",
+                        "version",
+                        "share_url",
+                        "summary_additions",
+                        "summary_deletions",
+                        "summary_files",
+                        "summary_diffs",
+                        "metadata",
+                        "cost",
+                        "tokens_input",
+                        "tokens_output",
+                        "tokens_reasoning",
+                        "tokens_cache_read",
+                        "tokens_cache_write",
+                        "revert",
+                        "permission",
+                        "agent",
+                        "model",
+                        "time_created",
+                        "time_updated",
+                        "time_compacting",
+                        "time_archived",
+                    ],
+                ),
+                (
+                    "part",
+                    &[
+                        "id",
+                        "message_id",
+                        "session_id",
+                        "time_created",
+                        "time_updated",
+                        "data",
+                    ],
+                ),
+            ],
         }
     }
 
@@ -452,6 +526,18 @@ impl SqliteAdapterPlan {
             Self::ZcodeV3 => &[
                 "SELECT rowid AS id, id AS session_ref, time_created FROM session WHERE rowid > ?1 ORDER BY rowid",
                 "SELECT rowid AS id, session_id, provider_id, model_id, input_tokens, output_tokens, computed_total_tokens, tool_call_count, completed_at FROM model_usage WHERE rowid > ?1 AND status = 'completed' ORDER BY rowid",
+                // Code lines come only from completed Edit/Write calls. The
+                // session.summary_* columns are cumulative snapshots that grow
+                // with the session, so re-emitting them re-counts the same
+                // lines on every update.
+                "SELECT time_updated AS id, session_id, time_updated AS time_created, json_extract(data, '$.callID') AS callId, CASE json_extract(data, '$.tool') WHEN 'Write' THEN CASE WHEN IFNULL(json_extract(data, '$.state.input.content'), '') = '' THEN 0 ELSE 1 + LENGTH(json_extract(data, '$.state.input.content')) - LENGTH(REPLACE(json_extract(data, '$.state.input.content'), CHAR(10), '')) END ELSE CASE WHEN IFNULL(json_extract(data, '$.state.input.new_string'), '') = '' THEN 0 ELSE 1 + LENGTH(json_extract(data, '$.state.input.new_string')) - LENGTH(REPLACE(json_extract(data, '$.state.input.new_string'), CHAR(10), '')) END END AS addedLines, CASE json_extract(data, '$.tool') WHEN 'Edit' THEN CASE WHEN IFNULL(json_extract(data, '$.state.input.old_string'), '') = '' THEN 0 ELSE 1 + LENGTH(json_extract(data, '$.state.input.old_string')) - LENGTH(REPLACE(json_extract(data, '$.state.input.old_string'), CHAR(10), '')) END ELSE 0 END AS removedLines, 1 AS fileCount, 'code_changed' AS event_type FROM part WHERE time_updated > ?1 AND json_extract(data, '$.type') = 'tool' AND json_extract(data, '$.tool') IN ('Edit', 'Write') AND json_extract(data, '$.state.status') = 'completed' ORDER BY time_updated, rowid",
+            ],
+            Self::OpenCodeV1 => &[
+                "SELECT rowid AS id, id AS session_ref, agent, model, time_created FROM session WHERE rowid > ?1 ORDER BY rowid",
+                "SELECT rowid AS id, session_id, time_created, json_extract(data, '$.tokens.input') AS input_tokens, json_extract(data, '$.tokens.output') AS output_tokens, json_extract(data, '$.tokens.reasoning') AS reasoning_tokens, json_extract(data, '$.tokens.cache.read') AS cache_read_tokens, json_extract(data, '$.tokens.cache.write') AS cache_write_tokens FROM part WHERE json_extract(data, '$.type') = 'step-finish' AND rowid > ?1 ORDER BY rowid",
+                // Same as ZcodeV3: session.summary_* is a cumulative snapshot;
+                // per-call part rows are the non-duplicating source of truth.
+                "SELECT time_updated AS id, session_id, time_updated AS time_created, json_extract(data, '$.callID') AS callId, COALESCE(json_extract(data, '$.state.metadata.filediff.additions'), CASE WHEN json_extract(data, '$.tool') IN ('Write','write') THEN CASE WHEN IFNULL(json_extract(data, '$.state.input.content'), '') = '' THEN 0 ELSE 1 + LENGTH(json_extract(data, '$.state.input.content')) - LENGTH(REPLACE(json_extract(data, '$.state.input.content'), CHAR(10), '')) END ELSE CASE WHEN IFNULL(COALESCE(json_extract(data, '$.state.input.newString'), json_extract(data, '$.state.input.new_string')), '') = '' THEN 0 ELSE 1 + LENGTH(COALESCE(json_extract(data, '$.state.input.newString'), json_extract(data, '$.state.input.new_string'))) - LENGTH(REPLACE(COALESCE(json_extract(data, '$.state.input.newString'), json_extract(data, '$.state.input.new_string')), CHAR(10), '')) END END) AS addedLines, COALESCE(json_extract(data, '$.state.metadata.filediff.deletions'), CASE WHEN json_extract(data, '$.tool') IN ('Edit','edit') THEN CASE WHEN IFNULL(COALESCE(json_extract(data, '$.state.input.oldString'), json_extract(data, '$.state.input.old_string')), '') = '' THEN 0 ELSE 1 + LENGTH(COALESCE(json_extract(data, '$.state.input.oldString'), json_extract(data, '$.state.input.old_string'))) - LENGTH(REPLACE(COALESCE(json_extract(data, '$.state.input.oldString'), json_extract(data, '$.state.input.old_string')), CHAR(10), '')) END ELSE 0 END) AS removedLines, 1 AS fileCount, 'code_changed' AS event_type FROM part WHERE time_updated > ?1 AND json_extract(data, '$.type') = 'tool' AND json_extract(data, '$.tool') IN ('Edit','Write','edit','write') AND json_extract(data, '$.state.status') = 'completed' ORDER BY time_updated, rowid",
             ],
         }
     }
@@ -498,6 +584,12 @@ impl SqliteSnapshotDriver {
         for (current, restored) in self.query_cursors.iter_mut().zip(cursors) {
             *current = (*restored).max(0);
         }
+    }
+
+    /// Re-read every row: all query cursors restart from zero, so the next
+    /// poll re-emits the full table and stable event ids dedupe the rest.
+    pub fn reset_to_start(&mut self) {
+        self.query_cursors = vec![0; self.plan.queries().len()];
     }
 
     pub fn query_cursors(&self) -> &[i64] {
@@ -641,25 +733,39 @@ fn normalize_sqlite_record(plan: SqliteAdapterPlan, row: &mut Map<String, Value>
     match plan {
         SqliteAdapterPlan::ZcodeV3 => {
             // Session probe rows carry `session_ref`; usage rows carry `session_id`.
+            // Code rows are tagged event_type=code_changed and must not leak diffs/paths.
+            let event_type = row.remove("event_type");
             let session_ref = row.remove("session_ref");
             let timestamp = row
                 .remove("completed_at")
                 .or_else(|| row.remove("time_created"));
-            match session_ref {
-                Some(session_ref) => {
-                    row.insert("type".into(), Value::String("session".into()));
+            if event_type.as_ref().and_then(Value::as_str) == Some("code_changed") {
+                row.insert("type".into(), Value::String("code_changed".into()));
+                if let Some(session_ref) = session_ref {
                     row.insert("sessionId".into(), session_ref);
-                }
-                None => {
-                    row.insert("type".into(), Value::String("step_finish".into()));
+                } else {
                     rename(row, "session_id", "sessionId");
-                    rename(row, "id", "stepId");
-                    rename(row, "provider_id", "provider");
-                    rename(row, "model_id", "model");
-                    rename(row, "input_tokens", "inputTokens");
-                    rename(row, "output_tokens", "outputTokens");
-                    rename(row, "computed_total_tokens", "totalTokens");
-                    rename(row, "tool_call_count", "toolCount");
+                }
+                rename(row, "summary_additions", "addedLines");
+                rename(row, "summary_deletions", "removedLines");
+                rename(row, "summary_files", "fileCount");
+            } else {
+                match session_ref {
+                    Some(session_ref) => {
+                        row.insert("type".into(), Value::String("session".into()));
+                        row.insert("sessionId".into(), session_ref);
+                    }
+                    None => {
+                        row.insert("type".into(), Value::String("step_finish".into()));
+                        rename(row, "session_id", "sessionId");
+                        rename(row, "id", "stepId");
+                        rename(row, "provider_id", "provider");
+                        rename(row, "model_id", "model");
+                        rename(row, "input_tokens", "inputTokens");
+                        rename(row, "output_tokens", "outputTokens");
+                        rename(row, "computed_total_tokens", "totalTokens");
+                        rename(row, "tool_call_count", "toolCount");
+                    }
                 }
             }
             if let Some(tokens) = timestamp.as_ref().and_then(Value::as_i64) {
@@ -671,6 +777,45 @@ fn normalize_sqlite_record(plan: SqliteAdapterPlan, row: &mut Map<String, Value>
         SqliteAdapterPlan::CursorPersonalV1 => {
             row.insert("type".into(), Value::String("conversation".into()));
             rename(row, "id", "conversationId");
+        }
+        SqliteAdapterPlan::OpenCodeV1 => {
+            let event_type = row.remove("event_type");
+            let session_ref = row.remove("session_ref");
+            let timestamp = row.remove("time_created");
+            if event_type.as_ref().and_then(Value::as_str) == Some("code_changed") {
+                row.insert("type".into(), Value::String("code_changed".into()));
+                if let Some(session_ref) = session_ref {
+                    row.insert("sessionId".into(), session_ref);
+                } else {
+                    rename(row, "session_id", "sessionId");
+                }
+                rename(row, "summary_additions", "addedLines");
+                rename(row, "summary_deletions", "removedLines");
+                rename(row, "summary_files", "fileCount");
+            } else {
+                match session_ref {
+                    Some(session_ref) => {
+                        row.insert("type".into(), Value::String("session".into()));
+                        row.insert("sessionId".into(), session_ref);
+                        rename(row, "agent", "provider");
+                    }
+                    None => {
+                        row.insert("type".into(), Value::String("step_finish".into()));
+                        rename(row, "session_id", "sessionId");
+                        rename(row, "id", "stepId");
+                        rename(row, "input_tokens", "inputTokens");
+                        rename(row, "output_tokens", "outputTokens");
+                        rename(row, "reasoning_tokens", "reasoningTokens");
+                        rename(row, "cache_read_tokens", "cacheReadTokens");
+                        rename(row, "cache_write_tokens", "cacheWriteTokens");
+                    }
+                }
+            }
+            if let Some(tokens) = timestamp.as_ref().and_then(Value::as_i64) {
+                if let Some(timestamp) = unix_ms_to_rfc3339(tokens) {
+                    row.insert("timestamp".into(), Value::String(timestamp));
+                }
+            }
         }
         SqliteAdapterPlan::ZcodeV1 | SqliteAdapterPlan::ZcodeV2 => {
             let session_id = row.remove("session_id");
@@ -744,6 +889,29 @@ pub fn detect_zcode_sqlite(path: &Path) -> Option<ZcodeSqliteDetection> {
         }
     }
     None
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenCodeSqliteDetection {
+    pub fingerprint: &'static str,
+    pub app_version: Option<String>,
+}
+
+pub fn detect_opencode_sqlite(path: &Path) -> Option<OpenCodeSqliteDetection> {
+    let connection = open_snapshot(path).ok()?;
+    let plan = SqliteAdapterPlan::OpenCodeV1;
+    verify_sqlite_plan(&connection, plan).ok()?;
+    let app_version = connection
+        .query_row(
+            "SELECT version FROM session WHERE version IS NOT NULL AND version != '' ORDER BY time_updated DESC LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .ok();
+    Some(OpenCodeSqliteDetection {
+        fingerprint: plan.fingerprint(),
+        app_version,
+    })
 }
 
 #[derive(Debug)]

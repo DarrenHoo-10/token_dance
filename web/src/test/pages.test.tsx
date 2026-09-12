@@ -56,10 +56,32 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
     it('renders real leaderboard entries returned by the API', async () => {
       const spy = vi.spyOn(api, 'getLeaderboard').mockResolvedValue(leaderboardPayload);
       renderWithProviders(<LeaderboardPage />, '/leaderboard');
-      await waitFor(() => expect(screen.getByText('ada')).toBeInTheDocument());
-      expect(screen.getByText('grace')).toBeInTheDocument();
+      await waitFor(() => expect(screen.getAllByText('Ada Lovelace')).toHaveLength(2));
+      expect(screen.getAllByText('Grace Hopper')).toHaveLength(2);
+      expect(screen.queryByText('ada')).not.toBeInTheDocument();
+      expect(screen.queryByText('grace')).not.toBeInTheDocument();
+      expect(screen.queryByText('@ada')).not.toBeInTheDocument();
       expect(screen.getAllByText('325.7M')).toHaveLength(2);
       expect(spy).toHaveBeenCalledWith({ window: 'today', limit: 10 });
+    });
+
+    it('shows the nickname on podium and list, and falls back to handle only when the nickname is empty', async () => {
+      vi.spyOn(api, 'getLeaderboard').mockResolvedValue({
+        ...leaderboardPayload,
+        entries: [
+          { rankNo: 1, handle: 'dancer_uss9', displayName: '桂林仔', avatarUrl: null, metricValue: '16500000', rankDelta: 2 },
+          { rankNo: 2, handle: 'jayzhang', displayName: 'Jiayu', avatarUrl: null, metricValue: '3500000', rankDelta: 0 },
+          { rankNo: 3, handle: 'blank_user', displayName: '   ', avatarUrl: null, metricValue: '1000', rankDelta: 0 },
+        ],
+      });
+      renderWithProviders(<LeaderboardPage />, '/leaderboard');
+      await waitFor(() => expect(screen.getAllByText('桂林仔')).toHaveLength(2));
+      expect(screen.getAllByText('Jiayu')).toHaveLength(2);
+      expect(screen.getAllByText('blank_user')).toHaveLength(2);
+      expect(screen.queryByText('dancer_uss9')).not.toBeInTheDocument();
+      expect(screen.queryByText('@dancer_uss9')).not.toBeInTheDocument();
+      expect(screen.queryByText('jayzhang')).not.toBeInTheDocument();
+      expect(screen.queryByText('@blank_user')).not.toBeInTheDocument();
     });
 
     it('shows an empty state instead of mock data when the API returns no entries', async () => {
@@ -600,7 +622,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       });
 
       vi.spyOn(api, 'getPersonalSummary').mockResolvedValue({
-        range: { key: '30d', from: '2026-08-01', to: '2026-08-30', timezone: 'UTC' },
+        range: { key: 'today', from: '2026-08-30', to: '2026-08-30', timezone: 'UTC' },
         metrics: {
           estimatedCost: { amount: '120.50', currency: 'USD', supported: true },
           totalTokens: { value: '50000000', supported: true },

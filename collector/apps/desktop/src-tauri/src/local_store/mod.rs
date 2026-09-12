@@ -3,7 +3,7 @@
 //! Local commit is the success criterion for collection. Upload ACK is independent
 //! and must not be mixed into these totals. Old `usage-ledger.json` is never imported.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -13,24 +13,27 @@ use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use wal_spool::SourceCheckpoint;
 
 mod aggregate_activity;
+pub mod pipeline;
 mod rebuild;
 mod retention;
 #[cfg(test)]
 mod retention_tests;
 mod sync;
 pub use retention::{AggregateSnapshot, PendingAggregate};
+pub use pipeline::{PipelineRuntime, PipelineStore, PipelineWriter, RenewLease, UploadWireEvent};
+pub use pipeline::runner;
 
 pub use rebuild::{DiscoveredSource, RebuildFileProgress, ScanWorkItem};
 pub use sync::{DeliveryRecord, LeasedBatch};
 
 use crate::pricing::{Catalog, CostCoverage, CostLedger};
 use crate::usage_ledger::{
-    accuracy_name, accuracy_rank, cost_units, event_tokens, local_date, AgentUsageSnapshot,
-    DayUsage, DISPLAY_DAYS,
+    accuracy_name, accuracy_rank, cost_units, event_tokens, local_date, local_hour,
+    AgentUsageSnapshot, DayUsage, HourUsage, DISPLAY_DAYS,
 };
 
 const DB_FILE: &str = "tokendance.sqlite3";
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 8;
 const AGGREGATION_VERSION: i64 = 1;
 const PARSE_VERSION: &str = "1";
 const BUSY_TIMEOUT_MS: u64 = 5_000;
@@ -181,6 +184,36 @@ pub struct LocalStore {
 }
 
 impl LocalStore {
+    /// Sources whose checkpoints were reset by a migration and whose drivers
+    /// must be rewound to the start of their source at next assembly.
+    pub fn pending_rescan_sources(&self) -> Vec<String> {
+        let Ok(mut statement) = self
+            .conn
+            .prepare("SELECT source_id FROM rescan_markers ORDER BY source_id")
+        else {
+            return vec![];
+        };
+        let rows = statement
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string());
+        match rows {
+            Ok(rows) => rows.filter_map(Result::ok).collect(),
+            Err(_) => vec![],
+        }
+    }
+
+    pub fn clear_rescan_markers(&mut self, sources: &[String]) -> Result<(), String> {
+        for source_id in sources {
+            self.conn
+                .execute(
+                    "DELETE FROM rescan_markers WHERE source_id = ?1",
+                    params![source_id],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     pub fn open(dir: &Path) -> Result<Self, String> {
         std::fs::create_dir_all(dir).map_err(|error| error.to_string())?;
         let path = dir.join(DB_FILE);
@@ -397,6 +430,7 @@ impl LocalStore {
                 *total_costs.entry(currency).or_default() += amount;
             }
             pricing.add(&CostCoverage {
+                estimated_costs: BTreeMap::new(),
                 estimated_usd: parse_u64_text(&row.estimated_usd),
                 estimated_requests: row.estimated_requests as u64,
                 unpriced_requests: row.unpriced_requests as u64,
@@ -412,6 +446,7 @@ impl LocalStore {
             daily_usage.push(DayUsage {
                 pricing: row
                     .map(|row| CostCoverage {
+                        estimated_costs: BTreeMap::new(),
                         estimated_usd: parse_u64_text(&row.estimated_usd),
                         estimated_requests: row.estimated_requests as u64,
                         unpriced_requests: row.unpriced_requests as u64,
@@ -434,6 +469,68 @@ impl LocalStore {
             pricing,
             history_start,
         })
+    }
+
+    pub fn today_hourly(&self, today: NaiveDate) -> HashMap<String, Vec<HourUsage>> {
+        let lower = today
+            .and_hms_opt(0, 0, 0)
+            .and_then(|naive| {
+                naive
+                    .and_local_timezone(Local)
+                    .single()
+                    .or_else(|| naive.and_local_timezone(Local).earliest())
+            })
+            .map(|start| (start - chrono::Duration::hours(14)).to_rfc3339())
+            .unwrap_or_default();
+        let Ok(mut stmt) = self.conn.prepare(
+            "SELECT agent_id, occurred_at, envelope_json
+             FROM events
+             WHERE event_type = 'model_usage_recorded' AND occurred_at >= ?1",
+        ) else {
+            return HashMap::new();
+        };
+        let Ok(rows) = stmt.query_map(params![lower], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        }) else {
+            return HashMap::new();
+        };
+        let mut buckets: HashMap<String, [u64; 24]> = HashMap::new();
+        for (agent_id, occurred_at, envelope_json) in rows.flatten() {
+            let Some((date, hour)) = local_hour(&occurred_at) else {
+                continue;
+            };
+            if date != today || hour > 23 {
+                continue;
+            }
+            let Ok(event) = serde_json::from_str::<EventEnvelope>(&envelope_json) else {
+                continue;
+            };
+            let Some(tokens) = event_tokens(&event) else {
+                continue;
+            };
+            let slot = buckets.entry(agent_id).or_insert([0; 24]);
+            slot[hour as usize] = slot[hour as usize].saturating_add(tokens);
+        }
+        buckets
+            .into_iter()
+            .map(|(agent_id, hours)| {
+                (
+                    agent_id,
+                    hours
+                        .into_iter()
+                        .enumerate()
+                        .map(|(hour, tokens)| HourUsage {
+                            hour: hour as u8,
+                            tokens,
+                        })
+                        .collect(),
+                )
+            })
+            .collect()
     }
 
     pub fn apply_prices(&mut self, catalog: Catalog) -> Result<(), String> {
@@ -535,6 +632,85 @@ fn migrate(conn: &mut Connection) -> Result<(), String> {
         tx.execute_batch(retention::SCHEMA)
             .map_err(|error| error.to_string())?;
         retention::migrate_data(&tx)?;
+    }
+    if current < 4 {
+        // Day buckets moved to the product calendar (UTC+8): drop the derived
+        // aggregates and replay the retained events under the new day keys.
+        tx.execute_batch(
+            "DELETE FROM aggregate_days;
+             DELETE FROM aggregate_pricing;
+             DELETE FROM aggregate_activity;",
+        )
+        .map_err(|error| error.to_string())?;
+        retention::migrate_data(&tx)?;
+    }
+    if current < 5 {
+        // ZCode sqlite usage previously hashed poll cursors into event_id, so
+        // each rebuild minted new rows for the same model_usage.id.
+        tx.execute_batch(
+            "DELETE FROM events WHERE agent_id = 'zcode';
+             DELETE FROM source_checkpoints WHERE source_id = 'zcode-sqlite';
+             DELETE FROM source_files WHERE source_id = 'zcode-sqlite';
+             UPDATE rebuild_job_files SET status = 'pending'
+              WHERE job_id LIKE '%:zcode-sqlite';
+             UPDATE rebuild_jobs SET status = 'running', processed_files = 0
+              WHERE source_id = 'zcode-sqlite';
+             DELETE FROM daily_agent_metrics;
+             DELETE FROM daily_model_metrics;
+             DELETE FROM daily_skill_metrics;",
+        )
+        .map_err(|error| error.to_string())?;
+        rebuild_daily_metrics_from_events(&tx)?;
+    }
+    if current < 6 {
+        // v5 rebuilt daily_* from events but left inflated aggregate_days
+        // snapshots in place; those are what get uploaded to the server.
+        tx.execute_batch(
+            "DELETE FROM aggregate_days;
+             DELETE FROM aggregate_pricing;
+             DELETE FROM aggregate_activity;",
+        )
+        .map_err(|error| error.to_string())?;
+        retention::migrate_data(&tx)?;
+    }
+    if current < 7 {
+        // Usage rows whose stable id degraded to the batch sequence (numeric
+        // sqlite row ids read as strings) were dropped by fingerprint
+        // collisions after the first rescan. Delete the affected usage
+        // events, reset the sqlite checkpoints, and let the rescan re-ingest
+        // every row under its stable row id. Code lines keep callId-based
+        // identities and are untouched.
+        tx.execute_batch(
+            "DELETE FROM events WHERE agent_id IN ('zcode','opencode') AND event_type = 'model_usage_recorded';
+             DELETE FROM source_checkpoints WHERE source_id IN ('zcode-sqlite','opencode-sqlite');
+             DELETE FROM source_files WHERE source_id IN ('zcode-sqlite','opencode-sqlite');
+             UPDATE rebuild_job_files SET status = 'pending'
+              WHERE job_id LIKE '%:zcode-sqlite' OR job_id LIKE '%:opencode-sqlite';
+             UPDATE rebuild_jobs SET status = 'running', processed_files = 0
+              WHERE source_id IN ('zcode-sqlite','opencode-sqlite');
+             DELETE FROM daily_agent_metrics;
+             DELETE FROM daily_model_metrics;
+             DELETE FROM daily_skill_metrics;
+             DELETE FROM aggregate_days;
+             DELETE FROM aggregate_pricing;
+             DELETE FROM aggregate_activity;",
+        )
+        .map_err(|error| error.to_string())?;
+        rebuild_daily_metrics_from_events(&tx)?;
+        retention::migrate_data(&tx)?;
+    }
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS rescan_markers (source_id TEXT PRIMARY KEY);",
+    )
+    .map_err(|error| error.to_string())?;
+    if current < 8 {
+        // Databases that already ran v7 before the markers existed still need
+        // their drivers rewound once; fresh databases drain these at first
+        // assembly as a harmless no-op.
+        tx.execute_batch(
+            "INSERT OR IGNORE INTO rescan_markers (source_id) VALUES ('zcode-sqlite'), ('opencode-sqlite');",
+        )
+        .map_err(|error| error.to_string())?;
     }
     if current != 0 && current < SCHEMA_VERSION {
         tx.execute(
@@ -679,6 +855,32 @@ fn maybe_enrich_unknown_model(tx: &Transaction, event: &EventEnvelope) -> Result
         params![envelope_json, event.event_id],
     )
     .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn rebuild_daily_metrics_from_events(tx: &Transaction) -> Result<(), String> {
+    let envelopes = {
+        let mut stmt = tx
+            .prepare("SELECT envelope_json FROM events ORDER BY local_seq")
+            .map_err(|error| error.to_string())?;
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|error| error.to_string())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|error| error.to_string())?
+    };
+    for raw in envelopes {
+        let event: EventEnvelope =
+            serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+        let Some(date) = local_date(&event.occurred_at) else {
+            continue;
+        };
+        let date_key = date.format("%Y-%m-%d").to_string();
+        let tokens = event_tokens(&event).unwrap_or(0);
+        bump_agent_metrics(tx, &event, &date_key, tokens)?;
+        bump_model_metrics(tx, &event, &date_key, tokens)?;
+        bump_skill_metrics(tx, &event, &date_key)?;
+    }
     Ok(())
 }
 
@@ -1165,6 +1367,16 @@ mod tests {
             .to_rfc3339()
     }
 
+    fn today_local_at(hour: u32) -> String {
+        Local::now()
+            .date_naive()
+            .and_hms_opt(hour, 0, 0)
+            .unwrap()
+            .and_local_timezone(Local)
+            .unwrap()
+            .to_rfc3339()
+    }
+
     fn open_store() -> (tempfile::TempDir, LocalStore) {
         let dir = tempfile::tempdir().unwrap();
         let store = LocalStore::open(dir.path()).unwrap();
@@ -1207,6 +1419,24 @@ mod tests {
         assert_eq!(snapshot.today_tokens, 100);
         assert_eq!(snapshot.total_tokens, 100);
         assert_eq!(snapshot.accuracy, "exact");
+    }
+
+    #[test]
+    fn today_hourly_buckets_local_hours() {
+        let (_dir, mut store) = open_store();
+        let morning = envelope("codex", &today_local_at(9), 40, Accuracy::Exact);
+        let afternoon = envelope("codex", &today_local_at(15), 70, Accuracy::Exact);
+        let other = envelope("claude-code", &today_local_at(9), 11, Accuracy::Exact);
+        assert!(store
+            .commit_batch(&[morning, afternoon, other], &[])
+            .unwrap());
+        let hourly = store.today_hourly(Local::now().date_naive());
+        let codex = hourly.get("codex").expect("codex hours");
+        assert_eq!(codex.len(), 24);
+        assert_eq!(codex[9].tokens, 40);
+        assert_eq!(codex[15].tokens, 70);
+        assert_eq!(codex.iter().map(|hour| hour.tokens).sum::<u64>(), 110);
+        assert_eq!(hourly.get("claude-code").unwrap()[9].tokens, 11);
     }
 
     #[test]

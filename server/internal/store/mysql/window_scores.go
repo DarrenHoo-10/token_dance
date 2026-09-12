@@ -22,11 +22,11 @@ const (
 var leaderboardWindows = []string{"today", "7d", "30d", "all"}
 
 func WindowGeneration(now time.Time) string {
-	return now.UTC().Format("2006-01-02")
+	return domain.DayDate(now)
 }
 
 func previousWindowGeneration(now time.Time) string {
-	return now.UTC().AddDate(0, 0, -1).Format("2006-01-02")
+	return domain.PreviousDayDate(now)
 }
 
 func newRankingOutboxID() (string, error) {
@@ -77,16 +77,18 @@ func MarkAggregateDirtyDayTx(ctx context.Context, tx *sql.Tx, userID, metricDate
 	if userID == "" || metricDate == "" {
 		return nil
 	}
+	nowMs := now.UnixMilli()
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO aggregate_dirty_days (
-			user_id, metric_date, dirty_version, applied_version, next_attempt_at, created_at, updated_at
-		) VALUES (?, ?, 1, 0, ?, ?, ?)
+			user_id, metric_date, dirty_version, applied_version, next_attempt_at,
+			created_at, updated_at, extra
+		) VALUES (?, ?, 1, 0, ?, ?, ?, JSON_OBJECT())
 		ON DUPLICATE KEY UPDATE
 			dirty_version = dirty_version + 1,
-			next_attempt_at = LEAST(next_attempt_at, VALUES(next_attempt_at)),
+			next_attempt_at = IF(claim_token IS NOT NULL, NULL, LEAST(COALESCE(next_attempt_at, VALUES(next_attempt_at)), VALUES(next_attempt_at))),
 			last_error_code = NULL,
 			updated_at = VALUES(updated_at)`,
-		userID, metricDate, now, now, now,
+		userID, metricDate, nowMs, nowMs, nowMs,
 	); err != nil {
 		return fmt.Errorf("mark aggregate dirty day: %w", err)
 	}
@@ -97,9 +99,9 @@ func ClearAggregateDirtyDaysTx(ctx context.Context, tx *sql.Tx, userID string, d
 	if userID == "" || len(dates) == 0 {
 		return nil
 	}
-	query := "UPDATE aggregate_dirty_days SET applied_version = dirty_version, claim_token = NULL, locked_by = NULL, lease_expires_at = NULL, last_error_code = NULL, updated_at = ? WHERE user_id = ? AND metric_date IN (" + placeholders(len(dates)) + ")"
+	query := "UPDATE aggregate_dirty_days SET applied_version = dirty_version, claim_token = NULL, lease_expires_at = NULL, next_attempt_at = NULL, last_error_code = NULL, updated_at = ? WHERE user_id = ? AND metric_date IN (" + placeholders(len(dates)) + ")"
 	args := make([]interface{}, 0, 2+len(dates))
-	args = append(args, now, userID)
+	args = append(args, now.UnixMilli(), userID)
 	for _, date := range dates {
 		args = append(args, date)
 	}
@@ -116,9 +118,12 @@ func ListPendingDirtyDaysTx(ctx context.Context, tx *sql.Tx, now time.Time, limi
 	rows, err := tx.QueryContext(ctx, `
 		SELECT user_id, DATE_FORMAT(metric_date, '%Y-%m-%d') AS metric_date
 		FROM aggregate_dirty_days
-		WHERE applied_version < dirty_version AND next_attempt_at <= ?
+		WHERE delete_at IS NULL
+		  AND applied_version < dirty_version
+		  AND next_attempt_at IS NOT NULL
+		  AND next_attempt_at <= ?
 		ORDER BY user_id, metric_date
-		LIMIT ?`, now, limit)
+		LIMIT ?`, now.UnixMilli(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("list pending dirty days: %w", err)
 	}
@@ -277,18 +282,10 @@ func writeUserWindowScoresTx(ctx context.Context, tx *sql.Tx, userID string, now
 		if err != nil {
 			return err
 		}
-		var computedRaw sql.NullInt64
-		if err := tx.QueryRowContext(ctx, `
-			SELECT COALESCE(SUM(exact_token_total + derived_token_total), 0)
-			FROM daily_user_agent_metrics
-			WHERE user_id = ? AND metric_date >= ? AND metric_date <= ?`,
-			userID, from, to,
-		).Scan(&computedRaw); err != nil {
+		var computed uint64
+		computed, err = SumTrustedTokensForWindow(ctx, tx, userID, from, to)
+		if err != nil {
 			return fmt.Errorf("sum window tokens for %s: %w", window, err)
-		}
-		computed := uint64(0)
-		if computedRaw.Valid && computedRaw.Int64 > 0 {
-			computed = uint64(computedRaw.Int64)
 		}
 		var existingTokens, existingRevision uint64
 		var existingEligible bool

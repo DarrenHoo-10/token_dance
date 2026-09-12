@@ -18,6 +18,9 @@ members = [
     "adapters/zcode",
     "adapters/pi",
     "adapters/deepseek-harness",
+    "adapters/opencode",
+    "adapters/workbuddy",
+    "adapters/doubao-work",
     "apps/service",
 ]
 
@@ -45,6 +48,9 @@ adapter-cursor = { path = "adapters/cursor" }
 adapter-zcode = { path = "adapters/zcode" }
 adapter-pi = { path = "adapters/pi" }
 adapter-deepseek-harness = { path = "adapters/deepseek-harness" }
+adapter-opencode = { path = "adapters/opencode" }
+adapter-workbuddy = { path = "adapters/workbuddy" }
+adapter-doubao-work = { path = "adapters/doubao-work" }
 collector-service = { path = "apps/service" }
 
 aes-gcm = "0.10"

@@ -40,10 +40,28 @@ func TestAvatarVisibilityMySQL(t *testing.T) {
 	if _, err := db.Exec("UPDATE user_privacy_settings SET public_profile_enabled=FALSE WHERE user_id='usr_avatar_test'"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := media.GetVisibleAvatar(ctx, "avatar_visibility_test", ""); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatalf("private avatar leaked: %v", err)
+	if _, err := media.GetVisibleAvatar(ctx, "avatar_visibility_test", ""); err != nil {
+		t.Fatalf("leaderboard avatar unavailable for private profile: %v", err)
+	}
+	if _, err := db.Exec("UPDATE users SET leaderboard_visibility='private' WHERE user_id='usr_avatar_test'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("DELETE FROM public_user_profiles WHERE user_id='usr_avatar_test'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := media.GetVisibleAvatar(ctx, "avatar_visibility_test", ""); err != nil {
+		t.Fatalf("unpublished account avatar unavailable: %v", err)
 	}
 	if _, err := media.GetVisibleAvatar(ctx, "avatar_visibility_test", "usr_avatar_test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("UPDATE users SET account_status='suspended' WHERE user_id='usr_avatar_test'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := media.GetVisibleAvatar(ctx, "avatar_visibility_test", ""); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("suspended account avatar exposed: %v", err)
+	}
+	if _, err := db.Exec("UPDATE users SET account_status='active' WHERE user_id='usr_avatar_test'"); err != nil {
 		t.Fatal(err)
 	}
 	if err := media.ClearAvatar(ctx, "usr_avatar_test", now); err != nil {

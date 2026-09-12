@@ -57,8 +57,17 @@ func TestAvatarRelayAndVisibility(t *testing.T) {
 	if _, err := st.UpdatePrivacyTx(ctx, "usr_avatar", priv, 0, domain.UserSecurityEvent{}, now); err != nil {
 		t.Fatal(err)
 	}
+	if _, _, err := svc.ReadAvatar(ctx, intent.ObjectID, ""); err != nil {
+		t.Fatalf("leaderboard avatar unavailable for private profile: %v", err)
+	}
+	if err := st.SetAccountStatusTx(ctx, "usr_avatar", domain.AccountStatusSuspended, now); err != nil {
+		t.Fatal(err)
+	}
 	if _, _, err := svc.ReadAvatar(ctx, intent.ObjectID, ""); !errors.Is(err, domain.ErrNotFound) {
-		t.Fatal("private avatar exposed")
+		t.Fatal("suspended account avatar exposed")
+	}
+	if err := st.SetAccountStatusTx(ctx, "usr_avatar", domain.AccountStatusActive, now); err != nil {
+		t.Fatal(err)
 	}
 	priv.PublicProfileEnabled = true
 	priv.LeaderboardVisibility = domain.LeaderboardVisibilityPublic

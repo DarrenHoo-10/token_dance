@@ -15,6 +15,7 @@ use protocol::{
 use serde_json::{Map, Value};
 
 pub const ADAPTER_ID: &str = "dev.tokenshow.adapter.cursor";
+pub const TRANSCRIPT_SOURCE_ID: &str = "cursor-agent-transcripts";
 pub const MANIFEST_JSON: &str = include_str!("../fixtures/manifest.json");
 pub const COMPATIBILITY_JSON: &str = include_str!("../fixtures/compatibility.json");
 pub const ENTERPRISE_JSON: &str = include_str!("../fixtures/contract/enterprise.json");
@@ -124,7 +125,9 @@ impl CursorAdapter {
                         ),
                     },
                     CursorMode::PersonalLocal => match capability {
-                        Capability::Sessions | Capability::Turns if self.local_schema_verified => {
+                        Capability::Sessions | Capability::Turns | Capability::Code
+                            if self.local_schema_verified =>
+                        {
                             (true, Some(Accuracy::Derived), "")
                         }
                         _ => (false, None, "CURSOR_PERSONAL_CAPABILITY_UNAVAILABLE"),
@@ -204,16 +207,34 @@ impl AgentAdapter for CursorAdapter {
                 id: "cursor-admin-api".into(),
                 domain: "api.cursor.com".into(),
             }],
-            CursorMode::PersonalLocal if self.local_schema_verified => {
-                vec![SourceSpec::SqliteSnapshot {
-                    id: "cursor-personal-local".into(),
-                    path_template: "${AGENT_CONFIG_HOME}/User/globalStorage/state.vscdb".into(),
-                }]
+            CursorMode::PersonalLocal => {
+                let mut sources = Vec::new();
+                if self.local_schema_verified {
+                    sources.push(SourceSpec::SqliteSnapshot {
+                        id: "cursor-personal-local".into(),
+                        path_template: "${AGENT_CONFIG_HOME}/User/globalStorage/state.vscdb"
+                            .into(),
+                    });
+                }
+                sources.push(SourceSpec::JsonlTail {
+                    id: TRANSCRIPT_SOURCE_ID.into(),
+                    path_template: "${USER_HOME}/.cursor/projects/**/agent-transcripts/**"
+                        .into(),
+                });
+                sources
             }
             _ => vec![],
         })
     }
     async fn decode(&self, frame: RawFrame) -> Result<Vec<NormalizedEvent>, AdapterError> {
+        if frame.source_kind == SourceKind::JsonlTail && frame.source_id == TRANSCRIPT_SOURCE_ID {
+            return decode_transcript_jsonl(
+                &self.manifest,
+                &self.version,
+                &self.hmac_key,
+                frame,
+            );
+        }
         if self.mode == CursorMode::PersonalLocal && !self.local_schema_verified {
             return Ok(vec![]);
         }
@@ -352,17 +373,21 @@ fn decode_record(
             }),
             Accuracy::Exact,
         ),
-        "accepted_code" if mode == CursorMode::EnterpriseApi => (
+        "accepted_code" if mode == CursorMode::EnterpriseApi => {
+            let added = number(o, "addedLines");
+            let accepted = number(o, "acceptedLines");
+            (
             EventPayload::CodeChanged(CodeChangedPayload {
-                added_lines: number(o, "addedLines").unwrap_or_else(|| "0".into()),
+                added_lines: added.clone().unwrap_or_else(|| "0".into()),
                 removed_lines: number(o, "removedLines").unwrap_or_else(|| "0".into()),
-                generated_lines: None,
-                accepted_lines: number(o, "acceptedLines"),
+                generated_lines: added.or(accepted.clone()),
+                accepted_lines: accepted,
                 file_count: o.get("fileCount").and_then(Value::as_u64).unwrap_or(0) as u32,
                 language: string(o, "language"),
             }),
             Accuracy::Exact,
-        ),
+        )
+        },
         "conversation" => (
             EventPayload::SessionStarted(SessionStartedPayload {
                 model_id: string(o, "model"),
@@ -437,6 +462,128 @@ fn decode_record(
         payload,
     }))
 }
+
+fn decode_transcript_jsonl(
+    manifest: &AdapterManifest,
+    version: &str,
+    hmac_key: &[u8],
+    frame: RawFrame,
+) -> Result<Vec<NormalizedEvent>, AdapterError> {
+    let text = std::str::from_utf8(&frame.payload)
+        .map_err(|err| AdapterError::decode_failed(err.to_string()))?;
+    let mut events = Vec::new();
+    for (index, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let line_no = index + 1;
+        let value: Value = serde_json::from_str(line).map_err(|err| {
+            AdapterError::decode_failed(format!("invalid JSON at line {line_no}: {err}"))
+        })?;
+        let Some(object) = value.as_object() else {
+            continue;
+        };
+        let message = object
+            .get("message")
+            .and_then(Value::as_object)
+            .unwrap_or(object);
+        let content = match message.get("content").and_then(Value::as_array) {
+            Some(content) => content,
+            None => continue,
+        };
+        let occurred_at = object
+            .get("timestamp")
+            .and_then(Value::as_str)
+            .or_else(|| message.get("timestamp").and_then(Value::as_str))
+            .unwrap_or("1970-01-01T00:00:00Z");
+        for item in content {
+            let Some(tool) = item.as_object() else {
+                continue;
+            };
+            if tool.get("type").and_then(Value::as_str) != Some("tool_use") {
+                continue;
+            }
+            let name = tool.get("name").and_then(Value::as_str).unwrap_or("");
+            if !matches!(name, "Write" | "StrReplace" | "Edit") {
+                continue;
+            }
+            let input = tool.get("input").and_then(Value::as_object);
+            let old_text = input
+                .and_then(|input| json_string(input, &["old_string", "oldString", "old_str"]))
+                .unwrap_or("");
+            let new_text = input
+                .and_then(|input| {
+                    json_string(input, &["contents", "content", "new_string", "newString"])
+                })
+                .unwrap_or("");
+            if old_text.is_empty() && new_text.is_empty() {
+                continue;
+            }
+            let added = line_count(new_text);
+            let removed = line_count(old_text);
+            if added == 0 && removed == 0 {
+                continue;
+            }
+            let call_id = tool.get("id").and_then(Value::as_str).unwrap_or("");
+            let cursor = format!("{}:{line_no}", frame.cursor);
+            let payload = EventPayload::CodeChanged(CodeChangedPayload {
+                added_lines: added.to_string(),
+                removed_lines: removed.to_string(),
+                generated_lines: Some(added.to_string()),
+                accepted_lines: None,
+                file_count: 1,
+                language: None,
+            });
+            events.push(EventEnvelope {
+                schema_version: "1.0".into(),
+                event_id: event_id(
+                    hmac_key,
+                    &frame.installation_id,
+                    &manifest.id,
+                    TRANSCRIPT_SOURCE_ID,
+                    call_id,
+                    "code_changed",
+                    &line_no.to_string(),
+                ),
+                adapter_id: manifest.id.clone(),
+                adapter_version: manifest.version.clone(),
+                agent_id: manifest.agent.id.clone(),
+                agent_version: Some(version.into()),
+                installation_id: frame.installation_id.clone(),
+                occurred_at: occurred_at.to_owned(),
+                session_hash: None,
+                turn_hash: None,
+                tool_call_hash: (!call_id.is_empty()).then(|| hash(hmac_key, call_id)),
+                source: EventSource {
+                    kind: frame.source_kind,
+                    cursor_hmac: format!("hmac-sha256:{}", keyed_hmac(hmac_key, &[&cursor])),
+                    raw_fingerprint_hmac: format!(
+                        "hmac-sha256:{}",
+                        keyed_hmac(hmac_key, &[&raw_fingerprint(line.as_bytes())])
+                    ),
+                },
+                accuracy: Accuracy::Derived,
+                payload,
+            });
+        }
+    }
+    Ok(events)
+}
+
+fn json_string<'a>(value: &'a Map<String, Value>, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_str))
+}
+
+fn line_count(text: &str) -> u64 {
+    if text.is_empty() {
+        0
+    } else {
+        u64::try_from(text.lines().count()).unwrap_or(0)
+    }
+}
+
 fn hash(hmac_key: &[u8], value: &str) -> String {
     format!("hmac-sha256:{}", keyed_hmac(hmac_key, &[value]))
 }

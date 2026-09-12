@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use adapter_cursor::{
     load_manifest, CursorAdapter, CursorMode, SecretRef, COMPATIBILITY_JSON, ENTERPRISE_JSON,
-    PERSONAL_JSON,
+    PERSONAL_JSON, TRANSCRIPT_SOURCE_ID,
 };
 use adapter_host::AdapterHost;
 use adapter_sdk::{
@@ -85,10 +85,14 @@ async fn enterprise_mode_uses_secret_ref_and_emits_token_cost_and_code() {
         EventPayload::ModelUsageRecorded(_)
     ));
     assert!(matches!(events[1].payload, EventPayload::CostRecorded(_)));
-    assert!(matches!(events[2].payload, EventPayload::CodeChanged(_)));
+    let EventPayload::CodeChanged(code) = &events[2].payload else {
+        panic!("expected code changed");
+    };
+    assert_eq!(code.generated_lines.as_deref(), Some("42"));
+    assert_eq!(code.accepted_lines.as_deref(), Some("39"));
     assert!(events
-        .into_iter()
-        .all(|event| PrivacyFilter.filter(event).is_ok()));
+        .iter()
+        .all(|event| PrivacyFilter.filter(event.clone()).is_ok()));
 }
 
 #[tokio::test]
@@ -132,6 +136,44 @@ async fn personal_and_team_modes_report_real_capability_limits() {
 }
 
 #[tokio::test]
+async fn personal_agent_transcripts_count_write_lines_without_paths() {
+    let adapter = CursorAdapter::personal("0.45.2", KEY);
+    let payload = concat!(
+        r#"{"role":"user","message":{"content":[{"type":"text","text":"CURSOR_LOCAL_PROMPT_CANARY"}]}}"#,
+        "\n",
+        r#"{"role":"assistant","message":{"content":[{"type":"tool_use","id":"call-write-1","name":"Write","input":{"path":"C:/TOKSHOW_TEST_ABSOLUTE_PATH_SECRET/marker-cursor.txt","contents":"base-line\nCURSOR_LINE_PROBE_0910\n"}}]}}"#,
+        "\n",
+    );
+    let events = adapter
+        .decode(frame(
+            SourceKind::JsonlTail,
+            TRANSCRIPT_SOURCE_ID,
+            payload,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    let EventPayload::CodeChanged(code) = &events[0].payload else {
+        panic!("expected code changed");
+    };
+    assert_eq!(code.generated_lines.as_deref(), Some("2"));
+    assert_eq!(code.added_lines, "2");
+    assert_eq!(code.removed_lines, "0");
+    let json = serde_json::to_string(&events).unwrap();
+    for secret in [
+        "CURSOR_LOCAL_PROMPT_CANARY",
+        "TOKSHOW_TEST_ABSOLUTE_PATH_SECRET",
+        "CURSOR_LINE_PROBE_0910",
+        "marker-cursor.txt",
+    ] {
+        assert!(!json.contains(secret), "privacy canary escaped: {secret}");
+    }
+    for event in events {
+        PrivacyFilter.filter(event).unwrap();
+    }
+}
+
+#[tokio::test]
 async fn personal_conversation_identity_is_fingerprinted_and_stable() {
     let adapter = CursorAdapter::personal("0.45.2", KEY);
     let first = r#"{"events":[{"type":"conversation","timestamp":"2026-08-30T12:30:00Z","conversationId":"same-private-conversation","model":"m1"}]}"#;
@@ -168,13 +210,14 @@ async fn missing_secret_unverified_schema_and_source_mismatch_fail_closed() {
         .is_err());
 
     let personal = CursorAdapter::personal("0.45.2", KEY).with_local_schema_verified(false);
-    assert!(personal
+    let sources = personal
         .discover_sources(adapter_sdk::SourceContext {
             installation_id: INSTALL.into(),
         })
         .await
-        .unwrap()
-        .is_empty());
+        .unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].id(), TRANSCRIPT_SOURCE_ID);
     let error = CursorAdapter::personal("0.45.2", KEY)
         .decode(frame(SourceKind::RemoteApi, "wrong-source", PERSONAL_JSON))
         .await

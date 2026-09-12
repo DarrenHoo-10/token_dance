@@ -9,8 +9,7 @@
 .settings-brand > span { font-size:11px; color:#8a948c; border-left:1px solid var(--settings-line); padding-left:12px; margin-left:2px; }
 .settings-main { width:100%; max-width:680px; margin:auto; padding:20px 32px; flex:1; min-height:0; overflow:auto; scrollbar-width:thin; }
 .settings-intro { display:flex; align-items:center; justify-content:space-between; gap:16px; margin-bottom:20px; }
-.settings-intro h1 { font-size:27px; font-weight:700; letter-spacing:-.8px; line-height:1.2; margin:0 0 8px; }
-.settings-intro p { font-size:12px; color:var(--settings-muted); margin:0; }
+.settings-intro h1 { font-size:27px; font-weight:700; letter-spacing:-.8px; line-height:1.2; margin:0; }
 .settings-status { display:flex; align-items:center; gap:6px; flex-shrink:0; font-size:11px; color:#77683e; padding:5px 9px; border-radius:6px; background:#f3eedf; }
 .settings-status i { width:6px; height:6px; background:currentColor; border-radius:50%; }
 .settings-status.active { color:#375e00; background:#effad2; }
@@ -34,6 +33,7 @@
 .settings-disclosure b { width:18px; text-align:center; font-size:18px; font-weight:400; }
 .settings-source-list { padding:0 20px 8px; }
 .settings-source-list[hidden] { display:none; }
+.settings-sources .settings-row:first-child { border-top:1px solid #edf0eb; }
 .settings-source { display:flex; align-items:center; gap:12px; border-top:1px solid #edf0eb; padding:12px 0; }
 .settings-source-initial { display:grid; place-items:center; width:29px; height:29px; border:1px solid #e3e9dd; border-radius:7px; background:#f3f6ee; color:#607049; font-size:12px; font-weight:600; flex-shrink:0; }
 .settings-source h3 { font-size:12px; }
@@ -74,3 +74,5 @@
 .settings-website-link:hover { color:#263e16; text-decoration:underline; text-underline-offset:3px; }
 .settings-website-link:focus-visible { outline:2px solid #527c19; outline-offset:4px; border-radius:3px; }
 .settings-footer > span { flex-shrink:0; }
+
+.settings-account-avatar img { width:100%; height:100%; border-radius:inherit; object-fit:cover; }

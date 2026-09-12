@@ -433,6 +433,9 @@ pub fn agent_display_name(agent_id: &str) -> &str {
         "zcode" => "ZCode",
         "pi" => "Pi",
         "deepseek-harness" => "DeepSeek Harness",
+        "opencode" => "OpenCode",
+        "workbuddy" => "WorkBuddy",
+        "doubao-work" => "Doubao Work",
         other => other,
     }
 }

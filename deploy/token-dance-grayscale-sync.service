@@ -1,0 +1,18 @@
+[Unit]
+Description=TokenDance grayscale top-N prod to dev mirror
+After=network.target docker.service
+# Test-host only. Never point the target DSN at tokendance_prod.
+
+[Service]
+User=tokendance
+Group=tokendance
+WorkingDirectory=/opt/token-dance/tools/grayscale-sync
+EnvironmentFile=/etc/token-dance/grayscale.env
+Environment=TOKENDANCE_GRAYSCALE_LOOP=true
+ExecStart=/opt/token-dance/tools/grayscale-sync/token-dance-grayscale-sync --loop
+Restart=on-failure
+RestartSec=15
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

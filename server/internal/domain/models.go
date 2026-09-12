@@ -502,13 +502,29 @@ type MetricBigInt struct {
 	Supported bool    `json:"supported"`
 }
 
+// MetricCoverage is the known/observed coverage of a metric sample set.
+type MetricCoverage string
+
+const (
+	MetricCoverageNone     MetricCoverage = "none"
+	MetricCoveragePartial  MetricCoverage = "partial"
+	MetricCoverageComplete MetricCoverage = "complete"
+)
+
 type MetricDecimal struct {
-	Value     *string `json:"value"`
-	Supported bool    `json:"supported"`
+	Value         *string         `json:"value"`
+	Supported     bool            `json:"supported"`
+	KnownCount    *int64          `json:"knownCount,omitempty"`
+	ObservedCount *int64          `json:"observedCount,omitempty"`
+	Coverage      *MetricCoverage `json:"coverage,omitempty"`
 }
 
 type PersonalSummaryMetrics struct {
+	// EstimatedCost is the single-currency scalar card. When multiple
+	// currencies exist without an FX rate, Amount/Currency are null and
+	// EstimatedCosts carries the per-currency breakdown.
 	EstimatedCost      MetricCost    `json:"estimatedCost"`
+	EstimatedCosts     []MetricCost  `json:"estimatedCosts,omitempty"`
 	TotalTokens        MetricBigInt  `json:"totalTokens"`
 	GeneratedCodeLines MetricBigInt  `json:"generatedCodeLines"`
 	TokensPerCodeLine  MetricDecimal `json:"tokensPerCodeLine"`
@@ -670,6 +686,46 @@ type LeaderboardResponse struct {
 	NextCursor        *string            `json:"nextCursor,omitempty"`
 	DataWatermarkAt   *time.Time         `json:"dataWatermarkAt"`
 	Stale             *bool              `json:"stale,omitempty"`
+}
+
+// CommunityCostDTO is one currency's community total. Amounts are never
+// FX-converted; clients must not SUM these into a single `$` figure.
+type CommunityCostDTO struct {
+	Amount   float64 `json:"amount"`
+	Currency string  `json:"currency"`
+}
+
+// CommunityStatsResponse projects precomputed daily community totals. Every
+// field is nil/omitted when the precomputed row is missing so clients can
+// render an empty state instead of a zero.
+type CommunityStatsResponse struct {
+	MetricDate   string                  `json:"metricDate"`
+	Timezone     string                  `json:"timezone"`
+	Tokens       *string                 `json:"tokens,omitempty"`
+	Developers   *uint64                 `json:"developers,omitempty"`
+	CodeLines    *string                 `json:"codeLines,omitempty"`
+	Interactions *string                 `json:"interactions,omitempty"`
+	CostAmount   *float64                `json:"costAmount,omitempty"`
+	Costs        []CommunityCostDTO      `json:"costs,omitempty"`
+	Deltas       *CommunityStatsDeltaDTO `json:"deltas,omitempty"`
+	Harnesses    []CommunityHarnessDTO   `json:"harnesses,omitempty"`
+	ComputedAt   *time.Time              `json:"computedAt,omitempty"`
+}
+
+type CommunityStatsDeltaDTO struct {
+	Tokens       *float64 `json:"tokens,omitempty"`
+	Developers   *float64 `json:"developers,omitempty"`
+	CodeLines    *float64 `json:"codeLines,omitempty"`
+	Interactions *float64 `json:"interactions,omitempty"`
+	CostAmount   *float64 `json:"costAmount,omitempty"`
+}
+
+// CommunityHarnessDTO is one harness's share of the community day (top N).
+type CommunityHarnessDTO struct {
+	AgentID  string   `json:"agentId"`
+	Label    string   `json:"label"`
+	Tokens   *string  `json:"tokens,omitempty"`
+	SharePct *float64 `json:"sharePct,omitempty"`
 }
 
 // Public Search Models

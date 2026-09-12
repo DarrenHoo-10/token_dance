@@ -34,23 +34,17 @@ func NewServiceWithConfig(st store.Store, cfg *config.Config, clk clock.Clock) *
 	return &Service{store: st.Analytics(), pStore: st.Profile(), clk: clk, cursorKeys: cfg.IdempotencyKeys}
 }
 
-func userLocation(name string) (*time.Location, string) {
-	loc, err := time.LoadLocation(name)
-	if err != nil || loc == nil {
-		return time.UTC, "UTC"
-	}
-	return loc, name
-}
-
+// ResolveTimeRange cuts today/7d/30d/10w/all/custom windows on the product
+// statistics calendar (Beijing, UTC+8). userTZ is ignored so personal tokens,
+// streak and rank cannot disagree with the public leaderboard.
 func (s *Service) ResolveTimeRange(key, userTZ, customFrom, customTo string) (domain.TimeRange, error) {
 	now := s.clk.Now()
-	loc, timezone := userLocation(userTZ)
-	localNow := now.In(loc)
+	loc := domain.DayTZ
 	rangeKey := domain.TimeRangeKey(key)
 	if rangeKey == "" {
 		rangeKey = domain.TimeRange30d
 	}
-	startOfToday := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, loc)
+	startOfToday := domain.StartOfDay(now)
 	from := startOfToday.AddDate(0, 0, -29)
 	to := now
 	switch rangeKey {
@@ -81,7 +75,7 @@ func (s *Service) ResolveTimeRange(key, userTZ, customFrom, customTo string) (do
 	default:
 		return domain.TimeRange{}, domain.NewAppError(400, "API_INVALID_ARGUMENT", "analytics.invalidRange", "unsupported range", nil, domain.ErrInvalidArgument)
 	}
-	return domain.TimeRange{Key: rangeKey, From: from.UTC(), To: to.UTC(), Timezone: timezone}, nil
+	return domain.TimeRange{Key: rangeKey, From: from.UTC(), To: to.UTC(), Timezone: domain.DayTZName}, nil
 }
 
 func (s *Service) ParseTimeRange(key string, userTZ string) domain.TimeRange {

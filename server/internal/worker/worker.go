@@ -21,17 +21,20 @@ import (
 )
 
 type Worker struct {
-	pricing        *pricing.Client
-	priceCursor    uint64
-	priceRetry     time.Time
-	db             *sql.DB
-	workerID       string
-	clk            clock.Clock
-	cipher         *crypto.AEADCipher
-	emailProvider  email.Provider
-	storage        provider.ObjectStorage
-	ranking        *ranking.Index
-	lastHotPublish time.Time
+	pricing            *pricing.Client
+	priceCursor        uint64
+	priceRetry         time.Time
+	db                 *sql.DB
+	workerID           string
+	clk                clock.Clock
+	cipher             *crypto.AEADCipher
+	emailProvider      email.Provider
+	storage            provider.ObjectStorage
+	ranking            *ranking.Index
+	lastHotPublish     time.Time
+	lastStatsFinalized time.Time
+	// eventPipelineV2Workers gates telemetry aggregation (P8 rollback switch).
+	eventPipelineV2Workers bool
 }
 
 func NewWorker(db *sql.DB, clk clock.Clock) *Worker {
@@ -57,13 +60,18 @@ func NewWorkerWithFull(db *sql.DB, clk clock.Clock, cipher *crypto.AEADCipher, e
 	workerID := fmt.Sprintf("wrk_%s_%d_%s", hostname, os.Getpid(), randSuffix)
 
 	return &Worker{
-		db:            db,
-		workerID:      workerID,
-		clk:           clk,
-		cipher:        cipher,
-		emailProvider: emailProvider,
-		storage:       storage,
+		db:                     db,
+		workerID:               workerID,
+		clk:                    clk,
+		cipher:                 cipher,
+		emailProvider:          emailProvider,
+		storage:                storage,
+		eventPipelineV2Workers: true,
 	}
+}
+
+func (w *Worker) SetEventPipelineV2Workers(enabled bool) {
+	w.eventPipelineV2Workers = enabled
 }
 
 func (w *Worker) SetStorage(s provider.ObjectStorage) {
@@ -608,6 +616,12 @@ func (w *Worker) RunPass(ctx context.Context) {
 	}
 	if _, err := w.ProcessRankingOutbox(ctx); err != nil {
 		log.Printf("[Worker %s] Ranking outbox processing error: %v", w.workerID, err)
+	}
+	if _, err := w.ProcessCommunityStatsOutbox(ctx); err != nil {
+		log.Printf("[Worker %s] Community stats outbox processing error: %v", w.workerID, err)
+	}
+	if err := w.ProcessCommunityStatsFinalize(ctx); err != nil {
+		log.Printf("[Worker %s] Community stats finalize error: %v", w.workerID, err)
 	}
 	if err := w.ProcessRankingSnapshots(ctx); err != nil {
 		log.Printf("[Worker %s] Ranking snapshot processing error: %v", w.workerID, err)

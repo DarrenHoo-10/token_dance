@@ -53,3 +53,8 @@
   .team-compact-cards { display: flex; flex-direction: column; gap: 12px; }
   .team-drawer { width: 100%; }
 }
+.team-metric-grid-4 .metric-card-hint {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--good);
+}

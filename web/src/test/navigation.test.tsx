@@ -36,8 +36,10 @@ describe('Navigation & Locale Switching Tests', () => {
 
     await waitFor(() => {
       expect(screen.getByText('TokenBoard')).toBeInTheDocument();
-      expect(screen.getByText('社区')).toBeInTheDocument();
-      expect(screen.getByText('团队')).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: '客户端下载' })).toHaveAttribute('href', '/download');
+      expect(screen.getByRole('link', { name: '使用文档' })).toHaveAttribute('href', '/docs');
+      expect(screen.queryByRole('link', { name: '社区' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: '团队' })).not.toBeInTheDocument();
     });
     expect(screen.queryByText('发现')).not.toBeInTheDocument();
     expect(screen.queryByRole('search')).not.toBeInTheDocument();
@@ -45,11 +47,15 @@ describe('Navigation & Locale Switching Tests', () => {
     const enBtn = screen.getByText('EN');
     fireEvent.click(enBtn);
 
-    expect(screen.getByText('Community')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Community' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Teams' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sign In' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Download' })).toHaveAttribute('href', '/download');
+    expect(screen.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/docs');
 
     const zhBtn = screen.getByText('中文');
     fireEvent.click(zhBtn);
-    expect(screen.getByText('社区')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '社区' })).not.toBeInTheDocument();
   });
 
   it('preserves query params, route, and input state across locale switches', () => {

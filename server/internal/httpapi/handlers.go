@@ -1634,6 +1634,19 @@ func (h *Handlers) GetLeaderboards(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, res)
 }
 
+// GetLeaderboardsStats serves precomputed community totals for the home hero.
+// It only reads rows the stats worker published; there is no on-the-fly
+// aggregation, so a cold day yields omitted fields.
+func (h *Handlers) GetLeaderboardsStats(w http.ResponseWriter, r *http.Request) {
+	res, err := h.leaderboard.GetCommunityStats(r.Context(), time.Now())
+	if err != nil {
+		WriteError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	WriteJSON(w, http.StatusOK, res)
+}
+
 func (h *Handlers) GetMyLeaderboards(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	q := leaderboardQueryFromRequest(r)

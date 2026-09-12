@@ -2163,6 +2163,19 @@ components:
           nullable: true
         supported:
           type: boolean
+        knownCount:
+          type: integer
+          format: int64
+          nullable: true
+        observedCount:
+          type: integer
+          format: int64
+          nullable: true
+        coverage:
+          type: string
+          nullable: true
+          description: none | partial | complete
+          enum: [none, partial, complete]
     PersonalSummary:
       type: object
       required:
@@ -2189,6 +2202,11 @@ components:
           properties:
             estimatedCost:
               $ref: '#/components/schemas/MetricCost'
+            estimatedCosts:
+              type: array
+              description: Per-currency cost totals. Never FX-converted into a single amount.
+              items:
+                $ref: '#/components/schemas/MetricCost'
             totalTokens:
               $ref: '#/components/schemas/MetricBigInt'
             generatedCodeLines:
@@ -2687,7 +2705,7 @@ components:
           type: string
         generation:
           type: string
-          description: UTC calendar generation for the current window scores
+          description: Beijing (UTC+8) calendar generation for the current window scores
         timezone:
           type: string
         totalEntries:

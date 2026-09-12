@@ -31,7 +31,7 @@ export const PersonalDashboardPage: React.FC = () => {
   const { showToast } = useNotification();
   const navigate = useNavigate();
 
-  const [range, setRange] = useState('30d');
+  const [range, setRange] = useState('today');
   const [selectedAgent, setSelectedAgent] = useState('all');
   const [selectedModel, setSelectedModel] = useState('all');
 
@@ -143,9 +143,6 @@ export const PersonalDashboardPage: React.FC = () => {
         <div>
           <p className="eyebrow">{t('nav.tokenBoard')}</p>
           <h1>{t('publicProfile.headline')}</h1>
-          <p className="text-muted" style={{ fontSize: 13 }}>
-            {t('dashboard.subheadline')}
-          </p>
         </div>
 
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
@@ -194,9 +191,6 @@ export const PersonalDashboardPage: React.FC = () => {
           <div className="panel-header">
             <div>
               <h2>{t('dashboard.tokenTrends')}</h2>
-              <p className="text-muted" style={{ fontSize: 12 }}>
-                {t('dashboard.tokenTrendsSub')}
-              </p>
             </div>
 
             <div style={{ display: 'flex', gap: 8 }}>
@@ -289,9 +283,6 @@ export const PersonalDashboardPage: React.FC = () => {
           <div className="panel-header">
             <div>
               <h2>{t('dashboard.skillRanking')}</h2>
-              <p className="text-muted" style={{ fontSize: 12 }}>
-                {t('dashboard.skillRankingSub')}
-              </p>
             </div>
             <Badge variant="lime">{t('dashboard.topSkills')}</Badge>
           </div>
@@ -304,9 +295,6 @@ export const PersonalDashboardPage: React.FC = () => {
           <div className="panel-header">
             <div>
               <h2>{t('dashboard.syncStatus')}</h2>
-              <p className="text-muted" style={{ fontSize: 12 }}>
-                {t('dashboard.collectorDevices')}
-              </p>
             </div>
             <Button
               variant="ghost"

@@ -1,0 +1,40 @@
+title = "TokenDance secret detection"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "infrastructure-password-literal"
+description = "Hardcoded infrastructure passwords, including low-entropy passwords"
+regex = '''(?im)\b(?:SSH_PASSWORD|NEW_ROOT|NEW_APP|MYSQL_ROOT_PASSWORD|MYSQL_PASSWORD|MYSQL_APP_USER_PASSWORD)\s*=\s*["']([^"'\r\n$<>]{8,})["']'''
+secretGroup = 1
+[[rules.allowlists]]
+regexTarget = "secret"
+regexes = ['''(?i)^(?:REDACTED_CREDENTIAL|change[-_]?me|replace[-_].*|your[-_].*|example[-_].*|test[-_].*)$''']
+
+[[rules]]
+id = "infrastructure-password-unquoted"
+description = "Unquoted shell infrastructure passwords"
+regex = '''(?im)^\s*(?:export\s+)?(?:SSH_PASSWORD|NEW_ROOT|NEW_APP|MYSQL_ROOT_PASSWORD|MYSQL_PASSWORD|MYSQL_APP_USER_PASSWORD)\s*=\s*([a-zA-Z0-9_!@#%^&*.+/=-]{8,})[\t ]*\r?$'''
+secretGroup = 1
+[[rules.allowlists]]
+regexTarget = "secret"
+regexes = ['''(?i)^(?:REDACTED_CREDENTIAL|change[-_]?me|replace[-_].*|your[-_].*|example[-_].*|test[-_].*)$''']
+
+[[rules]]
+id = "mysql-dsn-password"
+description = "Literal password in a Go MySQL DSN"
+regex = '''[a-zA-Z0-9_]+:([^\s"'<>$:@]{8,})@tcp\('''
+secretGroup = 1
+[[rules.allowlists]]
+regexTarget = "secret"
+regexes = ['''(?i)^(?:REDACTED_CREDENTIAL|change[-_]?me|replace[-_].*|your[-_].*|example[-_].*|test[-_].*)$''']
+
+[[rules]]
+id = "login-json-password"
+description = "Literal password in login JSON payloads"
+regex = '''(?i)"password"\s*:\s*"([^"\r\n$<>]{8,})"'''
+secretGroup = 1
+[[rules.allowlists]]
+regexTarget = "secret"
+regexes = ['''(?i)^(?:REDACTED_CREDENTIAL|change[-_]?me|replace[-_].*|your[-_].*|example[-_].*|test[-_].*)$''']

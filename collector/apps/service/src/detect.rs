@@ -22,6 +22,9 @@ pub fn detect_from_home(home: &Path) -> DetectionSnapshot {
     detect_cursor(home, &mut snapshot);
     detect_deepseek(home, &mut snapshot);
     detect_pi(home, &mut snapshot);
+    detect_opencode(home, &mut snapshot);
+    detect_workbuddy(home, &mut snapshot);
+    detect_doubao_work(home, &mut snapshot);
     snapshot
 }
 
@@ -135,7 +138,9 @@ pub fn enumerate_all_source_files(snapshot: &DetectionSnapshot) -> Vec<Enumerate
 fn is_sqlite_path(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("sqlite") || ext.eq_ignore_ascii_case("vscdb"))
+        .is_some_and(|ext| {
+        ext.eq_ignore_ascii_case("sqlite") || ext.eq_ignore_ascii_case("vscdb") || ext.eq_ignore_ascii_case("db")
+    })
 }
 
 fn mtime_of(path: &Path) -> SystemTime {
@@ -294,6 +299,17 @@ fn detect_cursor(home: &Path, snapshot: &mut DetectionSnapshot) {
         let mut detection = AgentDetection::installed("0");
         detection.cursor_mode = Some(crate::DetectedCursorMode::PersonalLocal);
         snapshot.insert(OfficialAgent::Cursor, detection);
+        let transcripts = local.join("projects");
+        if transcripts.is_dir() {
+            snapshot.configure_source(
+                OfficialAgent::Cursor,
+                adapter_cursor::TRANSCRIPT_SOURCE_ID,
+                DetectedSourceConfig {
+                    path: Some(transcripts),
+                    ..DetectedSourceConfig::default()
+                },
+            );
+        }
     }
 }
 
@@ -317,6 +333,108 @@ fn detect_deepseek(home: &Path, snapshot: &mut DetectionSnapshot) {
             },
         );
     }
+}
+
+fn detect_opencode(home: &Path, snapshot: &mut DetectionSnapshot) {
+    let mut candidates = vec![
+        home.join(".local")
+            .join("share")
+            .join("opencode")
+            .join("opencode.db"),
+        home.join(".opencode").join("opencode.db"),
+    ];
+    if let Some(local) = env_dir("LOCALAPPDATA") {
+        candidates.push(local.join("opencode").join("opencode.db"));
+    }
+    let Some(db) = candidates.into_iter().find(|path| path.is_file()) else {
+        let desktop = env_dir("APPDATA").map(|path| path.join("ai.opencode.desktop"));
+        if desktop.as_ref().is_some_and(|path| path.is_dir()) {
+            snapshot.insert(OfficialAgent::OpenCode, AgentDetection::installed("0"));
+        }
+        return;
+    };
+    match acquisition::detect_opencode_sqlite(&db) {
+        Some(schema) => {
+            let mut item =
+                AgentDetection::installed(schema.app_version.as_deref().unwrap_or("1.0.0"));
+            item.sqlite_fingerprint = Some(schema.fingerprint.to_string());
+            snapshot.insert(OfficialAgent::OpenCode, item);
+            snapshot.configure_source(
+                OfficialAgent::OpenCode,
+                adapter_opencode::SQLITE_SOURCE_ID,
+                DetectedSourceConfig {
+                    path: Some(db),
+                    ..DetectedSourceConfig::default()
+                },
+            );
+        }
+        None => {
+            snapshot.insert(OfficialAgent::OpenCode, AgentDetection::installed("0"));
+        }
+    }
+}
+
+fn detect_workbuddy(home: &Path, snapshot: &mut DetectionSnapshot) {
+    let roots = [
+        env_dir("LOCALAPPDATA").map(|path| path.join("WorkBuddy")),
+        env_dir("APPDATA").map(|path| path.join("@genie").join("workbuddy-desktop")),
+        env_dir("LOCALAPPDATA").map(|path| path.join("CodeBuddyExtension")),
+        Some(home.join(".codebuddy")),
+        Some(home.join(".workbuddy")),
+    ];
+    let present: Vec<PathBuf> = roots.into_iter().flatten().filter(|path| path.is_dir()).collect();
+    if present.is_empty() {
+        return;
+    }
+    snapshot.insert(
+        OfficialAgent::WorkBuddy,
+        AgentDetection::installed("1.0.0"),
+    );
+    if let Some(root) = present.into_iter().find(|path| dir_has_jsonl(path)) {
+        snapshot.configure_source(
+            OfficialAgent::WorkBuddy,
+            adapter_workbuddy::HISTORY_SOURCE_ID,
+            DetectedSourceConfig {
+                path: Some(root),
+                ..DetectedSourceConfig::default()
+            },
+        );
+    }
+}
+
+fn detect_doubao_work(home: &Path, snapshot: &mut DetectionSnapshot) {
+    let roots = [
+        env_dir("LOCALAPPDATA").map(|path| path.join("Doubao")),
+        env_dir("APPDATA").map(|path| path.join("Doubao")),
+        Some(home.join(".doubao-work")),
+        Some(home.join(".doubao")),
+    ];
+    let present: Vec<PathBuf> = roots.into_iter().flatten().filter(|path| path.is_dir()).collect();
+    if present.is_empty() {
+        return;
+    }
+    snapshot.insert(
+        OfficialAgent::DoubaoWork,
+        AgentDetection::installed("1.0.0"),
+    );
+    if let Some(root) = present.into_iter().find(|path| dir_has_jsonl(path)) {
+        snapshot.configure_source(
+            OfficialAgent::DoubaoWork,
+            adapter_doubao_work::HISTORY_SOURCE_ID,
+            DetectedSourceConfig {
+                path: Some(root),
+                ..DetectedSourceConfig::default()
+            },
+        );
+    }
+}
+
+fn env_dir(key: &str) -> Option<PathBuf> {
+    std::env::var_os(key).map(PathBuf::from)
+}
+
+fn dir_has_jsonl(root: &Path) -> bool {
+    !discover_jsonl_files(root).is_empty()
 }
 
 fn detect_pi(home: &Path, snapshot: &mut DetectionSnapshot) {
@@ -565,3 +683,4 @@ mod tests {
         assert!(files[0].to_string_lossy().contains("primary"));
     }
 }
+

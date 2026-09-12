@@ -7,9 +7,12 @@
   "protocolVersion": "1.0",
   "agent": { "id": "cursor", "versionRange": ">=1.0.0" },
   "platforms": ["windows-x64", "windows-arm64", "macos-x64", "macos-arm64"],
-  "sources": ["remote_api", "sqlite_snapshot"],
+  "sources": ["remote_api", "sqlite_snapshot", "jsonl_tail"],
   "permissions": {
-    "readPaths": [{ "template": "AGENT_CONFIG_HOME", "relativeGlob": "User/globalStorage/state.vscdb", "access": "read" }],
+    "readPaths": [
+      { "template": "AGENT_CONFIG_HOME", "relativeGlob": "User/globalStorage/state.vscdb", "access": "read" },
+      { "template": "USER_HOME", "relativeGlob": ".cursor/projects/**/agent-transcripts/**", "access": "read" }
+    ],
     "writePaths": [],
     "commands": [],
     "networkDomains": ["api.cursor.com", "cursor.com"]

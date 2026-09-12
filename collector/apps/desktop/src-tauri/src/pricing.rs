@@ -202,6 +202,9 @@ pub fn estimate(m: &Model, u: &Request) -> Option<u64> {
 #[serde(rename_all = "camelCase")]
 pub struct CostCoverage {
     pub estimated_usd: u64,
+    /// Calculated costs by currency for the event pipeline; legacy rows only carry USD.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub estimated_costs: BTreeMap<String, u64>,
     pub estimated_requests: u64,
     pub unpriced_requests: u64,
     pub detailed_tokens: u64,
@@ -209,6 +212,10 @@ pub struct CostCoverage {
 impl CostCoverage {
     pub fn add(&mut self, other: &Self) {
         self.estimated_usd = self.estimated_usd.saturating_add(other.estimated_usd);
+        for (currency, amount) in &other.estimated_costs {
+            let total = self.estimated_costs.entry(currency.clone()).or_default();
+            *total = total.saturating_add(*amount);
+        }
         self.estimated_requests += other.estimated_requests;
         self.unpriced_requests += other.unpriced_requests;
         self.detailed_tokens = self.detailed_tokens.saturating_add(other.detailed_tokens);

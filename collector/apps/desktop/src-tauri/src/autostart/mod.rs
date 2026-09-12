@@ -1,6 +1,6 @@
 #[cfg(not(target_os = "windows"))]
 use std::fs;
-#[cfg(target_os = "macos")]
+#[cfg(not(target_os = "windows"))]
 use std::path::Path;
 use std::path::PathBuf;
 #[cfg(target_os = "windows")]
@@ -89,6 +89,9 @@ struct WindowsAutostart {
 }
 
 #[cfg(target_os = "windows")]
+const LEGACY_RUN_VALUE: &str = "TokenDanceCollector";
+
+#[cfg(target_os = "windows")]
 impl WindowsAutostart {
     fn key(&self) -> &'static str {
         r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
@@ -96,6 +99,51 @@ impl WindowsAutostart {
 
     fn command(&self) -> String {
         format!("\"{}\" --minimized", self.exe_path.display())
+    }
+
+    fn query_value(&self, name: &str) -> Result<Option<String>, String> {
+        let output = self.run_reg(&["query", self.key(), "/v", name])?;
+        if output.status.success() {
+            Ok(Some(String::from_utf8_lossy(&output.stdout).into_owned()))
+        } else if output.status.code() == Some(1) {
+            Ok(None)
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        }
+    }
+
+    fn value_matches(&self, name: &str) -> Result<bool, String> {
+        Ok(self
+            .query_value(name)?
+            .is_some_and(|stdout| stdout.contains(&self.command())))
+    }
+
+    fn delete_value(&self, name: &str) -> Result<(), String> {
+        let output = self.run_reg(&["delete", self.key(), "/v", name, "/f"])?;
+        if output.status.success() || output.status.code() == Some(1) {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        }
+    }
+
+    fn write_value(&self) -> Result<(), String> {
+        let output = self.run_reg(&[
+            "add",
+            self.key(),
+            "/v",
+            &self.app_name,
+            "/t",
+            "REG_SZ",
+            "/d",
+            &self.command(),
+            "/f",
+        ])?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        }
     }
 
     fn run_reg(&self, args: &[&str]) -> Result<std::process::Output, String> {
@@ -126,36 +174,24 @@ impl AutostartPlatform for WindowsAutostart {
     }
 
     fn is_enabled(&self) -> Result<bool, String> {
-        let output = self.run_reg(&["query", self.key(), "/v", &self.app_name])?;
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).contains(&self.command()))
-        } else if output.status.code() == Some(1) {
-            Ok(false)
-        } else {
-            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        if self.value_matches(&self.app_name)? {
+            return Ok(true);
         }
+        if self.value_matches(LEGACY_RUN_VALUE)? {
+            self.write_value()?;
+            self.delete_value(LEGACY_RUN_VALUE)?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     fn set_enabled(&self, enabled: bool) -> Result<(), String> {
-        let output = if enabled {
-            self.run_reg(&[
-                "add",
-                self.key(),
-                "/v",
-                &self.app_name,
-                "/t",
-                "REG_SZ",
-                "/d",
-                &self.command(),
-                "/f",
-            ])?
+        if enabled {
+            self.write_value()?;
+            self.delete_value(LEGACY_RUN_VALUE)
         } else {
-            self.run_reg(&["delete", self.key(), "/v", &self.app_name, "/f"])?
-        };
-        if output.status.success() || (!enabled && output.status.code() == Some(1)) {
-            Ok(())
-        } else {
-            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+            self.delete_value(&self.app_name)?;
+            self.delete_value(LEGACY_RUN_VALUE)
         }
     }
 }
@@ -183,7 +219,7 @@ fn native_platform(_app_name: &str, exe_path: PathBuf) -> Arc<dyn AutostartPlatf
         method: "XDG_Autostart_Desktop",
         path: home.join(".config/autostart/tokendance-collector.desktop"),
         content: format!(
-            "[Desktop Entry]\nType=Application\nName=TokenDance Collector\nExec=\"{}\" --minimized\nX-GNOME-Autostart-enabled=true\n",
+            "[Desktop Entry]\nType=Application\nName=TokenDance\nExec=\"{}\" --minimized\nX-GNOME-Autostart-enabled=true\n",
             exe_path.display()
         ),
     })

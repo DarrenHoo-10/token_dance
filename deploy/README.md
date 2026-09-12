@@ -85,3 +85,11 @@ Pop-Location
 保留上一版本目录。将 `/opt/token-dance/current` 原子切换回旧目录后，重启两个服务；若 Nginx 有变更，从该次发布备份恢复配置，`nginx -t` 通过后 reload。数据库迁移不能仅靠回退二进制撤销：需先确认旧版本兼容性，必要时另行审核数据库备份恢复。备份保存在 Web 根目录之外。
 
 首次上线验证（2026-09-05）：生产迁移成功，两个服务 active，HTTPS readiness 200，网页浏览器冒烟通过，对象存储和 SMTP 认证通过；未向用户发送测试邮件。
+
+## 测试库灰度数据
+
+`token-dance-grayscale-sync` 把生产全部时间榜前 10 名的用量异步写入 `tokendance_dev`，供测试服务灰度。只应跑在测试侧，目标库不能是 `tokendance_prod`。说明见 [grayscale-sync.md](../docs/grayscale-sync.md)，单元文件为 `token-dance-grayscale-sync.service`。
+
+## 桌面安装包和更新清单
+
+网站部署与桌面发版分开。首次部署需配置独立的公共清单路径，后续发版更新 OSS 包和清单即可，不修改前端版本常量。详见 [桌面版本发布](../docs/desktop-release-publishing.md)。

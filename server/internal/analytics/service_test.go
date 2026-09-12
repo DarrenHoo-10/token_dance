@@ -6,24 +6,36 @@ import (
 	"time"
 
 	"tokendance/internal/clock"
+	"tokendance/internal/domain"
 	"tokendance/internal/store/memory"
 )
 
-func TestTimeRangesDSTAllAndCustom(t *testing.T) {
-	clk := clock.NewMockClock(time.Date(2026, 3, 8, 16, 0, 0, 0, time.UTC))
+func TestTimeRangesUseBeijingCalendar(t *testing.T) {
+	clk := clock.NewMockClock(time.Date(2026, 9, 10, 1, 51, 0, 0, time.UTC))
 	svc := NewService(memory.NewMemoryStore(), clk)
+	today, err := svc.ResolveTimeRange("today", "UTC", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if today.Timezone != "UTC+8" {
+		t.Fatalf("expected UTC+8 timezone label, got %q", today.Timezone)
+	}
+	wantFrom := time.Date(2026, 9, 9, 16, 0, 0, 0, time.UTC)
+	if !today.From.Equal(wantFrom) {
+		t.Fatalf("today must start at Beijing midnight, got %v", today.From)
+	}
 	custom, err := svc.ResolveTimeRange("custom", "America/New_York", "2026-03-08", "2026-03-08")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if duration := custom.To.Sub(custom.From) + time.Nanosecond; duration != 23*time.Hour {
-		t.Fatalf("expected 23-hour DST day, got %v", duration)
+	if duration := custom.To.Sub(custom.From) + time.Nanosecond; duration != 24*time.Hour {
+		t.Fatalf("expected 24-hour Beijing custom day, got %v", duration)
 	}
 	all, err := svc.ResolveTimeRange("all", "Asia/Tokyo", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if all.From.In(time.FixedZone("JST", 9*3600)).Year() != 1970 {
+	if all.From.In(domain.DayTZ).Year() != 1970 {
 		t.Fatalf("all range did not start at epoch calendar boundary")
 	}
 	if _, err := svc.ResolveTimeRange("custom", "UTC", "2026-04-01", "2026-03-01"); err == nil {

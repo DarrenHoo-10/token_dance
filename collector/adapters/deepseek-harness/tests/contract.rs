@@ -86,7 +86,7 @@ async fn contract_probe_sources_setup_and_decode() {
     assert!(events
         .iter()
         .all(|event| event.adapter_id == load_manifest().id));
-    assert_eq!(events[2].accuracy, Accuracy::Correlated);
+    assert_eq!(events[2].accuracy, Accuracy::Derived);
 }
 
 #[tokio::test]

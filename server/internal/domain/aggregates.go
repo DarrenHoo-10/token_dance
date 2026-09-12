@@ -37,6 +37,19 @@ type AggregateAck struct {
 	SHA256   string `json:"sha256"`
 }
 
+// TelemetryCursor is the per-device event watermark: everything up to it is
+// already stored server-side, so a device only needs to sync past this point
+// and never re-submits history the server already has.
+type TelemetryCursor struct {
+	InstallationID string     `json:"installationId"`
+	MaxEventPk     uint64     `json:"maxEventPk"`
+	LastOccurredAt *time.Time `json:"lastOccurredAt,omitempty"`
+	Day            string     `json:"day"`
+	// AckThroughDay is the last statistics day a device may locally mark as
+	// synced; it never includes the in-progress current day.
+	AckThroughDay string `json:"ackThroughDay"`
+}
+
 // Only these numeric fields reach SQL identifiers. Never use unvalidated
 // client-supplied metric keys as column names.
 var AggregateColumns = map[string][]string{
