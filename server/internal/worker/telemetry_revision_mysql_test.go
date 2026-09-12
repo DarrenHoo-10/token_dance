@@ -84,7 +84,7 @@ func TestUsageRevisionTemporaryMySQL(t *testing.T) {
 					t.Fatal(err)
 				}
 				ev := telemetryEventRow{ID: uint64(i + 1), InstallationID: "fixture-device", UserID: "fixture-user", HarnessID: "codex", EventType: "model_usage_recorded", OccurredAtMs: at, MetricSemanticsVersion: 1}
-				apply, err := w.prepareUsageRevision(ctx, tx, grain, &ev, at)
+				apply, err := w.prepareFactRevision(ctx, tx, grain, &ev, at)
 				if err != nil {
 					tx.Rollback()
 					t.Fatal(err)
@@ -117,6 +117,76 @@ func TestUsageRevisionTemporaryMySQL(t *testing.T) {
 			}
 			var tokens, known, requests int64
 			if err = db.QueryRowContext(ctx, "SELECT exact_token_total,token_total_known_count,model_request_count FROM telemetry_model_metrics WHERE delete_at IS NULL").Scan(&tokens, &known, &requests); err != nil {
+				t.Fatal(err)
+			}
+			if tokens != 20 || known != 1 || requests != 1 {
+				t.Fatalf("%s reverse=%v: got tokens=%d known=%d requests=%d", grain, reverse, tokens, known, requests)
+			}
+		}
+	}
+	if _, err = db.ExecContext(ctx, `CREATE TEMPORARY TABLE telemetry_harness_metrics (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,created_at BIGINT UNSIGNED,updated_at BIGINT UNSIGNED,delete_at BIGINT UNSIGNED NULL,user_id VARCHAR(100),installation_id VARCHAR(100),grain VARCHAR(10),bucket_start BIGINT,harness_id VARCHAR(100),metric_semantics_version INT,code_generated_lines BIGINT UNSIGNED DEFAULT 0,code_known_count BIGINT UNSIGNED DEFAULT 0,code_file_touch_count BIGINT UNSIGNED DEFAULT 0,UNIQUE(installation_id,grain,bucket_start,harness_id))`); err != nil {
+		t.Fatal(err)
+	}
+	for _, grain := range []string{"hour", "day", "month"} {
+		for _, reverse := range []bool{false, true} {
+			for _, q := range []string{"DELETE FROM telemetry_harness_metrics", "DELETE FROM telemetry_events", "DELETE FROM aggregate_dirty_days"} {
+				if _, err = db.ExecContext(ctx, q); err != nil {
+					t.Fatal(err)
+				}
+			}
+			at := int64(1789257600000)
+			bucket, err := domain.BucketStartMs(grain, at)
+			if err != nil {
+				t.Fatal(err)
+			}
+			payloads := []string{`{"meta":{"accuracy":"exact","time_source":"source_record"},"code":{"generated":"10","file_touch_count":"1"}}`, `{"meta":{"accuracy":"exact","time_source":"source_record"},"code":{"generated":"20","file_touch_count":"1"}}`}
+			for i, p := range payloads {
+				_, err = db.ExecContext(ctx, `INSERT INTO telemetry_events VALUES (?, 'fixture-device', UNHEX(REPEAT('ab',32)), ?, ?, 0, ?, 1, JSON_OBJECT('hour',2,'day',2,'month',2), NULL, ?)`, i+1, i+1, at, p, at)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			order := []int{0, 1}
+			if reverse {
+				order = []int{1, 0}
+			}
+			w := &Worker{}
+			for _, i := range order {
+				tx, err := db.BeginTx(ctx, nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				ev := telemetryEventRow{ID: uint64(i + 1), InstallationID: "fixture-device", UserID: "fixture-user", HarnessID: "codex", EventType: "code_changed", OccurredAtMs: at, MetricSemanticsVersion: 1}
+				apply, err := w.prepareFactRevision(ctx, tx, grain, &ev, at)
+				if err != nil {
+					tx.Rollback()
+					t.Fatal(err)
+				}
+				status := 4
+				if apply {
+					var p v2.EventPayload
+					if err = json.Unmarshal([]byte(payloads[i]), &p); err != nil {
+						tx.Rollback()
+						t.Fatal(err)
+					}
+					d := map[string]int64{}
+					accumulateCode(&p, d)
+					if err = mysqlstore.ApplyHarnessMetricDeltaTx(ctx, tx, "fixture-user", "fixture-device", grain, bucket, "codex", 1, at, d); err != nil {
+						tx.Rollback()
+						t.Fatal(err)
+					}
+					status = 3
+				}
+				if _, err = tx.ExecContext(ctx, "UPDATE telemetry_events SET status_json=JSON_SET(status_json,?,?) WHERE id=?", "$."+grain, status, i+1); err != nil {
+					tx.Rollback()
+					t.Fatal(err)
+				}
+				if err = tx.Commit(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var tokens, known, requests int64
+			if err = db.QueryRowContext(ctx, "SELECT code_generated_lines,code_known_count,code_file_touch_count FROM telemetry_harness_metrics WHERE delete_at IS NULL").Scan(&tokens, &known, &requests); err != nil {
 				t.Fatal(err)
 			}
 			if tokens != 20 || known != 1 || requests != 1 {

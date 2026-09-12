@@ -292,7 +292,7 @@ func (w *Worker) executeTelemetryTask(ctx context.Context, claim mysqlstore.Tele
 		return err
 	}
 
-	apply, err := w.prepareUsageRevision(ctx, tx, claim.Consumer, &ev, nowMs)
+	apply, err := w.prepareFactRevision(ctx, tx, claim.Consumer, &ev, nowMs)
 	if err != nil {
 		return err
 	}
@@ -976,10 +976,10 @@ func decodeB64URL32(s string) ([32]byte, error) {
 	return out, nil
 }
 
-// prepareUsageRevision replaces older applied usage contributions atomically.
+// prepareFactRevision replaces older applied usage/code contributions atomically.
 // The event rows retain ingestion identity; only this grain's processing state changes.
-func (w *Worker) prepareUsageRevision(ctx context.Context, tx *sql.Tx, grain string, ev *telemetryEventRow, nowMs int64) (bool, error) {
-	if ev.EventType != string(v2.EventTypeModelUsageRecorded) {
+func (w *Worker) prepareFactRevision(ctx context.Context, tx *sql.Tx, grain string, ev *telemetryEventRow, nowMs int64) (bool, error) {
+	if ev.EventType != string(v2.EventTypeModelUsageRecorded) && ev.EventType != "code_changed" {
 		return true, nil
 	}
 	var key []byte
@@ -1026,7 +1026,9 @@ func (w *Worker) prepareUsageRevision(ctx context.Context, tx *sql.Tx, grain str
 			return false, err
 		}
 		delta := map[string]int64{}
-		if err = accumulateUsage(&payload, delta); err != nil {
+		if ev.EventType == "code_changed" {
+			accumulateCode(&payload, delta)
+		} else if err = accumulateUsage(&payload, delta); err != nil {
 			return false, err
 		}
 		for k, v := range delta {
@@ -1036,7 +1038,12 @@ func (w *Worker) prepareUsageRevision(ctx context.Context, tx *sql.Tx, grain str
 		if err != nil {
 			return false, err
 		}
-		if err = mysqlstore.ApplyModelMetricDeltaTx(ctx, tx, ev.UserID, ev.InstallationID, grain, bucket, ev.HarnessID, p.model, p.semantics, nowMs, delta); err != nil {
+		if ev.EventType == "code_changed" {
+			err = mysqlstore.ApplyHarnessMetricDeltaTx(ctx, tx, ev.UserID, ev.InstallationID, grain, bucket, ev.HarnessID, p.semantics, nowMs, delta)
+		} else {
+			err = mysqlstore.ApplyModelMetricDeltaTx(ctx, tx, ev.UserID, ev.InstallationID, grain, bucket, ev.HarnessID, p.model, p.semantics, nowMs, delta)
+		}
+		if err != nil {
 			return false, err
 		}
 		if grain == domain.TelemetryGrainDay {
