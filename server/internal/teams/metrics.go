@@ -150,7 +150,7 @@ func AuthorizeEvent(evt UsageFact, member MembershipFact, grants []GrantWindow) 
 		return AuthorizationResult{}
 	}
 	mask := uint32(0)
-	if dimensionCovered(grants, domain.SharingNamed, evt.OccurredAt) {
+	if dimensionCovered(grants, domain.SharingBase, evt.OccurredAt) {
 		mask |= VisibilityNamed
 	}
 	if dimensionCovered(grants, domain.SharingClassification, evt.OccurredAt) {

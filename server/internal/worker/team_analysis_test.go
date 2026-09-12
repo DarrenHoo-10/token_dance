@@ -103,11 +103,10 @@ func TestCurrentGrantCoversHistoricalUsage(t *testing.T) {
 	}
 }
 
-func TestAnalysisVisibilityMaskRequiresNamedAndClassificationIndependently(t *testing.T) {
+func TestAnalysisVisibilityMaskNamedFollowsBase(t *testing.T) {
 	at := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	grants := []teamGrantWindow{
 		{dimension: string(domain.SharingBase), startsAt: at.Add(-time.Hour)},
-		{dimension: string(domain.SharingNamed), startsAt: at.Add(-time.Hour)},
 		{dimension: string(domain.SharingCost), startsAt: at.Add(-time.Hour)},
 	}
 	mask := analysisVisibilityMask(grants, at)

@@ -596,7 +596,7 @@ func (s *Service) ListMembers(ctx context.Context, userID, teamID string, q Memb
 		item := MemberDTO{
 			MembershipID: m.MembershipID, UserID: m.UserID, DisplayName: u.DisplayName, Handle: u.Handle,
 			Role: string(team.PublicRoleFor(m.UserID, m.BaseRole)),
-			JoinedAt: formatTime(m.JoinedAt), Sharing: sharing, CanOpenDetail: sharing.Named,
+			JoinedAt: formatTime(m.JoinedAt), Sharing: sharing, CanOpenDetail: sharing.Base,
 		}
 		if received, ok := receivedByMem[m.MembershipID]; ok {
 			formatted := formatTime(received)
@@ -631,20 +631,13 @@ func (s *Service) GetMember(ctx context.Context, userID, teamID, membershipID, s
 		return nil, err
 	}
 	memberRows := rowsForMembership(rows, membershipID)
-	named := false
-	for _, row := range memberRows {
-		if row.VisibilityMask&VisibilityNamed != 0 {
-			named = true
-			break
-		}
-	}
-	if !named {
-		return nil, errPermissionDenied()
-	}
 	u, _ := s.users.FindUserByID(ctx, target.UserID)
 	sharing := domain.SharingFlags{}
 	if st, err := s.teams.GetMySharing(ctx, teamID, target.UserID); err == nil && st != nil {
 		sharing = st.Sharing
+	}
+	if !sharing.Base {
+		return nil, errPermissionDenied()
 	}
 	snap, err := s.teams.GetReadySnapshot(ctx, teamID, snapshotID)
 	if err != nil || snap == nil {
@@ -2061,7 +2054,7 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 			key += *row.ModelID
 			modelTok[key] = AddIntDecimal(modelTok[key], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
 		}
-		if row.MembershipID != nil && row.VisibilityMask&VisibilityNamed != 0 {
+		if row.MembershipID != nil {
 			contribTok[*row.MembershipID] = AddIntDecimal(contribTok[*row.MembershipID], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
 		}
 		if row.Currency != nil && row.ReportedCostAmount != "" && row.ReportedCostAmount != "0" {
@@ -2287,10 +2280,8 @@ func assembleMemberDetail(target *domain.TeamMembership, user *domain.User, team
 	}
 	tokens := "0"
 	for _, row := range rows {
-		if row.VisibilityMask&VisibilityNamed != 0 {
-			tokens = AddIntDecimal(tokens, emptyZero(row.TokenExactTotal))
-			tokens = AddIntDecimal(tokens, emptyZero(row.TokenDerivedTotal))
-		}
+		tokens = AddIntDecimal(tokens, emptyZero(row.TokenExactTotal))
+		tokens = AddIntDecimal(tokens, emptyZero(row.TokenDerivedTotal))
 	}
 	state := domain.MetricAvailable
 	if tokens == "0" {
@@ -2322,7 +2313,7 @@ func assembleMemberDetail(target *domain.TeamMembership, user *domain.User, team
 		},
 		"agents": agents.Items, "models": models.Items,
 		"dimensions": map[string]string{
-			"named":          dimensionState(sharing.Named),
+			"named":          dimensionState(sharing.Base),
 			"classification": dimensionState(sharing.Classification),
 			"cost":           dimensionState(sharing.Cost),
 		},
@@ -2447,7 +2438,7 @@ func memberLastReceived(rows []domain.TeamAnalysisRow) map[string]time.Time {
 }
 
 func memberPeriodMetric(sharing domain.SharingFlags, tokens string) *domain.DecimalMetric {
-	if !sharing.Named {
+	if !sharing.Base {
 		return &domain.DecimalMetric{Value: "0", State: domain.MetricNotShared}
 	}
 	if strings.TrimSpace(tokens) == "" || tokens == "0" {
@@ -2479,7 +2470,7 @@ func memberSyncStatus(sharing domain.SharingFlags, lastReceived *string, now tim
 func memberTokenTotals(rows []domain.TeamAnalysisRow) map[string]string {
 	out := map[string]string{}
 	for _, row := range rows {
-		if row.MembershipID == nil || row.VisibilityMask&VisibilityNamed == 0 {
+		if row.MembershipID == nil {
 			continue
 		}
 		out[*row.MembershipID] = AddIntDecimal(out[*row.MembershipID], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
@@ -2684,10 +2675,12 @@ func normalizeSharing(flags *domain.SharingFlags) (domain.SharingFlags, error) {
 	if flags == nil {
 		return domain.SharingFlags{}, nil
 	}
-	if !flags.Valid() {
+	out := *flags
+	out.Named = out.Base
+	if !out.Valid() {
 		return domain.SharingFlags{}, fieldError("sharing", "teams.invalidSharing", "base=false cannot enable other sharing dimensions")
 	}
-	return *flags, nil
+	return out, nil
 }
 
 func normalizeInviteLinkParams(days, uses int) (int, int, error) {

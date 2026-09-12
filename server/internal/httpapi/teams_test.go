@@ -201,7 +201,7 @@ func TestCreateTeamCSRFAndValidation(t *testing.T) {
 		t.Fatalf("short name %d %s", rec.Code, rec.Body.String())
 	}
 
-	rec = app.do(http.MethodPost, "/api/v1/teams", []byte(`{"name":"星河开发组","timezone":"UTC","sharing":{"base":false,"named":true,"classification":false,"cost":false}}`), true, map[string]string{"Idempotency-Key": "k3"})
+	rec = app.do(http.MethodPost, "/api/v1/teams", []byte(`{"name":"星河开发组","timezone":"UTC","sharing":{"base":false,"named":false,"classification":true,"cost":false}}`), true, map[string]string{"Idempotency-Key": "k3"})
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid sharing %d %s", rec.Code, rec.Body.String())
 	}

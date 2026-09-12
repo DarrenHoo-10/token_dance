@@ -1033,7 +1033,7 @@ func (w *Worker) renewTeamAnalysisLease(ctx context.Context, claim *teamAnalysis
 
 func analysisVisibilityMask(grants []teamGrantWindow, at time.Time) uint32 {
 	var mask uint32
-	if grantCoversTime(grants, string(domain.SharingNamed), at) {
+	if grantCoversTime(grants, string(domain.SharingBase), at) {
 		mask |= visNamed
 	}
 	if grantCoversTime(grants, string(domain.SharingClassification), at) {

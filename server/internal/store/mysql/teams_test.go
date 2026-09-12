@@ -276,10 +276,13 @@ func TestMySQLTeams_SharingOpenClose(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open base: %v", err)
 	}
-	if !state.Sharing.Base || state.SharingVersion != 2 {
+	if !state.Sharing.Base || !state.Sharing.Named || state.SharingVersion != 2 {
 		t.Fatalf("after open base: %+v", state)
 	}
 	baseFrom := state.EffectiveFrom["base"]
+	if !state.EffectiveFrom["named"].Equal(baseFrom) {
+		t.Fatalf("named starts_at=%v base=%v", state.EffectiveFrom["named"], baseFrom)
+	}
 	t11 := now.Add(2 * time.Hour)
 	state, err = st.Teams().UpdateSharingTx(ctx, store.UpdateSharingTxInput{
 		ActorUserID:     alice,
@@ -289,10 +292,13 @@ func TestMySQLTeams_SharingOpenClose(t *testing.T) {
 		Now:             t11,
 	})
 	if err != nil {
-		t.Fatalf("open named: %v", err)
+		t.Fatalf("keep named: %v", err)
 	}
 	if !state.EffectiveFrom["base"].Equal(baseFrom) {
 		t.Fatalf("base starts_at reset %v -> %v", baseFrom, state.EffectiveFrom["base"])
+	}
+	if !state.EffectiveFrom["named"].Equal(baseFrom) {
+		t.Fatalf("named starts_at reset %v -> %v", baseFrom, state.EffectiveFrom["named"])
 	}
 	state, err = st.Teams().UpdateSharingTx(ctx, store.UpdateSharingTxInput{
 		ActorUserID:     alice,
@@ -302,10 +308,10 @@ func TestMySQLTeams_SharingOpenClose(t *testing.T) {
 		Now:             now.Add(3 * time.Hour),
 	})
 	if err != nil {
-		t.Fatalf("close named: %v", err)
+		t.Fatalf("named follows base: %v", err)
 	}
-	if state.Sharing.Named {
-		t.Fatal("named still open")
+	if !state.Sharing.Named {
+		t.Fatal("named must stay open with base sharing")
 	}
 	state, err = st.Teams().UpdateSharingTx(ctx, store.UpdateSharingTxInput{
 		ActorUserID:     alice,

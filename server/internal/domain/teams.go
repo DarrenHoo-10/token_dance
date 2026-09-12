@@ -6,7 +6,7 @@ import (
 )
 
 // TeamAnalysisRuleVersion invalidates snapshots and exports built under older disclosure rules.
-const TeamAnalysisRuleVersion = "4"
+const TeamAnalysisRuleVersion = "5"
 
 const (
 	TeamIDPrefix           = "tem_"
@@ -158,7 +158,7 @@ func (s SharingFlags) DimensionEnabled(dim SharingDimension) bool {
 	case SharingBase:
 		return s.Base
 	case SharingNamed:
-		return s.Named
+		return s.Base
 	case SharingClassification:
 		return s.Classification
 	case SharingCost:

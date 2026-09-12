@@ -279,7 +279,7 @@ COMMIT
 - Token 首版统计 `model_usage_recorded` 且 accuracy=exact/derived 的事件。优先采用标准化 token_total；缺失时只有适配器分项语义明确才派生。缓存 / reasoning 是否已含在 input/output 不能全局一律相加。
 - 分项语义不明的事件不冒充零 Token，返回 unsupportedEvents 与覆盖说明；estimated/correlated 另记质量计数，默认不混入精确用量。
 - 活跃成员：周期内至少有一条符合条件的有效 model_usage 事件，且属于当前有效成员；分母为读取时当前成员数。共享成员表示当前 base grant 开启的人数。
-- 贡献榜只排序 named 生效范围内的 Token。贡献榜数值之和可能小于团队总量，必须明确「已共享个人明细占比」，不能强制重标到 100%。并列使用 DENSE_RANK，稳定次序按 userId。
+- 贡献榜排序当前有效 base 共享范围内的 Token；named 不再作为单独开关，加入或开启基础共享后自动计入。贡献榜数值之和可能小于团队总量（未共享分类等），不能强制重标到 100%。并列使用 DENSE_RANK，稳定次序按 userId。
 - Agent / 模型筛选只作用于已授权分类的行；选全部时仍含 unshared_classification。所有指标、分布、成员周期数据及导出绑定同一个 snapshotId / filtersHash。
 - 同比只有同一成员集合、足够的授权历史与可比时间覆盖才计算；否则 comparison=null、reason=membership_changed / insufficient_history / no_baseline。
 
@@ -874,3 +874,9 @@ metrics 记录请求延迟 / 错误码、TEAM_MEMBERSHIP_EXISTS 次数、事务�
 - 当前成员、账号有效性、base/named/classification/cost 授权、撤回和删除屏障继续生效。不恢复加入或开启共享之后才计入的限制。新旧来源经权限掩码合并时以同一行键去重，使用大整数累计。
 - 小规模前 10 名测试镜像每轮在目标事务内完整替换选中成员的旧日汇总表与设备日汇总，修复历史缺口并跟随源端删除；不复制原始事件、生产密码或邮件身份。比较实际团队输入摘要，仅在变化时推进团队 source revision。默认时间字段保持源值，避免每次同步制造更新。
 - 0014 迁移增加行来源标识及用户/工具/事件类型/发生时间索引；旧规则快照和导出失效。成员页补充与总览一致的日期选择、缺日期提示及统计错误状态。
+
+## 2026-09-12：贡献榜随团队共享自动计入（规则版本 5）
+
+- 成员贡献不再要求单独的 named 授权。当前有效 base 共享即计入贡献榜、成员周期 Token、成员详情和成员导出中的姓名关联明细。classification / cost 仍为独立开关。
+- 创建团队和加入团队默认开启 base（named 随 base 生效），加入流程不再展示个人贡献开关。设置页仍可关闭基础共享。
+- 总览不再展示团队时区和历史日汇总说明条。规则版本升为 5，旧快照和导出失效。

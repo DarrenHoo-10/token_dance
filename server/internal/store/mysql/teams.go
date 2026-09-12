@@ -658,6 +658,7 @@ func (s *teamsStore) sharingState(ctx context.Context, q rowQueryer, mem domain.
 		}
 		effective[string(dim)] = g.StartsAt
 	}
+	flags.Named = flags.Base
 	return &domain.TeamSharingState{
 		MembershipID:   mem.MembershipID,
 		SharingVersion: mem.SharingVersion,
