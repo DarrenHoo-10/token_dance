@@ -33,7 +33,11 @@ fn write_crash_log(message: &str) {
     let path = crash_log_path();
     append_crash_record(&path, message);
     use std::io::Write;
-    let _ = writeln!(std::io::stderr(), "{message}\ncrash log: {}", path.display());
+    let _ = writeln!(
+        std::io::stderr(),
+        "{message}\ncrash log: {}",
+        path.display()
+    );
 }
 
 fn append_crash_record(path: &std::path::Path, message: &str) {
@@ -524,7 +528,9 @@ mod tests {
         super::append_crash_record(&path, "initial setup failure");
         super::append_crash_record(&path, "panic cannot unwind");
         let log = std::fs::read_to_string(path).unwrap();
-        assert!(log.find("initial setup failure").unwrap() < log.find("panic cannot unwind").unwrap());
+        assert!(
+            log.find("initial setup failure").unwrap() < log.find("panic cannot unwind").unwrap()
+        );
     }
 
     #[test]
@@ -534,8 +540,13 @@ mod tests {
         let history = "x".repeat(256 * 1024 + 1);
         std::fs::write(&path, &history).unwrap();
         super::append_crash_record(&path, "new failure");
-        assert_eq!(std::fs::read_to_string(path.with_extension("previous.log")).unwrap(), history);
-        assert!(std::fs::read_to_string(path).unwrap().contains("new failure"));
+        assert_eq!(
+            std::fs::read_to_string(path.with_extension("previous.log")).unwrap(),
+            history
+        );
+        assert!(std::fs::read_to_string(path)
+            .unwrap()
+            .contains("new failure"));
     }
 
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -639,6 +650,66 @@ mod tests {
         assert!(state.set_autostart(true).unwrap().enabled);
         assert!(state.get_autostart_status().unwrap().enabled);
         state.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn first_launch_enables_autostart_by_default() {
+        let (_root, state) = state().await;
+        assert!(
+            state.get_autostart_status().unwrap().enabled,
+            "install / first launch must turn autostart on"
+        );
+    }
+
+    #[tokio::test]
+    async fn later_launch_does_not_override_disabled_autostart() {
+        let root = tempfile::tempdir().unwrap();
+        {
+            let state = AppState::test(root.path().to_path_buf(), Arc::new(MockAutostart::new()))
+                .await
+                .unwrap();
+            assert!(state.get_autostart_status().unwrap().enabled);
+            assert!(!state.set_autostart(false).unwrap().enabled);
+        }
+        let state = AppState::test(root.path().to_path_buf(), Arc::new(MockAutostart::new()))
+            .await
+            .unwrap();
+        assert!(
+            !state.get_autostart_status().unwrap().enabled,
+            "existing installs must keep a user-disabled autostart off"
+        );
+    }
+
+    #[tokio::test]
+    async fn first_launch_autostart_failure_does_not_block_startup() {
+        struct FailEnable;
+        impl AutostartProvider for FailEnable {
+            fn is_enabled(&self) -> Result<bool, String> {
+                Ok(false)
+            }
+            fn enable(&self) -> Result<AutostartInfo, String> {
+                Err("denied".into())
+            }
+            fn disable(&self) -> Result<AutostartInfo, String> {
+                Err("denied".into())
+            }
+            fn get_info(&self) -> Result<AutostartInfo, String> {
+                Ok(AutostartInfo {
+                    enabled: false,
+                    status: crate::state::AutostartStatus::Disabled,
+                    platform: "test".into(),
+                    method: "memory".into(),
+                    target_path: "test://autostart".into(),
+                    details: "test provider".into(),
+                })
+            }
+        }
+        let root = tempfile::tempdir().unwrap();
+        let state = AppState::test(root.path().to_path_buf(), Arc::new(FailEnable))
+            .await
+            .unwrap();
+        assert!(!state.get_autostart_status().unwrap().enabled);
+        assert_eq!(state.get_daemon_status().await.status, "RUNNING");
     }
 
     #[tokio::test]

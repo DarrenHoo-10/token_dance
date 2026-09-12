@@ -110,6 +110,10 @@ assert(
   autostartContent.includes("SMAppService") && autostartContent.includes("login_items"),
   "macOS SMAppService.mainApp login-item autostart implementation"
 );
+const stateRs = fs.readFileSync(path.join(srcTauriRoot, "src", "state.rs"), "utf-8");
+assert(stateRs.includes("fn apply_default_autostart"), "First launch enables autostart by default");
+const settingsPage = fs.readFileSync(path.join(desktopRoot, "src", "SettingsPage.tsx"), "utf-8");
+assert(settingsPage.includes("autostart.enabled ?? true"), "Settings launch-at-login switch defaults on");
 
 // 4. Verify Frontend Components & UX Reusability
 console.log("\n[4/5] Verifying Frontend Components...");
