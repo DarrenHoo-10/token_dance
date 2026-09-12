@@ -104,20 +104,18 @@ export const TeamOverviewPage: React.FC = () => {
       {!noSharing && emptyTokens && <div className="team-status-banner">{t('teams.overview.waitingSync')}</div>}
 
       <div className="team-metric-grid-4">
-        <MetricCard label={t('teams.metrics.tokens')} value={tokens.available ? tokens.text : null} supported={tokens.available} hint={t('teams.metrics.tokensHint')} />
+        <MetricCard label={t('teams.metrics.tokens')} value={tokens.available ? tokens.text : null} supported={tokens.available} />
         <MetricCard
           label={t('teams.metrics.activeMembers')}
           value={analysis ? `${analysis.summary.activeMembers} / ${analysis.summary.currentMembers}` : null}
           supported={Boolean(analysis)}
-          hint={t('teams.metrics.activeHint')}
         />
         <MetricCard
           label={t('teams.metrics.sharingMembers')}
           value={sharingCount && currentMembers ? `${sharingCount}` : null}
           supported={Boolean(analysis)}
-          hint={t('teams.metrics.sharingHint')}
         />
-        <MetricCard label={costLabel} value={analysis ? costValue : null} supported={Boolean(analysis) && costValue !== '—'} hint={t('teams.metrics.costHint')} />
+        <MetricCard label={costLabel} value={analysis ? costValue : null} supported={Boolean(analysis) && costValue !== '—'} />
       </div>
 
       <div className="team-primary-grid">
