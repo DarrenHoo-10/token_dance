@@ -104,3 +104,10 @@ Redis 使用 `redis_dev`，对象存储使用独立 `token-dance-test/` 前缀�
 - 按用户截图移除总览四张指标卡底部的绿色说明。构建分支 `release`，完整 SHA `80ba777a69103a747ec33428669a6bb050f9062d`，干净工作区构建并发布。
 - 发布目录 `/opt/token-dance-test/releases/20260912-090152-80ba777a`，备份 `/var/backups/token-dance-test/20260912-090237`。包 SHA-256 `09e1d21dfb438961c8dc8fbac92f00f4687e66c9fd4facb42935932064b3e1f8`。
 - 构建通过；真实登录浏览器确认四张卡片仍显示，卡片内说明元素数量为 0，无页面运行时异常。截图保存在忽略目录 `build/test-release/cards-no-hints.png`。
+
+### 贡献榜自动计入与总览说明精简（17:38 CST）
+
+- 构建分支 `release`，完整 SHA `8b7a1b4ea44762062dfaa7af07d6ebd830fb6183`，干净 worktree 构建并发布。开发提交 `fac9ce303bc9abf0bfdba4141f4e41ee9ef04968`。
+- 发布目录 `/opt/token-dance-test/releases/20260912-093645-8b7a1b4e`；备份 `/var/backups/token-dance-test/20260912-093841`。包 SHA-256 `ff67ffb530911bd1c0770be81715d6f1c58d1ede306ffe84ceefc05bdb743f72`。
+- 总览不再显示团队时区和历史日汇总说明；贡献榜去掉「需主动授权姓名」文案。加入/创建团队默认开启基础共享，named 随 base 生效，规则版本 5。
+- 真实登录浏览器验证 7 天总览：时区/历史说明/姓名授权文案均不出现，四名成员贡献仍在，桌面与 390px 截图无运行时异常。测试和生产 `/readyz` 均为 200，公开 build-info 与 SHA 一致。生产未发布。
