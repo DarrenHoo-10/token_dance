@@ -13,8 +13,18 @@ export function useTeamAnalysis(input: {
   model?: string;
   enabled?: boolean;
 }) {
-  const { teamId, authRevision, range, from, to, agent, provider, model, enabled = true } = input;
-  const waitingForDates = range === 'custom' && (!from || !to);
+  const { teamId, authRevision, range: selectedRange, from: selectedFrom, to: selectedTo, agent, provider, model, enabled = true } = input;
+  const waitingForDates = selectedRange === 'custom' && (!selectedFrom || !selectedTo);
+  const lastCompleteRange = useRef<{ teamId?: string; range: string; from?: string; to?: string }>();
+  useEffect(() => {
+    if (!waitingForDates) {
+      lastCompleteRange.current = { teamId, range: selectedRange, from: selectedFrom, to: selectedTo };
+    }
+  }, [teamId, selectedRange, selectedFrom, selectedTo, waitingForDates]);
+  // Draft dates never replace the last complete query. Deep links start with today.
+  const { range, from, to } = waitingForDates
+    ? (lastCompleteRange.current?.teamId === teamId ? lastCompleteRange.current : undefined) || { range: 'today', from: undefined, to: undefined }
+    : { range: selectedRange, from: selectedFrom, to: selectedTo };
   const [analysis, setAnalysis] = useState<TeamAnalysisReady | null>(null);
   const [updating, setUpdating] = useState(false);
   const [updatingMessageKey, setUpdatingMessageKey] = useState<string | null>(null);
@@ -37,13 +47,6 @@ export function useTeamAnalysis(input: {
 
   useEffect(() => {
     if (!teamId || !enabled) return undefined;
-    if (waitingForDates) {
-      setAnalysis(null);
-      setUpdating(false);
-      setUpdatingMessageKey(null);
-      setError(null);
-      return undefined;
-    }
 
     const seq = seqRef.current + 1;
     seqRef.current = seq;
@@ -106,7 +109,7 @@ export function useTeamAnalysis(input: {
       controller.abort();
       if (timer) window.clearTimeout(timer);
     };
-  }, [agent, authRevision, enabled, from, model, provider, range, teamId, to, waitingForDates]);
+  }, [agent, authRevision, enabled, from, model, provider, range, teamId, to]);
 
   return { analysis, updating, updatingMessageKey, error, waitingForDates };
 }
