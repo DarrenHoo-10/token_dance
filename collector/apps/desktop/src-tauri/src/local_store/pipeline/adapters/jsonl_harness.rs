@@ -178,7 +178,12 @@ impl HarnessStrategy for JsonlHarnessStrategy {
     }
 
     fn discover(&self, budget: DiscoveryBudget) -> Result<Vec<SourceSpec>, RunnerError> {
-        let files = discover_jsonl_files(&self.root, ".jsonl", budget.max_sources);
+        let (files, _cursor) = discover_jsonl_files(
+            &self.root,
+            ".jsonl",
+            budget.max_sources,
+            budget.resume_after.as_deref(),
+        );
         Ok(files
             .into_iter()
             .map(|path| {

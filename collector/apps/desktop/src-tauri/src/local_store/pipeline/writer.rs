@@ -84,6 +84,29 @@ enum WriterCommand {
         limit: usize,
         reply: Sender<Result<Vec<i64>, PipelineError>>,
     },
+    SetHarnessSourcesEnabled {
+        harness_id: String,
+        enabled: bool,
+        reply: Sender<Result<usize, PipelineError>>,
+    },
+    ListSourceLocators {
+        harness_id: String,
+        reply: Sender<Result<Vec<String>, PipelineError>>,
+    },
+    QueryUsageSummary {
+        grain: super::buckets::Grain,
+        range_start: i64,
+        range_end: i64,
+        harness_id: Option<String>,
+        reply: Sender<Result<super::query::UsageSummary, PipelineError>>,
+    },
+    QueryHarnessTokenSeries {
+        grain: super::buckets::Grain,
+        range_start: i64,
+        range_end: i64,
+        harness_id: String,
+        reply: Sender<Result<Vec<(i64, i64)>, PipelineError>>,
+    },
     Shutdown {
         reply: Sender<()>,
     },
@@ -277,6 +300,58 @@ impl PipelineWriter {
         })
     }
 
+    pub fn set_harness_sources_enabled(
+        &self,
+        harness_id: &str,
+        enabled: bool,
+    ) -> Result<usize, PipelineError> {
+        self.request(0, |reply| WriterCommand::SetHarnessSourcesEnabled {
+            harness_id: harness_id.to_string(),
+            enabled,
+            reply,
+        })
+    }
+
+    pub fn list_source_locators(&self, harness_id: &str) -> Result<Vec<String>, PipelineError> {
+        self.request(0, |reply| WriterCommand::ListSourceLocators {
+            harness_id: harness_id.to_string(),
+            reply,
+        })
+    }
+
+    pub fn query_usage_summary(
+        &self,
+        grain: super::buckets::Grain,
+        range_start: i64,
+        range_end: i64,
+        harness_id: Option<&str>,
+    ) -> Result<super::query::UsageSummary, PipelineError> {
+        self.request(0, |reply| WriterCommand::QueryUsageSummary {
+            grain,
+            range_start,
+            range_end,
+            harness_id: harness_id.map(|s| s.to_string()),
+            reply,
+        })
+    }
+
+    /// `(bucket_start, token_total)` ascending for one harness/grain.
+    pub fn query_harness_token_series(
+        &self,
+        grain: super::buckets::Grain,
+        range_start: i64,
+        range_end: i64,
+        harness_id: &str,
+    ) -> Result<Vec<(i64, i64)>, PipelineError> {
+        self.request(0, |reply| WriterCommand::QueryHarnessTokenSeries {
+            grain,
+            range_start,
+            range_end,
+            harness_id: harness_id.to_string(),
+            reply,
+        })
+    }
+
     pub fn shutdown(mut self) {
         let (reply_tx, reply_rx) = mpsc::channel();
         let _ = self.enqueue(
@@ -440,6 +515,56 @@ fn writer_loop(store: &mut PipelineStore, rx: Receiver<QueuedBatch>, compensatio
                 reply,
             } => {
                 let _ = reply.send(store.list_due_sources(now_ms, limit));
+                false
+            }
+            WriterCommand::SetHarnessSourcesEnabled {
+                harness_id,
+                enabled,
+                reply,
+            } => {
+                let _ = reply.send(store.set_harness_sources_enabled(&harness_id, enabled));
+                false
+            }
+            WriterCommand::ListSourceLocators { harness_id, reply } => {
+                let _ = reply.send(store.list_source_locators(&harness_id));
+                false
+            }
+            WriterCommand::QueryUsageSummary {
+                grain,
+                range_start,
+                range_end,
+                harness_id,
+                reply,
+            } => {
+                let result = store.with_connection(|conn| {
+                    super::query::query_usage_summary(
+                        conn,
+                        grain,
+                        range_start,
+                        range_end,
+                        harness_id.as_deref(),
+                    )
+                });
+                let _ = reply.send(result);
+                false
+            }
+            WriterCommand::QueryHarnessTokenSeries {
+                grain,
+                range_start,
+                range_end,
+                harness_id,
+                reply,
+            } => {
+                let result = store.with_connection(|conn| {
+                    super::query::query_harness_token_series(
+                        conn,
+                        grain,
+                        range_start,
+                        range_end,
+                        &harness_id,
+                    )
+                });
+                let _ = reply.send(result);
                 false
             }
             WriterCommand::Shutdown { reply } => {

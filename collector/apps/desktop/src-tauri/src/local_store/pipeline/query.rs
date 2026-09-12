@@ -307,6 +307,34 @@ pub fn query_skill_ranks(
     Ok(out)
 }
 
+/// Ascending `(bucket_start, exact+derived token total)` for one harness/grain.
+pub fn query_harness_token_series(
+    conn: &Connection,
+    grain: Grain,
+    range_start: i64,
+    range_end: i64,
+    harness_id: &str,
+) -> Result<Vec<(i64, i64)>, PipelineError> {
+    let mut stmt = conn.prepare(
+        "SELECT bucket_start,
+                COALESCE(SUM(exact_token_total),0) + COALESCE(SUM(derived_token_total),0)
+         FROM model_metrics
+         WHERE delete_at IS NULL
+           AND grain=?1
+           AND harness_id=?2
+           AND bucket_start >= ?3 AND bucket_start < ?4
+         GROUP BY bucket_start
+         ORDER BY bucket_start ASC",
+    )?;
+    let rows = stmt
+        .query_map(
+            params![grain.as_str(), harness_id, range_start, range_end],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// Backlog for consumer health surfaces.
 #[derive(Debug, Clone, Serialize)]
 pub struct ConsumerBacklog {

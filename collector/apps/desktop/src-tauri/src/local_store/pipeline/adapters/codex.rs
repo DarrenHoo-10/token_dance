@@ -1,6 +1,6 @@
 //! Codex harness strategy: session JSONL is the sole usage authority.
 //! Native `event_msg` / `token_count` uses last_token_usage (request) and
-//! total_token_usage (cumulative baseline / delta). OTLP cumulative without
+//! total_token_usage (cumulative baseline / per-field delta). OTLP cumulative without
 //! differential evidence is Ignore/baseline-only.
 
 use std::path::{Path, PathBuf};
@@ -9,8 +9,9 @@ use std::sync::Arc;
 use serde_json::{json, Map, Value};
 
 use super::common::{
-    cumulative_delta, emit_skill_fact, emit_usage_fact, json_obj, parse_json_record,
-    remember_source_time, resolve_record_time, str_field, u64_field, SkillBook, UsageFactArgs,
+    cumulative_components_delta, cumulative_delta, emit_skill_fact, emit_usage_fact, json_obj,
+    parse_json_record, remember_source_time, resolve_record_time, str_field, u64_field,
+    CumulativeComponents, SkillBook, UsageFactArgs,
 };
 use super::identity::{source_key, TypedNativeKey};
 use super::jsonl_io::{discover_jsonl_files, read_jsonl_source};
@@ -27,7 +28,8 @@ pub const STREAM_OTLP: &str = "otlp";
 
 pub struct CodexStrategy {
     pub identity_secret: Vec<u8>,
-    pub sessions_root: PathBuf,
+    /// Detection source_id → root path (sessions, archived_sessions, …).
+    pub roots: Vec<(String, PathBuf)>,
     pub skill_book: SkillBook,
     pub skill_allocator: Arc<dyn Fn([u8; 32], &str) -> i64 + Send + Sync>,
 }
@@ -39,12 +41,35 @@ impl CodexStrategy {
         skill_book: SkillBook,
         skill_allocator: Arc<dyn Fn([u8; 32], &str) -> i64 + Send + Sync>,
     ) -> Self {
+        Self::with_roots(
+            identity_secret,
+            vec![("codex-sessions".into(), sessions_root.into())],
+            skill_book,
+            skill_allocator,
+        )
+    }
+
+    pub fn with_roots(
+        identity_secret: impl Into<Vec<u8>>,
+        roots: Vec<(String, PathBuf)>,
+        skill_book: SkillBook,
+        skill_allocator: Arc<dyn Fn([u8; 32], &str) -> i64 + Send + Sync>,
+    ) -> Self {
         Self {
             identity_secret: identity_secret.into(),
-            sessions_root: sessions_root.into(),
+            roots,
             skill_book,
             skill_allocator,
         }
+    }
+
+    /// Pick the strategy root whose path is a prefix of `locator_ref`.
+    pub fn source_id_for_locator(&self, locator_ref: &str) -> Option<&str> {
+        let locator = Path::new(locator_ref);
+        self.roots
+            .iter()
+            .find(|(_, root)| locator.starts_with(root) || locator == root.as_path())
+            .map(|(id, _)| id.as_str())
     }
 }
 
@@ -71,21 +96,89 @@ impl HarnessStrategy for CodexStrategy {
     }
 
     fn discover(&self, budget: DiscoveryBudget) -> Result<Vec<SourceSpec>, RunnerError> {
-        let files = discover_jsonl_files(&self.sessions_root, ".jsonl", budget.max_sources);
+        if self.roots.is_empty() || budget.max_sources == 0 {
+            return Ok(Vec::new());
+        }
+        // Fair share across roots; resume cursor is global lexicographic across roots.
+        let per_root = (budget.max_sources / self.roots.len()).max(1);
         let mut specs = Vec::new();
-        for path in files {
-            let scope = path.to_string_lossy().to_string();
-            specs.push(SourceSpec {
-                harness_id: HARNESS_ID.into(),
-                source_key: source_key(&self.identity_secret, HARNESS_ID, &scope),
-                source_kind: SourceKind::Jsonl,
-                locator_ref: path.to_string_lossy().into_owned(),
-                stream_key: STREAM_SESSIONS.into(),
-                cursor_kind: CursorKind::ByteOffset,
-                initial_cursor_json: json!({ "offset": 0 }),
-                initial_decoder_state_json: json!({ "last_source_time": null }),
-                observed_boundary_json: json!({ "len": 0 }),
-            });
+        let mut remaining = budget.max_sources;
+        for (_source_id, root) in &self.roots {
+            if remaining == 0 {
+                break;
+            }
+            let take = per_root.min(remaining);
+            let (files, _cursor) =
+                discover_jsonl_files(root, ".jsonl", take, budget.resume_after.as_deref());
+            for path in files {
+                if specs.len() >= budget.max_sources {
+                    break;
+                }
+                let scope = path.to_string_lossy().to_string();
+                specs.push(SourceSpec {
+                    harness_id: HARNESS_ID.into(),
+                    source_key: source_key(&self.identity_secret, HARNESS_ID, &scope),
+                    source_kind: SourceKind::Jsonl,
+                    locator_ref: path.to_string_lossy().into_owned(),
+                    stream_key: STREAM_SESSIONS.into(),
+                    cursor_kind: CursorKind::ByteOffset,
+                    initial_cursor_json: json!({ "offset": 0 }),
+                    initial_decoder_state_json: json!({ "last_source_time": null }),
+                    observed_boundary_json: json!({ "len": 0 }),
+                });
+                remaining = remaining.saturating_sub(1);
+            }
+        }
+        // If resume left a root under-filled and we still have budget, second pass without
+        // per-root cap so rotation can fill from other roots.
+        if specs.len() < budget.max_sources {
+            let mut all_files = Vec::new();
+            for (_source_id, root) in &self.roots {
+                let (files, _) = discover_jsonl_files(
+                    root,
+                    ".jsonl",
+                    budget.max_sources,
+                    budget.resume_after.as_deref(),
+                );
+                all_files.extend(files);
+            }
+            all_files.sort();
+            all_files.dedup();
+            let start = budget
+                .resume_after
+                .as_deref()
+                .and_then(|after| {
+                    all_files
+                        .iter()
+                        .position(|p| p.to_string_lossy().as_ref() > after)
+                        .or_else(|| {
+                            all_files
+                                .iter()
+                                .position(|p| p.to_string_lossy().as_ref() == after)
+                                .map(|i| i + 1)
+                        })
+                })
+                .unwrap_or(0);
+            if !all_files.is_empty() {
+                let n = all_files.len();
+                let take = budget.max_sources.min(n);
+                specs.clear();
+                for i in 0..take {
+                    let path = &all_files[(start + i) % n];
+                    let scope = path.to_string_lossy().to_string();
+                    specs.push(SourceSpec {
+                        harness_id: HARNESS_ID.into(),
+                        source_key: source_key(&self.identity_secret, HARNESS_ID, &scope),
+                        source_kind: SourceKind::Jsonl,
+                        locator_ref: path.to_string_lossy().into_owned(),
+                        stream_key: STREAM_SESSIONS.into(),
+                        cursor_kind: CursorKind::ByteOffset,
+                        initial_cursor_json: json!({ "offset": 0 }),
+                        initial_decoder_state_json: json!({ "last_source_time": null }),
+                        observed_boundary_json: json!({ "len": 0 }),
+                    });
+                }
+            }
         }
         Ok(specs)
     }
@@ -154,18 +247,16 @@ impl HarnessStrategy for CodexStrategy {
                 };
                 let payload_type = str_field(payload, "type").unwrap_or_default();
                 match payload_type.as_str() {
-                    "token_count" => {
-                        self.decode_token_count(
-                            payload,
-                            state,
-                            logical_scope,
-                            occurred_at,
-                            time_source,
-                            session.as_deref(),
-                            turn.as_deref(),
-                            byte_native,
-                        )
-                    }
+                    "token_count" => self.decode_token_count(
+                        payload,
+                        state,
+                        logical_scope,
+                        occurred_at,
+                        time_source,
+                        session.as_deref(),
+                        turn.as_deref(),
+                        byte_native,
+                    ),
                     "task_started" | "task_complete" | "agent_message" => {
                         Ok(DecodeOutcome::ContextOnly)
                     }
@@ -269,27 +360,24 @@ impl CodexStrategy {
             return Ok(DecodeOutcome::ContextOnly);
         };
 
-        // Always advance cumulative baseline from total_token_usage when present.
-        let mut cumulative_emit: Option<(u64, u64, u64, Option<u64>, Option<u64>)> = None;
+        // Always advance cumulative baselines from total_token_usage when present.
+        let mut cumulative_emit = None;
         if let Some(total_obj) = info.get("total_token_usage").and_then(|v| v.as_object()) {
             let (input, output, total, cache, reasoning) = read_usage_counts(total_obj);
             let series = format!("total::{}", session.unwrap_or("default"));
-            match cumulative_delta(state, &series, total) {
+            match cumulative_components_delta(
+                state,
+                &series,
+                CumulativeComponents {
+                    input,
+                    output,
+                    total,
+                    cache,
+                    reasoning,
+                },
+            ) {
                 Ok(delta) => {
-                    // Only emit cumulative delta when last_token_usage is absent.
-                    cumulative_emit = Some((
-                        if input > 0 {
-                            // Scale unknown; prefer reporting delta as token_total.
-                            0
-                        } else {
-                            0
-                        },
-                        0,
-                        delta,
-                        cache,
-                        reasoning,
-                    ));
-                    let _ = (input, output);
+                    cumulative_emit = Some(delta);
                 }
                 Err(IgnoreCode::Other(code))
                     if code == "cumulative_baseline_only" || code == "cumulative_unchanged" => {}
@@ -328,8 +416,8 @@ impl CodexStrategy {
             })]));
         }
 
-        if let Some((_input, _output, delta, cache, reasoning)) = cumulative_emit {
-            if delta == 0 {
+        if let Some(delta) = cumulative_emit {
+            if delta.total == 0 && delta.input == 0 && delta.output == 0 {
                 return Ok(DecodeOutcome::ContextOnly);
             }
             let native = turn
@@ -343,17 +431,17 @@ impl CodexStrategy {
                 fact_kind: "model_usage_recorded",
                 occurred_at,
                 time_source,
-                token_total: delta,
-                input_tokens: delta,
-                output_tokens: 0,
+                token_total: delta.total,
+                input_tokens: delta.input,
+                output_tokens: delta.output,
                 accuracy: TokenAccuracy::Derived,
                 session_id: session,
                 turn_id: turn,
                 skill_id: None,
                 skill_key: None,
                 model_key: 0,
-                cache_read_tokens: cache,
-                reasoning_tokens: reasoning,
+                cache_read_tokens: delta.cache,
+                reasoning_tokens: delta.reasoning,
             })]));
         }
 

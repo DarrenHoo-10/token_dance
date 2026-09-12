@@ -390,6 +390,36 @@ impl PipelineStore {
         Ok(rows)
     }
 
+    /// Enable/disable all live sources for a harness (stops lease/list when disabled).
+    pub fn set_harness_sources_enabled(
+        &mut self,
+        harness_id: &str,
+        enabled: bool,
+    ) -> Result<usize, PipelineError> {
+        schema::assert_ready(&self.conn)?;
+        let now = self.now_ms();
+        let n = self.conn.execute(
+            "UPDATE collection_sources
+             SET enabled = ?1, updated_at = ?2
+             WHERE harness_id = ?3 AND delete_at IS NULL",
+            params![if enabled { 1 } else { 0 }, now, harness_id],
+        )?;
+        Ok(n)
+    }
+
+    /// Locators already registered for a harness (for discover prefer-unknown).
+    pub fn list_source_locators(&self, harness_id: &str) -> Result<Vec<String>, PipelineError> {
+        schema::assert_ready(&self.conn)?;
+        let mut stmt = self.conn.prepare(
+            "SELECT locator_ref FROM collection_sources
+             WHERE harness_id=?1 AND delete_at IS NULL",
+        )?;
+        let rows = stmt
+            .query_map(params![harness_id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     // ── atomic source commit ────────────────────────────────────────────────
 
     pub fn commit_source(

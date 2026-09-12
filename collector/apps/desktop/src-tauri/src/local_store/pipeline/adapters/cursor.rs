@@ -54,7 +54,12 @@ impl HarnessStrategy for CursorStrategy {
     }
 
     fn discover(&self, budget: DiscoveryBudget) -> Result<Vec<SourceSpec>, RunnerError> {
-        let files = discover_jsonl_files(&self.transcripts_root, ".jsonl", budget.max_sources);
+        let (files, _cursor) = discover_jsonl_files(
+            &self.transcripts_root,
+            ".jsonl",
+            budget.max_sources,
+            budget.resume_after.as_deref(),
+        );
         let mut specs = Vec::new();
         for path in files {
             let scope = path.to_string_lossy().to_string();

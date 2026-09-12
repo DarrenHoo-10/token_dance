@@ -1,5 +1,6 @@
 //! Harness strategy registry for P3 adapters.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -18,7 +19,8 @@ pub type SkillAllocator = Arc<dyn Fn([u8; 32], &str) -> i64 + Send + Sync>;
 #[derive(Clone)]
 pub struct AdapterRoots {
     pub identity_secret: Vec<u8>,
-    pub codex_sessions: PathBuf,
+    /// All supported Codex detection sources (sessions, archived, …) keyed by source_id.
+    pub codex_roots: Vec<(String, PathBuf)>,
     pub claude_projects: PathBuf,
     pub cursor_transcripts: PathBuf,
     pub zcode_db: PathBuf,
@@ -33,6 +35,8 @@ pub struct AdapterRoots {
 pub struct HarnessRegistry {
     pub skill_book: SkillBook,
     strategies: Vec<Box<dyn HarnessStrategy>>,
+    /// Parallel to strategies: optional detection source_id for multi-root harnesses.
+    strategy_source_ids: Vec<Option<String>>,
 }
 
 impl HarnessRegistry {
@@ -40,13 +44,24 @@ impl HarnessRegistry {
         let book = SkillBook::new();
         let secret = roots.identity_secret.clone();
         let mut strategies: Vec<Box<dyn HarnessStrategy>> = Vec::new();
+        let mut strategy_source_ids: Vec<Option<String>> = Vec::new();
 
-        strategies.push(Box::new(CodexStrategy::new(
+        let codex_roots = if roots.codex_roots.is_empty() {
+            vec![(
+                "codex-sessions".into(),
+                PathBuf::from(".codex/sessions"),
+            )]
+        } else {
+            roots.codex_roots
+        };
+        strategies.push(Box::new(CodexStrategy::with_roots(
             secret.clone(),
-            roots.codex_sessions,
+            codex_roots,
             book.clone(),
             skill_allocator.clone(),
         )));
+        strategy_source_ids.push(None);
+
         strategies.push(Box::new(JsonlHarnessStrategy::new(
             CLAUDE,
             secret.clone(),
@@ -54,24 +69,28 @@ impl HarnessRegistry {
             book.clone(),
             skill_allocator.clone(),
         )));
+        strategy_source_ids.push(None);
         strategies.push(Box::new(CursorStrategy::new(
             secret.clone(),
             roots.cursor_transcripts,
             book.clone(),
             skill_allocator.clone(),
         )));
+        strategy_source_ids.push(None);
         strategies.push(Box::new(ZcodeStrategy::new(
             secret.clone(),
             roots.zcode_db,
             book.clone(),
             skill_allocator.clone(),
         )));
+        strategy_source_ids.push(None);
         strategies.push(Box::new(OpenCodeStrategy::new(
             secret.clone(),
             roots.opencode_db,
             book.clone(),
             skill_allocator.clone(),
         )));
+        strategy_source_ids.push(None);
         strategies.push(Box::new(JsonlHarnessStrategy::new(
             GROK,
             secret.clone(),
@@ -79,6 +98,7 @@ impl HarnessRegistry {
             book.clone(),
             skill_allocator.clone(),
         )));
+        strategy_source_ids.push(None);
         strategies.push(Box::new(JsonlHarnessStrategy::new(
             DEEPSEEK,
             secret.clone(),
@@ -86,6 +106,7 @@ impl HarnessRegistry {
             book.clone(),
             skill_allocator.clone(),
         )));
+        strategy_source_ids.push(None);
         strategies.push(Box::new(JsonlHarnessStrategy::new(
             PI,
             secret.clone(),
@@ -93,6 +114,7 @@ impl HarnessRegistry {
             book.clone(),
             skill_allocator.clone(),
         )));
+        strategy_source_ids.push(None);
         strategies.push(Box::new(JsonlHarnessStrategy::new(
             WORKBUDDY,
             secret.clone(),
@@ -100,6 +122,7 @@ impl HarnessRegistry {
             book.clone(),
             skill_allocator.clone(),
         )));
+        strategy_source_ids.push(None);
         strategies.push(Box::new(JsonlHarnessStrategy::new(
             DOUBAO,
             secret,
@@ -107,10 +130,12 @@ impl HarnessRegistry {
             book.clone(),
             skill_allocator,
         )));
+        strategy_source_ids.push(None);
 
         Self {
             skill_book: book,
             strategies,
+            strategy_source_ids,
         }
     }
 
@@ -125,7 +150,31 @@ impl HarnessRegistry {
             .map(|s| s.as_ref())
     }
 
+    /// Prefer a strategy that owns `locator_ref` via detection source roots; fall back to harness.
+    pub fn get_for_source(
+        &self,
+        harness_id: &str,
+        locator_ref: &str,
+    ) -> Option<&dyn HarnessStrategy> {
+        if harness_id == super::codex::HARNESS_ID {
+            if let Some(strategy) = self.get(harness_id) {
+                // CodexStrategy keeps all roots; locator selection is inside read via path.
+                let _ = locator_ref;
+                let _ = &self.strategy_source_ids;
+                return Some(strategy);
+            }
+        }
+        self.get(harness_id)
+    }
+
     pub fn harness_ids(&self) -> Vec<&str> {
-        self.strategies.iter().map(|s| s.harness_id()).collect()
+        let mut seen = HashSet::new();
+        let mut out = Vec::new();
+        for s in &self.strategies {
+            if seen.insert(s.harness_id()) {
+                out.push(s.harness_id());
+            }
+        }
+        out
     }
 }

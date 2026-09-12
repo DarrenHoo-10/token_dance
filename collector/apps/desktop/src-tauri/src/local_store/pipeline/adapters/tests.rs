@@ -134,7 +134,7 @@ fn registry_covers_all_ten_harnesses() {
     let alloc = skill_allocator(&book, store);
     let roots = AdapterRoots {
         identity_secret: secret(),
-        codex_sessions: dir.path().join("codex"),
+        codex_roots: vec![("codex-sessions".into(), dir.path().join("codex"))],
         claude_projects: dir.path().join("claude"),
         cursor_transcripts: dir.path().join("cursor"),
         zcode_db: dir.path().join("zcode.sqlite"),
@@ -1072,5 +1072,415 @@ fn review_pipeline_runtime_raw_to_metrics_to_upload_pending() {
     let pending = writer.pending_upload_count().unwrap();
     assert!(pending >= 1, "upload lane should have pending work");
     let _ = PipelineRuntime::start;
+    drop(writer);
+}
+
+#[test]
+fn review2_cumulative_token_components_are_differenced() {
+    let now = beijing_wall_to_utc_ms(2026, 9, 11, 12, 0, 0);
+    let strategy = CodexStrategy::new(
+        secret(),
+        PathBuf::from("/tmp"),
+        SkillBook::new(),
+        Arc::new(|_, _| 1),
+    );
+    let mut state = DecoderState {
+        version: 1,
+        json: json!({}),
+    };
+
+    let baseline = RawRecord {
+        ordinal: 0,
+        byte_start: Some(0),
+        byte_end: Some(10),
+        native_rowid: None,
+        payload: json!({
+            "type":"event_msg",
+            "timestamp": now - 5_000,
+            "thread_id":"t-cum",
+            "payload":{"type":"token_count","info":{
+                "total_token_usage":{
+                    "input_tokens":100,
+                    "output_tokens":20,
+                    "total_tokens":120,
+                    "cached_input_tokens":10,
+                    "reasoning_output_tokens":5
+                }
+            }}
+        })
+        .to_string()
+        .into_bytes(),
+        file_mtime_ms: None,
+    };
+    let out = strategy.decode(&baseline, &mut state, "/tmp/cum.jsonl").unwrap();
+    assert!(
+        matches!(out, DecodeOutcome::ContextOnly | DecodeOutcome::Ignore(_)),
+        "baseline must not invent a request: {out:?}"
+    );
+
+    let next = RawRecord {
+        ordinal: 1,
+        byte_start: Some(100),
+        byte_end: Some(200),
+        native_rowid: None,
+        payload: json!({
+            "type":"event_msg",
+            "timestamp": now - 4_000,
+            "thread_id":"t-cum",
+            "payload":{"type":"token_count","info":{
+                "total_token_usage":{
+                    "input_tokens":150,
+                    "output_tokens":30,
+                    "total_tokens":180,
+                    "cached_input_tokens":14,
+                    "reasoning_output_tokens":8
+                }
+            }}
+        })
+        .to_string()
+        .into_bytes(),
+        file_mtime_ms: None,
+    };
+    let out = strategy.decode(&next, &mut state, "/tmp/cum.jsonl").unwrap();
+    let DecodeOutcome::Emit(facts) = out else {
+        panic!("expected per-field cumulative delta emit, got {out:?}");
+    };
+    let usage = &facts[0].payload_sections["usage"];
+    assert_eq!(usage["input_context_tokens"], 50);
+    assert_eq!(usage["output_tokens"], 10);
+    assert_eq!(usage["token_total"], 60);
+    assert_eq!(usage["cache_read_tokens"], 4);
+    assert_eq!(usage["reasoning_tokens"], 3);
+}
+
+#[test]
+fn review2_codex_keeps_sessions_and_archived_roots() {
+    use collector_service::{DetectedSourceConfig, DetectionSnapshot, OfficialAgent};
+    use crate::local_store::pipeline::runtime::adapter_roots_from_detection;
+
+    let mut snap = DetectionSnapshot::default();
+    // archived sorts before sessions in BTreeMap — must not replace live sessions.
+    snap.configure_source(
+        OfficialAgent::Codex,
+        "codex-archived-sessions",
+        DetectedSourceConfig {
+            path: Some(PathBuf::from("/tmp/codex/archived_sessions")),
+            ..DetectedSourceConfig::default()
+        },
+    );
+    snap.configure_source(
+        OfficialAgent::Codex,
+        "codex-sessions",
+        DetectedSourceConfig {
+            path: Some(PathBuf::from("/tmp/codex/sessions")),
+            ..DetectedSourceConfig::default()
+        },
+    );
+    let roots = adapter_roots_from_detection(secret(), &snap);
+    assert_eq!(roots.codex_roots.len(), 2);
+    assert!(roots
+        .codex_roots
+        .iter()
+        .any(|(id, p)| id == "codex-sessions" && p.ends_with("sessions")));
+    assert!(roots
+        .codex_roots
+        .iter()
+        .any(|(id, p)| id == "codex-archived-sessions" && p.ends_with("archived_sessions")));
+
+    let strategy = CodexStrategy::with_roots(
+        secret(),
+        roots.codex_roots.clone(),
+        SkillBook::new(),
+        Arc::new(|_, _| 1),
+    );
+    assert_eq!(
+        strategy.source_id_for_locator("/tmp/codex/sessions/a.jsonl"),
+        Some("codex-sessions")
+    );
+    assert_eq!(
+        strategy.source_id_for_locator("/tmp/codex/archived_sessions/b.jsonl"),
+        Some("codex-archived-sessions")
+    );
+}
+
+#[test]
+fn review2_discover_rotates_past_64_cap() {
+    use super::jsonl_io::discover_jsonl_files;
+
+    let dir = tempfile::tempdir().unwrap();
+    for i in 0..80 {
+        std::fs::write(dir.path().join(format!("s{i:03}.jsonl")), "{}\n").unwrap();
+    }
+    let (page1, cursor1) = discover_jsonl_files(dir.path(), ".jsonl", 64, None);
+    assert_eq!(page1.len(), 64);
+    let cursor1 = cursor1.expect("cursor");
+    let (page2, _) = discover_jsonl_files(dir.path(), ".jsonl", 64, Some(&cursor1));
+    assert_eq!(page2.len(), 64);
+    // Second page must include files beyond the first 64 lexicographic slice.
+    let p1: std::collections::HashSet<_> = page1.iter().map(|p| p.to_string_lossy().into_owned()).collect();
+    let new_on_page2 = page2
+        .iter()
+        .filter(|p| !p1.contains(p.to_string_lossy().as_ref()))
+        .count();
+    assert!(
+        new_on_page2 >= 16,
+        "rotation must surface files past the permanent-64 trap, got {new_on_page2} new"
+    );
+}
+
+#[test]
+fn review2_single_file_history_jsonl_locator() {
+    use super::jsonl_io::discover_jsonl_files;
+
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("history.jsonl");
+    std::fs::write(
+        &file,
+        format!(
+            "{}\n",
+            json!({"type":"model_usage","timestamp":1,"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}})
+        ),
+    )
+    .unwrap();
+
+    let (found, _) = discover_jsonl_files(&file, ".jsonl", 8, None);
+    assert_eq!(found, vec![file.clone()]);
+
+    let strategy = JsonlHarnessStrategy::new(
+        super::jsonl_harness::WORKBUDDY,
+        secret(),
+        file.clone(),
+        SkillBook::new(),
+        Arc::new(|_, _| 1),
+    );
+    let specs = strategy.discover(DiscoveryBudget::new(8, 200)).unwrap();
+    assert_eq!(specs.len(), 1);
+    assert_eq!(specs[0].locator_ref, file.to_string_lossy());
+}
+
+#[test]
+fn review2_harness_disable_stops_discover_and_claim() {
+    use crate::local_store::pipeline::runtime::{adapter_roots_for_fixture, PipelineRuntime};
+    use crate::local_store::pipeline::PipelineWriter;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64;
+    // Keep fixture on "today" for wall-clock admission in writer path.
+    let dir = tempfile::tempdir().unwrap();
+    let codex_dir = dir.path().join("codex");
+    std::fs::create_dir_all(&codex_dir).unwrap();
+    std::fs::write(codex_dir.join("a.jsonl"), "{}\n").unwrap();
+    let claude_dir = dir.path().join("claude");
+    std::fs::create_dir_all(&claude_dir).unwrap();
+    std::fs::write(claude_dir.join("c.jsonl"), "{}\n").unwrap();
+
+    let store = open_store(now);
+    let writer = Arc::new(PipelineWriter::start(store));
+    let roots = adapter_roots_for_fixture(secret(), dir.path());
+    let writer_skills = Arc::clone(&writer);
+    let book = SkillBook::new();
+    let book2 = book.clone();
+    let alloc = Arc::new(move |key, name: &str| {
+        if let Some(id) = book2.get(&key) {
+            return id;
+        }
+        let id = writer_skills.register_skill(key, Some(name)).unwrap_or(0);
+        book2.upsert(key, id);
+        id
+    });
+    let registry = HarnessRegistry::from_roots(roots, alloc);
+
+    // Build runtime via start would need DetectionSnapshot; exercise enable gate through writer+manual.
+    writer.set_harness_sources_enabled("codex", false).unwrap();
+    let due_before = writer.list_due_sources(now, 32).unwrap();
+    // Register both harness sources then disable codex.
+    let codex = registry.get("codex").unwrap();
+    for spec in codex.discover(DiscoveryBudget::new(8, 200)).unwrap() {
+        writer
+            .register_source(RegisterSource {
+                harness_id: spec.harness_id,
+                source_key: spec.source_key,
+                source_kind: spec.source_kind,
+                locator_ref: spec.locator_ref,
+                stream_key: spec.stream_key,
+                cursor_kind: spec.cursor_kind,
+                cursor_json: spec.initial_cursor_json.to_string(),
+                decoder_state_version: 1,
+                decoder_state_json: spec.initial_decoder_state_json.to_string(),
+                observed_boundary_json: spec.observed_boundary_json.to_string(),
+                next_poll_at: Some(now),
+            })
+            .unwrap();
+    }
+    let claude = registry.get("claude-code").unwrap();
+    for spec in claude.discover(DiscoveryBudget::new(8, 200)).unwrap() {
+        writer
+            .register_source(RegisterSource {
+                harness_id: spec.harness_id,
+                source_key: spec.source_key,
+                source_kind: spec.source_kind,
+                locator_ref: spec.locator_ref,
+                stream_key: spec.stream_key,
+                cursor_kind: spec.cursor_kind,
+                cursor_json: spec.initial_cursor_json.to_string(),
+                decoder_state_version: 1,
+                decoder_state_json: spec.initial_decoder_state_json.to_string(),
+                observed_boundary_json: spec.observed_boundary_json.to_string(),
+                next_poll_at: Some(now),
+            })
+            .unwrap();
+    }
+    writer.set_harness_sources_enabled("codex", false).unwrap();
+    let due = writer.list_due_sources(now, 32).unwrap();
+    for id in &due {
+        let snap = writer.load_source_checkpoint(*id).unwrap();
+        assert_ne!(snap.harness_id, "codex", "disabled harness must not be claimable");
+    }
+    assert!(
+        due.iter().any(|id| {
+            writer.load_source_checkpoint(*id).unwrap().harness_id == "claude-code"
+        }),
+        "other harnesses must remain claimable"
+    );
+    let _ = (due_before, PipelineRuntime::start);
+    drop(writer);
+}
+
+#[test]
+fn review2_slow_source_does_not_block_other_harness_acquire() {
+    use crate::local_store::pipeline::runtime::{adapter_roots_for_fixture, PipelineRuntime};
+    use crate::local_store::pipeline::runner::{AcquisitionScheduler, ReadBudget};
+    use crate::local_store::pipeline::PipelineWriter;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    let now = beijing_wall_to_utc_ms(2026, 9, 12, 15, 30, 0);
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("codex")).unwrap();
+    std::fs::create_dir_all(dir.path().join("claude")).unwrap();
+    std::fs::write(dir.path().join("codex/slow.jsonl"), "{}\n").unwrap();
+    std::fs::write(dir.path().join("claude/fast.jsonl"), "{}\n").unwrap();
+
+    let store = open_store(now);
+    let writer = Arc::new(PipelineWriter::start(store));
+    let roots = adapter_roots_for_fixture(secret(), dir.path());
+    let writer_skills = Arc::clone(&writer);
+    let book = SkillBook::new();
+    let book2 = book.clone();
+    let alloc = Arc::new(move |key, name: &str| {
+        if let Some(id) = book2.get(&key) {
+            return id;
+        }
+        let id = writer_skills.register_skill(key, Some(name)).unwrap_or(0);
+        book2.upsert(key, id);
+        id
+    });
+    let registry = HarnessRegistry::from_roots(roots, alloc);
+
+    let mut source_ids = Vec::new();
+    for harness in ["codex", "claude-code"] {
+        let strategy = registry.get(harness).unwrap();
+        for spec in strategy.discover(DiscoveryBudget::new(8, 200)).unwrap() {
+            let id = writer
+                .register_source(RegisterSource {
+                    harness_id: spec.harness_id,
+                    source_key: spec.source_key,
+                    source_kind: spec.source_kind,
+                    locator_ref: spec.locator_ref,
+                    stream_key: spec.stream_key,
+                    cursor_kind: spec.cursor_kind,
+                    cursor_json: spec.initial_cursor_json.to_string(),
+                    decoder_state_version: 1,
+                    decoder_state_json: spec.initial_decoder_state_json.to_string(),
+                    observed_boundary_json: spec.observed_boundary_json.to_string(),
+                    next_poll_at: Some(now),
+                })
+                .unwrap();
+            source_ids.push((harness.to_string(), id));
+        }
+    }
+
+    let scheduler = AcquisitionScheduler::with_defaults();
+    let fast_done = Arc::new(AtomicBool::new(false));
+    let started = Arc::new(AtomicUsize::new(0));
+    let t0 = std::time::Instant::now();
+
+    std::thread::scope(|scope| {
+        for (harness, source_id) in &source_ids {
+            let permit = scheduler.try_acquire(harness, *source_id).expect("permit");
+            let fast_done = Arc::clone(&fast_done);
+            let started = Arc::clone(&started);
+            let harness = harness.clone();
+            scope.spawn(move || {
+                let _permit = permit;
+                started.fetch_add(1, Ordering::SeqCst);
+                if harness == "codex" {
+                    // Slow source: sleep while other harness should still complete.
+                    while !fast_done.load(Ordering::SeqCst) {
+                        if t0.elapsed() > Duration::from_millis(800) {
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                } else {
+                    std::thread::sleep(Duration::from_millis(20));
+                    fast_done.store(true, Ordering::SeqCst);
+                }
+            });
+        }
+    });
+
+    assert!(
+        fast_done.load(Ordering::SeqCst),
+        "fast harness must finish while slow source is still running"
+    );
+    assert!(
+        t0.elapsed() < Duration::from_millis(700),
+        "concurrent acquire must not serialize behind the slow source"
+    );
+    let _ = (ReadBudget::new(1, 1, 1), PipelineRuntime::start, writer);
+}
+
+#[test]
+fn review2_pipeline_query_facade_returns_tokens_when_legacy_empty() {
+    use crate::local_store::pipeline::buckets::Grain;
+    use crate::local_store::pipeline::query::query_usage_summary;
+    use crate::local_store::pipeline::PipelineWriter;
+
+    let now = beijing_wall_to_utc_ms(2026, 9, 12, 12, 0, 0);
+    let mut store = open_store(now);
+    // Insert a day-grain model_metrics row as the facade would see after drain.
+    store
+        .with_connection(|conn| {
+            conn.execute(
+                "INSERT INTO model_metrics (
+                    created_at, updated_at, grain, bucket_start, harness_id, model_key,
+                    metric_semantics_version, exact_token_total, derived_token_total,
+                    token_total_known_count, usage_observed_count, model_request_count,
+                    cache_eligible_input_tokens, cache_eligible_read_tokens
+                 ) VALUES (?1,?1,'day',?2,'codex',0,1,42,0,1,1,1,0,0)",
+                rusqlite::params![now, crate::local_store::pipeline::beijing_day_start(now)],
+            )
+            .map_err(crate::local_store::pipeline::types::PipelineError::from)?;
+            Ok(())
+        })
+        .unwrap();
+
+    let day_start = crate::local_store::pipeline::beijing_day_start(now);
+    let summary = store
+        .with_connection(|conn| {
+            query_usage_summary(conn, Grain::Day, day_start, day_start + 86_400_000, Some("codex"))
+        })
+        .unwrap();
+    assert_eq!(summary.total_tokens.value, Some(42));
+
+    let writer = PipelineWriter::start(store);
+    let from_writer = writer
+        .query_usage_summary(Grain::Day, day_start, day_start + 86_400_000, Some("codex"))
+        .unwrap();
+    assert_eq!(from_writer.total_tokens.value, Some(42));
     drop(writer);
 }

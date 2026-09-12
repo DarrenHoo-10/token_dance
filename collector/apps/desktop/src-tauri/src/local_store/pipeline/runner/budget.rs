@@ -33,10 +33,12 @@ impl ReadBudget {
 /// Default single-source read budget: 256 records / 1 MiB / 50 ms.
 pub const DEFAULT_READ_BUDGET: ReadBudget = ReadBudget::new(256, 1024 * 1024, 50);
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct DiscoveryBudget {
     pub max_sources: usize,
     pub max_duration: Duration,
+    /// Lexicographic resume cursor (last path from prior discover tick).
+    pub resume_after: Option<String>,
 }
 
 impl DiscoveryBudget {
@@ -44,7 +46,13 @@ impl DiscoveryBudget {
         Self {
             max_sources,
             max_duration: Duration::from_millis(max_duration_ms),
+            resume_after: None,
         }
+    }
+
+    pub fn with_resume(mut self, resume_after: Option<String>) -> Self {
+        self.resume_after = resume_after;
+        self
     }
 }
 

@@ -1,7 +1,8 @@
 //! Desktop/daemon glue: discover sources, run AcquisitionRunner, drain metrics.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use collector_service::{DetectionSnapshot, OfficialAgent};
@@ -13,14 +14,19 @@ use super::runner::{
 use super::types::{Consumer, CursorKind, RegisterSource, SourceKind, DEFAULT_LEASE_MS};
 use super::PipelineWriter;
 
-const DISCOVER_BUDGET: DiscoveryBudget = DiscoveryBudget::new(64, 200);
+const DISCOVER_MAX_SOURCES: usize = 64;
+const DISCOVER_MAX_DURATION_MS: u64 = 200;
 
-/// Orchestrates harness discovery, bounded acquisition, and local metrics drain.
+/// Orchestrates harness discovery, bounded concurrent acquisition, and local metrics drain.
 pub struct PipelineRuntime {
     writer: Arc<PipelineWriter>,
     registry: HarnessRegistry,
     runner: AcquisitionRunner,
     scheduler: AcquisitionScheduler,
+    /// Per-harness discover resume cursor (last locator_ref).
+    discover_cursors: Mutex<HashMap<String, String>>,
+    /// Per-harness enable switches (default true). Used for discover/claim gate.
+    harness_enabled: Mutex<HashMap<String, bool>>,
 }
 
 impl PipelineRuntime {
@@ -45,23 +51,58 @@ impl PipelineRuntime {
                 Err(_) => 0,
             }
         });
-        // from_roots builds its own SkillBook; share via reconstructing with same allocator.
         let registry = HarnessRegistry::from_roots(roots, alloc);
-        let _ = book; // registry owns its book; allocator still updates shared map via closure capture
+        let _ = book;
         Self {
             writer,
             registry,
             runner: AcquisitionRunner::default(),
             scheduler: AcquisitionScheduler::with_defaults(),
+            discover_cursors: Mutex::new(HashMap::new()),
+            harness_enabled: Mutex::new(HashMap::new()),
         }
     }
 
-    /// One daemon tick: rediscover → acquire due sources → drain hour/day/month.
+    /// Update per-harness enable for discover / claim / resume.
+    pub fn set_harness_enabled(&self, harness_id: &str, enabled: bool) {
+        if let Ok(mut map) = self.harness_enabled.lock() {
+            map.insert(harness_id.to_string(), enabled);
+        }
+        let _ = self
+            .writer
+            .set_harness_sources_enabled(harness_id, enabled);
+    }
+
+    pub fn is_harness_enabled(&self, harness_id: &str) -> bool {
+        self.harness_enabled
+            .lock()
+            .ok()
+            .and_then(|m| m.get(harness_id).copied())
+            .unwrap_or(true)
+    }
+
+    /// One daemon tick: rediscover → concurrent acquire ∥ independent metrics drain.
     pub fn tick(&self) -> PipelineTickStats {
         let mut stats = PipelineTickStats::default();
         stats.discovered = self.discover_and_register();
-        stats.acquired = self.run_due_sources();
-        stats.metrics = self.drain_metrics();
+
+        let (metrics_tx, metrics_rx) = std::sync::mpsc::sync_channel(1);
+        let (acquire_tx, acquire_rx) = std::sync::mpsc::sync_channel(1);
+
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let acquired = self.run_due_sources();
+                let _ = acquire_tx.send(acquired);
+            });
+            scope.spawn(|| {
+                // Metrics wake independently of this tick's acquisition finishing.
+                let metrics = self.drain_metrics();
+                let _ = metrics_tx.send(metrics);
+            });
+        });
+
+        stats.acquired = acquire_rx.recv().unwrap_or(0);
+        stats.metrics = metrics_rx.recv().unwrap_or(0);
         let _ = self.writer.run_compensation();
         stats
     }
@@ -70,10 +111,35 @@ impl PipelineRuntime {
         let mut n = 0usize;
         let now = now_ms();
         for strategy in self.registry.strategies() {
-            let Ok(specs) = strategy.discover(DISCOVER_BUDGET) else {
+            let harness = strategy.harness_id();
+            if !self.is_harness_enabled(harness) {
+                continue;
+            }
+            let resume = self
+                .discover_cursors
+                .lock()
+                .ok()
+                .and_then(|m| m.get(harness).cloned());
+            let budget = DiscoveryBudget::new(DISCOVER_MAX_SOURCES, DISCOVER_MAX_DURATION_MS)
+                .with_resume(resume);
+            let Ok(specs) = strategy.discover(budget) else {
                 continue;
             };
-            for spec in specs {
+            if let Some(last) = specs.last() {
+                if let Ok(mut cursors) = self.discover_cursors.lock() {
+                    cursors.insert(harness.to_string(), last.locator_ref.clone());
+                }
+            }
+            let known: std::collections::HashSet<String> = self
+                .writer
+                .list_source_locators(harness)
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
+            // Prefer unknown locators within the page so new files register under the 64 cap.
+            let mut ordered: Vec<_> = specs.into_iter().collect();
+            ordered.sort_by_key(|s| known.contains(&s.locator_ref));
+            for spec in ordered {
                 let source = RegisterSource {
                     harness_id: spec.harness_id,
                     source_key: spec.source_key,
@@ -100,24 +166,44 @@ impl PipelineRuntime {
         let Ok(due) = self.writer.list_due_sources(now, 32) else {
             return 0;
         };
-        let mut ran = 0usize;
+
+        let mut work = Vec::new();
         for source_id in due {
             let Ok(snapshot) = self.writer.load_source_checkpoint(source_id) else {
                 continue;
             };
-            let Some(strategy) = self.registry.get(&snapshot.harness_id) else {
+            if !self.is_harness_enabled(&snapshot.harness_id) || !snapshot.enabled {
+                continue;
+            }
+            let Some(strategy) = self
+                .registry
+                .get_for_source(&snapshot.harness_id, &snapshot.locator_ref)
+            else {
                 continue;
             };
-            let Some(_permit) = self.scheduler.try_acquire(&snapshot.harness_id, source_id) else {
+            let Some(permit) = self.scheduler.try_acquire(&snapshot.harness_id, source_id) else {
                 continue;
             };
-            let budget = DEFAULT_READ_BUDGET;
-            let _ = self
-                .runner
-                .run_once(self.writer.as_ref(), strategy, source_id, budget);
-            ran += 1;
+            work.push((source_id, strategy, permit));
         }
-        ran
+
+        let ran = Mutex::new(0usize);
+        std::thread::scope(|scope| {
+            for (source_id, strategy, permit) in work {
+                let writer = Arc::clone(&self.writer);
+                let runner = &self.runner;
+                let counter = &ran;
+                scope.spawn(move || {
+                    let _permit = permit;
+                    let budget = DEFAULT_READ_BUDGET;
+                    let _ = runner.run_once(writer.as_ref(), strategy, source_id, budget);
+                    if let Ok(mut n) = counter.lock() {
+                        *n += 1;
+                    }
+                });
+            }
+        });
+        ran.into_inner().unwrap_or(0)
     }
 
     fn drain_metrics(&self) -> usize {
@@ -159,9 +245,12 @@ pub fn adapter_roots_from_detection(
     let home = user_home();
     AdapterRoots {
         identity_secret,
-        codex_sessions: source_path(detection, OfficialAgent::Codex)
-            .or_else(|| Some(home.join(".codex").join("sessions")))
-            .unwrap_or_else(|| home.join(".codex").join("sessions")),
+        codex_roots: source_paths(detection, OfficialAgent::Codex).unwrap_or_else(|| {
+            vec![(
+                "codex-sessions".into(),
+                home.join(".codex").join("sessions"),
+            )]
+        }),
         claude_projects: source_path(detection, OfficialAgent::ClaudeCode)
             .unwrap_or_else(|| home.join(".claude").join("projects")),
         cursor_transcripts: source_path(detection, OfficialAgent::Cursor)
@@ -183,11 +272,34 @@ pub fn adapter_roots_from_detection(
     }
 }
 
+/// Keep **all** supported detection sources for an agent (BTreeMap order must not drop any).
+fn source_paths(
+    detection: &DetectionSnapshot,
+    agent: OfficialAgent,
+) -> Option<Vec<(String, PathBuf)>> {
+    let mut out = Vec::new();
+    for (a, source_id, cfg) in detection.iter_sources() {
+        if a != agent {
+            continue;
+        }
+        if let Some(path) = cfg.path.clone() {
+            out.push((source_id.to_string(), path));
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
 fn source_path(detection: &DetectionSnapshot, agent: OfficialAgent) -> Option<PathBuf> {
-    detection
-        .iter_sources()
-        .find(|(a, _, _)| *a == agent)
-        .and_then(|(_, _, cfg)| cfg.path.clone())
+    // Prefer non-archived / primary source when multiple exist; never silently keep only archived.
+    let paths = source_paths(detection, agent)?;
+    if let Some((_, p)) = paths.iter().find(|(id, _)| !id.contains("archived")) {
+        return Some(p.clone());
+    }
+    paths.into_iter().next().map(|(_, p)| p)
 }
 
 fn user_home() -> PathBuf {
@@ -201,7 +313,7 @@ fn user_home() -> PathBuf {
 pub fn adapter_roots_for_fixture(identity_secret: Vec<u8>, root: &Path) -> AdapterRoots {
     AdapterRoots {
         identity_secret,
-        codex_sessions: root.join("codex"),
+        codex_roots: vec![("codex-sessions".into(), root.join("codex"))],
         claude_projects: root.join("claude"),
         cursor_transcripts: root.join("cursor"),
         zcode_db: root.join("zcode.sqlite"),

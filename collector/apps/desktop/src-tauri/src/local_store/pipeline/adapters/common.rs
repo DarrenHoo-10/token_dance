@@ -178,6 +178,90 @@ pub fn cumulative_delta(
     Ok(delta)
 }
 
+/// Per-component cumulative observation (input / output / total / cache / reasoning).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CumulativeComponents {
+    pub input: u64,
+    pub output: u64,
+    pub total: u64,
+    pub cache: Option<u64>,
+    pub reasoning: Option<u64>,
+}
+
+/// Differenced request-sized components after a cumulative baseline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CumulativeComponentDelta {
+    pub input: u64,
+    pub output: u64,
+    pub total: u64,
+    pub cache: Option<u64>,
+    pub reasoning: Option<u64>,
+}
+
+/// First sight baselines all fields; later sights return per-field positive deltas.
+/// A reset on any tracked field yields `EstimatedOnly` (no invented request).
+pub fn cumulative_components_delta(
+    state: &mut DecoderState,
+    series_id: &str,
+    observed: CumulativeComponents,
+) -> Result<CumulativeComponentDelta, IgnoreCode> {
+    let prefix = format!("cum::{series_id}");
+    let keys = [
+        ("input", Some(observed.input)),
+        ("output", Some(observed.output)),
+        ("total", Some(observed.total)),
+        ("cache", observed.cache),
+        ("reasoning", observed.reasoning),
+    ];
+    let mut had_any_prev = false;
+    let mut reset = false;
+    let mut deltas = [0u64; 5];
+    let mut present = [false; 5];
+
+    for (i, (field, value)) in keys.iter().enumerate() {
+        let Some(curr) = value else {
+            continue;
+        };
+        present[i] = true;
+        let key = format!("{prefix}::{field}");
+        let prev = state.json.get(&key).and_then(|v| v.as_u64());
+        if let Some(prev) = prev {
+            had_any_prev = true;
+            if *curr < prev {
+                reset = true;
+            } else {
+                deltas[i] = *curr - prev;
+            }
+        }
+        state.json[key] = json!(curr);
+    }
+
+    // Keep scalar total baseline in sync for OTLP / legacy callers.
+    state.json[format!("cum::{series_id}")] = json!(observed.total);
+
+    if !had_any_prev {
+        return Err(IgnoreCode::Other("cumulative_baseline_only".into()));
+    }
+    if reset {
+        return Err(IgnoreCode::EstimatedOnly);
+    }
+    let total_delta = deltas[2];
+    if total_delta == 0 && deltas[0] == 0 && deltas[1] == 0 {
+        return Err(IgnoreCode::Other("cumulative_unchanged".into()));
+    }
+    Ok(CumulativeComponentDelta {
+        input: deltas[0],
+        output: deltas[1],
+        total: if total_delta > 0 {
+            total_delta
+        } else {
+            deltas[0].saturating_add(deltas[1])
+        },
+        cache: if present[3] { Some(deltas[3]) } else { None },
+        reasoning: if present[4] { Some(deltas[4]) } else { None },
+    })
+}
+
 pub struct UsageFactArgs<'a> {
     pub secret: &'a [u8],
     pub harness: &'a str,

@@ -21,8 +21,9 @@ use wal_spool::InjectedKeyProvider;
 use wal_spool::{AckPayload, KeyProvider, OsKeyProvider, WalStore};
 
 use crate::autostart::{AutostartProvider, SystemAutostartManager};
+use crate::local_store::pipeline::{event_pipeline_v2_client_enabled, Grain};
 use crate::local_store::{LeasedBatch, LocalStore, PipelineRuntime, PipelineStore, PipelineWriter};
-use crate::usage_ledger::{DayUsage, HourUsage};
+use crate::usage_ledger::{DayUsage, HourUsage, DISPLAY_DAYS};
 
 const COLLECTOR_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -611,6 +612,9 @@ impl AppState {
                 service.collector.disable(adapter_id)
             }
             .map_err(|error| error.to_string())?;
+            if let Some(runtime) = self.pipeline_runtime() {
+                runtime.set_harness_enabled(id, enabled);
+            }
         }
         Ok(())
     }
@@ -690,6 +694,11 @@ impl AppState {
         let store = self.local_store.lock().expect("local store poisoned");
         let today = Local::now().date_naive();
         let hourly = store.today_hourly(today);
+        let pipeline = if event_pipeline_v2_client_enabled() {
+            self.pipeline_writer()
+        } else {
+            None
+        };
         agent_metadata()
             .into_iter()
             .filter_map(|(id, name, adapter_id)| {
@@ -700,15 +709,31 @@ impl AppState {
                     .copied()
                     .unwrap_or(runtime.enabled);
                 let usage = store.agent_usage(id, today);
-                let (accuracy, today_tokens, total_tokens, daily_usage) = match &usage {
-                    Some(usage) => (
-                        usage.accuracy.clone(),
-                        usage.today_tokens,
-                        usage.total_tokens,
-                        usage.daily_usage.clone(),
-                    ),
-                    None => ("unknown".to_string(), 0, 0, Vec::new()),
-                };
+                let (mut accuracy, mut today_tokens, mut total_tokens, mut daily_usage) =
+                    match &usage {
+                        Some(usage) => (
+                            usage.accuracy.clone(),
+                            usage.today_tokens,
+                            usage.total_tokens,
+                            usage.daily_usage.clone(),
+                        ),
+                        None => ("unknown".to_string(), 0, 0, Vec::new()),
+                    };
+                let mut hourly_usage = hourly.get(id).cloned().unwrap_or_default();
+                if let Some(writer) = pipeline.as_ref() {
+                    if let Some(pipe) = pipeline_agent_usage(writer.as_ref(), id, today) {
+                        // Prefer pipeline when legacy is empty / unknown.
+                        if today_tokens == 0 && total_tokens == 0 {
+                            today_tokens = pipe.today_tokens;
+                            total_tokens = pipe.total_tokens;
+                            daily_usage = pipe.daily_usage;
+                            hourly_usage = pipe.hourly_usage;
+                            if pipe.today_tokens > 0 || pipe.total_tokens > 0 {
+                                accuracy = "exact".into();
+                            }
+                        }
+                    }
+                }
                 Some(AgentConfig {
                     id: id.into(),
                     name: name.into(),
@@ -730,7 +755,7 @@ impl AppState {
                     today_tokens,
                     total_tokens,
                     daily_usage,
-                    hourly_usage: hourly.get(id).cloned().unwrap_or_default(),
+                    hourly_usage,
                     total_costs: usage
                         .as_ref()
                         .map(|item| item.total_costs.clone())
@@ -756,6 +781,15 @@ impl AppState {
     }
 
     pub fn get_usage_summary(&self, local_date: chrono::NaiveDate) -> crate::orb::UsageSummary {
+        if event_pipeline_v2_client_enabled() {
+            if let Some(writer) = self.pipeline_writer() {
+                if let Some(summary) =
+                    pipeline_orb_usage_summary(writer.as_ref(), local_date)
+                {
+                    return summary;
+                }
+            }
+        }
         let ledger = self.lock_store();
         let ids = agent_metadata().map(|(id, _, _)| id);
         crate::orb::from_ledger(
@@ -767,6 +801,15 @@ impl AppState {
     }
 
     pub fn orb_today_sources(&self) -> Vec<crate::orb::TodaySourceTotal> {
+        if event_pipeline_v2_client_enabled() {
+            if let Some(writer) = self.pipeline_writer() {
+                let today = chrono::Local::now().date_naive();
+                let sources = pipeline_orb_today_sources(writer.as_ref(), today);
+                if sources.iter().any(|s| s.today_tokens.is_some()) {
+                    return sources;
+                }
+            }
+        }
         let ledger = self.lock_store();
         crate::orb::today_source_totals(
             &*ledger,
@@ -792,6 +835,9 @@ impl AppState {
                 service.collector.disable(adapter_id)
             }
             .map_err(|error| error.to_string())?;
+        }
+        if let Some(runtime) = self.pipeline_runtime() {
+            runtime.set_harness_enabled(agent_id, enabled);
         }
         self.control
             .write()
@@ -1105,6 +1151,140 @@ impl AppState {
         executor.apply(&plan).map_err(|error| error.to_string())?;
         Ok(())
     }
+}
+
+struct PipelineAgentUsageView {
+    today_tokens: u64,
+    total_tokens: u64,
+    daily_usage: Vec<DayUsage>,
+    hourly_usage: Vec<HourUsage>,
+}
+
+fn beijing_bounds_for_date(date: chrono::NaiveDate) -> (i64, i64) {
+    use chrono::{FixedOffset, TimeZone};
+    let tz = FixedOffset::east_opt(8 * 3600).expect("UTC+8");
+    let start = tz
+        .from_local_datetime(&date.and_hms_opt(0, 0, 0).expect("midnight"))
+        .single()
+        .expect("beijing local")
+        .timestamp_millis();
+    (start, start + 86_400_000)
+}
+
+fn pipeline_agent_usage(
+    writer: &PipelineWriter,
+    harness_id: &str,
+    today: chrono::NaiveDate,
+) -> Option<PipelineAgentUsageView> {
+    let range_end = beijing_bounds_for_date(today).1;
+    let range_start = beijing_bounds_for_date(today - chrono::Duration::days(DISPLAY_DAYS - 1)).0;
+    let day_series = writer
+        .query_harness_token_series(Grain::Day, range_start, range_end, harness_id)
+        .ok()?;
+    let (today_start, today_end) = beijing_bounds_for_date(today);
+    let hour_series = writer
+        .query_harness_token_series(Grain::Hour, today_start, today_end, harness_id)
+        .unwrap_or_default();
+
+    let mut by_day: HashMap<i64, i64> = day_series.into_iter().collect();
+    let mut daily_usage = Vec::with_capacity(DISPLAY_DAYS as usize);
+    let mut total_tokens = 0u64;
+    for offset in (0..DISPLAY_DAYS).rev() {
+        let date = today - chrono::Duration::days(offset);
+        let (start, _) = beijing_bounds_for_date(date);
+        let tokens = by_day.remove(&start).unwrap_or(0).max(0) as u64;
+        total_tokens = total_tokens.saturating_add(tokens);
+        daily_usage.push(DayUsage {
+            date: date.format("%Y-%m-%d").to_string(),
+            tokens,
+            costs: Default::default(),
+            pricing: Default::default(),
+        });
+    }
+    let today_tokens = daily_usage.last().map(|d| d.tokens).unwrap_or(0);
+    let mut hourly_usage: Vec<HourUsage> = hour_series
+        .into_iter()
+        .filter_map(|(bucket, tokens)| {
+            let hour = ((bucket - today_start) / 3_600_000) as u8;
+            if hour < 24 {
+                Some(HourUsage {
+                    hour,
+                    tokens: tokens.max(0) as u64,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
+    hourly_usage.sort_by_key(|h| h.hour);
+
+    if today_tokens == 0 && total_tokens == 0 && hourly_usage.is_empty() {
+        return None;
+    }
+    Some(PipelineAgentUsageView {
+        today_tokens,
+        total_tokens,
+        daily_usage,
+        hourly_usage,
+    })
+}
+
+fn pipeline_orb_usage_summary(
+    writer: &PipelineWriter,
+    local_date: chrono::NaiveDate,
+) -> Option<crate::orb::UsageSummary> {
+    let ids: Vec<&str> = agent_metadata().map(|(id, _, _)| id).to_vec();
+    let mut totals = Vec::new();
+    for id in &ids {
+        if let Some(tokens) = pipeline_today_token_value(writer, id, local_date) {
+            totals.push(tokens);
+        }
+    }
+    if totals.is_empty() {
+        return None;
+    }
+    Some(crate::orb::UsageSummary {
+        local_date: local_date.format("%Y-%m-%d").to_string(),
+        state: crate::orb::UsageState::Known,
+        today_tokens: Some(
+            totals
+                .iter()
+                .map(|v| u128::from(*v))
+                .sum::<u128>()
+                .to_string(),
+        ),
+        known_source_count: totals.len() as u32,
+        has_unmeasured_sources: totals.len() < ids.len(),
+        captured_at_ms: chrono::Utc::now().timestamp_millis(),
+        last_recorded_change_at_ms: None,
+    })
+}
+
+fn pipeline_orb_today_sources(
+    writer: &PipelineWriter,
+    local_date: chrono::NaiveDate,
+) -> Vec<crate::orb::TodaySourceTotal> {
+    crate::orb::CATALOG_AGENTS
+        .iter()
+        .map(|(id, name)| crate::orb::TodaySourceTotal {
+            agent_id: (*id).to_string(),
+            agent_name: (*name).to_string(),
+            today_tokens: pipeline_today_token_value(writer, id, local_date)
+                .map(|tokens| u128::from(tokens).to_string()),
+        })
+        .collect()
+}
+
+fn pipeline_today_token_value(
+    writer: &PipelineWriter,
+    harness_id: &str,
+    local_date: chrono::NaiveDate,
+) -> Option<u64> {
+    let (start, end) = beijing_bounds_for_date(local_date);
+    let summary = writer
+        .query_usage_summary(Grain::Day, start, end, Some(harness_id))
+        .ok()?;
+    summary.total_tokens.value.map(|v| v.max(0) as u64)
 }
 
 pub(crate) fn app_data_root() -> PathBuf {

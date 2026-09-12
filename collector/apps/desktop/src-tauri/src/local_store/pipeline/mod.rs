@@ -24,8 +24,9 @@ mod metrics_tests;
 pub use buckets::{bucket_start, beijing_day_start, Grain};
 pub use flags::event_pipeline_v2_client_enabled;
 pub use query::{
-    query_consumer_backlog, query_skill_ranks, query_usage_summary, ConsumerBacklog, CostByCurrency,
-    CoverageLevel, CoveredValue, RatioValue, SkillRankRow, UsageSummary,
+    query_consumer_backlog, query_harness_token_series, query_skill_ranks, query_usage_summary,
+    ConsumerBacklog, CostByCurrency, CoverageLevel, CoveredValue, RatioValue, SkillRankRow,
+    UsageSummary,
 };
 pub use rollout::{ensure_rollout, workers_allowed, RolloutPhase, RolloutStatus, CLOSED_BETA_GENERATION};
 pub use runtime::{PipelineRuntime, PipelineTickStats};
