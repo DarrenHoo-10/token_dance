@@ -60,6 +60,32 @@ impl CollectorDaemon {
                 }
             });
         }
+        // Statistics consume committed tasks independently of source discovery/I/O.
+        let metrics_state = state.clone();
+        let metrics_running = Arc::clone(&is_running);
+        tauri::async_runtime::spawn(async move {
+            while metrics_running.load(Ordering::Acquire) && !metrics_state.is_shutting_down() {
+                if event_pipeline_v2_client_enabled() && !metrics_state.collection_paused().await {
+                    if let Some(runtime) = metrics_state.pipeline_runtime() {
+                        let worker = Arc::clone(&runtime);
+                        let applied =
+                            tauri::async_runtime::spawn_blocking(move || worker.drain_metrics())
+                                .await
+                                .unwrap_or(0);
+                        if applied > 0 {
+                            continue;
+                        }
+                        let _ = tokio::time::timeout(
+                            Duration::from_secs(5),
+                            runtime.metrics_available.notified(),
+                        )
+                        .await;
+                        continue;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        });
         tauri::async_runtime::spawn(async move {
             state.backfill_local_prices().await;
             let mut interval = tokio::time::interval(Duration::from_secs(1));

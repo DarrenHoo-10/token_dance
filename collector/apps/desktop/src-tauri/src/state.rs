@@ -379,14 +379,16 @@ impl AppState {
             paths.logs.clone(),
             key_provider,
             Arc::new(SystemAutostartManager::new("TokenDance")),
+            false,
         )
         .await?;
         *state.instance_lock.lock().expect("instance lock") = Some(lock);
         Ok(state)
     }
 
-    #[cfg(test)]
-    pub async fn test(
+    /// Isolated test sources; never install hooks in the user home.
+    #[cfg(any(test, debug_assertions))]
+    pub(crate) async fn test(
         root: PathBuf,
         autostart: Arc<dyn AutostartProvider>,
     ) -> Result<Self, String> {
@@ -395,6 +397,7 @@ impl AppState {
             root,
             Arc::new(InjectedKeyProvider::new([0x61; 32])),
             autostart,
+            true,
         )
         .await
     }
@@ -404,6 +407,7 @@ impl AppState {
         logs: PathBuf,
         key_provider: Arc<dyn KeyProvider>,
         autostart: Arc<dyn AutostartProvider>,
+        fixture: bool,
     ) -> Result<Self, String> {
         fs::create_dir_all(&root).map_err(|error| error.to_string())?;
         let key = key_provider.data_key().map_err(|error| error.to_string())?;
@@ -415,7 +419,7 @@ impl AppState {
         // after the drivers are built but before the first poll.
         let mut local_store = LocalStore::open(&root)?;
         let rescan_sources = local_store.pending_rescan_sources();
-        let detection = if cfg!(test) {
+        let detection = if fixture {
             DetectionSnapshot::default()
         } else {
             detect_local()
@@ -436,7 +440,7 @@ impl AppState {
             service.driver_registry.reset_source(source_id);
         }
         local_store.clear_rescan_markers(&rescan_sources)?;
-        if !crate::local_test::enabled() {
+        if !fixture && !crate::local_test::enabled() {
             if let Some(home) = grok_user_home() {
                 let _ = write_session_end_hook(&home, &key);
                 let _ = start_listener(hook_auth_token(&key), service.grok_hooks.clone());
@@ -482,11 +486,14 @@ impl AppState {
             }
         };
         let pipeline_runtime = pipeline_writer.as_ref().map(|writer| {
-            Arc::new(PipelineRuntime::start(
-                Arc::clone(writer),
-                key.to_vec(),
-                &detection,
-            ))
+            Arc::new(if fixture {
+                PipelineRuntime::from_roots(
+                    Arc::clone(writer),
+                    crate::local_store::pipeline::runtime::adapter_roots_for_fixture(key.to_vec(), &root),
+                )
+            } else {
+                PipelineRuntime::start(Arc::clone(writer), key.to_vec(), &detection)
+            })
         });
         let state = Self {
             service: Arc::new(Mutex::new(service)),

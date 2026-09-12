@@ -1,3 +1,4 @@
+use crate::upload_pipeline::tests::seed_store_with_consumers;
 use super::*;
 use crate::local_store::pipeline::PipelineStore;
 use std::io::Write;
@@ -371,3 +372,19 @@ fn filesystem_create_notification_invalidates_discovery_cache() {
     runtime.discovery.lock().unwrap().last_scan = now_ms() - DISCOVER_DEBOUNCE_MS;
     assert_eq!(runtime.discover_and_register(), 1);
 }
+
+    #[test]
+    fn statistics_drain_without_discovery_or_upload() {
+        use crate::local_store::pipeline::runtime::{adapter_roots_for_fixture, PipelineRuntime};
+        let (store, _) = seed_store_with_consumers(1, vec![Consumer::Hour, Consumer::Day, Consumer::Month, Consumer::Upload]);
+        let writer = Arc::new(PipelineWriter::start(store));
+        let dir = tempfile::tempdir().unwrap();
+        let runtime = PipelineRuntime::from_roots(
+            Arc::clone(&writer),
+            adapter_roots_for_fixture(vec![1; 32], dir.path()),
+        );
+        let _discovery = runtime.discovery.lock().unwrap();
+        assert_eq!(runtime.drain_metrics(), 3);
+        assert_eq!(runtime.drain_metrics(), 0);
+        assert_eq!(writer.pending_upload_count().unwrap(), 1);
+    }

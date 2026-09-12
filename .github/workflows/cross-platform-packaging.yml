@@ -29,10 +29,9 @@ permissions:
   contents: read
 
 jobs:
-  windows:
+  windows-tests:
     runs-on: windows-latest
-    env:
-      BUILD_PROFILE: release
+    if: github.event_name != 'workflow_dispatch' || !inputs.sign_release
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,6 +46,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            collector -> target
+            collector/crates/platform-windows -> target
+            collector/packaging/adapter-pack -> target
+            collector/apps/desktop/src-tauri -> target
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -73,6 +79,98 @@ jobs:
       - name: Desktop update manifest and replacement tests
         run: cargo test --locked --manifest-path collector/apps/desktop/src-tauri/Cargo.toml updates::tests -- --test-threads=1
       - name: PowerShell syntax and fail-closed Authenticode tests
+        shell: pwsh
+        run: |
+          $scripts = @(
+            'collector/apps/desktop/scripts/build-windows.ps1',
+            'collector/packaging/windows/Verify-Authenticode.ps1',
+            'collector/packaging/windows/Sign-Authenticode.ps1',
+            'collector/packaging/windows/Install-CurrentUser.ps1',
+            'collector/packaging/windows/Uninstall-CurrentUser.ps1'
+          )
+          foreach ($script in $scripts) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $script), [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count) { throw "$script has parser errors: $errors" }
+          }
+          Set-Content -LiteralPath unsigned.exe -Value 'not a signed executable'
+          try {
+            & collector/packaging/windows/Verify-Authenticode.ps1 -Path unsigned.exe -ExpectedThumbprint ('0' * 40)
+            throw 'Unsigned artifact was incorrectly accepted'
+          } catch {
+            if ($_ -notmatch 'BLOCKED: Authenticode signature is not valid') { throw }
+          }
+          $oldThumbprint = $env:WINDOWS_SIGNING_CERT_THUMBPRINT
+          try {
+            $env:WINDOWS_SIGNING_CERT_THUMBPRINT = ''
+            try {
+              & collector/packaging/windows/Sign-Authenticode.ps1 -Path unsigned.exe
+              throw 'Missing signing certificate was incorrectly accepted'
+            } catch {
+              if ($_ -notmatch 'BLOCKED: WINDOWS_SIGNING_CERT_THUMBPRINT certificate evidence is missing') { throw }
+            }
+          } finally {
+            $env:WINDOWS_SIGNING_CERT_THUMBPRINT = $oldThumbprint
+          }
+
+  windows:
+    runs-on: windows-latest
+    env:
+      BUILD_PROFILE: release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.sign_release && 'main' || '' }}
+          fetch-depth: 0
+      - name: Reject release requests outside main
+        if: github.event_name == 'workflow_dispatch' && inputs.sign_release && github.ref != 'refs/heads/main'
+        shell: bash
+        run: |
+          echo 'BLOCKED: releases may only be requested from main' >&2
+          exit 1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            collector -> target
+            collector/crates/platform-windows -> target
+            collector/packaging/adapter-pack -> target
+            collector/apps/desktop/src-tauri -> target
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: collector/apps/desktop/package-lock.json
+      - name: Release wiring static tests
+        if: github.event_name == 'workflow_dispatch' && inputs.sign_release
+        shell: bash
+        run: |
+          python collector/packaging/tests/test_release_wiring.py
+          python collector/packaging/tests/test_macos_keychain_signing.py
+          python collector/packaging/tests/test_pe_gui.py
+          node --test collector/apps/desktop/scripts/build-source.test.mjs
+      - name: Build desktop frontend before embedded-resource checks
+        shell: bash
+        run: |
+          npm --prefix collector/apps/desktop ci
+          npm --prefix collector/apps/desktop run build
+      - name: Windows crate format
+        if: github.event_name == 'workflow_dispatch' && inputs.sign_release
+        run: cargo fmt --manifest-path collector/crates/platform-windows/Cargo.toml -- --check
+      - name: Windows runnable tests
+        if: github.event_name == 'workflow_dispatch' && inputs.sign_release
+        run: cargo test --locked --manifest-path collector/crates/platform-windows/Cargo.toml
+      - name: Adapter Pack tests
+        if: github.event_name == 'workflow_dispatch' && inputs.sign_release
+        run: cargo test --locked --manifest-path collector/packaging/adapter-pack/Cargo.toml
+      - name: Desktop update manifest and replacement tests
+        if: github.event_name == 'workflow_dispatch' && inputs.sign_release
+        run: cargo test --locked --manifest-path collector/apps/desktop/src-tauri/Cargo.toml updates::tests -- --test-threads=1
+      - name: PowerShell syntax and fail-closed Authenticode tests
+        if: github.event_name == 'workflow_dispatch' && inputs.sign_release
         shell: pwsh
         run: |
           $scripts = @(
@@ -211,6 +309,14 @@ jobs:
         with:
           components: rustfmt
           targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}-${{ env.BUILD_PROFILE }}
+          workspaces: |
+            collector -> target
+            collector/crates/platform-macos -> target
+            collector/packaging/adapter-pack -> target
+            collector/apps/desktop/src-tauri -> target
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -288,6 +394,8 @@ jobs:
         if: env.BUILD_PROFILE == 'debug' && matrix.architecture == 'arm64'
         run: |
           python3 collector/apps/desktop/scripts/startup-recovery-smoke.py \
+            collector/apps/desktop/src-tauri/target/${{ matrix.target }}/debug/bundle/macos/TokenDance.app/Contents/MacOS/tokendance-desktop
+          python3 collector/apps/desktop/scripts/startup-recovery-smoke.py --flow \
             collector/apps/desktop/src-tauri/target/${{ matrix.target }}/debug/bundle/macos/TokenDance.app/Contents/MacOS/tokendance-desktop
       - name: Stage free unnotarized DMG
         if: github.event_name == 'workflow_dispatch' && inputs.unnotarized_macos_release

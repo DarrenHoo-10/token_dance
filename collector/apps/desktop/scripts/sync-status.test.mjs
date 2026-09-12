@@ -27,3 +27,8 @@ test("update and device ownership explain why online sync is blocked", () => {
   assert.match(syncStatusText("CLIENT_UPGRADE_REQUIRED", 3, true), /本机采集继续/);
   assert.match(syncStatusText("DEVICE_BOUND_ELSEWHERE", 3, true), /原账号解绑/);
 });
+
+test("invalid endpoint and protocol show actionable retry states", () => {
+  assert.match(syncStatusText("SYNC_ENDPOINT_INVALID", 1, true), /接口响应异常/);
+  assert.match(syncStatusText("SYNC_PROTOCOL_UNSUPPORTED", 1, true), /协议不兼容/);
+});

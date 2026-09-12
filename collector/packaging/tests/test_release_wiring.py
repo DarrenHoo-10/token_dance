@@ -18,6 +18,26 @@ PUBLISH = (ROOT / "tools/releases/publish_manifest.py").read_text(encoding="utf-
 
 
 class ReleaseWiringTests(unittest.TestCase):
+    def test_windows_ci_parallelizes_without_bypassing_release_tests(self):
+        tests = WORKFLOW.split("  windows-tests:\n", 1)[1].split("  windows:\n", 1)[0]
+        build = WORKFLOW.split("  windows:\n", 1)[1].split("  macos:\n", 1)[0]
+        self.assertNotIn("    needs:", tests)
+        self.assertNotIn("    needs:", build)
+        self.assertIn("if: github.event_name != 'workflow_dispatch' || !inputs.sign_release", tests)
+        for name in (
+            "Release wiring static tests", "Windows crate format", "Windows runnable tests",
+            "Adapter Pack tests", "Desktop update manifest and replacement tests",
+            "PowerShell syntax and fail-closed Authenticode tests",
+        ):
+            self.assertIn(f"- name: {name}\n", tests)
+            self.assertIn(
+                f"- name: {name}\n        if: github.event_name == 'workflow_dispatch' && inputs.sign_release",
+                build,
+            )
+            self.assertLess(build.index(f"- name: {name}\n"), build.index("- name: Sign and verify"))
+        self.assertIn("cargo build --locked --release", build)
+        self.assertIn("Reject non-GUI Windows portable", build)
+
     def test_both_platforms_embed_frontend_with_a_locked_build(self):
         command = "cargo build --locked --release --manifest-path collector/apps/desktop/src-tauri/Cargo.toml --features custom-protocol"
         self.assertIn(command, WORKFLOW)

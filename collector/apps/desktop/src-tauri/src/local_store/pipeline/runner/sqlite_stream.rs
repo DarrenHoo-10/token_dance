@@ -142,8 +142,15 @@ pub fn read_sqlite_change_stream(
             let mapped = stmt
                 .query_map(params![state.last_rowid], map_row)
                 .map_err(|e| RunnerError::Io(e.to_string()))?;
+            // SQLite may sort before yielding its first row. Budget row consumption
+            // separately so query startup cannot cause an endless empty batch.
+            let mut rows_started = None;
             for item in mapped {
-                if budget.exhausted(rows.len(), bytes_read, started.elapsed()) {
+                let elapsed = rows_started.get_or_insert_with(Instant::now).elapsed();
+                if rows.len() >= budget.max_records
+                    || bytes_read >= budget.max_bytes
+                    || (!rows.is_empty() && elapsed >= budget.max_duration)
+                {
                     has_more = true;
                     break;
                 }
@@ -175,7 +182,10 @@ pub fn read_sqlite_change_stream(
             if state.pending.is_full() {
                 discovery_paused = true;
                 has_more = !state.pending.row_ids.is_empty();
-            } else if !budget.exhausted(rows.len(), bytes_read, started.elapsed()) {
+            } else if rows.len() < budget.max_records
+                && bytes_read < budget.max_bytes
+                && (bytes_read == 0 || started.elapsed() < budget.max_duration)
+            {
                 let discover_from = state.last_rowid;
                 let mut stmt = tx
                     .prepare(select_sql)
@@ -183,8 +193,15 @@ pub fn read_sqlite_change_stream(
                 let mapped = stmt
                     .query_map(params![discover_from], map_row)
                     .map_err(|e| RunnerError::Io(e.to_string()))?;
+                // SQLite may sort before yielding its first row. Budget row consumption
+                // separately so query startup cannot cause an endless empty batch.
+                let mut rows_started = None;
                 for item in mapped {
-                    if budget.exhausted(rows.len(), bytes_read, started.elapsed()) {
+                    let elapsed = rows_started.get_or_insert_with(Instant::now).elapsed();
+                    if rows.len() >= budget.max_records
+                        || bytes_read >= budget.max_bytes
+                        || (bytes_read > 0 && elapsed >= budget.max_duration)
+                    {
                         has_more = true;
                         break;
                     }
@@ -217,8 +234,15 @@ pub fn read_sqlite_change_stream(
             let mapped = stmt
                 .query_map(params![state.last_updated_at, state.last_rowid], map_row)
                 .map_err(|e| RunnerError::Io(e.to_string()))?;
+            // SQLite may sort before yielding its first row. Budget row consumption
+            // separately so query startup cannot cause an endless empty batch.
+            let mut rows_started = None;
             for item in mapped {
-                if budget.exhausted(rows.len(), bytes_read, started.elapsed()) {
+                let elapsed = rows_started.get_or_insert_with(Instant::now).elapsed();
+                if rows.len() >= budget.max_records
+                    || bytes_read >= budget.max_bytes
+                    || (!rows.is_empty() && elapsed >= budget.max_duration)
+                {
                     has_more = true;
                     break;
                 }
