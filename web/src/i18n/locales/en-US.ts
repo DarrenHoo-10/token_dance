@@ -396,6 +396,7 @@ export const enUS = {
       timezone: 'Team timezone {timezone}',
       tooLong: 'Custom ranges can cover at most 90 days.',
       customHint: 'Historical dates · Up to 90 days',
+      showingPrevious: 'Finish selecting dates to update. Charts keep the current range; new visits show today.',
       chooseDates: 'Select both dates to update',
     },
     overview: {

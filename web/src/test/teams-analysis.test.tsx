@@ -64,20 +64,22 @@ describe('Team analysis updating state', () => {
     ['overview', <TeamOverviewPage />, ''],
     ['analytics', <TeamAnalyticsPage />, '/analytics'],
     ['members', <TeamMembersPage />, '/members'],
-  ] as const)('keeps custom dates editable on a %s deep link without sending an incomplete query', async (_name, page, suffix) => {
+  ] as const)('shows today while custom dates are incomplete on a %s deep link', async (_name, page, suffix) => {
     vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     vi.spyOn(teamsApi, 'getExports').mockResolvedValue({ exports: [] });
     vi.spyOn(teamsApi, 'getFilterOptions').mockResolvedValue({ agents: [], providers: [], models: [] });
     const query = vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
     renderTeams(page, `/teams/tem_0123456789abcdefghijklmnop${suffix}?range=custom`);
-    const from = await screen.findByLabelText('开始日期');
+    await screen.findByLabelText('开始日期');
+    await waitFor(() => expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument());
+    const from = screen.getByLabelText('开始日期');
     const to = screen.getByLabelText('结束日期');
     expect(screen.getByText('选齐日期后自动更新')).toBeInTheDocument();
     expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();
-    expect(query).not.toHaveBeenCalled();
+    await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: 'today', from: undefined, to: undefined }), expect.any(AbortSignal)));
     fireEvent.change(from, { target: { value: '2026-09-01' } });
-    expect(query).not.toHaveBeenCalled();
+    await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: 'today', from: undefined, to: undefined }), expect.any(AbortSignal)));
     fireEvent.change(to, { target: { value: '2026-09-06' } });
     await waitFor(() => expect(query).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ range: 'custom', from: '2026-09-01', to: '2026-09-06' }), expect.any(AbortSignal)));
     await waitFor(() => expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument());
@@ -104,6 +106,39 @@ describe('Team analysis updating state', () => {
     expect(await screen.findByRole('tab', { name: '7 天' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByText(/包含历史日汇总/)).not.toBeInTheDocument();
     expect(screen.queryByText(/团队时区/)).not.toBeInTheDocument();
+  });
+
+  it('keeps charts above the date controls and preserves a complete range while editing', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    const query = vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
+    renderTeams(<TeamOverviewPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
+    const chart = await screen.findByRole('heading', { name: 'Token 趋势' });
+    const custom = screen.getByRole('tab', { name: '自定义' });
+    expect(chart.compareDocumentPosition(custom) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(custom);
+    expect(screen.getByRole('heading', { name: 'Token 趋势' })).toBeInTheDocument();
+    expect(screen.getByText('120.0K')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '2026-09-01' } });
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('120.0K')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('结束日期'), { target: { value: '2026-09-06' } });
+    await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: 'custom', from: '2026-09-01', to: '2026-09-06' }), expect.any(AbortSignal)));
+  });
+
+  it('clears retained charts when authorization changes during date editing', async () => {
+    const query = vi.spyOn(teamsApi, 'getAnalysis')
+      .mockResolvedValueOnce(readyAnalysis('1', '120000'))
+      .mockImplementation(() => new Promise(() => undefined));
+    const { result, rerender } = renderHook(({ revision, range }) => useTeamAnalysis({
+      teamId: 'tem_0123456789abcdefghijklmnop', authRevision: revision, range,
+    }), { initialProps: { revision: '1', range: '7d' } });
+    await waitFor(() => expect(result.current.analysis?.summary.tokens.value).toBe('120000'));
+    rerender({ revision: '1', range: 'custom' });
+    expect(result.current.analysis?.summary.tokens.value).toBe('120000');
+    rerender({ revision: '2', range: 'custom' });
+    expect(result.current.analysis).toBeNull();
+    expect(query).toHaveBeenCalledTimes(2);
   });
 
   it('lists contributions without named-share copy', async () => {

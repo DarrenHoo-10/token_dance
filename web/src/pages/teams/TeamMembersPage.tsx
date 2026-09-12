@@ -29,7 +29,7 @@ export const TeamMembersPage: React.FC = () => {
   const { showToast } = useNotification();
   const { scope, authRevision, refresh, applyScope } = useTeam();
   const { range, from, to, agent, provider, model } = useTeamSearchFilters();
-  const { analysis, updating, waitingForDates, error: analysisError } = useTeamAnalysis({
+  const { analysis, updating, error: analysisError } = useTeamAnalysis({
     teamId: scope?.team.id,
     authRevision,
     range,
@@ -80,7 +80,6 @@ export const TeamMembersPage: React.FC = () => {
   }, [canManage, query, scope, snapshotId]);
 
   if (!scope) return null;
-  if (waitingForDates) return <div><TeamDateRangeBar timezone={scope.team.timezone} /></div>;
   if (analysisError) return <div><TeamDateRangeBar timezone={scope.team.timezone} /><ErrorState error={analysisError} description={teamErrorMessage(t, analysisError)} /></div>;
   if (updating && !analysis) return <div><TeamDateRangeBar timezone={scope.team.timezone} /><AnalysisSkeleton /></div>;
   if (error) return <ErrorState error={error} description={teamErrorMessage(t, error)} />;

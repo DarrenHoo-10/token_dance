@@ -66,17 +66,14 @@ export const TeamAnalyticsPage: React.FC = () => {
   }, [scope]);
 
   if (!scope) return null;
-  if (waitingForDates) {
-    return <div><TeamDateRangeBar timezone={scope.team.timezone} /></div>;
-  }
   if (updating && !analysis) {
-    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} /></div>;
+    return <div><AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} /><TeamDateRangeBar timezone={scope.team.timezone} /></div>;
   }
   if (error && !analysis) {
-    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><ErrorState error={error} description={teamErrorMessage(t, error)} /></div>;
+    return <div><ErrorState error={error} description={teamErrorMessage(t, error)} /><TeamDateRangeBar timezone={scope.team.timezone} /></div>;
   }
   if (!analysis) {
-    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><AnalysisSkeleton /></div>;
+    return <div><AnalysisSkeleton /><TeamDateRangeBar timezone={scope.team.timezone} /></div>;
   }
 
   const tokens = metricDisplay(analysis.summary.tokens, formatTokenCompact);
@@ -115,7 +112,6 @@ export const TeamAnalyticsPage: React.FC = () => {
 
   return (
     <div>
-      <TeamDateRangeBar timezone={scope.team.timezone} />
       <p className="text-muted" style={{ fontSize: 12, margin: '12px 0' }}>
         {t('teams.overview.updatedAt', { time: formatInTimezone(analysis.snapshot.asOf, analysis.range.timezone, locale) })}
         {analysis.snapshot.refreshing ? ` · ${t('teams.analytics.refreshing')}` : ''}
@@ -161,6 +157,11 @@ export const TeamAnalyticsPage: React.FC = () => {
           <div className="panel-header"><h2>{t('dashboard.agentBreakdown')}</h2></div>
           <AgentBreakdown items={agentItems} />
         </Card>
+      </div>
+
+      <div className="team-chart-controls">
+        {waitingForDates && <p className="team-chart-range" role="status">{t('teams.range.showingPrevious')}</p>}
+        <TeamDateRangeBar timezone={scope.team.timezone} />
       </div>
 
       <Card>

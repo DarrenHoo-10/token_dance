@@ -85,3 +85,7 @@
   .team-date-icon { display: none; }
   .team-date-hint { margin-left: 0; }
 }
+
+.team-chart-controls { margin: 16px 0 24px; }
+.team-chart-controls .team-date-toolbar { margin-bottom: 0; }
+.team-chart-range { margin: 0 0 8px; color: #6d786f; font-size: 12px; }

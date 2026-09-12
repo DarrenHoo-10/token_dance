@@ -34,16 +34,13 @@ export const TeamOverviewPage: React.FC = () => {
 
   if (!scope) return null;
 
-  if (waitingForDates) {
-    return <div><TeamDateRangeBar timezone={scope.team.timezone} /></div>;
-  }
 
   if ((updating && !analysis) || (!analysis && !error)) {
-    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} /></div>;
+    return <div><AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} /><TeamDateRangeBar timezone={scope.team.timezone} /></div>;
   }
 
   if (error && !analysis) {
-    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><ErrorState error={error} description={teamErrorMessage(t, error)} /></div>;
+    return <div><ErrorState error={error} description={teamErrorMessage(t, error)} /><TeamDateRangeBar timezone={scope.team.timezone} /></div>;
   }
 
   const tokens = metricDisplay(analysis?.summary.tokens);
@@ -84,7 +81,6 @@ export const TeamOverviewPage: React.FC = () => {
         </div>
       )}
 
-      <TeamDateRangeBar timezone={scope.team.timezone} />
 
       {analysis && (
         <p className="text-muted" style={{ fontSize: 12, margin: '12px 0 20px' }}>
@@ -134,6 +130,11 @@ export const TeamOverviewPage: React.FC = () => {
           </div>
           <AgentBreakdown items={agents} />
         </Card>
+      </div>
+
+      <div className="team-chart-controls">
+        {waitingForDates && <p className="team-chart-range" role="status">{t('teams.range.showingPrevious')}</p>}
+        <TeamDateRangeBar timezone={scope.team.timezone} />
       </div>
 
       <Card>

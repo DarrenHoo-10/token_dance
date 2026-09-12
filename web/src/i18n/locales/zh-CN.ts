@@ -396,6 +396,7 @@ export const zhCN = {
       timezone: '团队时区 {timezone}',
       tooLong: '自定义范围最多 90 天。',
       customHint: '历史日期可选，最多 90 天',
+      showingPrevious: '日期尚未选齐，图表保留当前统计；首次打开显示今天。',
       chooseDates: '选齐日期后自动更新',
     },
     overview: {
