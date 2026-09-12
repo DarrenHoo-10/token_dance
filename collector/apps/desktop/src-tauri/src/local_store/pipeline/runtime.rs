@@ -95,6 +95,8 @@ pub struct PipelineRuntime {
     acquired: AtomicUsize,
     failures: AtomicUsize,
     pub work_available: tokio::sync::Notify,
+    pub metrics_available: tokio::sync::Notify,
+    metrics_applied: AtomicUsize,
 }
 
 impl PipelineRuntime {
@@ -204,6 +206,8 @@ impl PipelineRuntime {
             acquired: AtomicUsize::new(0),
             failures: AtomicUsize::new(0),
             work_available: tokio::sync::Notify::new(),
+            metrics_available: tokio::sync::Notify::new(),
+            metrics_applied: AtomicUsize::new(0),
         }
     }
 
@@ -232,7 +236,7 @@ impl PipelineRuntime {
         let _lifecycle = self.lifecycle.read().expect("pipeline lifecycle");
         let discovered = self.discover_and_register();
         self.refresh_sources();
-        let metrics = self.drain_metrics();
+        let metrics = self.metrics_applied.swap(0, Ordering::Relaxed);
         let rebuild = self
             .writer
             .rebuild(super::reconstruction::RebuildAction::Reconcile {
@@ -497,6 +501,7 @@ impl PipelineRuntime {
         drop(permit);
         if success {
             self.acquired.fetch_add(1, Ordering::Relaxed);
+            self.metrics_available.notify_one();
         } else {
             self.failures.fetch_add(1, Ordering::Relaxed);
         }
@@ -504,8 +509,9 @@ impl PipelineRuntime {
         true
     }
 
-    fn drain_metrics(&self) -> usize {
-        [Consumer::Hour, Consumer::Day, Consumer::Month]
+    pub fn drain_metrics(&self) -> usize {
+        let _lifecycle = self.lifecycle.read().expect("pipeline lifecycle");
+        let applied = [Consumer::Hour, Consumer::Day, Consumer::Month]
             .into_iter()
             .map(|consumer| {
                 self.writer
@@ -513,7 +519,9 @@ impl PipelineRuntime {
                     .map(|s| s.applied)
                     .unwrap_or(0)
             })
-            .sum()
+            .sum();
+        self.metrics_applied.fetch_add(applied, Ordering::Relaxed);
+        applied
     }
 
     pub fn collection_status(&self, harness: &str) -> Option<&'static str> {
