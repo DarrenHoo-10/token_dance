@@ -28,7 +28,7 @@ export const TeamAnalyticsPage: React.FC = () => {
   const { showToast } = useNotification();
   const { scope, authRevision } = useTeam();
   const { range, from, to, agent, provider, model, setFilter } = useTeamSearchFilters();
-  const { analysis, updating, updatingMessageKey, error, waitingForDates } = useTeamAnalysis({
+  const { analysis, updating, updatingMessageKey, error } = useTeamAnalysis({
     teamId: scope?.team.id,
     authRevision,
     range,
@@ -152,16 +152,14 @@ export const TeamAnalyticsPage: React.FC = () => {
         <Card>
           <div className="panel-header"><h2>{t('dashboard.tokenTrends')}</h2></div>
           <TokenTrendChart trends={trends} />
+          <div className="team-chart-controls">
+            <TeamDateRangeBar timezone={scope.team.timezone} />
+          </div>
         </Card>
         <Card>
           <div className="panel-header"><h2>{t('dashboard.agentBreakdown')}</h2></div>
           <AgentBreakdown items={agentItems} />
         </Card>
-      </div>
-
-      <div className="team-chart-controls">
-        {waitingForDates && <p className="team-chart-range" role="status">{t('teams.range.showingPrevious')}</p>}
-        <TeamDateRangeBar timezone={scope.team.timezone} />
       </div>
 
       <Card>

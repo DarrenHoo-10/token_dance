@@ -116,6 +116,7 @@ describe('Team analysis updating state', () => {
     const chart = await screen.findByRole('heading', { name: 'Token 趋势' });
     const custom = screen.getByRole('tab', { name: '自定义' });
     expect(chart.compareDocumentPosition(custom) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(chart.closest('.panel')).toContainElement(custom);
     fireEvent.click(custom);
     expect(screen.getByRole('heading', { name: 'Token 趋势' })).toBeInTheDocument();
     expect(screen.getByText('120.0K')).toBeInTheDocument();

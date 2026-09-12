@@ -21,7 +21,7 @@ export const TeamOverviewPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const justCreated = Boolean((location.state as { justCreated?: boolean } | null)?.justCreated);
-  const { analysis, updating, updatingMessageKey, error, waitingForDates } = useTeamAnalysis({
+  const { analysis, updating, updatingMessageKey, error } = useTeamAnalysis({
     teamId: scope?.team.id,
     authRevision,
     range,
@@ -121,6 +121,9 @@ export const TeamOverviewPage: React.FC = () => {
             </div>
           </div>
           <TokenTrendChart trends={trends} />
+          <div className="team-chart-controls">
+            <TeamDateRangeBar timezone={scope.team.timezone} />
+          </div>
         </Card>
         <Card>
           <div className="panel-header">
@@ -130,11 +133,6 @@ export const TeamOverviewPage: React.FC = () => {
           </div>
           <AgentBreakdown items={agents} />
         </Card>
-      </div>
-
-      <div className="team-chart-controls">
-        {waitingForDates && <p className="team-chart-range" role="status">{t('teams.range.showingPrevious')}</p>}
-        <TeamDateRangeBar timezone={scope.team.timezone} />
       </div>
 
       <Card>
