@@ -13,7 +13,8 @@ use adapter_grok_build::{hook_auth_token, write_session_end_hook};
 use adapter_sdk::{ConfigMutation, SetupPlan};
 use chrono::{Local, Utc};
 use collector_service::{
-    detect_local, grok_user_home, start_listener, AppPaths, InstanceLock, DetectionSnapshot, ProductionService,
+    detect_local, grok_user_home, start_listener, AppPaths, DetectionSnapshot, InstanceLock,
+    ProductionService,
 };
 use config_executor::{EncryptedBackupStore, SemanticVerifier, SetupPlanExecutor};
 use protocol::EventEnvelope;
@@ -367,15 +368,20 @@ impl AppState {
         let lock = InstanceLock::acquire(&paths)?;
         collector_service::platform::maybe_migrate_macos_home_dir(&paths)?;
         let key_provider: Arc<dyn KeyProvider> = if crate::local_test::enabled() {
-            Arc::new(InjectedKeyProvider::new(crate::local_test::data_key(&paths.collector)?))
+            Arc::new(InjectedKeyProvider::new(crate::local_test::data_key(
+                &paths.collector,
+            )?))
         } else {
             collector_service::runtime::wal_key_provider(&paths.collector)?
         };
         let state = Self::build(
-            paths.collector.clone(), paths.logs.clone(), key_provider,
+            paths.collector.clone(),
+            paths.logs.clone(),
+            key_provider,
             Arc::new(SystemAutostartManager::new("TokenDance")),
             false,
-        ).await?;
+        )
+        .await?;
         *state.instance_lock.lock().expect("instance lock") = Some(lock);
         Ok(state)
     }
@@ -440,9 +446,14 @@ impl AppState {
                 let _ = start_listener(hook_auth_token(&key), service.grok_hooks.clone());
             }
         }
+        let existing_control = load_control(&root)?;
+        let first_launch = existing_control.is_none();
         let autostart_enabled = autostart.is_enabled()?;
-        let control = load_control(&root)?
+        let control = existing_control
             .unwrap_or_else(|| PersistedControl::initial(&installation_id, autostart_enabled));
+        if first_launch {
+            apply_default_autostart(autostart.as_ref());
+        }
         let pipeline_writer = match PipelineStore::open(&root) {
             Ok(mut store) => {
                 if !cfg!(test) {
@@ -1453,6 +1464,15 @@ fn load_or_create_installation_id(root: &Path) -> Result<String, String> {
     let id = format!("ins_{}", ulid::Ulid::new());
     collector_service::platform::write_private_file(&path, &id)?;
     Ok(id)
+}
+
+fn apply_default_autostart(autostart: &dyn AutostartProvider) {
+    if crate::local_test::enabled() {
+        return;
+    }
+    if let Err(error) = autostart.enable() {
+        eprintln!("first-launch autostart enable failed: {error}");
+    }
 }
 
 fn load_control(root: &Path) -> Result<Option<PersistedControl>, String> {

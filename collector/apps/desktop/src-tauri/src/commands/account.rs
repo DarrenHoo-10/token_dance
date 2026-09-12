@@ -809,6 +809,7 @@ async fn browser_login(
     .await
     .map_err(|_| "BROWSER_OPEN_FAILED")??;
     let (mut stream, code) = wait_browser_callback(&listener, &redirect, &nonce).await?;
+    let home = origin.clone();
     let mut current = Connection::new(origin)?;
     let result: Result<AccountSession, String> = async {
         let session = current
@@ -823,18 +824,40 @@ async fn browser_login(
         Ok(session)
     }
     .await;
-    let message = if result.is_ok() {
-        "TokenDance 登录成功。可以关闭此页面并返回桌面应用。<br>Signed in. You can close this page and return to TokenDance."
+    if result.is_ok() {
+        // Skip any success interstitial — send the browser straight to the site home.
+        let _ = send_browser_redirect(&mut stream, home.as_str()).await;
     } else {
-        "登录未完成，请返回 TokenDance 重试。<br>Sign-in failed. Return to TokenDance and retry."
-    };
-    let _ = send_browser_result(&mut stream, "200 OK", message).await;
+        let _ = send_browser_result(
+            &mut stream,
+            "200 OK",
+            "登录未完成，请返回 TokenDance 重试。<br>Sign-in failed. Return to TokenDance and retry.",
+        )
+        .await;
+    }
     let session = result?;
     if let Some(user) = &session.user {
         let _ = app.activate_sync_account(&user.user_id).await;
     }
     *app.sync_status.write().await = "WAITING".into();
     Ok(session)
+}
+
+async fn send_browser_redirect(
+    stream: &mut tokio::net::TcpStream,
+    location: &str,
+) -> Result<(), String> {
+    let response = format!(
+        "HTTP/1.1 302 Found\r\nLocation: {location}\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+    );
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        stream.write_all(response.as_bytes()),
+    )
+    .await
+    .map_err(|_| "CALLBACK_ERROR")?
+    .map_err(|_| "CALLBACK_ERROR")?;
+    Ok(())
 }
 
 async fn send_browser_result(
@@ -1043,6 +1066,29 @@ mod tests {
         ] {
             assert!(callback_code(&invalid, redirect, "expected").is_none());
         }
+    }
+
+    #[tokio::test]
+    async fn successful_browser_callback_redirects_to_website_home() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = tokio::spawn(async move {
+            let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            let mut buf = [0u8; 1024];
+            let n = tokio::io::AsyncReadExt::read(&mut stream, &mut buf)
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&buf[..n]).into_owned()
+        });
+        let (mut stream, _) = listener.accept().await.unwrap();
+        send_browser_redirect(&mut stream, "https://example.test/token-dance/")
+            .await
+            .unwrap();
+        let response = client.await.unwrap();
+        assert!(response.starts_with("HTTP/1.1 302 Found\r\n"));
+        assert!(response.contains("Location: https://example.test/token-dance/\r\n"));
+        assert!(!response.contains("登录成功"));
+        assert!(!response.contains("Signed in"));
     }
 
     #[tokio::test]
