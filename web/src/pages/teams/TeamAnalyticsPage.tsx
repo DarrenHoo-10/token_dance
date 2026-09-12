@@ -28,7 +28,7 @@ export const TeamAnalyticsPage: React.FC = () => {
   const { showToast } = useNotification();
   const { scope, authRevision } = useTeam();
   const { range, from, to, agent, provider, model, setFilter } = useTeamSearchFilters();
-  const { analysis, updating, updatingMessageKey, error } = useTeamAnalysis({
+  const { analysis, updating, updatingMessageKey, error, waitingForDates } = useTeamAnalysis({
     teamId: scope?.team.id,
     authRevision,
     range,
@@ -66,14 +66,17 @@ export const TeamAnalyticsPage: React.FC = () => {
   }, [scope]);
 
   if (!scope) return null;
+  if (waitingForDates) {
+    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><p role="status" className="text-muted">{t('teams.range.chooseDates')}</p></div>;
+  }
   if (updating && !analysis) {
-    return <AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} />;
+    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} /></div>;
   }
   if (error && !analysis) {
-    return <ErrorState error={error} description={teamErrorMessage(t, error)} />;
+    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><ErrorState error={error} description={teamErrorMessage(t, error)} /></div>;
   }
   if (!analysis) {
-    return <AnalysisSkeleton />;
+    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><AnalysisSkeleton /></div>;
   }
 
   const tokens = metricDisplay(analysis.summary.tokens, formatTokenCompact);

@@ -3,8 +3,14 @@ import { act, fireEvent, renderHook, screen, waitFor } from '@testing-library/re
 import { api } from '@/api/client';
 import { teamsApi, type TeamAnalysisReady, type TeamAnalysisUpdating } from '@/api/teams';
 import { TeamAnalyticsPage } from '@/pages/teams/TeamAnalyticsPage';
+import { TeamOverviewPage } from '@/pages/teams/TeamOverviewPage';
 import { useTeamAnalysis } from '@/pages/teams/useTeamAnalysis';
 import { renderTeams, sampleScope, signedInUser } from './teams-test-helpers';
+
+vi.mock('react-router-dom', async (importOriginal) => ({
+  ...await importOriginal<typeof import('react-router-dom')>(),
+  useOutletContext: () => ({ openInvite: () => undefined }),
+}));
 
 const readyAnalysis = (authRevision: string, tokenValue: string): TeamAnalysisReady => ({
   state: 'ready',
@@ -50,6 +56,33 @@ describe('Team analysis updating state', () => {
     vi.useRealTimers();
   });
 
+  it.each([
+    ['overview', <TeamOverviewPage />, ''],
+    ['analytics', <TeamAnalyticsPage />, '/analytics'],
+  ] as const)('keeps custom dates editable on a %s deep link without sending an incomplete query', async (_name, page, suffix) => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    vi.spyOn(teamsApi, 'getExports').mockResolvedValue({ exports: [] });
+    vi.spyOn(teamsApi, 'getFilterOptions').mockResolvedValue({ agents: [], providers: [], models: [] });
+    const query = vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
+    renderTeams(page, `/teams/tem_0123456789abcdefghijklmnop${suffix}?range=custom`);
+    const from = await screen.findByLabelText('开始日期');
+    const to = screen.getByLabelText('结束日期');
+    expect(screen.getByText('请选择开始日期和结束日期，选好后自动查询。')).toBeInTheDocument();
+    expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();
+    expect(query).not.toHaveBeenCalled();
+    fireEvent.change(from, { target: { value: '2026-09-01' } });
+    expect(query).not.toHaveBeenCalled();
+    fireEvent.change(to, { target: { value: '2026-09-06' } });
+    await waitFor(() => expect(query).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ range: 'custom', from: '2026-09-01', to: '2026-09-06' }), expect.any(AbortSignal)));
+    await waitFor(() => expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '' } });
+    expect(screen.getByText('请选择开始日期和结束日期，选好后自动查询。')).toBeInTheDocument();
+    expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '7 天' }));
+    await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: '7d' }), expect.any(AbortSignal)));
+  });
+
   it('shows a skeleton and never fakes 0 while the snapshot is updating', async () => {
     vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope({ team: { ...sampleScope().team, authRevision: '13' } }));
@@ -64,6 +97,7 @@ describe('Team analysis updating state', () => {
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop/analytics');
 
     expect(await screen.findByTestId('analysis-skeleton')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '自定义' })).toBeInTheDocument();
     expect(screen.getByText('正在汇总团队数据，请稍候…')).toBeInTheDocument();
     expect(screen.queryByText('0')).not.toBeInTheDocument();
     expect(screen.queryByText('$0')).not.toBeInTheDocument();

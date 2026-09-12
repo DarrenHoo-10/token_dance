@@ -395,6 +395,7 @@ export const zhCN = {
       to: '结束日期',
       timezone: '团队时区 {timezone}',
       tooLong: '自定义范围最多 90 天。',
+      chooseDates: '请选择开始日期和结束日期，选好后自动查询。',
     },
     overview: {
       noDescription: '还没有简介',

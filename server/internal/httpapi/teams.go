@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -91,10 +92,10 @@ func (h *Handlers) GetMyTeamInvitations(w http.ResponseWriter, r *http.Request) 
 }
 
 type createTeamBody struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	Timezone    string                 `json:"timezone"`
-	Sharing     *domain.SharingFlags   `json:"sharing"`
+	Name        string               `json:"name"`
+	Description string               `json:"description"`
+	Timezone    string               `json:"timezone"`
+	Sharing     *domain.SharingFlags `json:"sharing"`
 }
 
 func (h *Handlers) CreateTeam(w http.ResponseWriter, r *http.Request) {
@@ -558,12 +559,14 @@ func (h *Handlers) GetTeamAnalysis(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
+	started := time.Now()
 	dto, retryAfter, err := svc.GetAnalysis(r.Context(), user.UserID, chi.URLParam(r, "teamId"), teams.AnalysisQuery{
 		RangeKey: r.URL.Query().Get("range"), From: r.URL.Query().Get("from"), To: r.URL.Query().Get("to"),
 		Agent: r.URL.Query().Get("agent"), Provider: r.URL.Query().Get("provider"), Model: r.URL.Query().Get("model"),
 		SnapshotID: r.URL.Query().Get("snapshotId"), Collection: r.URL.Query().Get("collection"),
 		Cursor: r.URL.Query().Get("cursor"), Limit: limit,
 	})
+	w.Header().Set("Server-Timing", "team_analysis;dur="+strconv.FormatFloat(float64(time.Since(started).Microseconds())/1000, 'f', 3, 64))
 	if err != nil {
 		writeTeamError(w, r, err)
 		return

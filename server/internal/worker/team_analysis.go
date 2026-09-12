@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"math/big"
 	"sort"
 	"strings"
@@ -258,7 +259,10 @@ func (w *Worker) executeTeamAnalysis(ctx context.Context, claim *teamAnalysisCla
 	if claim.ruleVersion != domain.TeamAnalysisRuleVersion {
 		return w.discardTeamAnalysis(ctx, claim, "TEAM_SNAPSHOT_OBSOLETE")
 	}
+	started := time.Now()
+	queueAge := w.clk.Now().Sub(claim.asOf)
 	source, err := w.readTeamAnalysisSource(ctx, claim)
+	readDone := time.Now()
 	if err != nil {
 		return err
 	}
@@ -268,10 +272,17 @@ func (w *Worker) executeTeamAnalysis(ctx context.Context, claim *teamAnalysisCla
 	if err := w.writeTeamAnalysisRows(ctx, claim, source.rows); err != nil {
 		return err
 	}
+	writeDone := time.Now()
 	published, err := w.publishTeamAnalysis(ctx, claim, source)
 	if err != nil {
 		return err
 	}
+	finished := time.Now()
+	log.Printf("[TeamAnalysisTiming] snapshot=%s queue_age_ms=%.3f read_aggregate_ms=%.3f write_ms=%.3f publish_ms=%.3f total_ms=%.3f rows=%d published=%v",
+		claim.snapshotID, float64(queueAge.Microseconds())/1000,
+		float64(readDone.Sub(started).Microseconds())/1000, float64(writeDone.Sub(readDone).Microseconds())/1000,
+		float64(finished.Sub(writeDone).Microseconds())/1000, float64(finished.Sub(started).Microseconds())/1000,
+		len(source.rows), published)
 	if published && source.sourceGrew {
 		return w.queueTeamAnalysisRefresh(ctx, claim, source.capturedAuth, source.capturedSource)
 	}

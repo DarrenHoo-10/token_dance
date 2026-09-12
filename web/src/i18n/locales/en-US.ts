@@ -395,6 +395,7 @@ export const enUS = {
       to: 'End date',
       timezone: 'Team timezone {timezone}',
       tooLong: 'Custom ranges can cover at most 90 days.',
+      chooseDates: 'Choose a start and end date to load team data.',
     },
     overview: {
       noDescription: 'No description yet',

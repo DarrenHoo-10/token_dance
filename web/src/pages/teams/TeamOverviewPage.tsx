@@ -21,7 +21,7 @@ export const TeamOverviewPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const justCreated = Boolean((location.state as { justCreated?: boolean } | null)?.justCreated);
-  const { analysis, updating, updatingMessageKey, error } = useTeamAnalysis({
+  const { analysis, updating, updatingMessageKey, error, waitingForDates } = useTeamAnalysis({
     teamId: scope?.team.id,
     authRevision,
     range,
@@ -34,12 +34,16 @@ export const TeamOverviewPage: React.FC = () => {
 
   if (!scope) return null;
 
+  if (waitingForDates) {
+    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><p role="status" className="text-muted">{t('teams.range.chooseDates')}</p></div>;
+  }
+
   if ((updating && !analysis) || (!analysis && !error)) {
-    return <AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} />;
+    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} /></div>;
   }
 
   if (error && !analysis) {
-    return <ErrorState error={error} description={teamErrorMessage(t, error)} />;
+    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><ErrorState error={error} description={teamErrorMessage(t, error)} /></div>;
   }
 
   const tokens = metricDisplay(analysis?.summary.tokens);

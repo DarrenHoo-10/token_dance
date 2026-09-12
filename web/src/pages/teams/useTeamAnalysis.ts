@@ -14,6 +14,7 @@ export function useTeamAnalysis(input: {
   enabled?: boolean;
 }) {
   const { teamId, authRevision, range, from, to, agent, provider, model, enabled = true } = input;
+  const waitingForDates = range === 'custom' && (!from || !to);
   const [analysis, setAnalysis] = useState<TeamAnalysisReady | null>(null);
   const [updating, setUpdating] = useState(false);
   const [updatingMessageKey, setUpdatingMessageKey] = useState<string | null>(null);
@@ -36,7 +37,13 @@ export function useTeamAnalysis(input: {
 
   useEffect(() => {
     if (!teamId || !enabled) return undefined;
-    if (range === 'custom' && (!from || !to)) return undefined;
+    if (waitingForDates) {
+      setAnalysis(null);
+      setUpdating(false);
+      setUpdatingMessageKey(null);
+      setError(null);
+      return undefined;
+    }
 
     const seq = seqRef.current + 1;
     seqRef.current = seq;
@@ -99,7 +106,7 @@ export function useTeamAnalysis(input: {
       controller.abort();
       if (timer) window.clearTimeout(timer);
     };
-  }, [agent, authRevision, enabled, from, model, provider, range, teamId, to]);
+  }, [agent, authRevision, enabled, from, model, provider, range, teamId, to, waitingForDates]);
 
-  return { analysis, updating, updatingMessageKey, error };
+  return { analysis, updating, updatingMessageKey, error, waitingForDates };
 }
