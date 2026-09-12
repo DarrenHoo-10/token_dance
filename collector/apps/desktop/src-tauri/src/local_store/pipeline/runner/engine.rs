@@ -19,6 +19,25 @@ use crate::local_store::pipeline::types::{
 };
 use crate::local_store::pipeline::{PipelineStore, PipelineWriter};
 
+/// Fairness bookkeeping must not turn unchanged running rows into a hot loop.
+pub(super) fn cursor_progress(before: &Value, after: &Value) -> bool {
+    if after["mode"] == "running_to_completed" {
+        if after["pending_scan"].as_array().is_some_and(|ids| !ids.is_empty())
+            || after["discover_next"].as_bool() == Some(true) {
+            return before != after;
+        }
+        let mut before = before.clone();
+        let mut after = after.clone();
+        for value in [&mut before, &mut after] {
+            if let Some(map) = value.as_object_mut() {
+                map.remove("pending_scan");
+                map.remove("discover_next");
+            }
+        }
+        before != after
+    } else { before != after }
+}
+
 /// Sink that commits a source batch (store direct or writer channel).
 pub trait SourceCommitSink {
     fn lease_source(
@@ -277,7 +296,7 @@ pub fn run_source_once(
                         ignored,
                         context_only,
                         has_more: batch.has_more,
-                        cursor_advanced: batch.next_cursor_json != committed.cursor_json,
+                        cursor_advanced: cursor_progress(&committed.cursor_json, &batch.next_cursor_json),
                         commit_seq: None,
                         last_ignored_code: last_ignored,
                         checkpoint_delay_ms: 0,
@@ -372,7 +391,7 @@ pub fn run_source_once(
         ignored,
         context_only,
         has_more: batch.has_more,
-        cursor_advanced: batch.next_cursor_json != committed.cursor_json,
+        cursor_advanced: cursor_progress(&committed.cursor_json, &batch.next_cursor_json),
         commit_seq: None,
         last_ignored_code: last_ignored.clone(),
         checkpoint_delay_ms: lease_started.elapsed().as_millis() as u64,
@@ -393,7 +412,7 @@ pub fn run_source_once(
         observed_boundary_json: next_boundary.to_string(),
         ignored_record_count_delta: ignored as i64,
         last_ignored_code: last_ignored,
-        next_poll_at: if batch.has_more && batch.next_cursor_json != committed.cursor_json {
+        next_poll_at: if batch.has_more && cursor_progress(&committed.cursor_json, &batch.next_cursor_json) {
             Some(admission_now)
         } else {
             Some(admission_now + 5_000)
