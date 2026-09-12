@@ -22,6 +22,49 @@
 
 部署任务通过受限文件 `TOKENDANCE_RELEASE_DB_CONFIG_FILE` 提供连接配置，JSON 字段为 `host`、`port`、`user`、`password`、`database`，可选 `unix_socket`、`ssl_ca`。连接本机 MySQL 可用 `127.0.0.1:3307`；非回环地址必须配置 CA 并校验服务端身份。配置文件只允许发布账号读取，不能进入仓库、OSS 或日志，密码不通过命令参数传入。生产与开发使用各自数据库、配置文件及清单目录。
 
+## 升版本前先查版本库
+
+**先查版本是否已存在，再修改版本文件。** 不要直接在本地版本号上加一：其他平台、其他工作区或并行发版可能已经使用了这个版本。
+
+1. 查询发布版本库 `desktop_releases` 的完整历史，覆盖 Windows、Mac 各架构及相关发布环境。不能只看 `desktop_release_channels`、`stable.json` 或 `macos.json`，它们只反映当前发布状态。
+2. 拉取远端 `main` 和标签，核对 GitHub Releases，包括草稿、预发布，以及正在进行的发版 PR，确认候选版本未被使用或预留。尚未登记进数据库的 Release/标签也算占用。
+3. 新改动选择高于已发布版本的未占用版本，按语义版本比较，不能按字符串排序。某个平台尚无安装包不代表版本号可重新使用。同一发行补齐平台包时，必须核对已有发行的版本与 main 完整提交 SHA 一致，不能覆盖已有产物。
+4. 只有完成检查后，才同步修改 Cargo、Tauri 和对应锁文件。在版本变更 PR 中记录“查询时间、查询范围、候选版本、是否已存在/预留”的结果；发布前重新检查，避免检查后被并行任务占用。查询失败或权限不足时，先补齐查询，不能按“未发现版本”继续升版本。
+
+可用以下只读查询检查数据库历史（通过既有受控连接配置执行）：
+
+```sql
+SELECT platform, version, source_branch, source_commit, created_at
+FROM desktop_releases
+ORDER BY created_at DESC, id DESC;
+```
+
+远端标签及 Release 检查示例：
+
+```sh
+git fetch origin main --tags
+git tag --list 'v*' --sort=-version:refname
+gh api --paginate repos/DarrenHoo-10/token_dance/releases \
+  --jq '.[] | {tag_name, draft, prerelease, target_commitish}'
+```
+
+例如，Mac 已发布 `0.1.27` 后，新修复不能再次发布成不同内容的 `0.1.27`；若 `0.1.28` 也已占用，需查询并确认 `0.1.29` 可用后再修改，不能仅凭本地仍显示 `0.1.27` 就选择 `0.1.28`。
+
+## PR 创建后的 CI 检查
+
+创建 PR 和每次推送后，必须查看 GitHub 检查状态，等待**最新 PR head 提交**的所有适用检查通过。不能用旧提交的绿色状态或本地测试结果代替。
+
+在 PR 对应分支的工作区执行：
+
+```sh
+gh pr view --json headRefOid,statusCheckRollup
+gh pr checks --watch --interval 30
+```
+
+失败时打开对应运行的失败步骤日志，定位原因、修复后推送，再次检查。排队、运行中、失败、取消、超时以及缺少必需检查都不表示通过；工作流按平台或发布条件明确不适用的任务可以跳过。不要通过忽略命令退出码、跳过失败测试或 `continue-on-error` 掩盖问题。
+
+合并前重新确认 head SHA 未变化，Windows、Mac 各架构、发布契约及密钥扫描等适用检查已通过，并在 PR 或交付记录中留下 SHA、结果和运行链接。合并和后续发布仍须遵守干净 `main` 构建规则。
+
 ## 首次切换（由云端 CI/CD 执行）
 
 1. 合并到 `main`，按现有发布流程执行服务端迁移、部署下载页和 `deploy/nginx-token-dance.conf`。不要从功能分支部署。安装 Python 3.11+ 发布依赖：`python3 -m pip install -r tools/releases/requirements.txt`，并由受控配置提供 `TOKENDANCE_RELEASE_DB_CONFIG_FILE`。
@@ -42,7 +85,7 @@ nginx -t
 
 ## 每次发布
 
-1. 从干净的 `main` 构建，确认 `HEAD == origin/main`。Rust 包、Cargo.lock、Tauri 配置中的版本号保持一致。
+1. 先按[升版本前检查](#升版本前先查版本库)确认版本未被占用，再从干净的 `main` 构建，确认 `HEAD == origin/main`。Rust 包、Cargo.lock、Tauri 配置中的版本号保持一致。
 2. 生成 `TokenDance.exe`、可选 ZIP、`build-info.json` 和 UTF-8 更新说明文件。`build-info.json` 沿用现有字段：`branch` 必须为 `main`，`commit` 是完整 40 位 SHA，`version` 与包版本一致，`sha256` 是 EXE 实际哈希。构建信息保留在内部发布记录中，不写进公共清单。
 3. 用现有 OSS 上传工具或 CI 步骤上传到不可变路径，例如 `token-dance/desktop/<version>/windows-x64/TokenDance.exe`。同版本文件不覆盖。仅安装包所在的专用 bucket/前缀提供匿名读取；不要把用户头像、数据导出等私有对象所在的整个 bucket 改为公开。OSS 写入凭据只通过 CI 的受控环境提供。
 4. 将这些本地构建产物交给云端发布任务，然后运行发布工具（Python 3.11+，需先配置数据库）：
