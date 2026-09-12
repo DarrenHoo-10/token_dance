@@ -50,6 +50,13 @@ export async function setAutoUpdate(enabled: boolean) {
 }
 export async function installUpdate() { if (isTauriEnvironment()) await invoke('install_update'); }
 
+export async function openUpdateDownloads() {
+  // Include prereleases: macOS DMGs are currently published on the release list.
+  const url = 'https://github.com/DarrenHoo-10/token_dance/releases';
+  if (isTauriEnvironment()) await invoke('open_website', { url });
+  else window.open(url, '_blank', 'noopener,noreferrer');
+}
+
 export function updateBusy(status: UpdateStatus | null) { return !!status && ['checking', 'downloading', 'installing'].includes(status.phase); }
 export function updateError(code: string | null, zh: boolean): string {
   const errors: Record<string, [string, string]> = {
@@ -66,12 +73,13 @@ export function updateError(code: string | null, zh: boolean): string {
     restore_failed: ['更新未完成，请从官网下载程序重新运行，数据仍保留在本机', 'Update could not complete. Download the app again; your local data is preserved.'],
     busy: ['更新正在进行，请稍候', 'An update is already in progress.'],
     no_update: ['当前已是最新版本', 'You are up to date.'],
+    unsupported: ['请从发布页下载安装包进行更新', 'Download an installer from the release page to update.'],
   };
   return (errors[code ?? ''] ?? ['暂时无法检查更新，请重试', 'Cannot check for updates. Please retry.'])[zh ? 0 : 1];
 }
 export function updateStatusText(status: UpdateStatus, zh: boolean): string {
   const t = (cn: string, en: string) => zh ? cn : en;
-  if (!status.supported) return t('此平台暂不支持应用内更新', 'In-app updates are not available on this platform yet.');
+  if (!status.supported) return t('此平台暂不支持应用内更新，请从发布页下载安装包', 'In-app updates are not available on this platform. Download an installer from the release page.');
   switch (status.phase) {
     case 'checking': return t('正在检查更新…', 'Checking for updates…');
     case 'downloading': return t(`正在后台下载 · ${status.progress}%`, `Downloading in background · ${status.progress}%`);

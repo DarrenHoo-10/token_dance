@@ -312,6 +312,15 @@ pub fn local_conversations(
     }
     if paths.database.exists() {
         let db = open_db(&paths.database)?;
+        // The IDE can have authentication/settings before it creates a conversation
+        // table. CLI metadata and transcript IDs still prove local ownership.
+        let has_conversations: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='cursorDiskKV')",
+            [], |row| row.get(0),
+        ).map_err(|_| failure("CURSOR_LOCAL_SOURCE_UNAVAILABLE"))?;
+        if !has_conversations {
+            return Ok(ids);
+        }
         let mut stmt = db
             .prepare("SELECT key FROM cursorDiskKV WHERE key LIKE 'composerData:%'")
             .map_err(|_| failure("CURSOR_LOCAL_SOURCE_UNAVAILABLE"))?;
