@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { TeamMemberInsights } from './TeamMemberInsights';
 import { AgentBreakdown } from '@/components/analytics/AgentBreakdown';
 import { MetricCard } from '@/components/analytics/MetricCard';
 import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
@@ -27,7 +28,7 @@ export const TeamAnalyticsPage: React.FC = () => {
   const { t, locale } = useLocale();
   const { showToast } = useNotification();
   const { scope, authRevision } = useTeam();
-  const { range, from, to, agent, provider, model, setFilter } = useTeamSearchFilters();
+  const { range, from, to, agent, provider, model, setFilter, search } = useTeamSearchFilters();
   const { analysis, updating, updatingMessageKey, error } = useTeamAnalysis({
     teamId: scope?.team.id,
     authRevision,
@@ -67,13 +68,13 @@ export const TeamAnalyticsPage: React.FC = () => {
 
   if (!scope) return null;
   if (updating && !analysis) {
-    return <div><AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} /><TeamDateRangeBar timezone={scope.team.timezone} /></div>;
+    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} /></div>;
   }
   if (error && !analysis) {
-    return <div><ErrorState error={error} description={teamErrorMessage(t, error)} /><TeamDateRangeBar timezone={scope.team.timezone} /></div>;
+    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><ErrorState error={error} description={teamErrorMessage(t, error)} /></div>;
   }
   if (!analysis) {
-    return <div><AnalysisSkeleton /><TeamDateRangeBar timezone={scope.team.timezone} /></div>;
+    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><AnalysisSkeleton /></div>;
   }
 
   const tokens = metricDisplay(analysis.summary.tokens, formatTokenCompact);
@@ -112,6 +113,7 @@ export const TeamAnalyticsPage: React.FC = () => {
 
   return (
     <div>
+      <TeamDateRangeBar timezone={scope.team.timezone} />
       <p className="text-muted" style={{ fontSize: 12, margin: '12px 0' }}>
         {t('teams.overview.updatedAt', { time: formatInTimezone(analysis.snapshot.asOf, analysis.range.timezone, locale) })}
         {analysis.snapshot.refreshing ? ` · ${t('teams.analytics.refreshing')}` : ''}
@@ -148,13 +150,12 @@ export const TeamAnalyticsPage: React.FC = () => {
         />
       </div>
 
+      <TeamMemberInsights key={`${scope.team.id}:${authRevision}`} analysis={analysis} teamId={scope.team.id} search={search} />
+
       <div className="team-primary-grid">
         <Card>
           <div className="panel-header"><h2>{t('dashboard.tokenTrends')}</h2></div>
           <TokenTrendChart trends={trends} />
-          <div className="team-chart-controls">
-            <TeamDateRangeBar timezone={scope.team.timezone} />
-          </div>
         </Card>
         <Card>
           <div className="panel-header"><h2>{t('dashboard.agentBreakdown')}</h2></div>

@@ -1,0 +1,86 @@
+import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
+import type { ContributionItem, TeamAnalysisReady } from '@/api/teams';
+import { Card } from '@/components/common/Card';
+import { useLocale } from '@/context/LocaleContext';
+import { firstGrapheme, formatTokenCompact, formatTokenExact } from './teamUtils';
+
+const COLORS = ['#527d13', '#297e9c', '#8863af', '#bb7730', '#bb5275'];
+const integer = (value?: string | null) => /^\d+$/.test(value || '') ? BigInt(value!) : 0n;
+export function memberPercent(value: string, total: string): number {
+  const denominator = integer(total);
+  return denominator > 0n ? Number(integer(value) * 10000n / denominator) / 100 : 0;
+}
+function pointsFor(member: ContributionItem, dates: string[], max: bigint, width = 720, height = 190) {
+  const values = new Map((member.trend || []).map(point => [point.date, integer(point.tokens.value)]));
+  const padding = Math.min(12, height * 0.16);
+  return dates.map((date, index) => {
+    const value = values.get(date) || 0n;
+    return { date, value, x: dates.length === 1 ? width / 2 : 12 + index * (width - 24) / (dates.length - 1), y: height - padding - Number(value * 10000n / (max || 1n)) / 10000 * (height - padding * 2) };
+  });
+}
+
+export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady; teamId: string; search: string }> = ({ analysis, teamId, search }) => {
+  const { t } = useLocale();
+  const members = analysis.contributions.items;
+  const [selection, setSelection] = useState<string[] | null>(null);
+  const available = members.filter(member => member.trend !== undefined);
+  const selected = selection === null ? available.slice(0, 3) : available.filter(member => selection.includes(member.membershipId));
+  const dates = [...new Set(available.flatMap(member => (member.trend || []).map(point => point.date)))].sort();
+  const max = selected.flatMap(member => member.trend || []).reduce((value, point) => integer(point.tokens.value) > value ? integer(point.tokens.value) : value, 1n);
+  const total = analysis.summary.tokens.value || '0';
+  const leaders = members.slice(0, 5);
+  const shown = leaders.reduce((sum, member) => sum + integer(member.tokens.value), 0n);
+  const remainder = integer(total) > shown ? integer(total) - shown : 0n;
+  const colorFor = (id: string) => COLORS[members.findIndex(member => member.membershipId === id) % COLORS.length] || COLORS[0];
+  const toggle = (id: string) => {
+    const ids = selected.map(member => member.membershipId);
+    setSelection(ids.includes(id) ? ids.filter(value => value !== id) : ids.length < 5 ? [...ids, id] : ids);
+  };
+
+  return <section className="team-people-section" aria-label={t('teams.insights.title')}>
+    <div className="team-section-heading"><div><span className="team-section-eyebrow">{t('teams.insights.eyebrow')}</span><h2>{t('teams.insights.title')}</h2></div><Link to={`/teams/${teamId}/members${search ? `?${search}` : ''}`}>{t('teams.insights.allMembers')} →</Link></div>
+    <div className="team-people-grid">
+      <Card className="team-member-trend">
+        <div className="panel-header"><div><h2>{t('teams.insights.memberTrend')}</h2><p>{t('teams.insights.compareHint')}</p></div><span className="team-chart-unit">Token / {t('teams.insights.day')}</span></div>
+        {available.length > 0 ? <>
+          <div className="team-series-picker" aria-label={t('teams.insights.chooseMembers')}>
+            {available.map(member => <button key={member.membershipId} type="button" aria-pressed={selected.some(item => item.membershipId === member.membershipId)} disabled={selected.length >= 5 && !selected.some(item => item.membershipId === member.membershipId)} onClick={() => toggle(member.membershipId)}><i style={{ background: colorFor(member.membershipId) }} aria-hidden="true" />{member.displayName}</button>)}
+          </div>
+          {selected.length > 0 && dates.length > 0 ? <>
+            <div className="team-line-scale"><span>{formatTokenCompact(max.toString())}</span></div>
+            <svg className="team-multiline-chart" viewBox="0 0 720 190" preserveAspectRatio="none" role="img" aria-label={t('teams.insights.memberTrend')}>
+              {[12, 95, 178].map(y => <line key={y} x1="12" x2="708" y1={y} y2={y} stroke="#e6ebe4" strokeDasharray="4 5" />)}
+              {selected.map(member => { const points = pointsFor(member, dates, max); return <g key={member.membershipId}>
+                <polyline points={points.map(point => `${point.x},${point.y}`).join(' ')} fill="none" stroke={colorFor(member.membershipId)} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
+                {points.map(point => <circle key={point.date} cx={point.x} cy={point.y} r="3.5" fill={colorFor(member.membershipId)}><title>{`${member.displayName} · ${point.date} · ${formatTokenExact(point.value.toString())} Token`}</title></circle>)}
+              </g>; })}
+            </svg>
+            <div className="team-line-scale"><span>0</span></div>
+            <div className="team-line-dates"><span>{dates[0]}</span><span>{dates.length > 1 ? dates[dates.length - 1] : ''}</span></div>
+            <details className="team-trend-details"><summary>{t('teams.insights.dailyDetails')}</summary><div className="team-table-scroll"><table><thead><tr><th>{t('teams.insights.date')}</th>{selected.map(member => <th key={member.membershipId}>{member.displayName}</th>)}</tr></thead><tbody>{dates.map(date => <tr key={date}><td>{date}</td>{selected.map(member => <td key={member.membershipId}>{formatTokenExact(member.trend?.find(point => point.date === date)?.tokens.value || '0')}</td>)}</tr>)}</tbody></table></div></details>
+          </> : <p className="team-chart-empty">{t('teams.insights.selectMember')}</p>}
+        </> : <p className="team-chart-empty">{t(members.length ? 'teams.insights.trendUnavailable' : 'teams.overview.noContributions')}</p>}
+      </Card>
+      <Card>
+        <div className="panel-header"><div><h2>{t('teams.insights.memberShare')}</h2><p>{t('teams.insights.shareHint')}</p></div></div>
+        {integer(total) > 0n ? <>
+          <div className="team-share-total"><strong className="mono-num">{formatTokenCompact(total)}</strong><span>{t('teams.metrics.tokens')}</span></div>
+          <div className="team-share-stack" role="img" aria-label={t('teams.insights.memberShare')}>
+            {leaders.map((member, index) => <span key={member.membershipId} style={{ width: `${memberPercent(member.tokens.value || '0', total)}%`, background: COLORS[index] }} title={`${member.displayName}: ${memberPercent(member.tokens.value || '0', total)}%`} />)}
+            {remainder > 0n && <span style={{ flex: 1, background: '#d6ddd1' }} title={t('teams.insights.others')} />}
+          </div>
+          <div className="team-share-legend">{leaders.map((member, index) => <div key={member.membershipId}><i style={{ background: COLORS[index] }} aria-hidden="true" /><span>{member.displayName}</span><strong className="mono-num">{memberPercent(member.tokens.value || '0', total).toFixed(1)}%</strong></div>)}{remainder > 0n && <div><i style={{ background: '#d6ddd1' }} aria-hidden="true" /><span>{t('teams.insights.others')}</span><strong>{memberPercent(remainder.toString(), total).toFixed(1)}%</strong></div>}</div>
+        </> : <p className="team-chart-empty">{t('teams.overview.noContributions')}</p>}
+      </Card>
+    </div>
+    <Card>
+      <div className="panel-header"><div><h2>{t('teams.overview.contributions')}</h2><p>{t('teams.insights.rankingHint')}</p></div>{analysis.contributions.nextCursor && <span className="team-chart-unit">{t('teams.insights.firstPage', { count: members.length })}</span>}</div>
+      {members.length ? <div className="team-table-scroll"><table className="team-contribution-table"><thead><tr><th>{t('teams.insights.member')}</th><th>Token</th><th>{t('teams.insights.share')}</th><th>{t('teams.insights.activeDays')}</th><th>{t('teams.insights.periodTrend')}</th></tr></thead><tbody>{members.map(member => {
+        const memberMax = (member.trend || []).reduce((value, point) => integer(point.tokens.value) > value ? integer(point.tokens.value) : value, 1n);
+        const points = pointsFor(member, dates, memberMax, 100, 30);
+        return <tr key={member.membershipId}><td><div className="team-person-cell"><span className="team-person-rank">{member.rank}</span><span className="team-person-avatar" aria-hidden="true">{firstGrapheme(member.displayName)}</span><span><strong>{member.displayName}</strong><small>{member.handle ? `@${member.handle}` : ''}</small></span></div></td><td className="mono-num" title={member.tokens.value || ''}>{member.tokens.state === 'available' ? formatTokenCompact(member.tokens.value || '0') : '—'}</td><td><div className="team-person-share"><span>{integer(total) > 0n ? `${memberPercent(member.tokens.value || '0', total).toFixed(1)}%` : '—'}</span><div><i style={{ width: `${memberPercent(member.tokens.value || '0', total)}%`, background: colorFor(member.membershipId) }} /></div></div></td><td>{member.trend ? member.trend.filter(point => integer(point.tokens.value) > 0n).length : '—'}</td><td>{member.trend && points.length ? <svg width="100" height="30" viewBox="0 0 100 30" aria-label={`${member.displayName} ${t('teams.insights.periodTrend')}`} role="img"><polyline points={points.map(point => `${point.x},${point.y}`).join(' ')} stroke={colorFor(member.membershipId)} strokeWidth="2" fill="none" />{points.length === 1 && <circle cx={points[0].x} cy={points[0].y} r="3" fill={colorFor(member.membershipId)} />}</svg> : '—'}</td></tr>;
+      })}</tbody></table></div> : <p className="team-chart-empty">{t('teams.overview.noContributions')}</p>}
+    </Card>
+  </section>;
+};

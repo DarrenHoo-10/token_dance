@@ -242,6 +242,8 @@ export interface ContributionItem {
   rank: string;
   tokens: MetricValue;
   namedShare?: boolean;
+  share?: string | null;
+  trend?: AnalysisTrendPoint[];
 }
 
 export interface CursorPage<T> {

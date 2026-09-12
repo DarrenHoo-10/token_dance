@@ -1,4 +1,6 @@
 import React from 'react';
+import { TeamMemberInsights } from './TeamMemberInsights';
+import { TeamUsageDetails } from './TeamUsageDetails';
 import { useLocation, useNavigate, useOutletContext } from 'react-router-dom';
 import { AgentBreakdown } from '@/components/analytics/AgentBreakdown';
 import { MetricCard } from '@/components/analytics/MetricCard';
@@ -16,7 +18,7 @@ import { useTeamAnalysis } from './useTeamAnalysis';
 export const TeamOverviewPage: React.FC = () => {
   const { t, locale } = useLocale();
   const { scope, authRevision } = useTeam();
-  const { range, from, to, agent, provider, model } = useTeamSearchFilters();
+  const { range, from, to, agent, provider, model, search } = useTeamSearchFilters();
   const { openInvite } = useOutletContext<{ openInvite: () => void }>();
   const location = useLocation();
   const navigate = useNavigate();
@@ -36,11 +38,11 @@ export const TeamOverviewPage: React.FC = () => {
 
 
   if ((updating && !analysis) || (!analysis && !error)) {
-    return <div><AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} /><TeamDateRangeBar timezone={scope.team.timezone} /></div>;
+    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} /></div>;
   }
 
   if (error && !analysis) {
-    return <div><ErrorState error={error} description={teamErrorMessage(t, error)} /><TeamDateRangeBar timezone={scope.team.timezone} /></div>;
+    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><ErrorState error={error} description={teamErrorMessage(t, error)} /></div>;
   }
 
   const tokens = metricDisplay(analysis?.summary.tokens);
@@ -70,6 +72,7 @@ export const TeamOverviewPage: React.FC = () => {
 
   return (
     <div>
+      <TeamDateRangeBar timezone={scope.team.timezone} />
       {justCreated && (
         <div className="team-status-banner">
           {t('teams.overview.firstUse')}
@@ -97,7 +100,7 @@ export const TeamOverviewPage: React.FC = () => {
       )}
       {!noSharing && emptyTokens && <div className="team-status-banner">{t('teams.overview.waitingSync')}</div>}
 
-      <div className="team-metric-grid-4">
+      <div className="team-metric-grid-6">
         <MetricCard label={t('teams.metrics.tokens')} value={tokens.available ? tokens.text : null} supported={tokens.available} />
         <MetricCard
           label={t('teams.metrics.activeMembers')}
@@ -110,8 +113,13 @@ export const TeamOverviewPage: React.FC = () => {
           supported={Boolean(analysis)}
         />
         <MetricCard label={costLabel} value={analysis ? costValue : null} supported={Boolean(analysis) && costValue !== '—'} />
+        <MetricCard label={t('teams.insights.average')} value={analysis?.summary.tokens.state === 'available' && BigInt(analysis.summary.activeMembers) > 0n ? formatTokenCompact((BigInt(analysis.summary.tokens.value || '0') / BigInt(analysis.summary.activeMembers)).toString()) : null} supported={Boolean(analysis?.summary.tokens.state === 'available' && BigInt(analysis.summary.activeMembers) > 0n)} />
+        <MetricCard label={t('teams.insights.peak')} value={trends.length ? formatTokenCompact(trends.reduce((max, point) => BigInt(point.tokenTotal || '0') > max ? BigInt(point.tokenTotal || '0') : max, 0n).toString()) : null} supported={trends.length > 0} />
       </div>
 
+      {analysis && <TeamMemberInsights key={`${scope.team.id}:${authRevision}`} analysis={analysis} teamId={scope.team.id} search={search} />}
+
+      <div className="team-section-heading"><h2>{t('teams.insights.usageTitle')}</h2></div>
       <div className="team-primary-grid">
         <Card>
           <div className="panel-header">
@@ -121,9 +129,6 @@ export const TeamOverviewPage: React.FC = () => {
             </div>
           </div>
           <TokenTrendChart trends={trends} />
-          <div className="team-chart-controls">
-            <TeamDateRangeBar timezone={scope.team.timezone} />
-          </div>
         </Card>
         <Card>
           <div className="panel-header">
@@ -135,29 +140,7 @@ export const TeamOverviewPage: React.FC = () => {
         </Card>
       </div>
 
-      <Card>
-        <div className="panel-header">
-          <div>
-            <h2>{t('teams.overview.contributions')}</h2>
-          </div>
-        </div>
-        {!analysis?.contributions.items.length && <p className="text-muted">{t('teams.overview.noContributions')}</p>}
-        <div className="team-member-list">
-          {analysis?.contributions.items.map((row) => {
-            const value = metricDisplay(row.tokens, formatTokenCompact);
-            return (
-              <div className="team-member-row" key={row.membershipId}>
-                <div className="team-member-rank">{row.rank}</div>
-                <div>
-                  <strong>{row.displayName}</strong>
-                  <small>{row.handle ? `@${row.handle}` : t('common.private')}</small>
-                </div>
-                <div className="mono-num">{value.available ? value.text : '—'}</div>
-              </div>
-            );
-          })}
-        </div>
-      </Card>
+      {analysis && <TeamUsageDetails analysis={analysis} />}
     </div>
   );
 };

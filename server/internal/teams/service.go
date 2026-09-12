@@ -2029,6 +2029,7 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 	agentTok := map[string]string{}
 	modelTok := map[string]string{}
 	contribTok := map[string]string{}
+	memberDays := map[string]map[string]string{}
 	reported := map[string]*bigRatAcc{}
 	estimatedCost := map[string]*bigRatAcc{}
 	unattributed := "0"
@@ -2056,6 +2057,13 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 		}
 		if row.MembershipID != nil {
 			contribTok[*row.MembershipID] = AddIntDecimal(contribTok[*row.MembershipID], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
+			if row.MetricDate != nil && *row.MetricDate != "" {
+				if memberDays[*row.MembershipID] == nil {
+					memberDays[*row.MembershipID] = map[string]string{}
+				}
+				day := *row.MetricDate
+				memberDays[*row.MembershipID][day] = AddIntDecimal(memberDays[*row.MembershipID][day], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
+			}
 		}
 		if row.Currency != nil && row.ReportedCostAmount != "" && row.ReportedCostAmount != "0" {
 			if reported[*row.Currency] == nil {
@@ -2088,10 +2096,35 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 		}
 		trend = append(trend, domain.TeamTrendPoint{Date: date, Tokens: domain.DecimalMetric{Value: val, State: st}})
 	}
+	sort.Slice(trend, func(i, j int) bool { return trend[i].Date < trend[j].Date })
 	limit := clampLimit(q.Limit)
 	agents := pageBuckets(sortKV(agentTok), "agent", q.Collection == "agents", q.Cursor, limit, tokenTotal)
 	models := pageBuckets(sortKV(modelTok), "model", q.Collection == "models", q.Cursor, limit, tokenTotal)
 	contribs := pageContributions(sortKV(contribTok), members, users, q.Collection == "contributions", q.Cursor, limit)
+	// Only attach data to the authorized, paginated contribution identities.
+	loc, err := time.LoadLocation(team.TimezoneName)
+	if err != nil {
+		loc = time.UTC
+	}
+	end := toEx.In(loc)
+	if !snap.AsOf.IsZero() && snap.AsOf.Before(toEx) {
+		end = localMidnight(snap.AsOf.In(loc)).AddDate(0, 0, 1)
+	}
+	for _, item := range contribs.Items {
+		id, _ := item["membershipId"].(string)
+		points := make([]domain.TeamTrendPoint, 0)
+		for d := localMidnight(from.In(loc)); d.Before(end) && len(points) < domain.TeamAnalysisMaxDays; d = d.AddDate(0, 0, 1) {
+			day := d.Format(dateLayout)
+			value := emptyZero(memberDays[id][day])
+			state := domain.MetricAvailable
+			if value == "0" {
+				state = domain.MetricEmpty
+			}
+			points = append(points, domain.TeamTrendPoint{Date: day, Tokens: domain.DecimalMetric{Value: value, State: state}})
+		}
+		item["trend"] = points
+		item["share"] = tokenShare(contribTok[id], tokenTotal)
+	}
 	costList := make([]domain.TeamCostAmount, 0, len(reported))
 	for cur, acc := range reported {
 		costList = append(costList, domain.TeamCostAmount{Currency: cur, Amount: acc.string()})
@@ -2195,7 +2228,6 @@ func pageBuckets(items []kv, kind string, paging bool, cursor string, limit int,
 }
 
 func pageContributions(items []kv, members []domain.TeamMembership, users []domain.User, paging bool, cursor string, limit int) *domain.TeamPagedItems {
-	page, start, _, next := pageWindow(items, paging, cursor, limit)
 	userByID := map[string]domain.User{}
 	for i := range users {
 		userByID[users[i].UserID] = users[i]
@@ -2204,6 +2236,15 @@ func pageContributions(items []kv, members []domain.TeamMembership, users []doma
 	for i := range members {
 		memByID[members[i].MembershipID] = members[i]
 	}
+	visible := make([]kv, 0, len(items))
+	for _, item := range items {
+		if member, ok := memByID[item.Key]; ok && member.EndedAt == nil {
+			if _, ok := userByID[member.UserID]; ok {
+				visible = append(visible, item)
+			}
+		}
+	}
+	page, start, _, next := pageWindow(visible, paging, cursor, limit)
 	out := make([]map[string]any, 0, len(page))
 	for i, it := range page {
 		display := ""
