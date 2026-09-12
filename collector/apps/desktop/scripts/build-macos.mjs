@@ -146,7 +146,7 @@ if (executable.status !== 0 || path.basename(executableName) !== executableName 
   console.error("BLOCKED: bundle does not contain its declared executable");
   process.exit(1);
 }
-run("lipo", ["-verify_arch", outArch, binary]);
+run("lipo", [binary, "-verify_arch", outArch]);
 
 const identity = options.notarized ? resolveSigningIdentity() : null;
 let notarizedInfo = null;
