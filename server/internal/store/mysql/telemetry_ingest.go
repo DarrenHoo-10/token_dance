@@ -98,12 +98,22 @@ func (s *ingestStore) CommitTelemetryEventsV2(ctx context.Context, in domain.Tel
 	lowerBoundMs := domain.StartOfDay(in.ReceivedAt).AddDate(0, 0, -14).UnixMilli()
 	futureLimitMs := in.ReceivedAt.Add(5 * time.Minute).UnixMilli()
 
+	accepted := false
 	for _, item := range ordered {
 		ack, err := processTelemetryEventV2(ctx, tx, in, item.event, item.id, nowMs, lowerBoundMs, futureLimitMs)
 		if err != nil {
 			return nil, err
 		}
 		acks[item.index] = ack
+		accepted = accepted || ack.Result == v2.AckResultAccepted
+	}
+
+	// The revision and facts commit together. Duplicate retries must not make
+	// team snapshots stale, and an upload outside a team must remain valid.
+	if accepted {
+		if err := bumpTeamSourceRevisionForUser(ctx, tx, in.UserID, in.ReceivedAt); err != nil {
+			return nil, err
+		}
 	}
 
 	if err := tx.Commit(); err != nil {

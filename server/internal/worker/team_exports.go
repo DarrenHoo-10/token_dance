@@ -231,8 +231,11 @@ func (w *Worker) authorizeTeamExport(ctx context.Context, claim *teamExportClaim
 		LEFT JOIN team_memberships m
 		  ON m.team_id = t.team_id AND m.membership_id = ? AND m.user_id = ?
 		LEFT JOIN users u ON u.user_id = ?
-		WHERE t.team_id = ?`,
+		WHERE t.team_id = ? AND EXISTS (
+			SELECT 1 FROM team_analysis_snapshots s
+			WHERE s.snapshot_id = ? AND s.team_id = t.team_id AND s.rule_version = ?)`,
 		claim.requesterMembershipID, claim.requesterUserID, claim.requesterUserID, claim.teamID,
+		claim.snapshotID, domain.TeamAnalysisRuleVersion,
 	).Scan(&teamStatus, &ownerUserID, &authRevision, &membershipID, &baseRole, &endedAt, &account)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -295,7 +298,7 @@ func (w *Worker) buildTeamExportCSV(ctx context.Context, claim *teamExportClaim)
 	if err := w.db.QueryRowContext(ctx, `
 		SELECT published_generation, auth_revision, status
 		FROM team_analysis_snapshots
-		WHERE snapshot_id = ? AND team_id = ?`, claim.snapshotID, claim.teamID,
+		WHERE snapshot_id = ? AND team_id = ? AND rule_version = ?`, claim.snapshotID, claim.teamID, domain.TeamAnalysisRuleVersion,
 	).Scan(&publishedGeneration, &snapshotAuth, &snapshotStatus); err != nil {
 		return nil, fmt.Errorf("load export snapshot: %w", err)
 	}

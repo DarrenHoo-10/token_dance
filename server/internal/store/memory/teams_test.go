@@ -20,6 +20,24 @@ func memID(prefix, tag string) string {
 	return s + strings.Repeat("x", 30-len(s))
 }
 
+func TestMemoryTeamsRejectOldAnalysisRules(t *testing.T) {
+	m := NewMemoryStore()
+	ctx := context.Background()
+	for _, rule := range []string{"1", domain.TeamAnalysisRuleVersion} {
+		m.teamSnapshots["snap"] = &domain.TeamAnalysisSnapshot{SnapshotID: "snap", TeamID: "team", Status: domain.SnapshotReady, RuleVersion: rule}
+		m.teamExports["export"] = &domain.TeamExportJob{ExportID: "export", TeamID: "team", SnapshotID: "snap", Status: domain.TeamExportCompleted}
+		_, snapErr := m.GetReadySnapshot(ctx, "team", "snap")
+		_, exportErr := m.GetExport(ctx, "team", "export")
+		if rule == domain.TeamAnalysisRuleVersion {
+			if snapErr != nil || exportErr != nil {
+				t.Fatalf("current rule rejected: %v %v", snapErr, exportErr)
+			}
+		} else if snapErr == nil || exportErr == nil {
+			t.Fatal("old rule must reject snapshots and exports")
+		}
+	}
+}
+
 func memIdem(scope, key, req string) store.TeamsIdempotency {
 	return store.TeamsIdempotency{
 		Scope:       scope,
@@ -102,12 +120,12 @@ func TestMemoryTeams_CreateAcceptConflict(t *testing.T) {
 		t.Fatalf("create bob team: %v", err)
 	}
 	invite := domain.TeamInvitation{
-		InvitationID:        memID("tiv_", "invite1"),
-		RecipientLookupHash: *mustEmailHash(t, m, alice),
-		RecipientCiphertext: []byte("cipher"),
-		LookupKeyVersion:    1,
+		InvitationID:         memID("tiv_", "invite1"),
+		RecipientLookupHash:  *mustEmailHash(t, m, alice),
+		RecipientCiphertext:  []byte("cipher"),
+		LookupKeyVersion:     1,
 		EncryptionKeyVersion: 1,
-		ExpiresAt:           now.Add(7 * 24 * time.Hour),
+		ExpiresAt:            now.Add(7 * 24 * time.Hour),
 	}
 	if _, err := m.CreateInvitationTx(ctx, store.CreateInvitationTxInput{
 		ActorUserID: bob,

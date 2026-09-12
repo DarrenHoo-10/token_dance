@@ -4,13 +4,13 @@
 
 当前工作区：`D:/ProgrammingProjects/TokenDance`。分支：`codex/team-init`。本轮基于 `ebde9473760ffa3de7a45bc536a1dfcfed999dfc` 合并 `origin/main` 的 `c7ba493b5cf5a33a891be0e387ed2b5e4f870675`；首次审查基线为 `728033f`。
 
-**本轮审查对象是合并最新 main 后的团队实现及衔接代码。** CR-001–CR-014 和前两轮验证记录保留历史证据；2026-09-12 的当前结论见第 6 节。
+**本轮审查对象是合并最新 main 后的团队实现及衔接代码。** CR-001–CR-014 和前两轮验证记录保留历史证据；第 6 节保留合并后的失败证据；2026-09-12 的修复与当前结论见第 7 节。
 
 依据：[产品与交互方案](tokendance-teams-product-design-v1.md)、[技术方案](tokendance-teams-technical-design-v1.md)。
 
 ## 1. 结论与跟踪规则
 
-累计记录 **17 项问题：8 项 P1、9 项 P2**。本轮新增 **CR-015、CR-016 两项 P1，待修复**；不能将编译、单元测试通过视为团队功能验收通过。CR-010 已在真实云端 MySQL 复验通过并关闭；本轮另记录 CR-017 测试清库遗漏，已修复、复验并关闭。当前为 15 项已关闭、2 项 P1 待修复。
+累计记录 **17 项问题：8 项 P1、9 项 P2，均已关闭**。CR-015、CR-016 已在合并提交 `3b4d66bbaf964b2e4565ca56907d392ee83963c8` 之后的当前工作区修复，并通过云端隔离 MySQL 的复现与功能回归；详见第 7 节。CR-010、CR-017 的云端复验记录继续保留。此结论不代表第 6.6 节的主干既有失败和环境受限测试已通过。
 
 前两轮未运行真实 MySQL；本轮在云端 MySQL 8.0.46 的独立临时 schema 执行集成测试，结果、失败和环境限制均记录在第 6 节。现有 `tokendance_dev` 账号与团队数据不用于清库测试。
 
@@ -38,8 +38,8 @@
 | CR-013 | P2 | 独立费用无法覆盖同组无金额的 usage | 实际 Worker 聚合函数复现 | 已关闭 | 工作区：`groupTeamCostEvents` 按 session/turn 保留无金额 usage。回归：`TestCostOnlyRecordCoversAssociatedUsage`。 |
 | CR-014 | P2 | 从筛选后的分析页导出时丢失筛选条件 | 前端请求 → Handler → 任务 → Worker 静态链路检查 | 已关闭 | 工作区：分析页传 agent/provider/model；分析响应补 `filtersHash`。回归：`teams-analysis.test.tsx` 筛选后导出。未跑真实 CSV Worker 联调。 |
 
-| CR-015 | P1 | main 的 v2 上传未接入团队统计与 source revision | 真实云端 v2 入库 → 个人聚合 → 团队快照复现 | 待修复 | `team_cr_probes_test.go` / `TestTeamCR015V2UploadReachesTeamAnalysis`，见第 6 节。 |
-| CR-016 | P1 | 同组费用借用已授权 usage 的时间窗口，泄露开启共享前的金额 | Worker 聚合函数复现，base / cost 两维度均失败 | 待修复 | `team_cr_probes_test.go` / `TestTeamCR016CostBeforeSharingStartIsNotExposed`，见第 6 节。 |
+| CR-015 | P1 | main 的 v2 上传未接入团队统计与 source revision | 真实云端 v2 入库 → 个人聚合 → 团队快照复现 | 已关闭 | 新增 `worker/team_telemetry.go`；v2 接收事务更新 source revision，修正刷新版本。原复现、重放/冲突、构建期间新上传及云端完整流程通过，见第 7 节。 |
+| CR-016 | P1 | 同组费用借用已授权 usage 的时间窗口，泄露开启共享前的金额 | Worker 聚合函数复现，base / cost 两维度均失败 | 已关闭 | 费用先逐条授权，按自身日期与可见性统计；规则版本升至 2，旧快照及导出拒绝读取。原复现、撤回/重开、跨日与云端 CSV 流程通过，见第 7 节。 |
 
 | CR-017 | P2 | 清库函数遗漏团队表，集成测试相互污染 | 全套云端测试中发现 8 条前序 receipts 残留 | 已关闭 | `migrate/runner.go` 补齐 15 张表；2026-09-12 `TestMigrationRunnerResetRemovesTeamTables` 及受影响清理用例均在云端复验通过。 |
 
@@ -296,7 +296,7 @@ go test -overlay "C:/Users/Administrator/AppData/Local/Temp/tokendance-team-cr2-
 | 2026-09-06 | 工作区落地 CR-011–CR-014。`go test ./internal/teams ./internal/worker`、HTTP 团队定向测试、`npm run typecheck`、web 19 文件 95 项通过。四项关闭；CR-010 仍待 MySQL 复验。未 commit。 |
 
 
-## 6. 合并 main 后的 CR 与功能验证（2026-09-12）
+## 6. 合并 main 后的 CR 与功能验证（2026-09-12，修复前历史记录）
 
 ### 6.1 合并范围与处理
 
@@ -386,3 +386,61 @@ go test ./internal/store/mysql -run TestMySQLTeams_OwnershipLeaveAndDissolveWork
 最终原始记录：`build/team-cr-run/migrate-final.log`、`mysql-teams-fixed.log`、`worker-fixed.log`、`probes-fixed.log`、`baseline-main.log`。前几次尝试日志也保留；中途停止的 `migrate-fixed.log` 不作为最终迁移通过证据。
 
 本轮云端临时 schema、专用数据库账号及测试二进制已清理；仅本地保留测试日志。
+
+
+## 7. CR-015 / CR-016 修复与复验（2026-09-12）
+
+### 7.1 修复范围
+
+基于本地合并提交 `3b4d66bbaf964b2e4565ca56907d392ee83963c8`，修改留在 `codex/team-init` 工作区。本轮没有再次合并 main，也没有提交、推送或部署。
+
+- **CR-015**：团队 Worker 改读 `telemetry_events`，连接新版模型维度，排除软删除事实；可信 Token 只使用 v2 `token_total`，不将 input/output 等已知分项推算为总量，使用大整数保留 uint64 精度。沿用现有 v2 的不可变事实接收与去重结果，不双读旧 `usage_events`，不新增原生修订替换能力。
+- v2 接收事务仅在批次包含新接受事件时推进团队 `source_revision`，整批只推进一次；重复与内容冲突不推进。新事实与版本一起提交。快照发布时检查构建期间是否又有新上传，刷新任务携带已捕获的源版本，追平后停止重排。
+- **CR-016**：每条费用独立检查入队时间、base 与 cost 授权；费用使用自身的实名/分类可见性和日期，不能借关联 usage 的授权。旧聚合辅助逻辑也先按授权过滤再分组，保留原 CR-013 正常覆盖率用例。
+- 新版费用使用 `cost_scope_key` 和 1e8 单位：同一 scope 的最新 provider bill 替换该 scope 各模型估算；无 scope 的金额各自相加。先决定整个 scope 的有效账单再裁切查询日期，避免查询历史日时恢复已被替换的估算。覆盖率仅关联授权、日期及可见分类兼容的 usage。
+- 统一 `domain.TeamAnalysisRuleVersion = "2"`。新请求按版本 2 构建；旧版 queued 快照被标记 obsolete；MySQL/Memory 的快照读取、导出读取以及 Worker 导出前校验拒绝旧版结果，已生成文件不能继续通过下载接口获取。
+
+主要代码：`server/internal/worker/team_telemetry.go`、`team_analysis.go`、`team_exports.go`，`server/internal/store/mysql/telemetry_ingest.go`、`team_analysis.go`、`teams.go`，及 Memory 对应读取校验。
+
+### 7.2 实际测试结果
+
+数据库使用云端 MySQL 8.0.46 的新建临时 schema 和专用受限账号，未重置共享 `tokendance_dev`。Linux 测试二进制由当前工作区编译；这些是数据库与 Worker 功能测试，没有启动或部署功能分支应用。
+
+| 验证项 | 结果 |
+| --- | --- |
+| 本地 `go test -json ./...` | 301 个用例通过（含子测试），86 个数据库用例因本地未设 DSN 跳过；29 个有测试包通过，10 个包无测试。随后增加构建中上传的数据库回归并定向重跑 Worker 通过，其实际执行见云端最终记录。 |
+| 本地 `go vet ./...` | 通过。 |
+| 前端 `npm test -- --run --reporter=json --outputFile=../build/team-cr-web-tests-p1.json` | 139 / 139 通过，无跳过。 |
+| 前端 `npm run typecheck` | 通过。 |
+| 云端 Worker 广泛回归 | 38 / 38 顶层用例通过，无隐式 skip；包含两个原 P1 复现、新版统计/费用/CSV/共享流程及已有聚合、清理、邮件和导出回归。明确排除的 8 个版本受限用例仍遵循第 6.6 节限制。 |
+| 云端团队 Store 回归 | 5 / 5 通过：建队/接受邀请冲突、幂等、分享链接次数、共享开关、所有权/退出/解散。 |
+| 云端最终团队 Worker 定向回归 | 补充不可变事实内容冲突、旧 queued 快照淘汰及构建中上传场景后，23 / 23 顶层用例通过，无 skip。最终测试二进制为 `worker-p1-final.test`。 |
+
+关键回归：
+
+- `TestTeamCR015V2UploadReachesTeamAnalysis`：同一次 v2 上传在个人与团队均为 **10 Token**；重复上传和同一事实内容冲突不增加 Token 或 source revision；旧源版本触发补建后队列归零；旧规则 queued 快照变为 obsolete。
+- `TestTeamCR016CostBeforeSharingStartIsNotExposed`：base / cost 开启前费用均为 **0 USD**；原两项失败已进入默认测试集，移除 `team_cr_probes` build tag。
+- `TestTeamTelemetrySharingCostExportMySQL`：授权前的 **999 USD 不可见**，已共享的 **2 USD 正式账单替换 1 USD 估算**；查询较早日期不会恢复估算；CSV 可生成、导出任务完成；旧规则快照与文件读取被拒绝；撤回费用共享后为 0，重新开启不会恢复旧费用；软删除 usage 不会重新计入新快照。
+- `TestTeamTelemetryUploadDuringSnapshotBuildMySQL`：一致性读取结束后再上传一条事实，发布时发现新版本并补建，最终 **20 Token**，后续无无限重排。
+- 单元回归覆盖 uint64 最大 Token、exact/derived、禁止用分项推导总量、无 scope 费用、跨模型正式账单替换、授权起止边界、撤回、入队边界、跨日和实名/分类掩码。
+- `TestMemoryTeamsRejectOldAnalysisRules`：Memory 与 MySQL 一致拒绝旧版本快照及导出。
+
+可复验命令（从 `server` 执行；数据库 DSN 仅允许指向可销毁的隔离 schema）：
+
+```powershell
+go test ./internal/worker -run 'TestTeamCR016|TestTeamTelemetry(Token|Cost)' -count=1
+go test ./internal/worker -run 'TestTeamCR015|TestTeamTelemetry.*MySQL' -count=1
+go test ./internal/store/mysql -run '^TestMySQLTeams_' -count=1
+```
+
+本地原始日志：`build/team-cr-go-tests-p1.jsonl`、`build/team-cr-web-tests-p1.json`、`build/team-cr-run/worker-p1.log`、`mysql-teams-p1.log`、`worker-teams-p1-final.log`。这些忽略目录不提交运行凭据。
+
+### 7.3 当前结论与边界
+
+CR-015、CR-016 均按真实云端复现和功能回归关闭；当前报告的 17 项团队问题全部关闭。第 6.6 节已确认的 main 既有失败、MySQL 8.0.34 精确版本断言和触发器权限限制仍保留，未宣称全部数据库测试已通过。没有进行浏览器手工验收、真实 SMTP 或云对象存储验证；本轮 CSV 生成与异步导出使用内存对象存储。
+
+| 日期 | 更新 |
+| --- | --- |
+| 2026-09-12 | 完成 CR-015、CR-016 修复并关闭；新增 v2 团队统计、费用授权、版本失效、构建中上传的回归。更新当前结论，保留修复前失败与环境限制。修改留在工作区，未提交、推送或部署。 |
+
+本轮收尾：Gitleaks 8.30.1 对本次变更和新增源码的脱敏扫描通过，`git diff --check` 通过；云端临时 schema、专用账号和测试二进制已清理，本地保留脱敏测试日志。

@@ -17,15 +17,14 @@ import (
 )
 
 const (
-	teamAnalysisRuleVersion    = "1"
-	teamAnalysisLeaseDuration  = 120 * time.Second
-	teamAnalysisLeaseRenew     = 30 * time.Second
-	teamAnalysisMaxAttempts    = 8
-	teamAnalysisRowBatch       = 200
-	teamAnalysisRetryDelay     = 5 * time.Second
-	visNamed                   = uint32(1 << 0)
-	visClassification          = uint32(1 << 1)
-	visCost                    = uint32(1 << 2)
+	teamAnalysisLeaseDuration    = 120 * time.Second
+	teamAnalysisLeaseRenew       = 30 * time.Second
+	teamAnalysisMaxAttempts      = 8
+	teamAnalysisRowBatch         = 200
+	teamAnalysisRetryDelay       = 5 * time.Second
+	visNamed                     = uint32(1 << 0)
+	visClassification            = uint32(1 << 1)
+	visCost                      = uint32(1 << 2)
 	unsharedClassificationBucket = "unshared_classification"
 	unknownClassificationBucket  = "unknown"
 )
@@ -60,51 +59,55 @@ type teamGrantWindow struct {
 }
 
 type teamFactEvent struct {
-	eventPK        uint64
-	userID         string
-	installationID string
-	agentID        string
-	providerID     sql.NullString
-	modelID        sql.NullString
-	eventType      string
-	accuracy       string
-	occurredAt     time.Time
-	receivedAt     time.Time
-	sessionHash    []byte
-	turnHash       []byte
-	tokenInput     sql.NullInt64
-	tokenOutput    sql.NullInt64
-	tokenCacheRead sql.NullInt64
-	tokenCacheWrite sql.NullInt64
-	tokenReasoning sql.NullInt64
-	tokenTotal     sql.NullInt64
-	costAmount     sql.NullString
-	costCurrency   sql.NullString
-	costSource     sql.NullString
+	eventPK              uint64
+	userID               string
+	installationID       string
+	agentID              string
+	providerID           sql.NullString
+	modelID              sql.NullString
+	eventType            string
+	accuracy             string
+	occurredAt           time.Time
+	receivedAt           time.Time
+	sessionHash          []byte
+	turnHash             []byte
+	tokenInput           sql.NullInt64
+	tokenOutput          sql.NullInt64
+	tokenCacheRead       sql.NullInt64
+	tokenCacheWrite      sql.NullInt64
+	tokenReasoning       sql.NullInt64
+	tokenTotal           sql.NullInt64
+	costAmount           sql.NullString
+	costCurrency         sql.NullString
+	costSource           sql.NullString
+	telemetry            bool
+	telemetryTotal       *big.Int
+	costScopeKey         []byte
+	outsideAnalysisRange bool
 }
 
 type analysisAggRow struct {
-	membershipID               *string
-	metricDate                 *string
-	visibilityMask             uint32
-	agentID                    *string
-	providerID                 *string
-	modelID                    *string
-	currency                   *string
-	tokenExact                 *big.Int
-	tokenDerived               *big.Int
-	usageEvents                *big.Int
-	tokenSupported             *big.Int
-	reportedCost               *big.Rat
-	estimatedCost              *big.Rat
-	reportedCostEvents         *big.Int
-	estimatedCostEvents        *big.Int
-	reportedCovered            *big.Int
-	estimatedCovered           *big.Int
-	unattributedCost           *big.Int
-	maxReceivedAt              *time.Time
-	usageIDsReported           map[uint64]struct{}
-	usageIDsEstimated          map[uint64]struct{}
+	membershipID        *string
+	metricDate          *string
+	visibilityMask      uint32
+	agentID             *string
+	providerID          *string
+	modelID             *string
+	currency            *string
+	tokenExact          *big.Int
+	tokenDerived        *big.Int
+	usageEvents         *big.Int
+	tokenSupported      *big.Int
+	reportedCost        *big.Rat
+	estimatedCost       *big.Rat
+	reportedCostEvents  *big.Int
+	estimatedCostEvents *big.Int
+	reportedCovered     *big.Int
+	estimatedCovered    *big.Int
+	unattributedCost    *big.Int
+	maxReceivedAt       *time.Time
+	usageIDsReported    map[uint64]struct{}
+	usageIDsEstimated   map[uint64]struct{}
 }
 
 type analysisPublishDecision int
@@ -252,6 +255,9 @@ func (w *Worker) claimTeamAnalysis(ctx context.Context) (*teamAnalysisClaim, err
 }
 
 func (w *Worker) executeTeamAnalysis(ctx context.Context, claim *teamAnalysisClaim) error {
+	if claim.ruleVersion != domain.TeamAnalysisRuleVersion {
+		return w.discardTeamAnalysis(ctx, claim, "TEAM_SNAPSHOT_OBSOLETE")
+	}
 	source, err := w.readTeamAnalysisSource(ctx, claim)
 	if err != nil {
 		return err
@@ -267,7 +273,7 @@ func (w *Worker) executeTeamAnalysis(ctx context.Context, claim *teamAnalysisCla
 		return err
 	}
 	if published && source.sourceGrew {
-		return w.queueTeamAnalysisRefresh(ctx, claim, source.capturedAuth)
+		return w.queueTeamAnalysisRefresh(ctx, claim, source.capturedAuth, source.capturedSource)
 	}
 	return nil
 }
@@ -348,7 +354,7 @@ func (w *Worker) readTeamAnalysisSource(ctx context.Context, claim *teamAnalysis
 			}
 			lastRenew = w.clk.Now()
 		}
-		memberRows, err := aggregateMemberAnalysis(ctx, tx, members[i], grants[members[i].membershipID], fromLocal, dataEnd, loc)
+		memberRows, err := aggregateMemberAnalysis(ctx, tx, members[i], grants[members[i].membershipID], fromLocal, dataEnd, claim.asOf, loc)
 		if err != nil {
 			return nil, err
 		}
@@ -411,7 +417,7 @@ func loadTeamAnalysisGrants(ctx context.Context, tx *sql.Tx, teamID string) (map
 	return out, rows.Err()
 }
 
-func aggregateMemberAnalysis(ctx context.Context, tx *sql.Tx, member teamMemberSource, grants []teamGrantWindow, from, toExclusive time.Time, loc *time.Location) ([]analysisAggRow, error) {
+func aggregateMemberAnalysis(ctx context.Context, tx *sql.Tx, member teamMemberSource, grants []teamGrantWindow, from, toExclusive, asOf time.Time, loc *time.Location) ([]analysisAggRow, error) {
 	if !member.accountOK {
 		return nil, nil
 	}
@@ -419,40 +425,15 @@ func aggregateMemberAnalysis(ctx context.Context, tx *sql.Tx, member teamMemberS
 	if member.joinedAt.After(queryFrom) {
 		queryFrom = member.joinedAt
 	}
-	rows, err := tx.QueryContext(ctx, `
-		SELECT event_pk, user_id, installation_id, agent_id, provider_id, model_id,
-		       event_type, accuracy, occurred_at, received_at, session_hash, turn_hash,
-		       token_input, token_output, token_cache_read, token_cache_write, token_reasoning, token_total,
-		       CAST(cost_amount AS CHAR), cost_currency, cost_source
-		FROM usage_events
-		WHERE user_id = ? AND occurred_at >= ? AND occurred_at < ?
-		ORDER BY occurred_at ASC, event_pk ASC`, member.userID, queryFrom.UTC(), toExclusive.UTC())
+	events, err := readTeamTelemetry(ctx, tx, member.userID, queryFrom, toExclusive, asOf)
 	if err != nil {
-		return nil, fmt.Errorf("read team analysis facts: %w", err)
-	}
-	defer rows.Close()
-
-	var events []teamFactEvent
-	for rows.Next() {
-		var ev teamFactEvent
-		if err := rows.Scan(
-			&ev.eventPK, &ev.userID, &ev.installationID, &ev.agentID, &ev.providerID, &ev.modelID,
-			&ev.eventType, &ev.accuracy, &ev.occurredAt, &ev.receivedAt, &ev.sessionHash, &ev.turnHash,
-			&ev.tokenInput, &ev.tokenOutput, &ev.tokenCacheRead, &ev.tokenCacheWrite, &ev.tokenReasoning, &ev.tokenTotal,
-			&ev.costAmount, &ev.costCurrency, &ev.costSource,
-		); err != nil {
-			return nil, fmt.Errorf("scan team analysis fact: %w", err)
-		}
-		events = append(events, ev)
-	}
-	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return buildMemberAnalysisRows(member, grants, events, loc), nil
 }
 
 func buildMemberAnalysisRows(member teamMemberSource, grants []teamGrantWindow, events []teamFactEvent, loc *time.Location) []analysisAggRow {
-	grouped := groupTeamCostEvents(events)
+	grouped := groupAuthorizedTeamCosts(member, grants, events, loc)
 	acc := make(map[string]*analysisAggRow)
 	for _, ev := range events {
 		if ev.occurredAt.Before(member.joinedAt) {
@@ -512,6 +493,7 @@ func buildMemberAnalysisRows(member teamMemberSource, grants []teamGrantWindow, 
 		}
 	}
 
+	addTeamTelemetryCosts(acc, member, grants, events, loc)
 	out := make([]analysisAggRow, 0, len(acc))
 	for _, row := range acc {
 		out = append(out, *row)
@@ -795,6 +777,12 @@ func (w *Worker) publishTeamAnalysis(ctx context.Context, claim *teamAnalysisCla
 		FOR UPDATE`, claim.teamID).Scan(&teamStatus, &liveAuth); err != nil {
 		return false, fmt.Errorf("lock team for analysis publish: %w", err)
 	}
+	var liveSource uint64
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(source_revision), 0)
+		FROM team_source_revisions WHERE team_id = ?`, claim.teamID).Scan(&liveSource); err != nil {
+		return false, fmt.Errorf("read source revision for analysis publish: %w", err)
+	}
+	source.sourceGrew = source.sourceGrew || liveSource > source.capturedSource
 
 	var (
 		status          string
@@ -963,7 +951,7 @@ func (w *Worker) failTeamAnalysis(ctx context.Context, claim *teamAnalysisClaim,
 	return nil
 }
 
-func (w *Worker) queueTeamAnalysisRefresh(ctx context.Context, claim *teamAnalysisClaim, authRevision uint64) error {
+func (w *Worker) queueTeamAnalysisRefresh(ctx context.Context, claim *teamAnalysisClaim, authRevision, sourceRevision uint64) error {
 	now := w.clk.Now().UTC().Truncate(time.Millisecond)
 	requestKey := teamAnalysisRequestKey(claim.teamID, claim.fromDate, claim.toDateExclusive, authRevision, claim.ruleVersion)
 	var existing string
@@ -984,9 +972,9 @@ func (w *Worker) queueTeamAnalysisRefresh(ctx context.Context, claim *teamAnalys
 		INSERT INTO team_analysis_snapshots (
 			snapshot_id, team_id, from_date, to_date_exclusive, auth_revision, source_revision,
 			rule_version, status, active_request_key, as_of, next_attempt_at, expires_at
-		) VALUES (?, ?, ?, ?, ?, 0, ?, 'queued', ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)`,
 		snapshotID, claim.teamID, claim.fromDate.Format("2006-01-02"), claim.toDateExclusive.Format("2006-01-02"),
-		authRevision, claim.ruleVersion, requestKey, now, now, now.Add(30*time.Minute))
+		authRevision, sourceRevision, claim.ruleVersion, requestKey, now, now, now.Add(30*time.Minute))
 	if err != nil && !isDuplicateKeyError(err) {
 		return fmt.Errorf("queue team analysis refresh: %w", err)
 	}
@@ -1046,6 +1034,12 @@ func tokenContribution(ev teamFactEvent) (*big.Int, bool) {
 	if ev.accuracy != "exact" && ev.accuracy != "derived" {
 		return big.NewInt(0), false
 	}
+	if ev.telemetry {
+		if ev.telemetryTotal != nil {
+			return new(big.Int).Set(ev.telemetryTotal), true
+		}
+		return big.NewInt(0), false
+	}
 	if ev.tokenTotal.Valid && ev.tokenTotal.Int64 >= 0 {
 		return big.NewInt(ev.tokenTotal.Int64), true
 	}
@@ -1091,20 +1085,20 @@ func teamAnalysisRequestKey(teamID string, from, toExclusive time.Time, auth uin
 
 func newAnalysisAggRow(membershipID, metricDate string, mask uint32, agent, provider, model, currency string) *analysisAggRow {
 	row := &analysisAggRow{
-		visibilityMask:    mask,
-		tokenExact:        big.NewInt(0),
-		tokenDerived:      big.NewInt(0),
-		usageEvents:       big.NewInt(0),
-		tokenSupported:    big.NewInt(0),
-		reportedCost:      new(big.Rat),
-		estimatedCost:     new(big.Rat),
-		reportedCostEvents: big.NewInt(0),
+		visibilityMask:      mask,
+		tokenExact:          big.NewInt(0),
+		tokenDerived:        big.NewInt(0),
+		usageEvents:         big.NewInt(0),
+		tokenSupported:      big.NewInt(0),
+		reportedCost:        new(big.Rat),
+		estimatedCost:       new(big.Rat),
+		reportedCostEvents:  big.NewInt(0),
 		estimatedCostEvents: big.NewInt(0),
-		reportedCovered:   big.NewInt(0),
-		estimatedCovered:  big.NewInt(0),
-		unattributedCost:  big.NewInt(0),
-		usageIDsReported:  map[uint64]struct{}{},
-		usageIDsEstimated: map[uint64]struct{}{},
+		reportedCovered:     big.NewInt(0),
+		estimatedCovered:    big.NewInt(0),
+		unattributedCost:    big.NewInt(0),
+		usageIDsReported:    map[uint64]struct{}{},
+		usageIDsEstimated:   map[uint64]struct{}{},
 	}
 	if membershipID != "" {
 		row.membershipID = &membershipID

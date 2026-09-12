@@ -73,7 +73,7 @@ func TestTeamAnalysisClaimAuthDiscardAndSourceRefreshMySQL(t *testing.T) {
 			rule_version, status, active_request_key, as_of, next_attempt_at, expires_at
 		) VALUES (
 			'tas_team_analysis_00000000001', ?, '2026-09-01', '2026-09-07', 1, 0,
-			'1', 'queued', 'analysis-key-1', ?, ?, ?
+			'2', 'queued', 'analysis-key-1', ?, ?, ?
 		)`, teamID, now, now, now.Add(30*time.Minute)); err != nil {
 		t.Fatalf("seed snapshot: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestTeamAnalysisClaimAuthDiscardAndSourceRefreshMySQL(t *testing.T) {
 			rule_version, status, active_request_key, as_of, next_attempt_at, expires_at
 		) VALUES (
 			'tas_team_analysis_00000000002', ?, '2026-09-01', '2026-09-07', 1, 0,
-			'1', 'queued', 'analysis-key-stale', ?, ?, ?
+			'2', 'queued', 'analysis-key-stale', ?, ?, ?
 		)`, teamID, now, now, now.Add(30*time.Minute)); err != nil {
 		t.Fatalf("seed stale snapshot: %v", err)
 	}

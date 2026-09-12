@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	AnalysisRuleVersion = "1"
+	AnalysisRuleVersion = domain.TeamAnalysisRuleVersion
 
 	VisibilityNamed          uint32 = 1 << 0
 	VisibilityClassification uint32 = 1 << 1

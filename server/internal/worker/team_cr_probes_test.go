@@ -1,5 +1,3 @@
-//go:build team_cr_probes
-
 package worker
 
 import (
@@ -8,11 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"tokendance/internal/crypto"
 	"tokendance/internal/domain"
+	v2 "tokendance/internal/protocol/v2"
 )
 
-// These acceptance probes reproduce open findings in docs/tokendance-teams-cr-report.md.
-// Run explicitly with -tags team_cr_probes; they should fail until those findings are fixed.
+// Regression coverage for CR-015 and CR-016 in docs/tokendance-teams-cr-report.md.
 func TestTeamCR015V2UploadReachesTeamAnalysis(t *testing.T) {
 	st, w, cleanup := setupAggDB(t)
 	defer cleanup()
@@ -27,6 +26,18 @@ func TestTeamCR015V2UploadReachesTeamAnalysis(t *testing.T) {
 		t.Fatal(err)
 	}
 	commitAggEvents(t, st, user, installation, "cr015", now, makeAggEvent(t, "cr015", now.Add(-time.Minute).UnixMilli(), nil))
+	commitAggEvents(t, st, user, installation, "cr015-retry", now, makeAggEvent(t, "cr015", now.Add(-time.Minute).UnixMilli(), nil))
+	conflict := makeAggEvent(t, "cr015", now.Add(-time.Minute).UnixMilli(), func(e map[string]any) {
+		e["payload"].(map[string]any)["usage"].(map[string]any)["token_total"] = "20"
+	})
+	result, err := st.Ingest().CommitTelemetryEventsV2(ctx, domain.TelemetryEventsV2Input{
+		UserID: user, InstallationID: installation, BindingStatusVersion: 1, ReceivedAt: now,
+		NonceHash: crypto.SHA256([]byte("cr015-conflict")), NonceExpiresAt: now.Add(time.Minute),
+		Events: []v2.EventEnvelope{conflict},
+	})
+	if err != nil || len(result.Acks) != 1 || result.Acks[0].Result != v2.AckResultConflict {
+		t.Fatalf("immutable fact content conflict: result=%+v err=%v", result, err)
+	}
 	if _, err := w.ProcessTelemetryAggregation(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -41,12 +52,12 @@ func TestTeamCR015V2UploadReachesTeamAnalysis(t *testing.T) {
 	if _, err := st.DB().Exec(`INSERT INTO team_analysis_snapshots
 		(snapshot_id, team_id, from_date, to_date_exclusive, auth_revision, source_revision,
 		 rule_version, status, active_request_key, as_of, next_attempt_at, expires_at)
-		VALUES ('tas_cr015', ?, ?, ?, 1, 0, '1', 'queued', 'cr015', ?, ?, ?)`, team,
-		now.UTC().Format("2006-01-02"), now.AddDate(0, 0, 1).UTC().Format("2006-01-02"),
+		VALUES ('tas_cr015', ?, ?, ?, 1, 0, '2', 'queued', 'cr015', ?, ?, ?)`, team,
+		now.Add(-time.Hour).UTC().Format("2006-01-02"), now.AddDate(0, 0, 1).UTC().Format("2006-01-02"),
 		now, now, now.Add(30*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := w.ProcessTeamAnalysis(ctx); err != nil || n != 1 {
+	if n, err := w.ProcessTeamAnalysis(ctx); err != nil || n != 2 {
 		t.Fatalf("analysis: processed=%d err=%v", n, err)
 	}
 	var teamTokens string
@@ -61,8 +72,22 @@ func TestTeamCR015V2UploadReachesTeamAnalysis(t *testing.T) {
 	if err := st.DB().QueryRow(`SELECT source_revision FROM team_source_revisions WHERE team_id = ?`, team).Scan(&revision); err != nil {
 		t.Fatal(err)
 	}
-	if revision == 0 {
-		t.Error("new v2 upload did not advance the team's source revision")
+	if revision != 1 {
+		t.Errorf("accepted batch should advance source once; retry must not: got %d", revision)
+	}
+	if n, err := w.ProcessTeamAnalysis(ctx); err != nil || n != 0 {
+		t.Fatalf("refresh must settle after catching up: processed=%d err=%v", n, err)
+	}
+	if _, err := st.DB().Exec(`UPDATE team_analysis_snapshots
+		SET status = 'queued', rule_version = '1', active_request_key = 'cr015-legacy' WHERE snapshot_id = 'tas_cr015'`); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := w.ProcessTeamAnalysis(ctx); err != nil || n != 1 {
+		t.Fatalf("old queued snapshot: processed=%d err=%v", n, err)
+	}
+	var status string
+	if err := st.DB().QueryRow(`SELECT status FROM team_analysis_snapshots WHERE snapshot_id = 'tas_cr015'`).Scan(&status); err != nil || status != "obsolete" {
+		t.Fatalf("old queued snapshot must be obsolete: status=%s err=%v", status, err)
 	}
 }
 

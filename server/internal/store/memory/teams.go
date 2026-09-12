@@ -946,6 +946,9 @@ func (m *MemoryStore) GetExport(ctx context.Context, teamID, exportID string) (*
 	if job == nil || job.TeamID != teamID {
 		return nil, memErrResourceNotFound()
 	}
+	if snap := m.teamSnapshots[job.SnapshotID]; snap == nil || snap.RuleVersion != domain.TeamAnalysisRuleVersion {
+		return nil, memErrResourceNotFound()
+	}
 	return memCloneExport(job), nil
 }
 
@@ -2011,7 +2014,7 @@ func (m *MemoryStore) GetReadySnapshot(ctx context.Context, teamID, snapshotID s
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	snap := m.teamSnapshots[snapshotID]
-	if snap == nil || snap.TeamID != teamID || snap.Status != domain.SnapshotReady {
+	if snap == nil || snap.TeamID != teamID || snap.Status != domain.SnapshotReady || snap.RuleVersion != domain.TeamAnalysisRuleVersion {
 		return nil, memErrResourceNotFound()
 	}
 	return memCloneSnap(snap), nil

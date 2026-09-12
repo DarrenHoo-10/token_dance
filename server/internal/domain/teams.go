@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// TeamAnalysisRuleVersion invalidates snapshots and exports built under older disclosure rules.
+const TeamAnalysisRuleVersion = "2"
+
 const (
 	TeamIDPrefix           = "tem_"
 	MembershipIDPrefix     = "tmb_"

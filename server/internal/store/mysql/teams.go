@@ -1207,7 +1207,8 @@ func (s *teamsStore) ListExports(ctx context.Context, teamID, requesterUserID st
 }
 
 func (s *teamsStore) GetExport(ctx context.Context, teamID, exportID string) (*domain.TeamExportJob, error) {
-	job, err := scanExport(s.db.QueryRowContext(ctx, exportSelectSQL+` WHERE export_id = ? AND team_id = ?`, exportID, teamID))
+	job, err := scanExport(s.db.QueryRowContext(ctx, exportSelectSQL+` WHERE export_id = ? AND team_id = ?
+		AND snapshot_id IN (SELECT snapshot_id FROM team_analysis_snapshots WHERE rule_version = ?)`, exportID, teamID, domain.TeamAnalysisRuleVersion))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errResourceNotFound()
 	}

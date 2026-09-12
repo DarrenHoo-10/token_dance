@@ -297,7 +297,7 @@ func (s *teamsStore) GetOrQueueAnalysis(ctx context.Context, teamID string, from
 }
 
 func (s *teamsStore) GetReadySnapshot(ctx context.Context, teamID, snapshotID string) (*domain.TeamAnalysisSnapshot, error) {
-	snap, err := scanSnapshot(s.db.QueryRowContext(ctx, snapshotSelectSQL+` WHERE snapshot_id = ? AND team_id = ? AND status = 'ready'`, snapshotID, teamID))
+	snap, err := scanSnapshot(s.db.QueryRowContext(ctx, snapshotSelectSQL+` WHERE snapshot_id = ? AND team_id = ? AND status = 'ready' AND rule_version = ?`, snapshotID, teamID, domain.TeamAnalysisRuleVersion))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, errResourceNotFound()
 	}
