@@ -407,3 +407,106 @@ pub fn emit_code_fact(
         }),
     }
 }
+
+/// Lifecycle evidence has stable native identity, separate from token facts.
+pub fn emit_activity_fact(
+    secret: &[u8],
+    harness: &str,
+    scope: &str,
+    native: TypedNativeKey,
+    kind: &str,
+    occurred_at: i64,
+    time_source: TimeSource,
+    session: &str,
+    turn: Option<&str>,
+    activity: Value,
+) -> FactDraft {
+    let fk = fact_key(secret, harness, scope, &native, kind);
+    FactDraft {
+        event_id: event_id(secret, &fk, 1),
+        fact_key: fk,
+        fact_revision: 1,
+        event_type: kind.into(),
+        schema_version: 2,
+        metric_semantics_version: 1,
+        occurred_at,
+        time_source,
+        model_key: 0,
+        model_identity: None,
+        skill_id: None,
+        skill_key: None,
+        session_key: Some(sess_hmac(secret, harness, session)),
+        turn_key: turn.map(|t| turn_key(secret, harness, session, t)),
+        cost_scope_key: None,
+        accuracy: TokenAccuracy::Derived,
+        payload_sections: json!({"activity": activity}),
+    }
+}
+
+/// Only successful edit/write inputs are evidence of generated code, never arbitrary tools.
+pub fn completed_code_payload(part: &Value) -> Option<Value> {
+    let state = part.get("state")?;
+    if state.get("status")?.as_str()? != "completed" {
+        return None;
+    }
+    let input = state.get("input")?;
+    let tool = part.get("tool")?.as_str()?.to_ascii_lowercase();
+    let lines = |s: &str| s.lines().count() as u64;
+    match tool.as_str() {
+        "edit" => {
+            // Without a match count, replace-all has no reliable line delta.
+            if input
+                .get("replace_all")
+                .or_else(|| input.get("replaceAll"))
+                .and_then(Value::as_bool)
+                == Some(true)
+            {
+                return None;
+            }
+            let old = input
+                .get("old_string")
+                .or_else(|| input.get("oldString"))?
+                .as_str()?;
+            let new = input
+                .get("new_string")
+                .or_else(|| input.get("newString"))?
+                .as_str()?;
+            if old == new {
+                return None;
+            }
+            Some(
+                json!({"generated": lines(new), "added": lines(new), "removed": lines(old), "file_touch_count": 1}),
+            )
+        }
+        "write" => {
+            let text = input.get("content")?.as_str()?;
+            // Generated content is known; overwritten old contents may not be available.
+            Some(json!({"generated": lines(text), "file_touch_count": 1}))
+        }
+        _ => None,
+    }
+}
+
+/// Count only explicit patch additions/deletions; context and headers are not generated lines.
+pub fn patch_code_payload(patch: &str) -> Option<Value> {
+    if !patch.starts_with("*** Begin Patch") || !patch.contains("*** End Patch") {
+        return None;
+    }
+    let (mut added, mut removed, mut files) = (0u64, 0u64, 0u64);
+    for line in patch.lines() {
+        if line.starts_with("*** Add File:") || line.starts_with("*** Update File:") {
+            files += 1;
+        } else if line.starts_with("*** Delete File:") {
+            return None;
+        }
+        // No deleted contents in this format.
+        else if line.starts_with('+') {
+            added += 1;
+        } else if line.starts_with('-') {
+            removed += 1;
+        }
+    }
+    (files > 0).then(
+        || json!({"generated":added,"added":added,"removed":removed,"file_touch_count":files}),
+    )
+}

@@ -369,6 +369,12 @@ func (w *Worker) applyTelemetryContribution(
 		for k, v := range d {
 			harnessDelta[k] += v
 		}
+		if v2.EventType(ev.EventType) == v2.EventTypeTurnStarted || v2.EventType(ev.EventType) == v2.EventTypeTurnCompleted {
+			harnessDelta["message_known_count"] += 1
+		}
+		if payload.Activity != nil && payload.Activity.DurationMs != nil {
+			harnessDelta["duration_known_count"] += 1
+		}
 		if err := applyDurationDiff(ctx, tx, grain, bucketStart, ev, payload, nowMs, harnessDelta); err != nil {
 			return false, err
 		}

@@ -83,8 +83,8 @@ fn read_usage_counts(usage: &Map<String, Value>) -> (u64, u64, u64, Option<u64>,
     let total = u64_field(usage, "total_tokens")
         .or_else(|| u64_field(usage, "totalTokens"))
         .unwrap_or(input.saturating_add(output));
-    let cache = u64_field(usage, "cached_input_tokens")
-        .or_else(|| u64_field(usage, "cache_read_tokens"));
+    let cache =
+        u64_field(usage, "cached_input_tokens").or_else(|| u64_field(usage, "cache_read_tokens"));
     let reasoning = u64_field(usage, "reasoning_output_tokens")
         .or_else(|| u64_field(usage, "reasoning_tokens"));
     (input, output, total, cache, reasoning)
@@ -202,7 +202,135 @@ impl HarnessStrategy for CodexStrategy {
                     .and_then(|v| v.as_str())
                     .map(str::to_owned)
             });
-        let turn = str_field(o, "turn_id");
+        let nested = o.get("payload").and_then(Value::as_object);
+        let turn = str_field(o, "turn_id")
+            .or_else(|| nested.and_then(|p| str_field(p, "turn_id")))
+            .or_else(|| {
+                state
+                    .json
+                    .get("active_turn_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            });
+        if let Some(session) = session.as_deref() {
+            let payload_type = nested
+                .and_then(|p| str_field(p, "type"))
+                .unwrap_or_default();
+            let mut activity = json!({});
+            let lifecycle = if kind == "session_meta" {
+                Some(("session_started", session.to_string(), None))
+            } else if kind == "event_msg" && payload_type == "task_started" {
+                if let Some(t) = turn.as_deref() {
+                    state.json["active_turn_id"] = json!(t);
+                    state.json["active_turn_started_at"] = json!(occurred_at);
+                    Some(("turn_started", t.to_string(), Some(t)))
+                } else {
+                    None
+                }
+            } else if kind == "event_msg" && payload_type == "task_complete" {
+                if let Some(t) = turn.as_deref() {
+                    if state.json.get("active_turn_id").and_then(Value::as_str) == Some(t) {
+                        if let Some(start) = state
+                            .json
+                            .get("active_turn_started_at")
+                            .and_then(Value::as_i64)
+                        {
+                            if occurred_at >= start {
+                                activity["duration_ms"] = json!(occurred_at - start);
+                            }
+                        }
+                    }
+                    state.json["active_turn_id"] = Value::Null;
+                    state.json["active_turn_started_at"] = Value::Null;
+                    activity["success"] = json!(true);
+                    Some(("turn_completed", t.to_string(), Some(t)))
+                } else {
+                    None
+                }
+            } else if kind == "response_item"
+                && payload_type == "message"
+                && nested.and_then(|p| str_field(p, "role")).as_deref() == Some("user")
+            {
+                turn.as_deref().map(|t| {
+                    activity["trigger"] = json!("user");
+                    ("turn_started", format!("{t}:user"), Some(t))
+                })
+            } else {
+                None
+            };
+            if let Some((event_type, native, turn)) = lifecycle {
+                return Ok(DecodeOutcome::Emit(vec![
+                    super::common::emit_activity_fact(
+                        &self.identity_secret,
+                        HARNESS_ID,
+                        logical_scope,
+                        TypedNativeKey::Str(native),
+                        event_type,
+                        occurred_at,
+                        time_source,
+                        session,
+                        turn,
+                        activity,
+                    ),
+                ]));
+            }
+        }
+        if kind == "response_item" {
+            if let Some(p) = nested {
+                let ty = str_field(p, "type").unwrap_or_default();
+                if ty == "custom_tool_call"
+                    && str_field(p, "name").as_deref() == Some("apply_patch")
+                {
+                    if let (Some(call), Some(patch)) = (
+                        str_field(p, "call_id"),
+                        p.get("input").and_then(Value::as_str),
+                    ) {
+                        if let Some(code) = super::common::patch_code_payload(patch) {
+                            if !state.json["pending_code"].is_object() {
+                                state.json["pending_code"] = json!({});
+                            }
+                            // Persist only counts, never raw code or paths.
+                            if state.json["pending_code"]
+                                .as_object()
+                                .map_or(0, |m| m.len())
+                                < 128
+                            {
+                                state.json["pending_code"][call] = code;
+                            }
+                        }
+                    }
+                } else if ty == "custom_tool_call_output" {
+                    if let Some(call) = str_field(p, "call_id") {
+                        let code = state.json["pending_code"]
+                            .as_object_mut()
+                            .and_then(|m| m.remove(&call));
+                        let output = p.get("output").and_then(Value::as_str).unwrap_or("");
+                        let parsed = serde_json::from_str::<Value>(output).ok();
+                        let success = parsed.as_ref().is_some_and(|v| {
+                            v.pointer("/metadata/exit_code").and_then(Value::as_i64) == Some(0)
+                        }) || output
+                            .starts_with("Success. Updated the following files:");
+                        if success {
+                            if let Some(code) = code {
+                                let mut fact = super::common::emit_code_fact(
+                                    &self.identity_secret,
+                                    HARNESS_ID,
+                                    logical_scope,
+                                    TypedNativeKey::Str(call),
+                                    occurred_at,
+                                    time_source,
+                                    session.as_deref(),
+                                    0,
+                                    0,
+                                );
+                                fact.payload_sections = json!({"code":code});
+                                return Ok(DecodeOutcome::Emit(vec![fact]));
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let byte_native = TypedNativeKey::ByteOffset(record.byte_start.unwrap_or(record.ordinal));
 
         match kind.as_str() {

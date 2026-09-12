@@ -6,8 +6,8 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use super::common::{
-    emit_code_fact, emit_usage_fact, i64_field, json_obj, remember_source_time, resolve_record_time, str_field,
-    u64_field, SkillBook, UsageFactArgs,
+    emit_code_fact, emit_usage_fact, i64_field, json_obj, remember_source_time,
+    resolve_record_time, str_field, u64_field, SkillBook, UsageFactArgs,
 };
 use super::identity::{source_key, TypedNativeKey};
 use crate::local_store::pipeline::runner::{
@@ -22,14 +22,12 @@ pub const STREAM_SESSION: &str = "sqlite/session";
 pub const STREAM_STEP: &str = "sqlite/step_finish";
 pub const STREAM_CODE: &str = "sqlite/code_part";
 
-pub const SQL_SESSION: &str =
-    "SELECT rowid, time_created AS updated_at, 'completed' AS status, \
+pub const SQL_SESSION: &str = "SELECT rowid, time_created AS updated_at, 'completed' AS status, \
      json_object('type','session','id',rowid,'sessionId',id,'timestamp',time_created, \
        'model',COALESCE(model,'unknown')) \
      FROM session WHERE rowid > ?1 ORDER BY rowid";
 
-pub const SQL_STEP: &str =
-    "SELECT rowid, time_created AS updated_at, 'completed' AS status, \
+pub const SQL_STEP: &str = "SELECT rowid, time_created AS updated_at, 'completed' AS status, \
      json_object('type','step_finish','id',rowid,'sessionId',session_id, \
        'timestamp',time_created, \
        'inputTokens',json_extract(data,'$.tokens.input'), \
@@ -39,11 +37,10 @@ pub const SQL_STEP: &str =
          + COALESCE(json_extract(data,'$.tokens.output'),0)) \
      FROM part WHERE json_extract(data,'$.type') = 'step-finish' AND rowid > ?1 ORDER BY rowid";
 
-pub const SQL_CODE: &str =
-    "SELECT rowid, time_updated AS updated_at, 'completed' AS status, \
+pub const SQL_CODE: &str = "SELECT rowid, time_updated AS updated_at, 'completed' AS status, \
      json_object('type','code_changed','id',rowid,'sessionId',session_id, \
        'timestamp',time_updated,'callId',json_extract(data,'$.callID'), \
-       'addedLines',1,'removedLines',0) \
+       'part',json(data)) \
      FROM part WHERE json_extract(data,'$.type') = 'tool' \
        AND ((time_updated > ?1) OR (time_updated = ?1 AND rowid > ?2)) \
      ORDER BY time_updated, rowid";
@@ -124,8 +121,13 @@ impl HarnessStrategy for OpenCodeStrategy {
                 "unknown opencode stream {stream_key}"
             )));
         };
-        let result =
-            read_sqlite_change_stream(Path::new(locator_ref), sql, &committed.cursor_json, mode, budget)?;
+        let result = read_sqlite_change_stream(
+            Path::new(locator_ref),
+            sql,
+            &committed.cursor_json,
+            mode,
+            budget,
+        )?;
         let records = result
             .rows
             .into_iter()
@@ -213,17 +215,30 @@ impl HarnessStrategy for OpenCodeStrategy {
                     reasoning_tokens: None,
                 })]))
             }
-            "code_changed" => Ok(DecodeOutcome::Emit(vec![emit_code_fact(
-                &self.identity_secret,
-                HARNESS_ID,
-                logical_scope,
-                native,
-                occurred_at,
-                time_source,
-                session.as_deref(),
-                0,
-                0,
-            )])),
+            "code_changed" => {
+                let Some(code) = o
+                    .get("part")
+                    .and_then(super::common::completed_code_payload)
+                else {
+                    return Ok(DecodeOutcome::ContextOnly);
+                };
+                let mut fact = emit_code_fact(
+                    &self.identity_secret,
+                    HARNESS_ID,
+                    logical_scope,
+                    native,
+                    occurred_at,
+                    time_source,
+                    session.as_deref(),
+                    0,
+                    0,
+                );
+                // Correction revision: old collectors emitted placeholder counts at revision 1.
+                fact.fact_revision = 2;
+                fact.event_id = super::identity::event_id(&self.identity_secret, &fact.fact_key, 2);
+                fact.payload_sections = json!({"code": code});
+                Ok(DecodeOutcome::Emit(vec![fact]))
+            }
             _ => Ok(DecodeOutcome::Ignore(IgnoreCode::UnsupportedStructure)),
         }
     }

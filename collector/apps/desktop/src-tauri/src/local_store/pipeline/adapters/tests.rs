@@ -118,8 +118,8 @@ fn review3_codex_archive_move_preserves_event_identity() {
     }
     assert_eq!(
         store.event_count().unwrap(),
-        1,
-        "archiving the same already-collected session must not duplicate usage"
+        2,
+        "archiving must not duplicate the session or usage"
     );
 }
 
@@ -504,9 +504,9 @@ fn zcode_same_time_updated_multi_rows_not_skipped() {
                 status TEXT, completed_at INTEGER);
              CREATE TABLE part(rowid INTEGER PRIMARY KEY, session_id TEXT, time_updated INTEGER, data TEXT);
              INSERT INTO part VALUES
-               (1,'s',{ts},'{{\"callID\":\"c1\",\"type\":\"tool\"}}'),
-               (2,'s',{ts},'{{\"callID\":\"c2\",\"type\":\"tool\"}}'),
-               (3,'s',{ts},'{{\"callID\":\"c3\",\"type\":\"tool\"}}');"
+               (1,'s',{ts},'{{\"callID\":\"c1\",\"type\":\"tool\",\"tool\":\"Edit\",\"state\":{{\"status\":\"completed\",\"input\":{{\"old_string\":\"old\",\"new_string\":\"new\"}}}}}}'),
+               (2,'s',{ts},'{{\"callID\":\"c2\",\"type\":\"tool\",\"tool\":\"Edit\",\"state\":{{\"status\":\"completed\",\"input\":{{\"old_string\":\"old\",\"new_string\":\"new\"}}}}}}'),
+               (3,'s',{ts},'{{\"callID\":\"c3\",\"type\":\"tool\",\"tool\":\"Edit\",\"state\":{{\"status\":\"completed\",\"input\":{{\"old_string\":\"old\",\"new_string\":\"new\"}}}}}}');"
         ))
         .unwrap();
     }
@@ -1606,4 +1606,130 @@ fn review2_pipeline_query_facade_returns_tokens_when_legacy_empty() {
         .unwrap();
     assert_eq!(from_writer.total_tokens.value, Some(42));
     drop(writer);
+}
+
+#[test]
+fn code_counts_require_completed_edit_or_write_evidence() {
+    use super::common::{completed_code_payload, patch_code_payload};
+    assert!(completed_code_payload(
+        &json!({"tool":"Bash","state":{"status":"completed","input":{"command":"echo ok"}}})
+    )
+    .is_none());
+    assert!(completed_code_payload(&json!({"tool":"Edit","state":{"status":"error","input":{"old_string":"a","new_string":"b"}}})).is_none());
+    let code = completed_code_payload(&json!({"tool":"Edit","state":{"status":"completed","input":{"old_string":"a","new_string":"b\nc\n"}}})).unwrap();
+    assert_eq!(code["generated"], 2);
+    assert_eq!(code["removed"], 1);
+    let code = completed_code_payload(
+        &json!({"tool":"write","state":{"status":"completed","input":{"content":"a\nb\n"}}}),
+    )
+    .unwrap();
+    assert_eq!(code["generated"], 2);
+    assert!(code.get("removed").is_none());
+    assert!(code.get("added").is_none());
+    let code = patch_code_payload("*** Begin Patch\n*** Update File: fixture.rs\n@@\n context\n-old\n+new\n+next\n*** End Patch").unwrap();
+    assert_eq!(code["generated"], 2);
+    assert_eq!(code["removed"], 1);
+    assert!(patch_code_payload("not a patch").is_none());
+}
+
+#[test]
+fn codex_lifecycle_survives_batch_boundaries() {
+    let now = beijing_wall_to_utc_ms(2026, 9, 12, 12, 0, 0);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fixture.jsonl");
+    let records = vec![
+        json!({"type":"session_meta","timestamp":now,"payload":{"id":"session"}}),
+        json!({"type":"event_msg","timestamp":now+1,"payload":{"type":"task_started","turn_id":"turn"}}),
+        json!({"type":"response_item","timestamp":now+2,"payload":{"type":"message","role":"user"}}),
+        json!({"type":"event_msg","timestamp":now+1001,"payload":{"type":"task_complete","turn_id":"turn"}}),
+    ];
+    std::fs::write(
+        &path,
+        records.iter().map(|v| format!("{v}\n")).collect::<String>(),
+    )
+    .unwrap();
+    let strategy = CodexStrategy::new(secret(), dir.path(), SkillBook::new(), Arc::new(|_, _| 1));
+    let mut store = open_store(now + 2000);
+    let id = register_source(
+        &mut store,
+        "codex",
+        path.to_str().unwrap(),
+        "sessions-jsonl",
+        SourceKind::Jsonl,
+        r#"{"offset":0}"#,
+        r#"{"last_source_time":null}"#,
+        now + 2000,
+    );
+    for _ in 0..5 {
+        let sink = StoreSinkMut::new(&mut store);
+        run_source_once(
+            &sink,
+            &strategy,
+            id,
+            crate::local_store::pipeline::runner::ReadBudget::new(1, 65536, 50),
+            DEFAULT_LEASE_MS,
+            &[],
+            None,
+        )
+        .unwrap();
+    }
+    assert_eq!(store.event_count().unwrap(), 4);
+    store.with_connection(|c| {
+        let duration: i64 = c.query_row("SELECT json_extract(payload_json,'$.activity.duration_ms') FROM events WHERE event_type='turn_completed'",[],|r|r.get(0))?;
+        assert_eq!(duration,1000);
+        let user: i64 = c.query_row("SELECT COUNT(*) FROM events WHERE json_extract(payload_json,'$.activity.trigger')='user'",[],|r|r.get(0))?;
+        assert_eq!(user,1); Ok(())
+    }).unwrap();
+}
+
+#[test]
+fn codex_patch_requires_success_and_is_replay_idempotent() {
+    let now = beijing_wall_to_utc_ms(2026, 9, 12, 12, 0, 0);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("patch.jsonl");
+    let patch = "*** Begin Patch\n*** Update File: fixture.rs\n@@\n-old\n+new\n*** End Patch";
+    let records = vec![
+        json!({"type":"session_meta","timestamp":now,"payload":{"id":"patch-session"}}),
+        json!({"type":"response_item","timestamp":now+1,"payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"ok","input":patch}}),
+        json!({"type":"response_item","timestamp":now+2,"payload":{"type":"custom_tool_call_output","call_id":"ok","output":"Success. Updated the following files:"}}),
+        json!({"type":"response_item","timestamp":now+3,"payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"failed","input":patch}}),
+        json!({"type":"response_item","timestamp":now+4,"payload":{"type":"custom_tool_call_output","call_id":"failed","output":"patch failed"}}),
+    ];
+    std::fs::write(
+        &path,
+        records.iter().map(|v| format!("{v}\n")).collect::<String>(),
+    )
+    .unwrap();
+    let strategy = CodexStrategy::new(secret(), dir.path(), SkillBook::new(), Arc::new(|_, _| 1));
+    let mut store = open_store(now + 2000);
+    let id = register_source(
+        &mut store,
+        "codex",
+        path.to_str().unwrap(),
+        "sessions-jsonl",
+        SourceKind::Jsonl,
+        r#"{"offset":0}"#,
+        r#"{"last_source_time":null}"#,
+        now + 2000,
+    );
+    for _ in 0..2 {
+        store.with_connection(|c| {
+            c.execute(r#"UPDATE collection_sources SET cursor_json='{"offset":0}', decoder_state_json='{}' WHERE id=?1"#,[id])?;
+            Ok(())
+        }).unwrap();
+        for _ in 0..6 {
+            let sink = StoreSinkMut::new(&mut store);
+            run_source_once(
+                &sink,
+                &strategy,
+                id,
+                crate::local_store::pipeline::runner::ReadBudget::new(1, 65536, 50),
+                DEFAULT_LEASE_MS,
+                &[],
+                None,
+            )
+            .unwrap();
+        }
+        assert_eq!(store.event_count().unwrap(), 2);
+    }
 }
