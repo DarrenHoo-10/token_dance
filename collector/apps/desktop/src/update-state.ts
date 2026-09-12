@@ -51,6 +51,8 @@ export function updateBusy(status: UpdateStatus | null) { return !!status && ['c
 export function updateError(code: string | null, zh: boolean): string {
   const errors: Record<string, [string, string]> = {
     network: ['网络暂不可用，请稍后重试', 'Network unavailable. Try again later.'],
+    download_network: ['安装包下载失败，请检查网络后重试', 'Package download failed. Check your connection and retry.'],
+    download_failed: ['下载服务暂不可用，请稍后重试', 'The download service is unavailable. Try again later.'],
     rate_limited: ['检查过于频繁，请稍后重试', 'Too many requests. Try again later.'],
     asset_missing: ['新版安装包尚未就绪，请稍后重试', 'The new package is not ready yet.'],
     unverified_release: ['新版校验信息不完整，暂不能更新', 'Release verification is unavailable.'],

@@ -166,14 +166,46 @@ fn select_release(manifest: Manifest, current: &str) -> Result<Option<Candidate>
     }))
 }
 
-fn client(timeout: u64) -> Result<reqwest::Client, String> {
+fn client_builder(timeout: u64) -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .user_agent(concat!("TokenDance/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(timeout))
         .redirect(reqwest::redirect::Policy::none())
+}
+fn client(timeout: u64) -> Result<reqwest::Client, String> {
+    client_builder(timeout)
         .build()
         .map_err(|_| "network".into())
+}
+
+// Release assets are public, validated HTTPS URLs and carry no account credentials.
+// A configured proxy can reach the manifest but fail the package TLS handshake.
+// Retry transport failures once directly, keeping TLS and redirect checks intact.
+async fn asset_response(
+    primary: reqwest::Client,
+    url: &str,
+    timeout: u64,
+) -> Result<reqwest::Response, String> {
+    match primary.get(url).send().await {
+        Ok(response) => Ok(response),
+        Err(_) => client_builder(timeout)
+            .no_proxy()
+            .build()
+            .map_err(|_| "download_network")?
+            .get(url)
+            .send()
+            .await
+            .map_err(|_| "download_network".into()),
+    }
+}
+
+fn asset_status_error(status: reqwest::StatusCode) -> &'static str {
+    match status.as_u16() {
+        404 | 410 => "asset_missing",
+        429 => "rate_limited",
+        _ => "download_failed",
+    }
 }
 async fn latest() -> Result<Option<Candidate>, String> {
     let mut response = client(20)?
@@ -291,16 +323,13 @@ impl UpdateState {
             view.progress = 0;
             view.error = None;
         }
-        let mut response = client(300)?
-            .get(&candidate.asset.url)
-            .send()
-            .await
-            .map_err(|_| "network")?;
+        let primary = client(300).map_err(|_| "download_network")?;
+        let mut response = asset_response(primary, &candidate.asset.url, 300).await?;
         if !response.status().is_success() {
-            return Err("network".into());
+            return Err(asset_status_error(response.status()).into());
         }
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| "network")? {
+        while let Some(chunk) = response.chunk().await.map_err(|_| "download_network")? {
             if bytes.len() as u64 + chunk.len() as u64 > candidate.asset.size {
                 return Err("integrity".into());
             }
@@ -613,6 +642,94 @@ mod tests {
     #[ignore = "live read-only check of the public release endpoint"]
     async fn live_release_feed() {
         assert!(latest().await.is_ok());
+    }
+
+    async fn one_reply(reply: &'static [u8]) -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/asset", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            let (mut stream, _) = tokio::time::timeout(Duration::from_secs(3), listener.accept())
+                .await
+                .unwrap()
+                .unwrap();
+            let mut request = [0; 4096];
+            let _ = stream.read(&mut request).await.unwrap();
+            stream.write_all(reply).await.unwrap();
+        });
+        (url, task)
+    }
+
+    #[tokio::test]
+    async fn asset_transport_failure_retries_directly() {
+        let (asset, asset_server) =
+            one_reply(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nMZ").await;
+        let (proxy, proxy_server) = one_reply(b"").await;
+        let primary = client_builder(2)
+            .no_proxy()
+            .proxy(reqwest::Proxy::all(&proxy).unwrap())
+            .build()
+            .unwrap();
+        let response = asset_response(primary, &asset, 2).await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(response.bytes().await.unwrap().as_ref(), b"MZ");
+        proxy_server.await.unwrap();
+        asset_server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn asset_http_errors_are_not_transport_retries_or_redirects() {
+        for (reply, status, error) in [
+            (b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/redirect\r\nContent-Length: 0\r\n\r\n".as_slice(), 302, "download_failed"),
+            (b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".as_slice(), 404, "asset_missing"),
+            (b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n".as_slice(), 429, "rate_limited"),
+        ] {
+            let (url, server) = one_reply(reply).await;
+            let primary = client_builder(2).no_proxy().build().unwrap();
+            let response = asset_response(primary, &url, 2).await.unwrap();
+            assert_eq!(response.status().as_u16(), status);
+            assert_eq!(asset_status_error(response.status()), error);
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn asset_all_routes_unavailable_report_download_failure() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/asset", listener.local_addr().unwrap());
+        drop(listener);
+        let primary = client_builder(1).no_proxy().build().unwrap();
+        assert_eq!(
+            asset_response(primary, &url, 1).await.unwrap_err(),
+            "download_network"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "downloads and verifies the current public release without installing it"]
+    async fn live_release_asset() {
+        let manifest: Manifest = client(20)
+            .unwrap()
+            .get(RELEASES)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let candidate = select_release(manifest, "0.0.0").unwrap().unwrap();
+        let response = asset_response(client(60).unwrap(), &candidate.asset.url, 60)
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        let bytes = response.bytes().await.unwrap();
+        assert!(verify(&bytes, &candidate));
     }
 
     #[test]
