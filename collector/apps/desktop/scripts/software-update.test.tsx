@@ -56,6 +56,30 @@ describe('update notice', () => {
   });
 });
 describe('settings updates', () => {
+  it('shows a shared download failure once and clears it when retrying', async () => {
+    const user = userEvent.setup();
+    mock.install.mockImplementation(async () => {
+      mock.status = { ...mock.status!, phase: 'error', error: 'network' };
+      throw 'network';
+    });
+    render(<SoftwareUpdateCard zh />);
+    await user.click(screen.getByRole('button', { name: '立即更新' }));
+    expect(screen.getAllByText('网络暂不可用，请稍后重试')).toHaveLength(1);
+    expect(screen.getByRole('alert').textContent).toContain('网络暂不可用');
+    mock.check.mockImplementation(async () => {
+      mock.status = { ...mock.status!, phase: 'ready', error: null };
+    });
+    await user.click(screen.getByRole('button', { name: '检查更新' }));
+    expect(screen.queryByText('网络暂不可用，请稍后重试')).toBeNull();
+    expect(screen.getByRole('button', { name: '重启并更新' })).toBeTruthy();
+  });
+
+  it('describes a download connection failure separately from checking for updates', () => {
+    mock.status = { ...mock.status!, phase: 'error', error: 'download_network' };
+    render(<SoftwareUpdateCard zh />);
+    expect(screen.getByRole('alert').textContent).toContain('安装包下载失败');
+  });
+
   it('checks manually and saves the automatic-update switch', async () => {
     const user = userEvent.setup(); render(<SoftwareUpdateCard zh />);
     await user.click(screen.getByRole('button', { name: '检查更新' }));
