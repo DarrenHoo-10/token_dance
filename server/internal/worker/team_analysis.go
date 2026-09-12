@@ -421,11 +421,7 @@ func aggregateMemberAnalysis(ctx context.Context, tx *sql.Tx, member teamMemberS
 	if !member.accountOK {
 		return nil, nil
 	}
-	queryFrom := from
-	if member.joinedAt.After(queryFrom) {
-		queryFrom = member.joinedAt
-	}
-	events, err := readTeamTelemetry(ctx, tx, member.userID, queryFrom, toExclusive, asOf)
+	events, err := readTeamTelemetry(ctx, tx, member.userID, from, toExclusive, asOf)
 	if err != nil {
 		return nil, err
 	}
@@ -436,9 +432,6 @@ func buildMemberAnalysisRows(member teamMemberSource, grants []teamGrantWindow, 
 	grouped := groupAuthorizedTeamCosts(member, grants, events, loc)
 	acc := make(map[string]*analysisAggRow)
 	for _, ev := range events {
-		if ev.occurredAt.Before(member.joinedAt) {
-			continue
-		}
 		if !grantCoversTime(grants, string(domain.SharingBase), ev.occurredAt) {
 			continue
 		}
@@ -472,7 +465,7 @@ func buildMemberAnalysisRows(member teamMemberSource, grants []teamGrantWindow, 
 			continue
 		}
 		sample := group.events[0]
-		if sample.occurredAt.Before(member.joinedAt) || !grantCoversTime(grants, string(domain.SharingBase), sample.occurredAt) {
+		if !grantCoversTime(grants, string(domain.SharingBase), sample.occurredAt) {
 			continue
 		}
 		mask := analysisVisibilityMask(grants, sample.occurredAt)
@@ -1016,13 +1009,8 @@ func grantCoversTime(grants []teamGrantWindow, dimension string, at time.Time) b
 		if g.dimension != dimension {
 			continue
 		}
-		if g.revokedAt.Valid {
-			continue
-		}
-		if g.startsAt.After(at) {
-			continue
-		}
-		if g.endsAt.Valid && !at.Before(g.endsAt.Time) {
+		// Current sharing applies to the entire requested history.
+		if g.revokedAt.Valid || g.endsAt.Valid {
 			continue
 		}
 		return true

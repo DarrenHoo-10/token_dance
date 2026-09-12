@@ -236,11 +236,15 @@ func (s *teamsStore) GetOrQueueAnalysis(ctx context.Context, teamID string, from
 		}
 		fromDate := domain.FormatTeamCalendarDate(from, team.TimezoneName)
 		toDate := domain.FormatTeamCalendarDate(toExclusive, team.TimezoneName)
+		var source uint64
+		if err := tx.QueryRowContext(ctx, `SELECT source_revision FROM team_source_revisions WHERE team_id = ?`, teamID).Scan(&source); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("load source revision: %w", err)
+		}
 		ready, err := scanSnapshot(tx.QueryRowContext(ctx, snapshotSelectSQL+`
-			WHERE team_id = ? AND from_date = ? AND to_date_exclusive = ? AND auth_revision = ? AND rule_version = ? AND status = 'ready'
+			WHERE team_id = ? AND from_date = ? AND to_date_exclusive = ? AND auth_revision = ? AND rule_version = ? AND status = 'ready' AND expires_at > ?
 			ORDER BY as_of DESC
-			LIMIT 1`, teamID, fromDate, toDate, authRevision, ruleVersion))
-		if err == nil && tNow.Sub(ready.AsOf) <= 30*time.Second {
+			LIMIT 1`, teamID, fromDate, toDate, authRevision, ruleVersion, tNow))
+		if err == nil && ready.SourceRevision == source {
 			snap = ready
 			queued = false
 			return nil
@@ -253,6 +257,10 @@ func (s *teamsStore) GetOrQueueAnalysis(ctx context.Context, teamID string, from
 		if err == nil {
 			snap = existing
 			queued = existing.Status == domain.SnapshotQueued || existing.Status == domain.SnapshotBuilding
+			if ready != nil {
+				ready.Refreshing = true
+				snap, queued = ready, false
+			}
 			return nil
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -261,10 +269,6 @@ func (s *teamsStore) GetOrQueueAnalysis(ctx context.Context, teamID string, from
 		id, err := newTeamID(domain.SnapshotIDPrefix)
 		if err != nil {
 			return err
-		}
-		var source uint64
-		if err := tx.QueryRowContext(ctx, `SELECT source_revision FROM team_source_revisions WHERE team_id = ?`, teamID).Scan(&source); err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return fmt.Errorf("load source revision: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO team_analysis_snapshots (
@@ -281,6 +285,10 @@ func (s *teamsStore) GetOrQueueAnalysis(ctx context.Context, teamID string, from
 				}
 				snap = existing
 				queued = true
+				if ready != nil {
+					ready.Refreshing = true
+					snap, queued = ready, false
+				}
 				return nil
 			}
 			return fmt.Errorf("queue analysis snapshot: %w", err)
@@ -291,6 +299,10 @@ func (s *teamsStore) GetOrQueueAnalysis(ctx context.Context, teamID string, from
 		}
 		snap = created
 		queued = true
+		if ready != nil {
+			ready.Refreshing = true
+			snap, queued = ready, false
+		}
 		return nil
 	})
 	return snap, queued, err

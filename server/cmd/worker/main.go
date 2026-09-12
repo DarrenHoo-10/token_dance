@@ -107,6 +107,24 @@ func main() {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
+	// Interactive analysis must not wait behind ranking and bulk export passes.
+	go func() {
+		analysisTicker := time.NewTicker(500 * time.Millisecond)
+		defer analysisTicker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-analysisTicker.C:
+				if wrk != nil {
+					if _, err := wrk.ProcessTeamAnalysis(ctx); err != nil {
+						log.Printf("Team analysis processing error: %v", err)
+					}
+				}
+			}
+		}
+	}()
+
 	go func() {
 		for {
 			select {

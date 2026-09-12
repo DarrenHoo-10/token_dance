@@ -635,9 +635,6 @@ func (w *Worker) RunPass(ctx context.Context) {
 	if _, err := w.ProcessDeletionRequests(ctx); err != nil {
 		log.Printf("[Worker %s] Deletion requests processing error: %v", w.workerID, err)
 	}
-	if _, err := w.ProcessTeamAnalysis(ctx); err != nil {
-		log.Printf("[Worker %s] Team analysis processing error: %v", w.workerID, err)
-	}
 	if _, err := w.ProcessTeamExports(ctx); err != nil {
 		log.Printf("[Worker %s] Team export processing error: %v", w.workerID, err)
 	}

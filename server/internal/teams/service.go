@@ -39,7 +39,7 @@ const (
 	invitationTTL          = 7 * 24 * time.Hour
 	inviteLinkDefaultDays  = 7
 	inviteLinkDefaultUses  = 50
-	analysisRetryAfterMS   = 2000
+	analysisRetryAfterMS   = 500
 	avatarIntentTTL        = 10 * time.Minute
 	timeJSON               = "2006-01-02T15:04:05.000Z"
 	dateLayout             = "2006-01-02"

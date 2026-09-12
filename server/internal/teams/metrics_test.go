@@ -8,94 +8,40 @@ import (
 )
 
 func ptrUint(v uint64) *uint64 { return &v }
-func ptrStr(v string) *string   { return &v }
+func ptrStr(v string) *string  { return &v }
 
-func TestGrantWindowCoversHalfOpen(t *testing.T) {
-	start := time.Date(2026, 9, 6, 10, 0, 0, 0, time.UTC)
-	end := start.Add(time.Hour)
-	g := GrantWindow{Dimension: domain.SharingBase, StartsAt: start, EndsAt: &end}
-
-	if g.Covers(start.Add(-time.Millisecond)) {
-		t.Fatal("event before starts_at must be excluded")
+func TestCurrentSharingIncludesHistory(t *testing.T) {
+	now := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
+	member := MembershipFact{UserID: "u", TeamActive: true, UserActive: true, JoinedAt: now}
+	event := UsageFact{UserID: "u", OccurredAt: now.Add(-7 * 24 * time.Hour)}
+	grants := []GrantWindow{{Dimension: domain.SharingBase, StartsAt: now}, {Dimension: domain.SharingNamed, StartsAt: now}}
+	got := AuthorizeEvent(event, member, grants)
+	if !got.Eligible || got.Mask != VisibilityNamed {
+		t.Fatalf("history must follow current grants: %+v", got)
 	}
-	if !g.Covers(start) {
-		t.Fatal("starts_at is inclusive")
+	grants[1].RevokedAt = &now
+	if got := AuthorizeEvent(event, member, grants); !got.Eligible || got.Mask != 0 {
+		t.Fatalf("revoked name must hide history: %+v", got)
 	}
-	if g.Covers(end) {
-		t.Fatal("ends_at is exclusive")
+	grants[0].EndsAt = &now
+	if AuthorizeEvent(event, member, grants).Eligible {
+		t.Fatal("closed base must hide all history")
 	}
-}
-
-func TestAuthorizeEventIntersection(t *testing.T) {
-	joined := time.Date(2026, 9, 6, 9, 0, 0, 0, time.UTC)
-	member := MembershipFact{
-		MembershipID: "tmb_a",
-		UserID:       "usr_a",
-		TeamActive:   true,
-		UserActive:   true,
-		JoinedAt:     joined,
+	grants[0].EndsAt = nil
+	member.EndedAt = &now
+	if AuthorizeEvent(event, member, grants).Eligible {
+		t.Fatal("former member must be excluded")
 	}
-	baseStart := time.Date(2026, 9, 6, 10, 0, 0, 0, time.UTC)
-	namedStart := time.Date(2026, 9, 6, 11, 0, 0, 0, time.UTC)
-	namedEnd := time.Date(2026, 9, 6, 13, 0, 0, 0, time.UTC)
-	classStart := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
-	grants := []GrantWindow{
-		{Dimension: domain.SharingBase, StartsAt: baseStart},
-		{Dimension: domain.SharingNamed, StartsAt: namedStart, EndsAt: &namedEnd},
-		{Dimension: domain.SharingClassification, StartsAt: classStart},
-		{Dimension: domain.SharingCost, StartsAt: classStart},
+	member.EndedAt = nil
+	event.UserID = "other"
+	if AuthorizeEvent(event, member, grants).Eligible {
+		t.Fatal("other user must be excluded")
 	}
-
-	t.Run("before join", func(t *testing.T) {
-		evt := UsageFact{UserID: "usr_a", OccurredAt: joined.Add(-time.Millisecond)}
-		if AuthorizeEvent(evt, member, grants).Eligible {
-			t.Fatal("pre-join events must not be eligible")
-		}
-	})
-	t.Run("base only after 10:00", func(t *testing.T) {
-		evt := UsageFact{UserID: "usr_a", OccurredAt: baseStart.Add(time.Minute)}
-		got := AuthorizeEvent(evt, member, grants)
-		if !got.Eligible {
-			t.Fatal("expected base eligible")
-		}
-		if got.Mask != 0 {
-			t.Fatalf("expected no extra dimensions, mask=%d", got.Mask)
-		}
-	})
-	t.Run("named intersection", func(t *testing.T) {
-		evt := UsageFact{UserID: "usr_a", OccurredAt: namedStart.Add(time.Minute)}
-		got := AuthorizeEvent(evt, member, grants)
-		if got.Mask&VisibilityNamed == 0 {
-			t.Fatal("expected named")
-		}
-		if got.Mask&VisibilityClassification != 0 {
-			t.Fatal("classification starts later")
-		}
-	})
-	t.Run("named revoked", func(t *testing.T) {
-		evt := UsageFact{UserID: "usr_a", OccurredAt: namedEnd}
-		got := AuthorizeEvent(evt, member, grants)
-		if got.Mask&VisibilityNamed != 0 {
-			t.Fatal("named must be withdrawn at ends_at")
-		}
-		if !got.Eligible {
-			t.Fatal("base remains after named revoke")
-		}
-	})
-	t.Run("other user", func(t *testing.T) {
-		evt := UsageFact{UserID: "usr_b", OccurredAt: classStart.Add(time.Minute)}
-		if AuthorizeEvent(evt, member, grants).Eligible {
-			t.Fatal("other user must not match")
-		}
-	})
-	t.Run("inactive team", func(t *testing.T) {
-		inactive := member
-		inactive.TeamActive = false
-		evt := UsageFact{UserID: "usr_a", OccurredAt: classStart.Add(time.Minute)}
-		if AuthorizeEvent(evt, inactive, grants).Eligible {
-			t.Fatal("dissolved team events are ineligible")
-		}
-	})
+	member.TeamActive = false
+	event.UserID = "u"
+	if AuthorizeEvent(event, member, grants).Eligible {
+		t.Fatal("inactive team must be excluded")
+	}
 }
 
 func TestNormalizeTokenFixtures(t *testing.T) {

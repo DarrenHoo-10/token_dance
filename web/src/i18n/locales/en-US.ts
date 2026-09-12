@@ -388,7 +388,7 @@ export const enUS = {
       costHint: 'Recorded and estimated costs are totaled separately.',
       on: 'Sharing',
       off: 'Not sharing',
-      closeBaseHint: 'Turning off basic sharing removes your data from team stats. Personal data stays. New sharing starts from the new grant time.',
+      closeBaseHint: 'Turning off basic sharing removes your data from team stats. Personal data stays. Re-enabling sharing includes history in the selected date range.',
     },
     range: {
       from: 'Start date',
@@ -495,7 +495,7 @@ export const enUS = {
       ownerLeaveHint: 'Owners must transfer ownership before leaving, or dissolve the team instead.',
       confirmShareTitle: 'Confirm sharing change',
       confirmReduce: 'Turning these dimensions off immediately hides the matching historical team metrics.',
-      confirmCloseBase: 'Your data will leave team stats. Personal data stays. New sharing starts from the new grant time.',
+      confirmCloseBase: 'Your data will leave team stats. Personal data stays. Re-enabling sharing includes history in the selected date range.',
     },
     audit: {
       create: 'Created team',

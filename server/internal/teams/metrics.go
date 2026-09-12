@@ -23,10 +23,10 @@ const (
 	EventModelUsage = "model_usage_recorded"
 	EventCostRecord = "cost_recorded"
 
-	AccuracyExact       = "exact"
-	AccuracyDerived     = "derived"
-	AccuracyEstimated   = "estimated"
-	AccuracyCorrelated  = "correlated"
+	AccuracyExact        = "exact"
+	AccuracyDerived      = "derived"
+	AccuracyEstimated    = "estimated"
+	AccuracyCorrelated   = "correlated"
 	CostProviderReported = "provider_reported"
 	CostEstimatedTable   = "estimated_price_table"
 
@@ -76,40 +76,31 @@ type GrantWindow struct {
 }
 
 func (g GrantWindow) Covers(at time.Time) bool {
-	if at.Before(g.StartsAt) {
-		return false
-	}
-	if g.EndsAt != nil && !at.Before(*g.EndsAt) {
-		return false
-	}
-	if g.RevokedAt != nil && !at.Before(*g.RevokedAt) {
-		return false
-	}
-	return true
+	return g.EndsAt == nil && g.RevokedAt == nil
 }
 
 type UsageFact struct {
-	EventID        [32]byte
-	UserID         string
-	InstallationID string
-	AdapterID      string
-	AgentID        string
-	ProviderID     string
-	ModelID        string
-	EventType      string
-	Accuracy       string
-	OccurredAt     time.Time
-	SessionHash    *[32]byte
-	TurnHash       *[32]byte
-	TokenInput     *uint64
-	TokenOutput    *uint64
-	TokenCacheRead *uint64
-	TokenCacheWrite *uint64
-	TokenReasoning *uint64
-	TokenTotal     *uint64
-	CostAmount     *string
-	CostCurrency   *string
-	CostSource     *string
+	EventID           [32]byte
+	UserID            string
+	InstallationID    string
+	AdapterID         string
+	AgentID           string
+	ProviderID        string
+	ModelID           string
+	EventType         string
+	Accuracy          string
+	OccurredAt        time.Time
+	SessionHash       *[32]byte
+	TurnHash          *[32]byte
+	TokenInput        *uint64
+	TokenOutput       *uint64
+	TokenCacheRead    *uint64
+	TokenCacheWrite   *uint64
+	TokenReasoning    *uint64
+	TokenTotal        *uint64
+	CostAmount        *string
+	CostCurrency      *string
+	CostSource        *string
 	CostIsFinalTotal  bool
 	CostIsIncremental bool
 }
@@ -155,9 +146,6 @@ func AuthorizeEvent(evt UsageFact, member MembershipFact, grants []GrantWindow) 
 	if evt.UserID != member.UserID {
 		return AuthorizationResult{}
 	}
-	if evt.OccurredAt.Before(member.JoinedAt) {
-		return AuthorizationResult{}
-	}
 	if !dimensionCovered(grants, domain.SharingBase, evt.OccurredAt) {
 		return AuthorizationResult{}
 	}
@@ -184,10 +172,10 @@ func dimensionCovered(grants []GrantWindow, dim domain.SharingDimension, at time
 }
 
 type NormalizedToken struct {
-	Total      uint64
-	Accuracy   string
-	Supported  bool
-	Empty      bool
+	Total     uint64
+	Accuracy  string
+	Supported bool
+	Empty     bool
 }
 
 func NormalizeToken(evt UsageFact) NormalizedToken {
@@ -285,13 +273,13 @@ func associationKey(evt UsageFact) (CostAssociationKey, bool) {
 }
 
 type CostContribution struct {
-	Currency              string
-	ReportedAmount        string
-	EstimatedAmount       string
+	Currency               string
+	ReportedAmount         string
+	EstimatedAmount        string
 	PotentiallyOverlapping bool
-	Unattributed          bool
-	SourceRecordedOnly    bool
-	CoveredUsageIDs       [][32]byte
+	Unattributed           bool
+	SourceRecordedOnly     bool
+	CoveredUsageIDs        [][32]byte
 }
 
 type CostNormalizationResult struct {

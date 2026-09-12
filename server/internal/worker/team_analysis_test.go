@@ -70,9 +70,9 @@ func TestCostOnlyRecordCoversAssociatedUsage(t *testing.T) {
 			eventPK: 12, userID: "usr_1", installationID: "ins_1", agentID: "codex",
 			eventType: "cost_recorded", occurredAt: at,
 			sessionHash: session, turnHash: turn,
-			costAmount: sql.NullString{String: "2.00000000", Valid: true},
+			costAmount:   sql.NullString{String: "2.00000000", Valid: true},
 			costCurrency: sql.NullString{String: "USD", Valid: true},
-			costSource: sql.NullString{String: "provider_reported", Valid: true},
+			costSource:   sql.NullString{String: "provider_reported", Valid: true},
 		},
 	}, loc)
 	usage, covered := int64(0), int64(0)
@@ -85,26 +85,21 @@ func TestCostOnlyRecordCoversAssociatedUsage(t *testing.T) {
 	}
 }
 
-func TestGrantCoversTimeHalfOpen(t *testing.T) {
-	start := time.Date(2026, 9, 6, 10, 0, 0, 0, time.UTC)
-	end := time.Date(2026, 9, 6, 13, 0, 0, 0, time.UTC)
-	grants := []teamGrantWindow{{
-		membershipID: "tmb_1",
-		dimension:    string(domain.SharingBase),
-		startsAt:     start,
-		endsAt:       sql.NullTime{Time: end, Valid: true},
-	}}
-	if grantCoversTime(grants, string(domain.SharingBase), start.Add(-time.Millisecond)) {
-		t.Fatal("event before starts_at should be excluded")
+func TestCurrentGrantCoversHistoricalUsage(t *testing.T) {
+	now := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
+	grants := []teamGrantWindow{{dimension: "base", startsAt: now}}
+	member := teamMemberSource{membershipID: "m", userID: "u", joinedAt: now, accountOK: true}
+	at := now.Add(-7 * 24 * time.Hour)
+	rows := buildMemberAnalysisRows(member, grants, []teamFactEvent{{eventType: "model_usage_recorded", accuracy: "exact", occurredAt: at, tokenTotal: sql.NullInt64{Int64: 123, Valid: true}}}, time.UTC)
+	if len(rows) != 1 || rows[0].tokenExact.Int64() != 123 {
+		t.Fatal("history before joining and sharing must be counted")
 	}
-	if !grantCoversTime(grants, string(domain.SharingBase), start) {
-		t.Fatal("event at starts_at should be included")
+	grants[0].endsAt = sql.NullTime{Time: now, Valid: true}
+	if grantCoversTime(grants, "base", at) {
+		t.Fatal("closed grant must not expose history")
 	}
-	if grantCoversTime(grants, string(domain.SharingBase), end) {
-		t.Fatal("event at ends_at should be excluded")
-	}
-	if grantCoversTime(grants, string(domain.SharingNamed), start) {
-		t.Fatal("other dimension should not match")
+	if grantCoversTime(grants, "named", at) {
+		t.Fatal("unshared dimension must not match")
 	}
 }
 

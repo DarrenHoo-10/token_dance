@@ -91,7 +91,7 @@ func TestTeamCR015V2UploadReachesTeamAnalysis(t *testing.T) {
 	}
 }
 
-func TestTeamCR016CostBeforeSharingStartIsNotExposed(t *testing.T) {
+func TestTeamRevokedCostSharingIsNotExposed(t *testing.T) {
 	at := time.Date(2026, 9, 12, 10, 0, 0, 0, time.UTC)
 	member := teamMemberSource{membershipID: "tmb_cr016", userID: "usr_cr016", joinedAt: at.Add(-time.Hour), accountOK: true}
 	for _, dimension := range []domain.SharingDimension{domain.SharingBase, domain.SharingCost} {
@@ -102,7 +102,7 @@ func TestTeamCR016CostBeforeSharingStartIsNotExposed(t *testing.T) {
 			}
 			for i := range grants {
 				if grants[i].dimension == string(dimension) {
-					grants[i].startsAt = at.Add(-time.Minute)
+					grants[i].revokedAt = sql.NullTime{Time: at.Add(-time.Minute), Valid: true}
 				}
 			}
 			usage := teamFactEvent{eventPK: 1, userID: member.userID, installationID: "ins_cr016", agentID: "codex",

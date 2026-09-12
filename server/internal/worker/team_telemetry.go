@@ -80,7 +80,7 @@ func decodeTeamTelemetryPayload(ev *teamFactEvent, data []byte) error {
 }
 
 func teamFactAuthorized(member teamMemberSource, grants []teamGrantWindow, ev teamFactEvent) bool {
-	return !ev.occurredAt.Before(member.joinedAt) && grantCoversTime(grants, string(domain.SharingBase), ev.occurredAt)
+	return grantCoversTime(grants, string(domain.SharingBase), ev.occurredAt)
 }
 
 // Never let an associated usage event lend its timestamp, identity or

@@ -1962,10 +1962,14 @@ func (m *MemoryStore) GetOrQueueAnalysis(ctx context.Context, teamID string, fro
 		return nil, false, memErrTeamNotFound()
 	}
 	tNow := now.UTC()
+	var source uint64
+	if rev := m.teamRevisions[teamID]; rev != nil {
+		source = rev.SourceRevision
+	}
 	var best *domain.TeamAnalysisSnapshot
 	for _, snap := range m.teamSnapshots {
 		if snap.TeamID == teamID && snap.AuthRevision == authRevision && snap.RuleVersion == ruleVersion &&
-			snap.Status == domain.SnapshotReady &&
+			snap.Status == domain.SnapshotReady && snap.ExpiresAt.After(tNow) &&
 			domain.FormatTeamCalendarDate(snap.FromDate, team.TimezoneName) == domain.FormatTeamCalendarDate(from, team.TimezoneName) &&
 			domain.FormatTeamCalendarDate(snap.ToDateExclusive, team.TimezoneName) == domain.FormatTeamCalendarDate(toExclusive, team.TimezoneName) {
 			if best == nil || snap.AsOf.After(best.AsOf) {
@@ -1973,23 +1977,24 @@ func (m *MemoryStore) GetOrQueueAnalysis(ctx context.Context, teamID string, fro
 			}
 		}
 	}
-	if best != nil && tNow.Sub(best.AsOf) <= 30*time.Second {
+	if best != nil && best.SourceRevision == source {
 		return memCloneSnap(best), false, nil
 	}
 	key := memAnalysisKey(teamID, from, toExclusive, authRevision, ruleVersion, team.TimezoneName)
 	for _, snap := range m.teamSnapshots {
 		if snap.ActiveRequestKey != nil && *snap.ActiveRequestKey == key {
 			queued := snap.Status == domain.SnapshotQueued || snap.Status == domain.SnapshotBuilding
+			if best != nil {
+				result := memCloneSnap(best)
+				result.Refreshing = true
+				return result, false, nil
+			}
 			return memCloneSnap(snap), queued, nil
 		}
 	}
 	id, err := memNewID(domain.SnapshotIDPrefix)
 	if err != nil {
 		return nil, false, err
-	}
-	var source uint64
-	if rev := m.teamRevisions[teamID]; rev != nil {
-		source = rev.SourceRevision
 	}
 	active := key
 	snap := &domain.TeamAnalysisSnapshot{
@@ -2007,6 +2012,11 @@ func (m *MemoryStore) GetOrQueueAnalysis(ctx context.Context, teamID string, fro
 		ExpiresAt:        tNow.Add(30 * time.Minute),
 	}
 	m.teamSnapshots[id] = snap
+	if best != nil {
+		result := memCloneSnap(best)
+		result.Refreshing = true
+		return result, false, nil
+	}
 	return memCloneSnap(snap), true, nil
 }
 

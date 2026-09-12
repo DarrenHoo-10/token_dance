@@ -20,6 +20,36 @@ func memID(prefix, tag string) string {
 	return s + strings.Repeat("x", 30-len(s))
 }
 
+func TestAnalysisCacheUsesRevisionsAndRefreshesWithoutHidingReady(t *testing.T) {
+	m := NewMemoryStore()
+	ctx := context.Background()
+	now := time.Date(2026, 9, 12, 12, 0, 0, 0, time.UTC)
+	from, to := now.Add(-24*time.Hour), now.Add(24*time.Hour)
+	m.teams["team"] = &domain.Team{TeamID: "team", Status: domain.TeamStatusActive, TimezoneName: "UTC", AuthRevision: 1}
+	m.teamRevisions["team"] = &domain.TeamSourceRevision{SourceRevision: 1}
+	m.teamSnapshots["ready"] = &domain.TeamAnalysisSnapshot{SnapshotID: "ready", TeamID: "team", FromDate: from, ToDateExclusive: to, AuthRevision: 1, SourceRevision: 1, RuleVersion: domain.TeamAnalysisRuleVersion, Status: domain.SnapshotReady, AsOf: now.Add(-time.Minute), ExpiresAt: now.Add(time.Minute)}
+	snap, queued, err := m.GetOrQueueAnalysis(ctx, "team", from, to, 1, domain.TeamAnalysisRuleVersion, now)
+	if err != nil || queued || snap.SnapshotID != "ready" || len(m.teamSnapshots) != 1 {
+		t.Fatalf("unchanged data must reuse snapshots older than 30s: %+v %v %v", snap, queued, err)
+	}
+	m.teamRevisions["team"].SourceRevision++
+	for i := 0; i < 2; i++ {
+		snap, queued, err = m.GetOrQueueAnalysis(ctx, "team", from, to, 1, domain.TeamAnalysisRuleVersion, now)
+		if err != nil || queued || snap.SnapshotID != "ready" || !snap.Refreshing || len(m.teamSnapshots) != 2 {
+			t.Fatalf("refresh must retain ready data and deduplicate jobs: %+v %v %v", snap, queued, err)
+		}
+	}
+	m.teams["team"].AuthRevision = 2
+	snap, queued, err = m.GetOrQueueAnalysis(ctx, "team", from, to, 2, domain.TeamAnalysisRuleVersion, now)
+	if err != nil || !queued || snap.SnapshotID == "ready" {
+		t.Fatal("changed authorization must never reuse previous data")
+	}
+	snap, queued, err = m.GetOrQueueAnalysis(ctx, "team", from, to, 1, domain.TeamAnalysisRuleVersion, now.Add(2*time.Minute))
+	if err != nil || !queued || snap.SnapshotID == "ready" {
+		t.Fatal("expired snapshot must not be served")
+	}
+}
+
 func TestMemoryTeamsRejectOldAnalysisRules(t *testing.T) {
 	m := NewMemoryStore()
 	ctx := context.Background()

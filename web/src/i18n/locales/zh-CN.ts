@@ -388,7 +388,7 @@ export const zhCN = {
       costHint: '已记录费用与估算费用分别汇总。',
       on: '已共享',
       off: '尚未共享',
-      closeBaseHint: '关闭基础共享后，你的数据将从团队统计中移除，个人数据保留。重新开启后从新的授权时间开始统计。',
+      closeBaseHint: '关闭基础共享后，你的数据将从团队统计中移除，个人数据保留。重新开启后将统计所选时间范围内的历史数据。',
     },
     range: {
       from: '开始日期',
@@ -495,7 +495,7 @@ export const zhCN = {
       ownerLeaveHint: '所有者需先转移所有权再退出，或不转移而解散团队。',
       confirmShareTitle: '确认更改共享',
       confirmReduce: '关闭这些维度后，对应的历史团队指标将立即不可见。',
-      confirmCloseBase: '你的数据将从团队统计中移除，个人数据保留。重新开启后从新的授权时间开始统计。',
+      confirmCloseBase: '你的数据将从团队统计中移除，个人数据保留。重新开启后将统计所选时间范围内的历史数据。',
     },
     audit: {
       create: '创建团队',

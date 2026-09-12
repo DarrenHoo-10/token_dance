@@ -112,7 +112,7 @@ func TestTeamTelemetryCostAuthorizationBoundaries(t *testing.T) {
 					total.Add(total, row.reportedCost)
 				}
 				want := "0"
-				if boundary == "at start" {
+				if boundary == "at start" || boundary == "before start" || boundary == "before join" {
 					want = "2"
 				}
 				if total.RatString() != want {
@@ -134,7 +134,7 @@ func TestTeamTelemetryCostsKeepTheirOwnVisibilityAndDate(t *testing.T) {
 	usage.occurredAt = at
 	usage.costAmount = sql.NullString{}
 	for _, row := range buildMemberAnalysisRows(member, grants, []teamFactEvent{cost, usage}, time.UTC) {
-		if row.reportedCost.Sign() > 0 && (row.visibilityMask != visCost || deref(row.metricDate) != "2026-09-11" || deref(row.agentID) != unsharedClassificationBucket || row.reportedCovered.Sign() != 0) {
+		if row.reportedCost.Sign() > 0 && (row.visibilityMask != visCost|visNamed|visClassification || deref(row.metricDate) != "2026-09-11" || row.reportedCovered.Sign() != 0) {
 			t.Fatalf("cost borrowed usage visibility/date: %+v", row)
 		}
 	}
