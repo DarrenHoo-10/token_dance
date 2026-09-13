@@ -48,9 +48,9 @@ func TestProcessRankingOutboxAppliesAbsoluteScores(t *testing.T) {
 	nowMs := now.UnixMilli()
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO telemetry_model_metrics (
-			created_at, updated_at, user_id, installation_id, grain, bucket_start, harness_id, model_key,
+			created_at, updated_at, installation_id, grain, bucket_start, harness_id, model_key,
 			exact_token_total, derived_token_total, metric_semantics_version
-		) VALUES (?, ?, 'usr_rank_a', 'ins_rank_a', 'day', ?, 'codex', 1, 40, 2, 1)`,
+		) VALUES (?, ?, 'ins_rank_a', 'day', ?, 'codex', 1, 40, 2, 1)`,
 		nowMs, nowMs, dayBucket); err != nil {
 		t.Fatalf("seed metrics: %v", err)
 	}

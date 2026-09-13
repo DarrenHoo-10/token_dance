@@ -30,20 +30,22 @@ describe('Dashboard Components Tests', () => {
       tokensPerCodeLine: {value:null,supported:false},
       activeDurationMs: {value:null,supported:false},
     }} /></LocaleProvider>);
-    expect(screen.queryByText('预估费用')).not.toBeInTheDocument();
+    expect(screen.getByText('预估费用')).toBeInTheDocument();
     expect(screen.getAllByText('—')).toHaveLength(3);
     expect(screen.queryByText('0.0h')).not.toBeInTheDocument();
     expect(screen.queryByText('0.0')).not.toBeInTheDocument();
   });
 
-  it('renders core metrics without estimated cost in MetricGrid', () => {
+  it('renders core metrics with estimated cost in MetricGrid', () => {
     render(
       <LocaleProvider>
         <MetricGrid metrics={mockMetrics} />
       </LocaleProvider>
     );
 
-    expect(screen.queryByText('预估费用')).not.toBeInTheDocument();
+    expect(screen.getByText('预估费用')).toBeInTheDocument();
+    expect(screen.getByText('$1,428.60')).toBeInTheDocument();
+    expect(screen.queryByText(/USD/)).not.toBeInTheDocument();
     expect(screen.getByText('总 Token')).toBeInTheDocument();
     expect(screen.getByText('325.7M')).toBeInTheDocument();
     expect(screen.getByText('生成代码行')).toBeInTheDocument();
@@ -54,7 +56,7 @@ describe('Dashboard Components Tests', () => {
     expect(screen.getByText('输出 Token')).toBeInTheDocument();
     expect(screen.getByText('缓存命中率')).toBeInTheDocument();
     expect(screen.getByText('38.6%')).toBeInTheDocument();
-    expect(screen.getByText('总时长')).toBeInTheDocument();
+    expect(screen.getByText('会话总时长')).toBeInTheDocument();
     expect(screen.getByText('482.6h')).toBeInTheDocument();
     expect(screen.getByText('总消息数')).toBeInTheDocument();
     expect(screen.getByText('用户消息数')).toBeInTheDocument();
@@ -94,35 +96,36 @@ describe('Dashboard Components Tests', () => {
     expect(screen.getByText('commit-context')).toBeInTheDocument();
   });
 
-  it('renders SyncStatusCard with health badge', () => {
+  it('renders SyncStatusCard with health badge and last seen, without pending events', () => {
     render(
       <LocaleProvider>
         <SyncStatusCard
           lastCommittedAt={new Date().toISOString()}
-          pendingLocalCount={0}
           status="healthy"
         />
       </LocaleProvider>
     );
 
+    expect(screen.getByText('同步状态')).toBeInTheDocument();
     expect(screen.getByText('正常')).toBeInTheDocument();
+    expect(screen.getByText('最近活跃')).toBeInTheDocument();
     expect(screen.getByText('刚刚')).toBeInTheDocument();
-    expect(screen.getByText('0')).toBeInTheDocument();
+    expect(screen.queryByText('待同步事件')).not.toBeInTheDocument();
   });
 
-  it('ensures pendingLocalCount null stays unknown rather than 0', () => {
+  it('does not show unknown for missing pendingLocalCount after row removal', () => {
     render(
       <LocaleProvider>
         <SyncStatusCard
           lastCommittedAt={null}
-          pendingLocalCount={null}
           status="healthy"
         />
       </LocaleProvider>
     );
 
-    expect(screen.getByText('未知')).toBeInTheDocument();
-    expect(screen.queryByText('0')).not.toBeInTheDocument();
+    expect(screen.getByText('最近活跃')).toBeInTheDocument();
+    expect(screen.queryByText('待同步事件')).not.toBeInTheDocument();
+    expect(screen.queryByText('未知')).not.toBeInTheDocument();
   });
 
   it('localizes empty dashboard states and accessibility labels', () => {
@@ -163,10 +166,10 @@ describe('Dashboard Components Tests', () => {
       </LocaleProvider>
     );
 
-    expect(screen.getAllByText('N/A').length).toBe(8);
+    expect(screen.getAllByText('N/A').length).toBe(9);
   });
 
-  it('does not display estimated costs even when supplied', () => {
+  it('lists multi-currency estimatedCosts with symbols instead of a fake USD sum', () => {
     render(
       <LocaleProvider>
         <MetricGrid metrics={{
@@ -179,9 +182,9 @@ describe('Dashboard Components Tests', () => {
         }} />
       </LocaleProvider>
     );
+    expect(screen.getByText('$1.00 · ¥7.00')).toBeInTheDocument();
     expect(screen.queryByText('USD 1.00 · CNY 7.00')).not.toBeInTheDocument();
     expect(screen.queryByText('$8.00')).not.toBeInTheDocument();
-    expect(screen.queryByText('$1.00')).not.toBeInTheDocument();
   });
 });
 

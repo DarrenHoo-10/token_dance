@@ -373,12 +373,14 @@ func isPersistentDDL(stmt string) bool {
 }
 
 var (
-	createTablePattern   = regexp.MustCompile(`(?is)^CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+((?:` + "`[^`]+`" + `|[a-zA-Z0-9_]+)(?:\.(?:` + "`[^`]+`" + `|[a-zA-Z0-9_]+))?)`)
-	alterTablePattern    = regexp.MustCompile(`(?is)^ALTER\s+TABLE\s+((?:` + "`[^`]+`" + `|[a-zA-Z0-9_]+)(?:\.(?:` + "`[^`]+`" + `|[a-zA-Z0-9_]+))?)`)
-	addColumnPattern     = regexp.MustCompile(`(?is)\bADD\s+COLUMN\s+(` + "`[^`]+`" + `|[a-zA-Z0-9_]+)`)
-	addIndexPattern      = regexp.MustCompile(`(?is)\bADD\s+(UNIQUE\s+)?(?:KEY|INDEX)\s+(` + "`[^`]+`" + `|[a-zA-Z0-9_]+)`)
-	addConstraintPattern = regexp.MustCompile(`(?is)\bADD\s+CONSTRAINT\s+(` + "`[^`]+`" + `|[a-zA-Z0-9_]+)\s+(CHECK|FOREIGN\s+KEY)`)
-	dropCheckPattern     = regexp.MustCompile(`(?is)\bDROP\s+CHECK\s+(` + "`[^`]+`" + `|[a-zA-Z0-9_]+)`)
+	createTablePattern    = regexp.MustCompile(`(?is)^CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+((?:` + "`[^`]+`" + `|[a-zA-Z0-9_]+)(?:\.(?:` + "`[^`]+`" + `|[a-zA-Z0-9_]+))?)`)
+	alterTablePattern     = regexp.MustCompile(`(?is)^ALTER\s+TABLE\s+((?:` + "`[^`]+`" + `|[a-zA-Z0-9_]+)(?:\.(?:` + "`[^`]+`" + `|[a-zA-Z0-9_]+))?)`)
+	addColumnPattern      = regexp.MustCompile(`(?is)\bADD\s+COLUMN\s+(` + "`[^`]+`" + `|[a-zA-Z0-9_]+)`)
+	addIndexPattern       = regexp.MustCompile(`(?is)\bADD\s+(UNIQUE\s+)?(?:KEY|INDEX)\s+(` + "`[^`]+`" + `|[a-zA-Z0-9_]+)`)
+	addConstraintPattern  = regexp.MustCompile(`(?is)\bADD\s+CONSTRAINT\s+(` + "`[^`]+`" + `|[a-zA-Z0-9_]+)\s+(CHECK|FOREIGN\s+KEY)`)
+	dropColumnPattern     = regexp.MustCompile(`(?is)\bDROP\s+COLUMN\s+(` + "`[^`]+`" + `|[a-zA-Z0-9_]+)`)
+	dropForeignKeyPattern = regexp.MustCompile(`(?is)\bDROP\s+FOREIGN\s+KEY\s+(` + "`[^`]+`" + `|[a-zA-Z0-9_]+)`)
+	dropCheckPattern      = regexp.MustCompile(`(?is)\bDROP\s+CHECK\s+(` + "`[^`]+`" + `|[a-zA-Z0-9_]+)`)
 )
 
 func ddlAlreadyApplied(ctx context.Context, conn *sql.Conn, stmt string) (bool, error) {
@@ -400,6 +402,23 @@ func ddlAlreadyApplied(ctx context.Context, conn *sql.Conn, stmt string) (bool, 
 	}
 	schema, table := schemaAndObject(match[1])
 	checks := 0
+	// A compound ALTER that replaces an index is not applied merely because
+	// the old index has the same name. Its dropped columns/constraints must be gone.
+	for _, m := range dropColumnPattern.FindAllStringSubmatch(stmt, -1) {
+		checks++
+		exists, err := informationSchemaObjectExists(ctx, conn, `SELECT COUNT(*) FROM information_schema.columns WHERE table_schema=COALESCE(NULLIF(?,''),DATABASE()) AND table_name=? AND column_name=?`, schema, table, unquoteIdentifier(m[1]))
+		if err != nil || exists {
+			return false, err
+		}
+	}
+	for _, m := range dropForeignKeyPattern.FindAllStringSubmatch(stmt, -1) {
+		checks++
+		exists, err := informationSchemaObjectExists(ctx, conn, `SELECT COUNT(*) FROM information_schema.table_constraints WHERE constraint_schema=COALESCE(NULLIF(?,''),DATABASE()) AND table_name=? AND constraint_name=? AND constraint_type='FOREIGN KEY'`, schema, table, unquoteIdentifier(m[1]))
+		if err != nil || exists {
+			return false, err
+		}
+	}
+
 	for _, columnMatch := range addColumnPattern.FindAllStringSubmatch(stmt, -1) {
 		checks++
 		exists, err := informationSchemaObjectExists(ctx, conn, `SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = COALESCE(NULLIF(?, ''), DATABASE()) AND table_name = ? AND column_name = ?`, schema, table, unquoteIdentifier(columnMatch[1]))

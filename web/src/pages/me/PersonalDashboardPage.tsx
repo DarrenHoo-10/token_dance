@@ -14,7 +14,6 @@ import { SkillRanking } from '@/components/analytics/SkillRanking';
 import { SyncStatusCard } from '@/components/analytics/SyncStatusCard';
 import { Button } from '@/components/common/Button';
 import { Badge } from '@/components/common/Badge';
-import { ProfileVisibilitySwitch } from '@/components/analytics/ProfileVisibilitySwitch';
 import { api, ApiError } from '@/api/client';
 import type {
   PersonalSummary,
@@ -179,8 +178,6 @@ export const PersonalDashboardPage: React.FC = () => {
         </div>
       </div>
 
-      <ProfileVisibilitySwitch />
-
       {/* Ten Core Metrics Grid */}
       <MetricGrid metrics={displaySummary.metrics} />
 
@@ -308,7 +305,6 @@ export const PersonalDashboardPage: React.FC = () => {
 
           <SyncStatusCard
             lastCommittedAt={displaySummary.sync.lastCommittedAt}
-            pendingLocalCount={displaySummary.sync.pendingLocalCount}
             status={syncStatus}
           />
         </div>

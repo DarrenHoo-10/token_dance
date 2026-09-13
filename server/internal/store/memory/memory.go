@@ -341,6 +341,40 @@ func (m *MemoryStore) CompleteRegistrationTx(ctx context.Context, in store.Regis
 
 	m.insertZeroWindowScoresLocked(u.UserID, u.CreatedAt, now)
 
+	if u.Handle != nil && *u.Handle != "" {
+		profileStatus := domain.ProfileStatusHidden
+		var publishedAt *time.Time
+		if priv.PublicProfileEnabled && u.AccountStatus == domain.AccountStatusActive && u.OnboardingCompletedAt != nil {
+			profileStatus = domain.ProfileStatusPublished
+			publishedAt = &now
+		}
+		var bio *string
+		if priv.ShowBio {
+			bio = u.Bio
+		}
+		m.publicProfiles[u.UserID] = &domain.PublicUserProfile{
+			UserID:               u.UserID,
+			Handle:               *u.Handle,
+			DisplayName:          u.DisplayName,
+			AvatarURL:            u.AvatarURL,
+			Bio:                  bio,
+			ProfileStatus:        profileStatus,
+			ShowBio:              priv.ShowBio,
+			ShowTokenTotal:       priv.ShowTokenTotal,
+			ShowTrends:           priv.ShowTrends,
+			ShowActivityCalendar: priv.ShowActivityCalendar,
+			ShowAgentBreakdown:   priv.ShowAgentBreakdown,
+			ShowSkillRanking:     priv.ShowSkillRanking,
+			ShowAchievements:     priv.ShowAchievements,
+			SourceProfileVersion: u.ProfileVersion,
+			SourcePrivacyVersion: priv.PrivacyVersion,
+			ProjectionVersion:    1,
+			PublishedAt:          publishedAt,
+			CreatedAt:            now,
+			UpdatedAt:            now,
+		}
+	}
+
 	return &sess, nil
 }
 
@@ -1618,8 +1652,16 @@ func (m *MemoryStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 
 	for _, existing := range m.installations {
 		if existing.DevicePublicKey == inst.DevicePublicKey {
-			if existing.InstallationStatus == domain.InstallationStatusActive {
-				if existing.UserID != challenge.UserID {
+			if existing.InstallationStatus == domain.InstallationStatusActive || existing.InstallationStatus == domain.InstallationStatusRevoked {
+				if existing.InstallationStatus != domain.InstallationStatusRevoked && existing.UserID != challenge.UserID {
+					return nil, domain.ErrPublicKeyConflict
+				}
+				if existing.UserID != challenge.UserID || existing.InstallationStatus == domain.InstallationStatusRevoked {
+					if !inst.BindingProofVerified {
+						return nil, domain.ErrPublicKeyConflict
+					}
+					existing.InstallationStatus = domain.InstallationStatusActive
+					existing.RevokedAt = nil
 					existing.UserID = challenge.UserID
 					existing.StatusVersion++
 					existing.UpdatedAt = now
@@ -1673,8 +1715,16 @@ func (m *MemoryStore) RegisterInstallationTx(ctx context.Context, inst domain.In
 
 	for _, existing := range m.installations {
 		if existing.DevicePublicKey == inst.DevicePublicKey {
-			if existing.InstallationStatus == domain.InstallationStatusActive {
-				if existing.UserID != inst.UserID {
+			if existing.InstallationStatus == domain.InstallationStatusActive || existing.InstallationStatus == domain.InstallationStatusRevoked {
+				if existing.InstallationStatus != domain.InstallationStatusRevoked && existing.UserID != inst.UserID {
+					return nil, domain.ErrPublicKeyConflict
+				}
+				if existing.UserID != inst.UserID || existing.InstallationStatus == domain.InstallationStatusRevoked {
+					if !inst.BindingProofVerified {
+						return nil, domain.ErrPublicKeyConflict
+					}
+					existing.InstallationStatus = domain.InstallationStatusActive
+					existing.RevokedAt = nil
 					existing.UserID = inst.UserID
 					existing.StatusVersion++
 					existing.UpdatedAt = now
@@ -1718,13 +1768,15 @@ func (m *MemoryStore) RebindInstallationTx(ctx context.Context, installationID, 
 	if !ok {
 		return nil, domain.ErrNotFound
 	}
-	if inst.InstallationStatus == domain.InstallationStatusRevoked {
-		return nil, domain.ErrDeviceRevoked
+	if inst.InstallationStatus != domain.InstallationStatusRevoked && inst.UserID != newUserID {
+		return nil, domain.ErrPublicKeyConflict
 	}
 	if inst.InstallationStatus == domain.InstallationStatusDisabled {
 		return nil, domain.ErrDeviceDisabled
 	}
-	if inst.UserID != newUserID {
+	if inst.UserID != newUserID || inst.InstallationStatus == domain.InstallationStatusRevoked {
+		inst.InstallationStatus = domain.InstallationStatusActive
+		inst.RevokedAt = nil
 		inst.UserID = newUserID
 		inst.StatusVersion++
 		inst.UpdatedAt = now

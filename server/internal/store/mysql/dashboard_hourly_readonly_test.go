@@ -26,7 +26,7 @@ func TestDashboardHourlyReadOnlyMySQL(t *testing.T) {
 	// Connection-local fixtures disappear on close; shared dev rows stay untouched.
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	_, err = db.Exec(`CREATE TEMPORARY TABLE telemetry_model_metrics (
+	_, err = db.Exec(`CREATE TEMPORARY TABLE bound_telemetry_model_metrics (
         user_id VARCHAR(64), grain VARCHAR(8), bucket_start BIGINT, delete_at BIGINT NULL,
         harness_id VARCHAR(64), model_key BIGINT DEFAULT 0,
         exact_token_total BIGINT DEFAULT 0, derived_token_total BIGINT DEFAULT 0,
@@ -43,12 +43,12 @@ func TestDashboardHourlyReadOnlyMySQL(t *testing.T) {
 	to := from.AddDate(0, 0, 1).Add(-time.Nanosecond)
 	r := domain.TimeRange{Key: domain.TimeRangeToday, From: from, To: to, Timezone: "Asia/Shanghai"}
 	for i, value := range []int{100, 200} {
-		_, err = db.Exec("INSERT INTO telemetry_model_metrics (user_id,grain,bucket_start,harness_id,exact_token_total,updated_at) VALUES (?,'hour',?,'codex',?,?)", user, bucket+int64(i)*3600000, value, bucket)
+		_, err = db.Exec("INSERT INTO bound_telemetry_model_metrics (user_id,grain,bucket_start,harness_id,exact_token_total,updated_at) VALUES (?,'hour',?,'codex',?,?)", user, bucket+int64(i)*3600000, value, bucket)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	_, err = db.Exec("INSERT INTO telemetry_model_metrics (user_id,grain,bucket_start,harness_id,exact_token_total,updated_at) VALUES (?,'day',?,'codex',300,?)", user, from.UnixMilli(), bucket)
+	_, err = db.Exec("INSERT INTO bound_telemetry_model_metrics (user_id,grain,bucket_start,harness_id,exact_token_total,updated_at) VALUES (?,'day',?,'codex',300,?)", user, from.UnixMilli(), bucket)
 	if err != nil {
 		t.Fatal(err)
 	}

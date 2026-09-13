@@ -29,7 +29,8 @@ func readTeamLegacyRows(ctx context.Context, tx *sql.Tx, member teamMemberSource
 		WHERE d.user_id = ? AND d.metric_date >= ? AND d.metric_date < ?
 		  AND NOT EXISTS (
 		    SELECT 1 FROM telemetry_events e
-		    WHERE e.user_id = d.user_id AND e.harness_id = d.agent_id
+		    JOIN installations i ON i.installation_id = e.installation_id
+		    WHERE i.user_id = d.user_id AND e.harness_id = d.agent_id
 		      AND e.schema_version = 2
 		      AND e.event_type = 'model_usage_recorded'
 		      AND e.occurred_at >= TIMESTAMPDIFF(SECOND, '1970-01-01', d.metric_date) * 1000

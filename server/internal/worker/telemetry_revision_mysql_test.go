@@ -38,7 +38,7 @@ func TestUsageRevisionTemporaryMySQL(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	metricDDL := `CREATE TEMPORARY TABLE telemetry_model_metrics (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,created_at BIGINT UNSIGNED NOT NULL,updated_at BIGINT UNSIGNED NOT NULL,delete_at BIGINT UNSIGNED NULL,extra JSON NULL,user_id VARCHAR(100), installation_id VARCHAR(100),grain VARCHAR(10),bucket_start BIGINT,harness_id VARCHAR(100),model_key BIGINT UNSIGNED,metric_semantics_version INT,`
+	metricDDL := `CREATE TEMPORARY TABLE telemetry_model_metrics (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,created_at BIGINT UNSIGNED NOT NULL,updated_at BIGINT UNSIGNED NOT NULL,delete_at BIGINT UNSIGNED NULL,extra JSON NULL,installation_id VARCHAR(100),grain VARCHAR(10),bucket_start BIGINT,harness_id VARCHAR(100),model_key BIGINT UNSIGNED,metric_semantics_version INT,`
 	cols := strings.Fields("exact_token_total derived_token_total input_context_tokens input_uncached_tokens output_tokens cache_read_tokens cache_write_tokens reasoning_tokens tool_extra_tokens model_request_count usage_observed_count token_total_known_count input_context_known_count input_uncached_known_count output_known_count cache_read_known_count cache_write_known_count reasoning_known_count tool_extra_known_count cache_eligible_input_tokens cache_eligible_read_tokens cache_pair_known_count")
 	for _, col := range cols {
 		metricDDL += col + " BIGINT UNSIGNED NOT NULL DEFAULT 0,"
@@ -124,7 +124,7 @@ func TestUsageRevisionTemporaryMySQL(t *testing.T) {
 			}
 		}
 	}
-	if _, err = db.ExecContext(ctx, `CREATE TEMPORARY TABLE telemetry_harness_metrics (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,created_at BIGINT UNSIGNED,updated_at BIGINT UNSIGNED,delete_at BIGINT UNSIGNED NULL,user_id VARCHAR(100),installation_id VARCHAR(100),grain VARCHAR(10),bucket_start BIGINT,harness_id VARCHAR(100),metric_semantics_version INT,code_generated_lines BIGINT UNSIGNED DEFAULT 0,code_known_count BIGINT UNSIGNED DEFAULT 0,code_file_touch_count BIGINT UNSIGNED DEFAULT 0,UNIQUE(installation_id,grain,bucket_start,harness_id))`); err != nil {
+	if _, err = db.ExecContext(ctx, `CREATE TEMPORARY TABLE telemetry_harness_metrics (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,created_at BIGINT UNSIGNED,updated_at BIGINT UNSIGNED,delete_at BIGINT UNSIGNED NULL,installation_id VARCHAR(100),grain VARCHAR(10),bucket_start BIGINT,harness_id VARCHAR(100),metric_semantics_version INT,active_duration_ms BIGINT UNSIGNED DEFAULT 0,duration_known_count BIGINT UNSIGNED DEFAULT 0,code_generated_lines BIGINT UNSIGNED DEFAULT 0,code_known_count BIGINT UNSIGNED DEFAULT 0,code_file_touch_count BIGINT UNSIGNED DEFAULT 0,UNIQUE(installation_id,grain,bucket_start,harness_id))`); err != nil {
 		t.Fatal(err)
 	}
 	for _, grain := range []string{"hour", "day", "month"} {
@@ -192,6 +192,38 @@ func TestUsageRevisionTemporaryMySQL(t *testing.T) {
 			if tokens != 20 || known != 1 || requests != 1 {
 				t.Fatalf("%s reverse=%v: got tokens=%d known=%d requests=%d", grain, reverse, tokens, known, requests)
 			}
+		}
+	}
+
+	if _, err = db.ExecContext(ctx, `CREATE TEMPORARY TABLE telemetry_session_extents(id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,created_at BIGINT UNSIGNED,updated_at BIGINT UNSIGNED,delete_at BIGINT UNSIGNED NULL,installation_id VARCHAR(100),harness_id VARCHAR(100),session_key BINARY(32),grain VARCHAR(10),first_event_at BIGINT,last_event_at BIGINT,UNIQUE(installation_id,harness_id,session_key,grain))`); err != nil {
+		t.Fatal(err)
+	}
+	for _, grain := range []string{"hour", "day", "month"} {
+		if _, err = db.ExecContext(ctx, "DELETE FROM telemetry_harness_metrics"); err != nil {
+			t.Fatal(err)
+		}
+		start := time.Date(2024, 5, 31, 23, 30, 0, 0, domain.DayTZ).UnixMilli()
+		end := start + 3600000
+		for _, at := range []int64{end, start, end, start} {
+			tx, err := db.BeginTx(ctx, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ev := telemetryEventRow{InstallationID: "fixture-device", UserID: "fixture-user", HarnessID: "codex", EventType: "turn_completed", SessionKey: make([]byte, 32), OccurredAtMs: at, MetricSemanticsVersion: 1}
+			if _, err = applySessionExtent(ctx, tx, grain, &ev, end); err != nil {
+				tx.Rollback()
+				t.Fatal(err)
+			}
+			if err = tx.Commit(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var duration, known, count int64
+		if err = db.QueryRowContext(ctx, "SELECT SUM(active_duration_ms),SUM(duration_known_count),COUNT(*) FROM telemetry_harness_metrics").Scan(&duration, &known, &count); err != nil {
+			t.Fatal(err)
+		}
+		if duration != 3600000 || known != 2 || count != 2 {
+			t.Fatalf("%s duration=%d known=%d count=%d", grain, duration, known, count)
 		}
 	}
 }

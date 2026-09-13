@@ -114,6 +114,7 @@ func NewRouterWithTeams(
 	// Collector /v1 endpoints
 	r.Route("/v1", func(cr chi.Router) {
 		cr.Use(mw.RateLimit(120, time.Minute))
+		cr.Get("/update-policy", handlers.GetUpdatePolicy)
 		cr.Post("/installations/claim", handlers.ClaimInstallation)
 		cr.Post("/installations/register", handlers.RegisterInstallation)
 		cr.Post("/installations/rebind", handlers.RebindInstallation)
