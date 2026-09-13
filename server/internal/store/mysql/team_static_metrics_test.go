@@ -93,11 +93,11 @@ func TestMySQLTeamStaticMetrics_JoinLeaveRejoinFailpointGet(t *testing.T) {
 		}
 		if _, err := db.ExecContext(ctx, `
 			INSERT INTO telemetry_model_metrics (
-				created_at, updated_at, extra, user_id, installation_id, grain, bucket_start, harness_id, model_key,
+				created_at, updated_at, extra, installation_id, grain, bucket_start, harness_id, model_key,
 				exact_token_total, usage_observed_count, metric_semantics_version
-			) VALUES (?, ?, JSON_OBJECT(), ?, ?, 'day', ?, 'codex', 1, ?, 1, 1)
+			) VALUES (?, ?, JSON_OBJECT(), ?, 'day', ?, 'codex', 1, ?, 1, 1)
 			ON DUPLICATE KEY UPDATE exact_token_total = exact_token_total + VALUES(exact_token_total), updated_at = VALUES(updated_at)`,
-			now.UnixMilli(), now.UnixMilli(), member, installID, start, tokens); err != nil {
+			now.UnixMilli(), now.UnixMilli(), installID, start, tokens); err != nil {
 			t.Fatalf("insert model day %s: %v", day, err)
 		}
 	}
@@ -304,10 +304,10 @@ func TestMySQLTeamStaticMetrics_PrivacyDeleteAndDissolve(t *testing.T) {
 	}
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO telemetry_model_metrics (
-			created_at, updated_at, extra, user_id, installation_id, grain, bucket_start, harness_id, model_key,
+			created_at, updated_at, extra, installation_id, grain, bucket_start, harness_id, model_key,
 			exact_token_total, usage_observed_count, metric_semantics_version
-		) VALUES (?, ?, JSON_OBJECT(), ?, ?, 'day', ?, 'codex', 1, 100, 1, 1)`,
-		now.UnixMilli(), now.UnixMilli(), member, installID, start); err != nil {
+		) VALUES (?, ?, JSON_OBJECT(), ?, 'day', ?, 'codex', 1, 100, 1, 1)`,
+		now.UnixMilli(), now.UnixMilli(), installID, start); err != nil {
 		t.Fatal(err)
 	}
 
@@ -378,7 +378,7 @@ func TestMySQLTeamStaticMetrics_PrivacyDeleteAndDissolve(t *testing.T) {
 		t.Fatalf("privacy delete must remove contributor identity, got %d", contribs)
 	}
 	var personal string
-	if err := db.QueryRowContext(ctx, `SELECT CAST(COALESCE(SUM(exact_token_total),0) AS CHAR) FROM telemetry_model_metrics WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL`, member).Scan(&personal); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT CAST(COALESCE(SUM(exact_token_total),0) AS CHAR) FROM bound_telemetry_model_metrics WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL`, member).Scan(&personal); err != nil {
 		t.Fatal(err)
 	}
 	if personal != "100" {
@@ -395,10 +395,10 @@ func TestMySQLTeamStaticMetrics_PrivacyDeleteAndDissolve(t *testing.T) {
 	}
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO telemetry_model_metrics (
-			created_at, updated_at, extra, user_id, installation_id, grain, bucket_start, harness_id, model_key,
+			created_at, updated_at, extra, installation_id, grain, bucket_start, harness_id, model_key,
 			exact_token_total, usage_observed_count, metric_semantics_version
-		) VALUES (?, ?, JSON_OBJECT(), ?, ?, 'day', ?, 'codex', 1, 40, 1, 1)`,
-		now.UnixMilli(), now.UnixMilli(), owner, ownerInstall, start); err != nil {
+		) VALUES (?, ?, JSON_OBJECT(), ?, 'day', ?, 'codex', 1, 40, 1, 1)`,
+		now.UnixMilli(), now.UnixMilli(), ownerInstall, start); err != nil {
 		t.Fatal(err)
 	}
 	tx, err = db.BeginTx(ctx, nil)
@@ -437,7 +437,7 @@ func TestMySQLTeamStaticMetrics_PrivacyDeleteAndDissolve(t *testing.T) {
 		t.Fatalf("dissolve must clear team static rows, got %d", afterDissolve)
 	}
 	var ownerPersonal string
-	if err := db.QueryRowContext(ctx, `SELECT CAST(COALESCE(SUM(exact_token_total),0) AS CHAR) FROM telemetry_model_metrics WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL`, owner).Scan(&ownerPersonal); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT CAST(COALESCE(SUM(exact_token_total),0) AS CHAR) FROM bound_telemetry_model_metrics WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL`, owner).Scan(&ownerPersonal); err != nil {
 		t.Fatal(err)
 	}
 	if ownerPersonal != "40" {
@@ -479,10 +479,10 @@ func TestMySQLTeamStaticMetrics_GetFilterOptionsListsRealAgents(t *testing.T) {
 	}
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO telemetry_model_metrics (
-			created_at, updated_at, extra, user_id, installation_id, grain, bucket_start, harness_id, model_key,
+			created_at, updated_at, extra, installation_id, grain, bucket_start, harness_id, model_key,
 			exact_token_total, usage_observed_count, metric_semantics_version
-		) VALUES (?, ?, JSON_OBJECT(), ?, ?, 'day', ?, 'codex', ?, 100, 1, 1)`,
-		now.UnixMilli(), now.UnixMilli(), member, installID, start, modelKey); err != nil {
+		) VALUES (?, ?, JSON_OBJECT(), ?, 'day', ?, 'codex', ?, 100, 1, 1)`,
+		now.UnixMilli(), now.UnixMilli(), installID, start, modelKey); err != nil {
 		t.Fatal(err)
 	}
 

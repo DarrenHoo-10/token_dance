@@ -82,25 +82,25 @@ func discoverPersonalDays(ctx context.Context, tx *sql.Tx, userID string) ([]str
 	}
 	if err := q(`
 		SELECT DISTINCT DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(bucket_start/1000), INTERVAL 8 HOUR), '%Y-%m-%d')
-		FROM telemetry_model_metrics
+		FROM bound_telemetry_model_metrics
 		WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL`, userID); err != nil {
 		return nil, err
 	}
 	if err := q(`
 		SELECT DISTINCT DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(bucket_start/1000), INTERVAL 8 HOUR), '%Y-%m-%d')
-		FROM telemetry_harness_metrics
+		FROM bound_telemetry_harness_metrics
 		WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL`, userID); err != nil {
 		return nil, err
 	}
 	if err := q(`
 		SELECT DISTINCT DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(bucket_start/1000), INTERVAL 8 HOUR), '%Y-%m-%d')
-		FROM telemetry_skill_metrics
+		FROM bound_telemetry_skill_metrics
 		WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL`, userID); err != nil {
 		return nil, err
 	}
 	if err := q(`
 		SELECT DISTINCT DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(bucket_start/1000), INTERVAL 8 HOUR), '%Y-%m-%d')
-		FROM telemetry_cost_metrics
+		FROM bound_telemetry_cost_metrics
 		WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL`, userID); err != nil {
 		return nil, err
 	}
@@ -144,7 +144,7 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 		       CAST(SUM(m.cache_pair_known_count) AS CHAR),
 		       CAST(SUM(m.input_context_known_count) AS CHAR), CAST(SUM(m.output_known_count) AS CHAR),
 		       CAST(SUM(m.usage_observed_count) AS CHAR)
-		FROM telemetry_model_metrics m
+		FROM bound_telemetry_model_metrics m
 		JOIN telemetry_models tm ON tm.id = m.model_key
 		WHERE m.user_id = ? AND m.grain = 'day' AND m.delete_at IS NULL
 		  AND DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(m.bucket_start/1000), INTERVAL 8 HOUR), '%Y-%m-%d') IN (`+in+`)
@@ -231,7 +231,7 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 		       CAST(SUM(user_turn_started_count) AS CHAR),
 		       CAST(SUM(code_known_count) AS CHAR), CAST(SUM(duration_known_count) AS CHAR),
 		       CAST(SUM(message_known_count) AS CHAR)
-		FROM telemetry_harness_metrics
+		FROM bound_telemetry_harness_metrics
 		WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL
 		  AND DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(bucket_start/1000), INTERVAL 8 HOUR), '%Y-%m-%d') IN (`+in+`)
 		GROUP BY 1, harness_id`,
@@ -268,7 +268,7 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 		       m.harness_id, tm.provider_id, tm.model_id, m.currency,
 		       CAST(SUM(m.reported_cost_units)/100000000 AS CHAR),
 		       CAST(SUM(m.estimated_cost_units)/100000000 AS CHAR)
-		FROM telemetry_cost_metrics m
+		FROM bound_telemetry_cost_metrics m
 		JOIN telemetry_models tm ON tm.id = m.model_key
 		WHERE m.user_id = ? AND m.grain = 'day' AND m.delete_at IS NULL
 		  AND DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(m.bucket_start/1000), INTERVAL 8 HOUR), '%Y-%m-%d') IN (`+in+`)
@@ -302,7 +302,7 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 		       CAST(SUM(m.success_count) AS CHAR), CAST(SUM(m.failure_count) AS CHAR),
 		       CAST(SUM(m.duration_ms) AS CHAR), CAST(SUM(m.duration_known_count) AS CHAR),
 		       MIN(ts.public_name)
-		FROM telemetry_skill_metrics m
+		FROM bound_telemetry_skill_metrics m
 		LEFT JOIN telemetry_skills ts ON ts.id = m.skill_id
 		WHERE m.user_id = ? AND m.grain = 'day' AND m.delete_at IS NULL
 		  AND DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(m.bucket_start/1000), INTERVAL 8 HOUR), '%Y-%m-%d') IN (`+in+`)
@@ -347,7 +347,7 @@ func loadHourly(ctx context.Context, tx *sql.Tx, userID, date, agent, provider, 
 	endMs := startMs + 24*60*60*1000
 	rows, err := tx.QueryContext(ctx, `
 		SELECT m.bucket_start, CAST(SUM(m.exact_token_total) AS CHAR), CAST(SUM(m.derived_token_total) AS CHAR)
-		FROM telemetry_model_metrics m
+		FROM bound_telemetry_model_metrics m
 		JOIN telemetry_models tm ON tm.id = m.model_key
 		WHERE m.user_id = ? AND m.grain = 'hour' AND m.delete_at IS NULL
 		  AND m.bucket_start >= ? AND m.bucket_start < ?
@@ -633,7 +633,7 @@ func ListStaleTeamProjectionUsers(ctx context.Context, q interface {
 		    )
 		  ) OR (
 		    EXISTS (
-		      SELECT 1 FROM telemetry_skill_metrics s
+		      SELECT 1 FROM bound_telemetry_skill_metrics s
 		      WHERE s.user_id = c.user_id AND s.grain = 'day' AND s.delete_at IS NULL
 		    )
 		    AND NOT EXISTS (
