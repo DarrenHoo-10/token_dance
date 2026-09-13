@@ -82,10 +82,7 @@ export const TeamUsageMix: React.FC<{ analysis: TeamAnalysisReady }> = ({ analys
   return (
     <section className="team-usage-section" aria-labelledby="team-usage-mix-heading">
       <div className="team-section-heading">
-        <div>
-          <h2 id="team-usage-mix-heading">{t('teams.overview.usageMix')}</h2>
-          <p>{t('teams.overview.usageMixSub')}</p>
-        </div>
+        <h2 id="team-usage-mix-heading">{t('teams.overview.usageMix')}</h2>
       </div>
       <div className="segmented-control team-mix-tabs" role="tablist" aria-label={t('teams.overview.usageMix')}>
         {groups.map((group) => (

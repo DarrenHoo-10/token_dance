@@ -185,6 +185,8 @@ describe('Team analysis updating state', () => {
     expect(screen.queryByText('成员表现')).not.toBeInTheDocument();
     expect(screen.queryByText('我的共享')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '用量构成' })).toBeInTheDocument();
+    expect(screen.queryByText('Harness、模型与 Skill 的成员分布')).not.toBeInTheDocument();
+    expect(screen.queryByText('查看每日明细')).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Harness' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Skill' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Skill 使用' })).not.toBeInTheDocument();

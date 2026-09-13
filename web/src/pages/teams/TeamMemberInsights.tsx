@@ -76,7 +76,6 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady; teamId:
           </svg>
           <div className="team-line-scale"><span>0</span></div>
           <div className="team-line-dates"><span>{dates[0]}</span><span>{dates.length > 1 ? dates[dates.length - 1] : ''}</span></div>
-          <details className="team-trend-details"><summary>{t('teams.insights.dailyDetails')}</summary><div className="team-table-scroll"><table><thead><tr><th>{t('teams.insights.date')}</th><th>{seriesLabel}</th></tr></thead><tbody>{dates.map(date => <tr key={date}><td>{date}</td><td>{formatTokenExact(activeTrend.find(point => point.date === date)?.tokens.value || '0')}</td></tr>)}</tbody></table></div></details>
         </> : <p className="team-chart-empty">{t(selectedMember ? 'teams.insights.trendUnavailable' : 'teams.overview.emptyRange')}</p>}
       </Card>
       <Card>
