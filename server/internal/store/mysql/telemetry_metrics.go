@@ -108,6 +108,39 @@ func ApplyModelMetricDeltaTx(ctx context.Context, tx *sql.Tx, userID, installati
 		"reasoning_known_count", "tool_extra_known_count",
 		"cache_eligible_input_tokens", "cache_eligible_read_tokens", "cache_pair_known_count",
 	}
+	negative := false
+	for _, value := range d {
+		if value < 0 {
+			negative = true
+			break
+		}
+	}
+	if negative {
+		// MySQL validates unsigned INSERT values before ON DUPLICATE KEY UPDATE.
+		// Revision reversal must update the existing bucket without a negative insert.
+		updates := "updated_at=?"
+		args := []interface{}{nowMs}
+		for _, col := range cols {
+			if value := d[col]; value != 0 {
+				updates += fmt.Sprintf(", %s=CAST(%s AS SIGNED)+?", col, col)
+				args = append(args, value)
+			}
+		}
+		args = append(args, installationID, grain, bucketStart, harnessID, modelKey)
+		result, err := tx.ExecContext(ctx, "UPDATE telemetry_model_metrics SET "+updates+" WHERE installation_id=? AND grain=? AND bucket_start=? AND harness_id=? AND model_key=? AND delete_at IS NULL", args...)
+		if err != nil {
+			return fmt.Errorf("reverse model metric delta: %w", err)
+		}
+		n, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n != 1 {
+			return fmt.Errorf("reverse model metric delta: expected one existing bucket, got %d", n)
+		}
+		return nil
+	}
+
 	args := []interface{}{nowMs, nowMs, installationID, grain, bucketStart, harnessID, modelKey, semantics}
 	placeholders := "?, ?, ?, ?, ?, ?, ?, ?"
 	updates := "updated_at = VALUES(updated_at)"

@@ -189,16 +189,20 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 	addNullInt64(&userMsgNull, raw.userMessages)
 	maxNullTime(&maxComputedAtNull, raw.maxReceivedAt)
 
-	var codeRecords, durationRecords int
-	_ = s.db.QueryRowContext(ctx, `
+	var codeRecords, durationRecords, messageRecords int
+	err = s.db.QueryRowContext(ctx, `
 		SELECT
 			CAST(COALESCE(SUM(code_known_count), 0) AS UNSIGNED),
-			CAST(COALESCE(SUM(duration_known_count), 0) AS UNSIGNED)
+			CAST(COALESCE(SUM(duration_known_count), 0) AS UNSIGNED),
+			CAST(COALESCE(SUM(message_known_count), 0) AS UNSIGNED)
 		FROM bound_telemetry_harness_metrics
 		WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL
 		  AND bucket_start >= ? AND bucket_start <= ?`,
 		userID, fromMs, toMs,
-	).Scan(&codeRecords, &durationRecords)
+	).Scan(&codeRecords, &durationRecords, &messageRecords)
+	if err != nil {
+		return nil, fmt.Errorf("query metric coverage: %w", err)
+	}
 	totTokensStr := fmt.Sprintf("%d", totalTokens)
 	codeLinesStr := fmt.Sprintf("%d", codeLines)
 
@@ -295,6 +299,12 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 		}
 	}
 
+	if messageRecords == 0 && (!messageCountNull.Valid || messageCountNull.Int64 == 0) {
+		messageMetric = domain.MetricBigInt{Supported: false}
+	}
+	if messageRecords == 0 && (!userMsgNull.Valid || userMsgNull.Int64 == 0) {
+		userMessageMetric = domain.MetricBigInt{Supported: false}
+	}
 	var dataWatermarkAt *time.Time
 	if maxComputedAtNull.Valid {
 		tVal := maxComputedAtNull.Time
@@ -348,6 +358,16 @@ func (s *analyticsStore) GetTokenTrend(ctx context.Context, userID string, r dom
 		return nil, err
 	}
 
+	grain := "day"
+	dateSQL := telemetryMetricDateSQL
+	prefixedDateSQL := telemetryMetricDateSQLPrefixed("m")
+	if r.Key == domain.TimeRangeToday {
+		grain = "hour"
+		fromMs = r.From.UnixMilli()
+		toMs = r.To.UnixMilli()
+		dateSQL = "DATE_FORMAT(CONVERT_TZ(FROM_UNIXTIME(bucket_start / 1000), '+00:00', '+08:00'), '%Y-%m-%d %H:00')"
+		prefixedDateSQL = strings.ReplaceAll(dateSQL, "bucket_start", "m.bucket_start")
+	}
 	hasModelFilter := (providerID != nil && *providerID != "" && *providerID != "all") || (modelID != nil && *modelID != "" && *modelID != "all")
 
 	var query string
@@ -356,7 +376,7 @@ func (s *analyticsStore) GetTokenTrend(ctx context.Context, userID string, r dom
 
 	if hasModelFilter {
 		query = `
-			SELECT ` + telemetryMetricDateSQLPrefixed("m") + ` AS metric_date,
+			SELECT ` + prefixedDateSQL + ` AS metric_date,
 			       CAST(COALESCE(SUM(m.exact_token_total + m.derived_token_total), 0) AS UNSIGNED) AS total_tokens,
 			       SUM(m.input_context_tokens) AS input_tokens,
 			       SUM(m.output_tokens) AS output_tokens,
@@ -367,7 +387,7 @@ func (s *analyticsStore) GetTokenTrend(ctx context.Context, userID string, r dom
 			       MAX(m.metric_semantics_version) AS max_agg_ver
 			FROM bound_telemetry_model_metrics m
 			JOIN telemetry_models tm ON tm.id = m.model_key
-			WHERE m.user_id = ? AND m.grain = 'day' AND m.delete_at IS NULL
+			WHERE m.user_id = ? AND m.grain = '` + grain + `' AND m.delete_at IS NULL
 			  AND m.bucket_start >= ? AND m.bucket_start <= ?`
 
 		if agentID != nil && *agentID != "" && *agentID != "all" {
@@ -385,7 +405,7 @@ func (s *analyticsStore) GetTokenTrend(ctx context.Context, userID string, r dom
 		query += " GROUP BY metric_date ORDER BY metric_date ASC"
 	} else {
 		query = `
-			SELECT ` + telemetryMetricDateSQL + ` AS metric_date,
+			SELECT ` + dateSQL + ` AS metric_date,
 			       CAST(COALESCE(SUM(exact_token_total + derived_token_total), 0) AS UNSIGNED) AS total_tokens,
 			       SUM(input_context_tokens) AS input_tokens,
 			       SUM(output_tokens) AS output_tokens,
@@ -395,7 +415,7 @@ func (s *analyticsStore) GetTokenTrend(ctx context.Context, userID string, r dom
 			       ` + telemetryWatermarkSQL + ` AS max_computed_at,
 			       MAX(metric_semantics_version) AS max_agg_ver
 			FROM bound_telemetry_model_metrics
-			WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL
+			WHERE user_id = ? AND grain = '` + grain + `' AND delete_at IS NULL
 			  AND bucket_start >= ? AND bucket_start <= ?`
 
 		if agentID != nil && *agentID != "" && *agentID != "all" {
@@ -482,7 +502,11 @@ func (s *analyticsStore) GetTokenTrend(ctx context.Context, userID string, r dom
 		return nil, fmt.Errorf("token trend rows iteration error: %w", err)
 	}
 
-	rawPoints, err := s.queryRawTokenPoints(ctx, userID, r.Timezone, plan.raw, agentID, providerID, modelID)
+	intervals := plan.raw
+	if grain == "hour" {
+		intervals = nil
+	}
+	rawPoints, err := s.queryRawTokenPoints(ctx, userID, r.Timezone, intervals, agentID, providerID, modelID)
 	if err != nil {
 		return nil, err
 	}
@@ -538,7 +562,7 @@ func (s *analyticsStore) GetTokenTrend(ctx context.Context, userID string, r dom
 		AgentID:            agentID,
 		ProviderID:         providerID,
 		ModelID:            modelID,
-		Granularity:        "day",
+		Granularity:        grain,
 		Points:             points,
 		DataWatermarkAt:    dataWatermarkAt,
 		AggregationVersion: aggVer,

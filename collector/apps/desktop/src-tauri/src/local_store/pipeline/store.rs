@@ -27,6 +27,9 @@ pub struct PipelineStore {
     path: PathBuf,
     /// Injected clock for deterministic tests (UTC ms).
     clock_ms: Option<i64>,
+    maintenance_cursor: i64,
+    price_catalog: crate::pricing::Catalog,
+    price_stamp: Option<(SystemTime, u64)>,
 }
 
 impl PipelineStore {
@@ -39,6 +42,9 @@ impl PipelineStore {
             conn,
             path,
             clock_ms: None,
+            maintenance_cursor: 0,
+            price_catalog: crate::pricing::Catalog::default(),
+            price_stamp: None,
         };
         store.ensure_initialized()?;
         Ok(store)
@@ -51,6 +57,9 @@ impl PipelineStore {
             conn,
             path: PathBuf::from(":memory:"),
             clock_ms: None,
+            maintenance_cursor: 0,
+            price_catalog: crate::pricing::Catalog::default(),
+            price_stamp: None,
         };
         store.ensure_initialized()?;
         Ok(store)
@@ -79,6 +88,8 @@ impl PipelineStore {
         if status.phase == super::rollout::RolloutPhase::Failed {
             return Err(PipelineError::NotInitialized);
         }
+        schema::ensure_session_extents(&self.conn)?;
+        schema::repair_workbuddy_models(&self.conn)?;
         // Match prior semantics: true when this call completed empty-DB init.
         Ok(!before && status.pipeline_ready && status.phase == super::rollout::RolloutPhase::Ready)
     }
@@ -171,7 +182,7 @@ impl PipelineStore {
     }
 
     /// Register a skill identity once. Subsequent calls with the same skill_key
-    /// return the existing id and do not mutate public_name.
+    /// return the existing id; a newly observed name fills an unnamed identity.
     pub fn register_skill(
         &mut self,
         skill_key: &[u8; 32],
@@ -187,7 +198,20 @@ impl PipelineStore {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .optional()?;
-        if let Some((id, _)) = existing {
+        if let Some((id, old_name)) = existing {
+            if old_name.as_deref().is_none_or(str::is_empty) {
+                if let Some(name) = public_name.filter(|name| !name.is_empty()) {
+                    tx.execute(
+                        "UPDATE skill_dimensions SET public_name=?1,updated_at=?2 WHERE id=?3",
+                        params![name, now, id],
+                    )?;
+                    // Re-send display metadata with unchanged event identity/hash. Metrics stay applied.
+                    tx.execute("UPDATE events SET status_json=json_set(status_json,'$.upload',0),updated_at=?1 WHERE skill_id=?2 AND delete_at IS NULL AND json_extract(status_json,'$.upload') IN (0,1,2,3)",params![now,id])?;
+                    tx.execute("INSERT INTO processing_tasks(created_at,updated_at,event_row_id,consumer,runnable_at)
+                        SELECT ?1,?1,id,'upload',?1 FROM events WHERE skill_id=?2 AND delete_at IS NULL AND json_extract(status_json,'$.upload')=0
+                        ON CONFLICT(event_row_id,consumer) DO UPDATE SET updated_at=excluded.updated_at,runnable_at=excluded.runnable_at,lease_token=NULL,lease_until=NULL,delete_at=NULL,last_error_code=NULL",params![now,id])?;
+                }
+            }
             tx.commit()?;
             return Ok(id);
         }
@@ -490,6 +514,8 @@ impl PipelineStore {
             validate_event_candidate(event)?;
         }
 
+        self.refresh_price_catalog();
+        let catalog = &self.price_catalog;
         let now = batch.created_at_override.unwrap_or_else(|| self.now_ms());
         let tx = self.conn.transaction()?;
 
@@ -517,6 +543,15 @@ impl PipelineStore {
             }
         }
 
+        for event in &batch.events {
+            if let Some(cost) = derived_cost(&tx, &source.harness_id, event, &catalog)? {
+                match insert_event_with_tasks(&tx, batch.source_id, &source.harness_id, &cost, now)?
+                {
+                    InsertOutcome::Inserted => inserted += 1,
+                    InsertOutcome::Duplicate => duplicates += 1,
+                }
+            }
+        }
         let new_seq = source.commit_seq + 1;
         let ignored = source.ignored_record_count + batch.ignored_record_count_delta.max(0);
         tx.execute(
@@ -1502,3 +1537,5 @@ fn block_dependent_tasks(
     }
     Ok(())
 }
+
+include!("derived_cost.rs");

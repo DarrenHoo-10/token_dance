@@ -31,11 +31,7 @@ fn open_store() -> PipelineStore {
     store
 }
 
-fn register(
-    store: &mut PipelineStore,
-    harness: &str,
-    source_seed: u8,
-) -> (i64, String) {
+fn register(store: &mut PipelineStore, harness: &str, source_seed: u8) -> (i64, String) {
     let id = store
         .register_source(&RegisterSource {
             harness_id: harness.into(),
@@ -94,12 +90,7 @@ fn drain_all(store: &mut PipelineStore) {
     }
 }
 
-fn harness_active(
-    store: &mut PipelineStore,
-    grain: &str,
-    bucket: i64,
-    harness: &str,
-) -> i64 {
+fn harness_active(store: &mut PipelineStore, grain: &str, bucket: i64, harness: &str) -> i64 {
     store
         .with_connection(|conn| {
             Ok(conn
@@ -114,12 +105,7 @@ fn harness_active(
         .unwrap()
 }
 
-fn harness_sessions(
-    store: &mut PipelineStore,
-    grain: &str,
-    bucket: i64,
-    harness: &str,
-) -> i64 {
+fn harness_sessions(store: &mut PipelineStore, grain: &str, bucket: i64, harness: &str) -> i64 {
     store
         .with_connection(|conn| {
             Ok(conn
@@ -190,18 +176,9 @@ fn duration_out_of_order_converges() {
         };
         commit(&mut store, sid, &token, 0, events);
         drain_all(&mut store);
-        assert_eq!(
-            harness_active(&mut store, "day", day, "codex"),
-            500,
-            "reverse={reverse}"
-        );
-        // Hour re-attribution: end hour gets 500; turn hours should not keep fallback.
-        let h9 = bucket_start(Grain::Hour, ms(2024, 6, 15, 9, 0));
-        let h10 = bucket_start(Grain::Hour, ms(2024, 6, 15, 10, 0));
-        let h11 = bucket_start(Grain::Hour, ms(2024, 6, 15, 11, 0));
-        assert_eq!(harness_active(&mut store, "hour", h9, "codex"), 0, "reverse={reverse}");
-        assert_eq!(harness_active(&mut store, "hour", h10, "codex"), 0, "reverse={reverse}");
-        assert_eq!(harness_active(&mut store, "hour", h11, "codex"), 500, "reverse={reverse}");
+        assert_eq!(harness_active(&mut store,"day",day,"codex"),7_200_000,"reverse={reverse}");
+        for (hour,expected) in [(9,3_600_000),(10,3_600_000),(11,0)] {let bucket=bucket_start(Grain::Hour,ms(2024,6,15,hour,0));assert_eq!(harness_active(&mut store,"hour",bucket,"codex"),expected,"reverse={reverse}");}
+
     }
 }
 
@@ -352,9 +329,7 @@ fn skill_multi_harness_one_active_day() {
     assert_eq!(rows, 2, "one metrics row per harness");
 
     let ranks = store
-        .with_connection(|conn| {
-            query_skill_ranks(conn, day, day + 86_400_000)
-        })
+        .with_connection(|conn| query_skill_ranks(conn, day, day + 86_400_000))
         .unwrap();
     assert_eq!(ranks.len(), 1);
     assert_eq!(ranks[0].active_days, 1);
@@ -431,7 +406,13 @@ fn cache_hit_rate_sums_then_divides() {
     // Denom 0 → null
     let empty = store
         .with_connection(|conn| {
-            query_usage_summary(conn, Grain::Day, day + 86_400_000, day + 2 * 86_400_000, None)
+            query_usage_summary(
+                conn,
+                Grain::Day,
+                day + 86_400_000,
+                day + 2 * 86_400_000,
+                None,
+            )
         })
         .unwrap();
     assert!(empty.cache_hit_rate.value.is_none());
@@ -471,4 +452,93 @@ fn duplicate_apply_rejected_no_double_count() {
         })
         .unwrap();
     assert_eq!(tokens, 10);
+}
+
+#[test]
+fn usage_revision_replaces_prior_contribution_in_either_arrival_order() {
+    for reversed in [false, true] {
+        let mut store = open_store();
+        let (sid, token) = register(&mut store, "codex", 1);
+        let mut old = base_event(
+            61,
+            "model_usage_recorded",
+            ms(2024, 6, 15, 12, 0),
+            r#"{"meta":{"accuracy":"exact","time_source":"source_record"},"usage":{"token_total":10,"input_context_tokens":8,"output_tokens":2}}"#,
+        );
+        old.fact_revision = 1;
+        let mut new = old.clone();
+        new.event_id = blob(62);
+        new.fact_revision = 2;
+        new.payload_json=r#"{"meta":{"accuracy":"exact","time_source":"source_record"},"usage":{"token_total":20,"input_context_tokens":18,"output_tokens":2}}"#.into();
+        commit(&mut store, sid, &token, 0, vec![old, new]);
+        for c in [Consumer::Hour, Consumer::Day, Consumer::Month] {
+            let mut tasks = store.claim_tasks(c, 8, DEFAULT_LEASE_MS).unwrap();
+            assert_eq!(tasks.len(), 2);
+            if reversed {
+                tasks.reverse();
+            }
+            for task in tasks {
+                store.apply_and_complete_metrics(&task).unwrap();
+            }
+        }
+        store.with_connection(|conn|{
+            let mut q=conn.prepare("SELECT exact_token_total,token_total_known_count FROM model_metrics WHERE delete_at IS NULL")?;
+            let rows=q.query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?)))?.collect::<Result<Vec<_>,_>>()?;
+            assert_eq!(rows.len(),3);for row in rows{assert_eq!(row,(20,1),"reversed={reversed}");}Ok(())
+        }).unwrap();
+    }
+}
+
+#[test]
+fn code_revision_replaces_prior_contribution_in_either_arrival_order() {
+    for reversed in [false, true] {
+        let mut store = open_store();
+        let (sid, token) = register(&mut store, "codex", 1);
+        let mut old = base_event(
+            61,
+            "code_changed",
+            ms(2024, 6, 15, 12, 0),
+            r#"{"meta":{"accuracy":"exact","time_source":"source_record"},"code":{"generated":10,"file_touch_count":1}}"#,
+        );
+        old.fact_revision = 1;
+        let mut new = old.clone();
+        new.event_id = blob(62);
+        new.fact_revision = 2;
+        new.payload_json=r#"{"meta":{"accuracy":"exact","time_source":"source_record"},"code":{"generated":20,"file_touch_count":1}}"#.into();
+        commit(&mut store, sid, &token, 0, vec![old, new]);
+        for c in [Consumer::Hour, Consumer::Day, Consumer::Month] {
+            let mut tasks = store.claim_tasks(c, 8, DEFAULT_LEASE_MS).unwrap();
+            assert_eq!(tasks.len(), 2);
+            if reversed {
+                tasks.reverse();
+            }
+            for task in tasks {
+                store.apply_and_complete_metrics(&task).unwrap();
+            }
+        }
+        store.with_connection(|conn|{
+            let mut q=conn.prepare("SELECT code_generated_lines,code_known_count FROM harness_metrics WHERE delete_at IS NULL")?;
+            let rows=q.query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?)))?.collect::<Result<Vec<_>,_>>()?;
+            assert_eq!(rows.len(),3);for row in rows{assert_eq!(row,(20,1),"reversed={reversed}");}Ok(())
+        }).unwrap();
+    }
+}
+
+#[test]
+fn session_span_crosses_month_boundary_and_backfill_is_idempotent() {
+    let mut store=open_store();
+    let (sid,token)=register(&mut store,"codex",1);
+    let mut start=base_event(71,"session_started",ms(2024,5,31,23,30),r#"{"meta":{"accuracy":"exact","time_source":"source_record"},"activity":{}}"#);
+    start.session_key=Some(blob(99));
+    let mut end=start.clone(); end.event_id=blob(72);end.fact_key=blob(72);end.event_type="session_ended".into();end.occurred_at=ms(2024,6,1,0,30);
+    commit(&mut store,sid,&token,0,vec![end,start]);
+    for consumer in [Consumer::Hour,Consumer::Day,Consumer::Month] {
+        for task in store.claim_tasks(consumer,8,DEFAULT_LEASE_MS).unwrap() {store.apply_and_complete_metrics(&task).unwrap();}
+    }
+    store.backfill_derived_metrics(128).unwrap();
+    store.with_connection(|conn| {
+        let mut q=conn.prepare("SELECT active_duration_ms,duration_known_count FROM harness_metrics WHERE delete_at IS NULL")?;
+        let rows=q.query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?)))?.collect::<Result<Vec<_>,_>>()?;
+        assert_eq!(rows.len(),6);for row in rows{assert_eq!(row,(1_800_000,1));}Ok(())
+    }).unwrap();
 }

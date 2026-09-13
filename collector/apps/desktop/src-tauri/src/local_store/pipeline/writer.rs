@@ -493,6 +493,7 @@ fn writer_loop(store: &mut PipelineStore, rx: Receiver<QueuedBatch>, compensatio
         // Absolute monotonic deadline: run even when the channel stays busy.
         if Instant::now() >= next_compensation {
             let _ = store.reclaim_expired_leases();
+            let _ = store.backfill_derived_metrics(128);
             let _ = store.expire_due_events(64);
             next_compensation = Instant::now() + interval;
         }

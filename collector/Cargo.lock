@@ -52,6 +52,7 @@ dependencies = [
  "async-trait",
  "privacy",
  "protocol",
+ "serde",
  "serde_json",
  "tokio",
 ]

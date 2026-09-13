@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 mod session_context;
 mod skill_reads;
+pub use skill_reads::SkillReads;
 use session_context::SessionContext;
 use std::collections::BTreeMap;
 use std::sync::Mutex;

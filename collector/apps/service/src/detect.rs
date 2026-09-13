@@ -319,7 +319,12 @@ fn detect_cursor(resolver: &PathResolver, snapshot: &mut DetectionSnapshot) {
 }
 
 fn detect_deepseek(home: &Path, snapshot: &mut DetectionSnapshot) {
-    let root = home.join(".deepseek-harness");
+    let modern = home.join(".dsh");
+    let root = if modern.join("sessions").is_dir() {
+        modern
+    } else {
+        home.join(".deepseek-harness")
+    };
     if !root.is_dir() {
         return;
     }
@@ -385,6 +390,9 @@ fn detect_opencode(resolver: &PathResolver, snapshot: &mut DetectionSnapshot) {
 fn detect_workbuddy(resolver: &PathResolver, snapshot: &mut DetectionSnapshot) {
     let home = resolver.home();
     let roots = [
+        Some(home.join(".workbuddy/projects")),
+        Some(home.join(".codebuddy/projects")),
+        Some(home.join(".workbuddy-ai/projects")),
         resolver
             .env_dir("LOCALAPPDATA")
             .map(|path| path.join("WorkBuddy")),
@@ -440,7 +448,10 @@ fn detect_doubao_work(resolver: &PathResolver, snapshot: &mut DetectionSnapshot)
         OfficialAgent::DoubaoWork,
         AgentDetection::installed("1.0.0"),
     );
-    if let Some(root) = present.into_iter().find(|path| dir_has_jsonl(path)) {
+    if let Some(root) = present
+        .into_iter()
+        .find(|path| path.join("User Data").is_dir() || dir_has_jsonl(path))
+    {
         snapshot.configure_source(
             OfficialAgent::DoubaoWork,
             adapter_doubao_work::HISTORY_SOURCE_ID,
@@ -736,5 +747,43 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert!(files[0].ends_with("updates.jsonl"));
         assert!(files[0].to_string_lossy().contains("primary"));
+    }
+    #[test]
+    fn detects_modern_deepseek_sessions_without_legacy_directory() {
+        let home = tempfile::tempdir().unwrap();
+        let sessions = home.path().join(".dsh/sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        let snapshot = detect_from_home(home.path());
+        assert!(snapshot.is_installed(OfficialAgent::DeepseekHarness));
+        assert_eq!(
+            snapshot
+                .source(
+                    OfficialAgent::DeepseekHarness,
+                    adapter_deepseek_harness::HISTORY_SOURCE_ID
+                )
+                .unwrap()
+                .path
+                .as_ref(),
+            Some(&sessions)
+        );
+    }
+    #[test]
+    fn workbuddy_uses_native_projects_before_installation_directory() {
+        let home = tempfile::tempdir().unwrap();
+        let projects = home.path().join(".workbuddy/projects");
+        fs::create_dir_all(&projects).unwrap();
+        fs::write(projects.join("session.jsonl"), "{}\n").unwrap();
+        let snapshot = detect_from_home(home.path());
+        assert_eq!(
+            snapshot
+                .source(
+                    OfficialAgent::WorkBuddy,
+                    adapter_workbuddy::HISTORY_SOURCE_ID
+                )
+                .unwrap()
+                .path
+                .as_ref(),
+            Some(&projects)
+        );
     }
 }

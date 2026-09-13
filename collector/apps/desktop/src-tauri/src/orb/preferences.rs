@@ -330,7 +330,7 @@ mod tests {
     fn smaller_sizes_persist_and_existing_sizes_remain_valid() {
         let dir = tempfile::tempdir().unwrap();
         let store = PreferencesStore::load(dir.path());
-        assert_eq!(store.snapshot().diameter_dip, 80);
+        assert_eq!(store.snapshot().diameter_dip, 96);
         for diameter in ALLOWED_DIAMETERS {
             let saved = store.patch(PreferencesPatch {
                 expected_revision: store.snapshot().revision,

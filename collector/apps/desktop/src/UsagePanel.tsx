@@ -85,6 +85,7 @@ export function UsagePanel() {
     if (!entries.length) return '—';
     return entries.map(([currency, value]) => new Intl.NumberFormat(zh ? 'zh-CN' : 'en-US', { style: 'currency', currency, currencyDisplay: 'narrowSymbol', maximumFractionDigits: 2 }).format(value)).join(' + ');
   };
+  const showAgentWarning = (agent: AgentConfig) => paused || !agent.enabled || ['ERROR', 'DEGRADED', 'NEEDS_PERMISSION', 'AUTH_REQUIRED', 'CONNECTING', 'CONFIGURING', 'PAUSED'].includes(agent.status);
   const agentState = (agent: AgentConfig) => collectionStatusText(agent, range, !!paused, zh);
   return <div className="usage-panel">
     <header className="usage-header" data-tauri-drag-region="deep"><div className="usage-brand" data-tauri-drag-region="deep"><img src={brandLogo} alt="" draggable={false} /><div className="desktop-update-wordmark"><strong>TokenDance{localTestBuild ? " Test" : ""}</strong>{!localTestBuild && <UpdateNotice zh={zh} />}</div></div><div className="usage-window-controls" data-tauri-drag-region="false" role="group" aria-label={text('语言与窗口控制', 'Language and window controls')}>
@@ -106,13 +107,13 @@ export function UsagePanel() {
           const quota = quotas.find(item => item.agentId === agent.id);
           const tokens = usageTokens(agent, range);
           return <article className="usage-agent-card" key={agent.id}><div className="usage-agent-top"><div className="usage-agent-name"><span className="usage-agent-symbol">{agent.name.slice(0, 2)}</span><strong>{agent.name}</strong>{quota?.plan && <small>{quota.plan}</small>}</div><div className="usage-agent-value"><strong>{tokens === null ? '—' : format(tokens)}</strong><small>{costLabel([agent], range)}</small></div></div>
-            {(paused || !agent.enabled || ['ERROR', 'DEGRADED', 'NEEDS_PERMISSION', 'AUTH_REQUIRED', 'CONNECTING'].includes(agent.status)) && <div className="usage-agent-warning">{agentState(agent)}</div>}
+            {showAgentWarning(agent) && <div className="usage-agent-warning">{agentState(agent)}</div>}
             <QuotaRings quota={quota} zh={zh} />
           </article>;
         })}
         {others.length > 0 && <details className="usage-other-sources"><summary>{text('其他来源', 'Other sources')} · {others.length}</summary>{others.map(agent => {
           const quota = quotas.find(item => item.agentId === agent.id);
-          return <div className="usage-other-source" key={agent.id}><div className="usage-source-row"><span>{agent.name}{quota?.plan && <small> · {quota.plan}</small>}</span><small>{agentState(agent)}</small><strong>{usageTokens(agent, range) === null ? '—' : format(usageTokens(agent, range)!)}</strong></div>{quota && <QuotaRings quota={quota} zh={zh} />}</div>;
+          return <div className="usage-other-source" key={agent.id}><div className="usage-source-row"><span>{agent.name}{quota?.plan && <small> · {quota.plan}</small>}</span>{showAgentWarning(agent) && <small>{agentState(agent)}</small>}<strong>{usageTokens(agent, range) === null ? '—' : format(usageTokens(agent, range)!)}</strong></div>{quota && <QuotaRings quota={quota} zh={zh} />}</div>;
         })}</details>}
         {data && agents.length === 0 && <p className="usage-empty">{text('尚未检测到 Agent，在设置中连接。', 'No agents found. Connect one in Settings.')}</p>}
       </section>

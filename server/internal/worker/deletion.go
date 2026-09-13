@@ -326,7 +326,7 @@ func (w *Worker) deletionDeleteEvents(ctx context.Context, claim *deletionClaim)
 			}
 			for _, table := range []string{
 				"telemetry_harness_metrics", "telemetry_model_metrics", "telemetry_skill_metrics",
-				"telemetry_cost_metrics", "telemetry_bucket_entities",
+				"telemetry_cost_metrics", "telemetry_bucket_entities", "telemetry_session_extents",
 			} {
 				if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE "+deletionOwnerPredicate(table)+" AND installation_id = ?", claim.userID.String, installationID); err != nil {
 					return fmt.Errorf("delete installation %s: %w", table, err)
@@ -381,7 +381,7 @@ func (w *Worker) deletionDeleteAggregates(ctx context.Context, claim *deletionCl
 			toMs := to.UnixMilli()
 			for _, table := range []string{
 				"telemetry_harness_metrics", "telemetry_model_metrics", "telemetry_skill_metrics",
-				"telemetry_cost_metrics", "telemetry_bucket_entities",
+				"telemetry_cost_metrics", "telemetry_bucket_entities", "telemetry_session_extents",
 			} {
 				if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE "+deletionOwnerPredicate(table)+" AND bucket_start >= ? AND bucket_start < ?", userID, fromMs, toMs); err != nil {
 					return fmt.Errorf("delete %s time range: %w", table, err)
@@ -395,7 +395,7 @@ func (w *Worker) deletionDeleteAggregates(ctx context.Context, claim *deletionCl
 			}
 			for _, table := range []string{
 				"telemetry_harness_metrics", "telemetry_model_metrics", "telemetry_skill_metrics",
-				"telemetry_cost_metrics", "telemetry_bucket_entities",
+				"telemetry_cost_metrics", "telemetry_bucket_entities", "telemetry_session_extents",
 			} {
 				if _, err := tx.ExecContext(ctx, "DELETE FROM "+table+" WHERE "+deletionOwnerPredicate(table)+"", userID); err != nil {
 					return fmt.Errorf("delete %s: %w", table, err)
@@ -627,7 +627,7 @@ func reconcileDeletionResiduals(ctx context.Context, tx *sql.Tx, claim *deletion
 			"device_binding_challenges", "installations", "usage_events",
 			"daily_user_agent_metrics", "daily_user_agent_model_metrics", "daily_skill_metrics",
 			"telemetry_events", "telemetry_harness_metrics", "telemetry_model_metrics",
-			"telemetry_skill_metrics", "telemetry_cost_metrics", "telemetry_bucket_entities",
+			"telemetry_skill_metrics", "telemetry_cost_metrics", "telemetry_bucket_entities", "telemetry_session_extents",
 			"data_export_jobs", "user_upload_objects", "public_user_profiles",
 			"user_privacy_settings", "user_handle_history",
 		} {
@@ -658,7 +658,7 @@ func reconcileDeletionResiduals(ctx context.Context, tx *sql.Tx, claim *deletion
 		for _, table := range []string{
 			"usage_events", "daily_user_agent_metrics", "daily_user_agent_model_metrics", "daily_skill_metrics",
 			"telemetry_events", "telemetry_harness_metrics", "telemetry_model_metrics",
-			"telemetry_skill_metrics", "telemetry_cost_metrics", "telemetry_bucket_entities",
+			"telemetry_skill_metrics", "telemetry_cost_metrics", "telemetry_bucket_entities", "telemetry_session_extents",
 		} {
 			checks = append(checks, struct {
 				name  string
@@ -886,7 +886,7 @@ func requireOneRow(res sql.Result) error {
 
 func deletionOwnerPredicate(table string) string {
 	switch table {
-	case "telemetry_events", "telemetry_harness_metrics", "telemetry_model_metrics", "telemetry_skill_metrics", "telemetry_cost_metrics", "telemetry_bucket_entities":
+	case "telemetry_events", "telemetry_harness_metrics", "telemetry_model_metrics", "telemetry_skill_metrics", "telemetry_cost_metrics", "telemetry_bucket_entities", "telemetry_session_extents":
 		return "installation_id IN (SELECT installation_id FROM installations WHERE user_id = ?)"
 	default:
 		return "user_id = ?"

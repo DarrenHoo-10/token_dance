@@ -153,6 +153,7 @@ export function collectionStatusText(agent: AgentConfig, range: UsageRange, paus
   const text = (cn: string, en: string) => zh ? cn : en;
   if (!agent.enabled) return text('已关闭', 'Disabled');
   if (paused || agent.status === 'PAUSED') return text('已暂停', 'Paused');
+  if (agent.id === 'doubao-work' && agent.status === 'ACTIVE') return text('活动采集中，Token 不可用', 'Collecting activity; Token unavailable');
   switch (agent.status) {
     case 'UNDETECTED': return text('未检测到', 'Not detected');
     case 'AUTH_REQUIRED': return text(`请在 ${agent.name} 重新登录`, `Sign in again to ${agent.name}`);

@@ -1,7 +1,6 @@
 import React from 'react';
 import { useLocale } from '@/context/LocaleContext';
 import type { PersonalSummaryMetrics } from '@/types/api';
-import { formatPersonalCost } from '@/utils/cost';
 import { MetricCard } from './MetricCard';
 
 export interface MetricGridProps {
@@ -36,74 +35,67 @@ function formatPercentage(val: string | null | undefined): string | null {
 
 export const MetricGrid: React.FC<MetricGridProps> = ({ metrics }) => {
   const { t } = useLocale();
-  const cost = formatPersonalCost(metrics.estimatedCost, metrics.estimatedCosts);
 
   return (
     <div className="metric-grid-10" aria-label={t('dashboard.coreMetricsLabel')}>
-      {/* 1. Estimated Cost */}
-      <MetricCard
-        label={t('metrics.estimatedCost')}
-        value={cost.value}
-        supported={cost.supported}
-      />
-
-      {/* 2. Total Tokens */}
+      <MetricCard label={t('metrics.estimatedCost')} value={metrics.estimatedCost?.amount == null ? null : `${metrics.estimatedCost.currency} ${Number(metrics.estimatedCost.amount).toFixed(2)}`} supported={metrics.estimatedCost?.supported} />
+      {/* Total Tokens */}
       <MetricCard
         label={t('metrics.totalTokens')}
         value={formatNumber(metrics.totalTokens?.value)}
         supported={metrics.totalTokens?.supported}
       />
 
-      {/* 3. Generated Code Lines */}
+      {/* Generated Code Lines */}
       <MetricCard
         label={t('metrics.generatedCodeLines')}
         value={formatNumber(metrics.generatedCodeLines?.value)}
         supported={metrics.generatedCodeLines?.supported}
       />
 
-      {/* 4. Tokens per Code Line */}
+      {/* Tokens per Code Line */}
       <MetricCard
         label={t('metrics.tokensPerCodeLine')}
         value={metrics.tokensPerCodeLine?.value ? parseFloat(metrics.tokensPerCodeLine.value).toFixed(1) : null}
         supported={metrics.tokensPerCodeLine?.supported}
       />
 
-      {/* 5. Input Context */}
+      {/* Input Context */}
       <MetricCard
         label={t('metrics.inputContextTokens')}
         value={formatNumber(metrics.inputContextTokens?.value)}
         supported={metrics.inputContextTokens?.supported}
       />
 
-      {/* 6. Output Tokens */}
+      {/* Output Tokens */}
       <MetricCard
         label={t('metrics.outputTokens')}
         value={formatNumber(metrics.outputTokens?.value)}
         supported={metrics.outputTokens?.supported}
       />
 
-      {/* 7. Cache Hit Rate */}
+      {/* Cache Hit Rate */}
       <MetricCard
         label={t('metrics.cacheHitRate')}
         value={formatPercentage(metrics.cacheHitRate?.value)}
         supported={metrics.cacheHitRate?.supported}
       />
 
-      {/* 8. Total Active Duration */}
+      {/* Total Active Duration */}
       <MetricCard
         label={t('metrics.activeDurationMs')}
         value={formatDurationHours(metrics.activeDurationMs?.value)}
         supported={metrics.activeDurationMs?.supported}
       />
 
-      {/* 9. Total Messages */}
+      {/* Total Messages */}
       <MetricCard
         label={t('metrics.messageCount')}
         value={formatNumber(metrics.messageCount?.value)}
         supported={metrics.messageCount?.supported}
       />
 
-      {/* 10. User Messages */}
+      {/* User Messages */}
       <MetricCard
         label={t('metrics.userMessageCount')}
         value={formatNumber(metrics.userMessageCount?.value)}

@@ -538,6 +538,11 @@ pub fn local_payload_to_wire(payload_json: &str) -> Result<EventPayload, String>
             }
         }
     }
+    if let Some(Value::Object(cost)) = obj.get_mut("cost") {
+        if cost.get("source").and_then(Value::as_str) == Some("estimated_price_table") {
+            cost.insert("source".into(), Value::String("calculated_price".into()));
+        }
+    }
     // Ensure required meta exists for wire types.
     if !obj.contains_key("meta") {
         obj.insert(

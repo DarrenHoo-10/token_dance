@@ -3,7 +3,7 @@ use std::collections::HashSet;
 
 pub const SCHEMA_VERSION: u32 = 1;
 pub const ALLOWED_DIAMETERS: [u32; 7] = [64, 80, 96, 112, 128, 144, 160];
-pub const DEFAULT_DIAMETER_DIP: u32 = 80;
+pub const DEFAULT_DIAMETER_DIP: u32 = 96;
 pub const QUOTA_FRESH_MS: i64 = 30 * 60 * 1000;
 pub const INITIAL_SOURCE_ORDER: &[&str] = &[
     "codex",

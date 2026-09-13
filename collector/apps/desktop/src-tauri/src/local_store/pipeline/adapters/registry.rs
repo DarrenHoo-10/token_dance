@@ -7,7 +7,7 @@ use std::sync::Arc;
 use super::codex::CodexStrategy;
 use super::common::SkillBook;
 use super::cursor::CursorStrategy;
-use super::jsonl_harness::{JsonlHarnessStrategy, CLAUDE, DEEPSEEK, DOUBAO, GROK, PI, WORKBUDDY};
+use super::jsonl_harness::{JsonlHarnessStrategy, CLAUDE, DEEPSEEK, GROK, PI, WORKBUDDY};
 use super::opencode::OpenCodeStrategy;
 use super::zcode::ZcodeStrategy;
 use crate::local_store::pipeline::runner::HarnessStrategy;
@@ -123,8 +123,7 @@ impl HarnessRegistry {
             skill_allocator.clone(),
         )));
         strategy_source_ids.push(None);
-        strategies.push(Box::new(JsonlHarnessStrategy::new(
-            DOUBAO,
+        strategies.push(Box::new(super::doubao::DoubaoStrategy::new(
             secret,
             roots.doubao_history,
             book.clone(),

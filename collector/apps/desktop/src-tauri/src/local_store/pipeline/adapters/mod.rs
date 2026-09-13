@@ -8,12 +8,16 @@ mod codex;
 mod common;
 mod cursor;
 mod cursor_usage;
+mod doubao;
+mod doubao_storage;
 mod identity;
 mod jsonl_harness;
 mod jsonl_io;
+mod native_jsonl;
 mod opencode;
 mod registry;
 mod zcode;
+mod zstd_jsonl;
 
 #[cfg(test)]
 mod tests;
@@ -40,3 +44,6 @@ pub use zcode::{ZcodeStrategy, HARNESS_ID as ZCODE_ID};
 
 #[cfg(test)]
 pub(crate) use zcode::SQL_CODE as ZCODE_SQL_CODE;
+
+#[cfg(test)]
+mod coverage_audit;

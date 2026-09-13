@@ -196,12 +196,20 @@ pub const WORKBUDDY: HarnessCapability = HarnessCapability {
 
 pub const DOUBAO: HarnessCapability = HarnessCapability {
     harness_id: "doubao-work",
-    streams: &[StreamCapability {
-        stream_key: "history-jsonl",
-        level: CapabilityLevel::Available,
-        reason_code: None,
-        poll_interval_ms: None,
-    }],
+    streams: &[
+        StreamCapability {
+            stream_key: "desktop-activity",
+            level: CapabilityLevel::Available,
+            reason_code: None,
+            poll_interval_ms: None,
+        },
+        StreamCapability {
+            stream_key: "history-jsonl",
+            level: CapabilityLevel::Available,
+            reason_code: None,
+            poll_interval_ms: None,
+        },
+    ],
 };
 
 pub const ALL: &[&HarnessCapability] = &[

@@ -36,6 +36,8 @@ impl std::error::Error for RunnerError {}
 pub enum TokenAccuracy {
     Exact,
     Derived,
+    /// Runtime evidence, such as a successful skill-document read.
+    Correlated,
 }
 
 impl TokenAccuracy {
@@ -43,6 +45,7 @@ impl TokenAccuracy {
         match self {
             Self::Exact => "exact",
             Self::Derived => "derived",
+            Self::Correlated => "correlated",
         }
     }
 }

@@ -34,7 +34,7 @@ export const TokenTrendChart: React.FC<TokenTrendChartProps> = ({
   const points = trends.map((item) => {
     const total = parseFloat(item.tokenTotal || '0') || 0;
     return {
-      date: item.date,
+      date: item.date.includes(' ') ? item.date.split(' ')[1] : item.date,
       total,
       input: parseFloat(item.inputTokens || '0') || 0,
       output: parseFloat(item.outputTokens || '0') || 0,

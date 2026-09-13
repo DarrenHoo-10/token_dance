@@ -167,7 +167,7 @@ impl PipelineRuntime {
             if let Some(id) = book.get(&key) {
                 return id;
             }
-            match writer_for_skills.register_skill(key, Some(name)) {
+            match writer_for_skills.register_skill(key, (!name.is_empty()).then_some(name)) {
                 Ok(id) => {
                     book.upsert(key, id);
                     id

@@ -15,3 +15,5 @@ html[data-platform="macos"] .usage-panel{border:0;font-family:-apple-system,Blin
 html[data-platform="macos"] .usage-header{justify-content:flex-end;height:52px;padding:0 16px 0 86px;-webkit-app-region:drag;app-region:drag;user-select:none}
 html[data-platform="macos"] .usage-panel .usage-window-controls{display:none}
 html[data-platform="macos"] .usage-brand img{width:28px;height:28px}
+
+.usage-source-row>strong{margin-left:auto}.usage-source-row>small+strong{margin-left:0}

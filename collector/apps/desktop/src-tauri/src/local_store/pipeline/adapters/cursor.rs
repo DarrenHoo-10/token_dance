@@ -79,9 +79,10 @@ impl HarnessStrategy for CursorStrategy {
     }
 
     fn discover(&self, budget: DiscoveryBudget) -> Result<Vec<SourceSpec>, RunnerError> {
+        let mut specs = Vec::new();
         if let Some(source) = self.usage_source.as_ref().filter(|s| s.configured()) {
             let locator = source.locator();
-            return Ok(vec![SourceSpec {
+            specs.push(SourceSpec {
                 harness_id: HARNESS_ID.into(),
                 source_key: source_key(&self.identity_secret, HARNESS_ID, &locator),
                 source_kind: SourceKind::Other,
@@ -91,7 +92,7 @@ impl HarnessStrategy for CursorStrategy {
                 initial_cursor_json: json!({}),
                 initial_decoder_state_json: json!({}),
                 observed_boundary_json: json!({}),
-            }]);
+            });
         }
         let (files, _cursor) = discover_jsonl_files(
             &self.transcripts_root,
@@ -99,7 +100,6 @@ impl HarnessStrategy for CursorStrategy {
             budget.max_sources,
             budget.resume_after.as_deref(),
         );
-        let mut specs = Vec::new();
         for path in files {
             let scope = path.to_string_lossy().to_string();
             specs.push(SourceSpec {
@@ -168,10 +168,6 @@ impl HarnessStrategy for CursorStrategy {
             }
             return Ok(DecodeOutcome::Emit(vec![fact]));
         }
-        // Production token usage has one authority; transcript content cannot duplicate API facts.
-        if self.usage_source.is_some() {
-            return Ok(DecodeOutcome::ContextOnly);
-        }
         let Some(o) = json_obj(&value) else {
             return Ok(DecodeOutcome::Ignore(IgnoreCode::MalformedRecord));
         };
@@ -188,6 +184,33 @@ impl HarnessStrategy for CursorStrategy {
                 Err(code) => return Ok(DecodeOutcome::Ignore(code)),
             };
         remember_source_time(state, occurred_at, is_native);
+        let context = super::native_jsonl::Context {
+            harness: HARNESS_ID,
+            secret: &self.identity_secret,
+            scope: logical_scope,
+            now: occurred_at,
+            time_source,
+            record,
+            book: &self.skill_book,
+            allocator: &*self.skill_allocator,
+        };
+        if let Some(mut facts) = if value.get("message").is_some() || value["type"] == "turn_ended"
+        {
+            super::native_jsonl::decode(&context, &value, state)
+        } else {
+            None
+        } {
+            // API owns tokens; local transcripts contribute only non-token facts.
+            facts.retain(|f| f.event_type != "model_usage_recorded");
+            return Ok(if facts.is_empty() {
+                DecodeOutcome::ContextOnly
+            } else {
+                DecodeOutcome::Emit(facts)
+            });
+        }
+        if self.usage_source.is_some() {
+            return Ok(DecodeOutcome::ContextOnly);
+        }
 
         let kind = str_field(o, "type")
             .or_else(|| str_field(o, "role"))

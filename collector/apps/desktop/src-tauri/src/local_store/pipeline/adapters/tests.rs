@@ -118,8 +118,8 @@ fn review3_codex_archive_move_preserves_event_identity() {
     }
     assert_eq!(
         store.event_count().unwrap(),
-        1,
-        "archiving the same already-collected session must not duplicate usage"
+        2,
+        "archiving must not duplicate the session or usage"
     );
 }
 
@@ -340,7 +340,7 @@ fn codex_jsonl_double_scan_stable_event_ids() {
         None,
     )
     .unwrap();
-    assert!(matches!(first, RunOutcome::Committed(_)));
+    assert!(matches!(first, RunOutcome::Committed(_)), "{first:?}");
     let ids1 = event_ids(&mut store);
     assert_eq!(ids1.len(), 2);
 
@@ -419,6 +419,7 @@ fn zcode_late_small_rowid_not_lost_when_large_completes_first() {
                (2,'s1','zai','m',20,8,28,'completed',1000);",
         )
         .unwrap();
+        conn.execute_batch("ALTER TABLE model_usage ADD cache_read_input_tokens INTEGER; ALTER TABLE model_usage ADD cache_creation_input_tokens INTEGER; ALTER TABLE model_usage ADD reasoning_tokens INTEGER;").unwrap();
     }
 
     let store_arc = Arc::new(std::sync::Mutex::new(open_store(now)));
@@ -462,7 +463,7 @@ fn zcode_late_small_rowid_not_lost_when_large_completes_first() {
         None,
     )
     .unwrap();
-    assert!(matches!(first, RunOutcome::Committed(_)));
+    assert!(matches!(first, RunOutcome::Committed(_)), "{first:?}");
     assert_eq!(count_events(&store), 1, "only completed rowid=2");
 
     // Complete the late small rowid.
@@ -505,11 +506,16 @@ fn zcode_same_time_updated_multi_rows_not_skipped() {
                 status TEXT, completed_at INTEGER);
              CREATE TABLE part(rowid INTEGER PRIMARY KEY, session_id TEXT, time_updated INTEGER, data TEXT);
              INSERT INTO part VALUES
-               (1,'s',{ts},'{{\"callID\":\"c1\",\"type\":\"tool\"}}'),
-               (2,'s',{ts},'{{\"callID\":\"c2\",\"type\":\"tool\"}}'),
-               (3,'s',{ts},'{{\"callID\":\"c3\",\"type\":\"tool\"}}');"
+               (1,'s',{ts},'{{\"callID\":\"c1\",\"type\":\"tool\",\"tool\":\"Edit\",\"state\":{{\"status\":\"completed\",\"input\":{{\"old_string\":\"old\",\"new_string\":\"new\"}}}}}}'),
+               (2,'s',{ts},'{{\"callID\":\"c2\",\"type\":\"tool\",\"tool\":\"Edit\",\"state\":{{\"status\":\"completed\",\"input\":{{\"old_string\":\"old\",\"new_string\":\"new\"}}}}}}'),
+               (3,'s',{ts},'{{\"callID\":\"c3\",\"type\":\"tool\",\"tool\":\"Edit\",\"state\":{{\"status\":\"completed\",\"input\":{{\"old_string\":\"old\",\"new_string\":\"new\"}}}}}}');"
         ))
         .unwrap();
+        conn.execute_batch(
+            "ALTER TABLE part ADD message_id TEXT; CREATE TABLE message(id TEXT,data TEXT);",
+        )
+        .unwrap();
+        conn.execute_batch("ALTER TABLE model_usage ADD cache_read_input_tokens INTEGER; ALTER TABLE model_usage ADD cache_creation_input_tokens INTEGER; ALTER TABLE model_usage ADD reasoning_tokens INTEGER;").unwrap();
     }
 
     let store_arc = Arc::new(std::sync::Mutex::new(open_store(now)));
@@ -720,6 +726,10 @@ fn opencode_numeric_step_ids_stable_across_polls() {
                (43,'s1',{ts},{ts},'{{\"type\":\"step-finish\",\"tokens\":{{\"input\":5,\"output\":6}}}}');"
         ))
         .unwrap();
+        conn.execute_batch(
+            "ALTER TABLE part ADD message_id TEXT; CREATE TABLE message(id TEXT,data TEXT);",
+        )
+        .unwrap();
     }
     let store_arc = Arc::new(std::sync::Mutex::new(open_store(now)));
     let book = SkillBook::new();
@@ -752,7 +762,7 @@ fn opencode_numeric_step_ids_stable_across_polls() {
         None,
     )
     .unwrap();
-    assert!(matches!(first, RunOutcome::Committed(_)));
+    assert!(matches!(first, RunOutcome::Committed(_)), "{first:?}");
     let ids = event_ids(&mut store);
     assert_eq!(ids.len(), 2);
 
@@ -967,7 +977,10 @@ fn review_dual_jsonl_same_offset_distinct_event_ids() {
             None,
         )
         .unwrap();
-        assert!(matches!(out, RunOutcome::Committed(ref s) if s.emitted == 1));
+        assert!(
+            matches!(out, RunOutcome::Committed(ref s) if s.emitted == 1),
+            "{out:?}"
+        );
     }
     let ids = event_ids(&mut store);
     assert_eq!(ids.len(), 2);
@@ -989,6 +1002,10 @@ fn review_dual_sqlite_same_rowid_distinct_event_ids() {
              INSERT INTO part(rowid,session_id,time_created,time_updated,data) VALUES
                (42,'s1',{ts},{ts},'{{\"type\":\"step-finish\",\"tokens\":{{\"input\":3,\"output\":4}}}}');"
         ))
+        .unwrap();
+        conn.execute_batch(
+            "ALTER TABLE part ADD message_id TEXT; CREATE TABLE message(id TEXT,data TEXT);",
+        )
         .unwrap();
         path
     };
@@ -1027,7 +1044,10 @@ fn review_dual_sqlite_same_rowid_distinct_event_ids() {
             None,
         )
         .unwrap();
-        assert!(matches!(out, RunOutcome::Committed(ref s) if s.emitted == 1));
+        assert!(
+            matches!(out, RunOutcome::Committed(ref s) if s.emitted == 1),
+            "{out:?}"
+        );
     }
     let mut store = store_arc.lock().unwrap();
     let ids = event_ids(&mut store);
@@ -1142,7 +1162,7 @@ fn review_pipeline_runtime_raw_to_metrics_to_upload_pending() {
     use crate::local_store::pipeline::{Consumer, PipelineWriter};
 
     // Writer sink uses wall-clock admission; keep fixture on "today" (Beijing).
-    let now = beijing_wall_to_utc_ms(2026, 9, 12, 15, 30, 0);
+    let now = chrono::Utc::now().timestamp_millis();
     let dir = tempfile::tempdir().unwrap();
     let codex_dir = dir.path().join("codex");
     std::fs::create_dir_all(&codex_dir).unwrap();
@@ -1152,7 +1172,7 @@ fn review_pipeline_runtime_raw_to_metrics_to_upload_pending() {
             "{}\n",
             json!({
                 "type":"event_msg",
-                "timestamp": now - 2_000,
+                "timestamp": now,
                 "thread_id":"rt1",
                 "payload":{"type":"token_count","info":{
                     "last_token_usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}
@@ -1642,4 +1662,398 @@ fn review2_pipeline_query_facade_returns_tokens_when_legacy_empty() {
         .unwrap();
     assert_eq!(from_writer.total_tokens.value, Some(42));
     drop(writer);
+}
+
+#[test]
+fn code_counts_require_completed_edit_or_write_evidence() {
+    use super::common::{completed_code_payload, patch_code_payload};
+    assert!(completed_code_payload(
+        &json!({"tool":"Bash","state":{"status":"completed","input":{"command":"echo ok"}}})
+    )
+    .is_none());
+    assert!(completed_code_payload(&json!({"tool":"Edit","state":{"status":"error","input":{"old_string":"a","new_string":"b"}}})).is_none());
+    let code = completed_code_payload(&json!({"tool":"Edit","state":{"status":"completed","input":{"old_string":"a","new_string":"b\nc\n"}}})).unwrap();
+    assert_eq!(code["generated"], 2);
+    assert_eq!(code["removed"], 1);
+    let code = completed_code_payload(
+        &json!({"tool":"write","state":{"status":"completed","input":{"content":"a\nb\n"}}}),
+    )
+    .unwrap();
+    assert_eq!(code["generated"], 2);
+    assert!(code.get("removed").is_none());
+    assert!(code.get("added").is_none());
+    let code = patch_code_payload("*** Begin Patch\n*** Update File: fixture.rs\n@@\n context\n-old\n+new\n+next\n*** End Patch").unwrap();
+    assert_eq!(code["generated"], 2);
+    assert_eq!(code["removed"], 1);
+    assert!(patch_code_payload("not a patch").is_none());
+}
+
+#[test]
+fn codex_lifecycle_survives_batch_boundaries() {
+    let now = beijing_wall_to_utc_ms(2026, 9, 12, 12, 0, 0);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("fixture.jsonl");
+    let records = vec![
+        json!({"type":"session_meta","timestamp":now,"payload":{"id":"session"}}),
+        json!({"type":"event_msg","timestamp":now+1,"payload":{"type":"task_started","turn_id":"turn"}}),
+        json!({"type":"response_item","timestamp":now+2,"payload":{"type":"message","role":"user"}}),
+        json!({"type":"event_msg","timestamp":now+1001,"payload":{"type":"task_complete","turn_id":"turn"}}),
+    ];
+    std::fs::write(
+        &path,
+        records.iter().map(|v| format!("{v}\n")).collect::<String>(),
+    )
+    .unwrap();
+    let strategy = CodexStrategy::new(secret(), dir.path(), SkillBook::new(), Arc::new(|_, _| 1));
+    let mut store = open_store(now + 2000);
+    let id = register_source(
+        &mut store,
+        "codex",
+        path.to_str().unwrap(),
+        "sessions-jsonl",
+        SourceKind::Jsonl,
+        r#"{"offset":0}"#,
+        r#"{"last_source_time":null}"#,
+        now + 2000,
+    );
+    for _ in 0..5 {
+        let sink = StoreSinkMut::new(&mut store);
+        run_source_once(
+            &sink,
+            &strategy,
+            id,
+            crate::local_store::pipeline::runner::ReadBudget::new(1, 65536, 50),
+            DEFAULT_LEASE_MS,
+            &[],
+            None,
+        )
+        .unwrap();
+    }
+    assert_eq!(store.event_count().unwrap(), 4);
+    store.with_connection(|c| {
+        let duration: i64 = c.query_row("SELECT json_extract(payload_json,'$.activity.duration_ms') FROM events WHERE event_type='turn_completed'",[],|r|r.get(0))?;
+        assert_eq!(duration,1000);
+        let user: i64 = c.query_row("SELECT COUNT(*) FROM events WHERE json_extract(payload_json,'$.activity.trigger')='user'",[],|r|r.get(0))?;
+        assert_eq!(user,1); Ok(())
+    }).unwrap();
+}
+
+#[test]
+fn codex_patch_requires_success_and_is_replay_idempotent() {
+    let now = beijing_wall_to_utc_ms(2026, 9, 12, 12, 0, 0);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("patch.jsonl");
+    let patch = "*** Begin Patch\n*** Update File: fixture.rs\n@@\n-old\n+new\n*** End Patch";
+    let records = vec![
+        json!({"type":"session_meta","timestamp":now,"payload":{"id":"patch-session"}}),
+        json!({"type":"response_item","timestamp":now+1,"payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"ok","input":patch}}),
+        json!({"type":"response_item","timestamp":now+2,"payload":{"type":"custom_tool_call_output","call_id":"ok","output":"Success. Updated the following files:"}}),
+        json!({"type":"response_item","timestamp":now+3,"payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"failed","input":patch}}),
+        json!({"type":"response_item","timestamp":now+4,"payload":{"type":"custom_tool_call_output","call_id":"failed","output":"patch failed"}}),
+    ];
+    std::fs::write(
+        &path,
+        records.iter().map(|v| format!("{v}\n")).collect::<String>(),
+    )
+    .unwrap();
+    let strategy = CodexStrategy::new(secret(), dir.path(), SkillBook::new(), Arc::new(|_, _| 1));
+    let mut store = open_store(now + 2000);
+    let id = register_source(
+        &mut store,
+        "codex",
+        path.to_str().unwrap(),
+        "sessions-jsonl",
+        SourceKind::Jsonl,
+        r#"{"offset":0}"#,
+        r#"{"last_source_time":null}"#,
+        now + 2000,
+    );
+    for _ in 0..2 {
+        store.with_connection(|c| {
+            c.execute(r#"UPDATE collection_sources SET cursor_json='{"offset":0}', decoder_state_json='{}' WHERE id=?1"#,[id])?;
+            Ok(())
+        }).unwrap();
+        for _ in 0..6 {
+            let sink = StoreSinkMut::new(&mut store);
+            run_source_once(
+                &sink,
+                &strategy,
+                id,
+                crate::local_store::pipeline::runner::ReadBudget::new(1, 65536, 50),
+                DEFAULT_LEASE_MS,
+                &[],
+                None,
+            )
+            .unwrap();
+        }
+        assert_eq!(store.event_count().unwrap(), 2);
+    }
+}
+
+#[test]
+fn codex_skill_read_checkpoint_privacy_and_replay() {
+    let now = beijing_wall_to_utc_ms(2026, 9, 12, 12, 0, 0);
+    for (path, expected_public) in [
+        ("C:/Users/Fixture/.codex/skills/browser/SKILL.md", "browser"),
+        ("C:/private/project/skills/private-name/SKILL.md", "private-name"),
+    ] {
+        let names = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = names.clone();
+        let strategy = CodexStrategy::new(
+            secret(),
+            "fixture",
+            SkillBook::new(),
+            Arc::new(move |_, name| {
+                seen.lock().unwrap().push(name.to_owned());
+                1
+            }),
+        );
+        let mut records = vec![
+            json!({"type":"session_meta","timestamp":now,"payload":{"id":"session"}}),
+            json!({"type":"event_msg","timestamp":now+1,"payload":{"type":"task_started","turn_id":"turn"}}),
+        ];
+        for (id, exit) in [("failed", 1), ("read", 0), ("repeat", 0)] {
+            records.push(json!({"type":"response_item","timestamp":now+2,"payload":{"type":"function_call","name":"exec_command","call_id":id,"arguments":json!({"cmd":format!("Get-Content {path}")}).to_string()}}));
+            records.push(json!({"type":"response_item","timestamp":now+3,"payload":{"type":"function_call_output","call_id":id,"output":json!({"exit_code":exit,"output":"---\nname: browser\n---"}).to_string()}}));
+        }
+        let mut identities = Vec::new();
+        for _ in 0..2 {
+            let mut state = DecoderState {
+                version: 1,
+                json: json!({}),
+            };
+            let mut skill_facts = Vec::new();
+            for (i, value) in records.iter().enumerate() {
+                let record = RawRecord {
+                    ordinal: i as u64,
+                    byte_start: Some(i as u64),
+                    byte_end: Some(i as u64 + 1),
+                    native_rowid: None,
+                    payload: value.to_string().into_bytes(),
+                    file_mtime_ms: None,
+                };
+                if let DecodeOutcome::Emit(facts) =
+                    strategy.decode(&record, &mut state, "fixture").unwrap()
+                {
+                    skill_facts.extend(
+                        facts
+                            .into_iter()
+                            .filter(|f| f.event_type == "skill_invoked"),
+                    );
+                }
+                state.json = serde_json::from_str(&state.json.to_string()).unwrap();
+            }
+            assert_eq!(skill_facts.len(), 1);
+            let fact = &skill_facts[0];
+            assert_eq!(
+                fact.accuracy,
+                crate::local_store::pipeline::runner::TokenAccuracy::Correlated
+            );
+            assert!(!fact.payload_sections.to_string().contains(path));
+            assert!(fact
+                .payload_sections
+                .pointer("/activity/duration_ms")
+                .is_none());
+            let candidate = fact
+                .clone()
+                .into_event_candidate(
+                    "codex",
+                    vec![crate::local_store::pipeline::types::Consumer::Upload],
+                )
+                .unwrap();
+            assert!(candidate.payload_json.contains("correlated"));
+            identities.push(fact.event_id);
+        }
+        assert_eq!(identities[0], identities[1]);
+        assert_eq!(
+            names.lock().unwrap().as_slice(),
+            &[expected_public.to_string()]
+        );
+    }
+}
+
+#[test]
+fn grok_normalized_input_includes_cache_once() {
+ let strategy=JsonlHarnessStrategy::new(super::jsonl_harness::GROK,secret(),PathBuf::from("/tmp"),SkillBook::new(),Arc::new(|_,_|1));
+ let record=RawRecord{ordinal:0,byte_start:Some(0),byte_end:Some(200),native_rowid:None,file_mtime_ms:None,payload:json!({"name":"grok_code.token.usage","id":"request-a","timestamp":"2026-09-13T01:00:00Z","tokens":{"input_tokens":100,"output_tokens":10,"cache_read_tokens":90,"total_tokens":110}}).to_string().into_bytes()};
+ let mut state=DecoderState::default();
+ let DecodeOutcome::Emit(facts)=strategy.decode(&record,&mut state,"/tmp/updates.jsonl").unwrap() else {panic!("missing usage")};
+ let fact=facts.iter().find(|f|f.event_type=="model_usage_recorded").unwrap();
+ assert_eq!(fact.payload_sections["usage"]["input_context_tokens"],100);
+ assert_eq!(fact.payload_sections["usage"]["cache_read_tokens"],90);
+ assert_eq!(fact.payload_sections["usage"]["token_total"],110);
+ assert_eq!(fact.fact_revision,2);
+}
+
+#[test]
+fn codex_model_context_survives_checkpoint_for_pricing() {
+ let strategy=CodexStrategy::new(secret(),PathBuf::from("/tmp"),SkillBook::new(),Arc::new(|_,_|1));
+ let mut state=DecoderState::default();
+ let raw=|ordinal,payload:serde_json::Value|RawRecord{ordinal,byte_start:Some(ordinal*100),byte_end:Some((ordinal+1)*100),native_rowid:None,file_mtime_ms:None,payload:payload.to_string().into_bytes()};
+ strategy.decode(&raw(0,json!({"type":"turn_context","timestamp":"2026-09-13T01:00:00Z","payload":{"model":"gpt-5.5"}})),&mut state,"/tmp/session").unwrap();
+ let saved=serde_json::to_string(&state.json).unwrap();state.json=serde_json::from_str(&saved).unwrap();
+ let result=strategy.decode(&raw(1,json!({"type":"event_msg","timestamp":"2026-09-13T01:00:01Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110}}}})),&mut state,"/tmp/session").unwrap();
+ let DecodeOutcome::Emit(facts)=result else {panic!("expected usage")};
+ let f=facts.iter().find(|f|f.event_type=="model_usage_recorded").unwrap();
+ assert_eq!(f.model_identity,Some(("openai".into(),"gpt-5.5".into())));assert_eq!(f.fact_revision,2);
+}
+
+#[test]
+fn codex_real_shape_model_context_reaches_priced_store() {
+    use crate::local_store::pipeline::adapters::HarnessRegistry;
+    use crate::local_store::pipeline::runtime::{adapter_roots_for_fixture, PipelineRuntime};
+    use crate::local_store::pipeline::{Consumer, PipelineWriter};
+
+    // Writer sink uses wall-clock admission; keep fixture on "today" (Beijing).
+    let now = chrono::Utc::now().timestamp_millis();
+    let dir = tempfile::tempdir().unwrap();
+    let codex_dir = dir.path().join("codex");
+    std::fs::create_dir_all(&codex_dir).unwrap();
+    std::fs::write(
+        codex_dir.join("s.jsonl"),
+        format!(
+            "{}\n",
+            json!({
+                "type":"event_msg",
+                "timestamp": now,
+                "thread_id":"rt1",
+                "payload":{"type":"token_count","info":{
+                    "last_token_usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}
+                }}
+            }),
+        ),
+    )
+    .unwrap();
+
+    // Writer timestamps use the wall clock, so task claiming must use it too.
+    let file=codex_dir.join("s.jsonl");
+    let usage=std::fs::read_to_string(&file).unwrap();
+    std::fs::write(&file,format!("{}\n{}",json!({"type":"turn_context","timestamp":now,"payload":{"model":"gpt-5.5"}}),usage)).unwrap();
+    std::fs::write(dir.path().join("openrouter-prices.json"),r#"{"fetched_at":1789258883,"data":[{"id":"openai/gpt-5.5","pricing":{"prompt":"0.000005","completion":"0.00003"}}]}"#).unwrap();
+    let store = PipelineStore::open(dir.path()).unwrap();
+    let writer = Arc::new(PipelineWriter::start(store));
+    let roots = adapter_roots_for_fixture(secret(), dir.path());
+    let writer_skills = Arc::clone(&writer);
+    let book = SkillBook::new();
+    let book2 = book.clone();
+    let alloc = Arc::new(move |key, name: &str| {
+        if let Some(id) = book2.get(&key) {
+            return id;
+        }
+        let id = writer_skills.register_skill(key, Some(name)).unwrap_or(0);
+        book2.upsert(key, id);
+        id
+    });
+    let mut registry = HarnessRegistry::from_roots(roots, alloc);
+    let model_writer=Arc::clone(&writer);
+    registry.set_model_allocator(Arc::new(move |p,m|model_writer.upsert_model(p,m).map_err(|e|crate::local_store::pipeline::runner::RunnerError::Pipeline(e.to_string()))));
+    let strategy = registry.get("codex").expect("codex");
+    let specs = strategy.discover(DiscoveryBudget::new(8, 200)).unwrap();
+    assert!(!specs.is_empty());
+    let spec = &specs[0];
+    let source_id = writer
+        .register_source(crate::local_store::pipeline::types::RegisterSource {
+            harness_id: spec.harness_id.clone(),
+            source_key: spec.source_key,
+            source_kind: spec.source_kind,
+            locator_ref: spec.locator_ref.clone(),
+            stream_key: spec.stream_key.clone(),
+            cursor_kind: spec.cursor_kind,
+            cursor_json: spec.initial_cursor_json.to_string(),
+            decoder_state_version: 1,
+            decoder_state_json: spec.initial_decoder_state_json.to_string(),
+            observed_boundary_json: spec.observed_boundary_json.to_string(),
+            next_poll_at: Some(now),
+        })
+        .unwrap();
+
+    let runner = AcquisitionRunner::default();
+    let outcome = runner
+        .run_once(writer.as_ref(), strategy, source_id, DEFAULT_READ_BUDGET)
+        .unwrap();
+    assert!(
+        matches!(outcome, RunOutcome::Committed(ref s) if s.emitted >= 1),
+        "unexpected outcome: {outcome:?}"
+    );
+
+    for consumer in [Consumer::Hour, Consumer::Day, Consumer::Month] {
+        let drained = writer
+            .drain_metrics_consumer(consumer, 16, DEFAULT_LEASE_MS)
+            .unwrap();
+        assert!(drained.applied >= 1, "{consumer:?} should apply");
+    }
+    let pending = writer.pending_upload_count().unwrap();
+    assert!(pending >= 2, "upload lane should have pending work");
+    let _ = PipelineRuntime::start;
+    drop(writer);
+}
+
+#[test]
+fn codex_requests_in_same_turn_have_distinct_replay_stable_keys() {
+    let strategy=CodexStrategy::new(secret(),PathBuf::from("/tmp"),SkillBook::new(),Arc::new(|_,_|1));
+    let decode = || {
+        let mut state=DecoderState::default();
+        state.json=json!({"codex_model":"gpt-5.5", "active_turn_id":"one-turn"});
+        [100_u64,200].into_iter().map(|offset| {
+            let record=RawRecord {ordinal:offset,byte_start:Some(offset),byte_end:Some(offset+100),native_rowid:None,file_mtime_ms:None,
+                payload:json!({"type":"event_msg","timestamp":"2026-09-13T01:00:01Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":offset,"output_tokens":10,"total_tokens":offset+10}}}}).to_string().into_bytes()};
+            let DecodeOutcome::Emit(facts)=strategy.decode(&record,&mut state,"stable-session").unwrap() else {panic!("missing usage")};
+            facts.into_iter().find(|f|f.event_type=="model_usage_recorded").unwrap()
+        }).collect::<Vec<_>>()
+    };
+    let first=decode();let replay=decode();
+    assert_ne!(first[0].fact_key,first[1].fact_key);
+    for (a,b) in first.iter().zip(replay.iter()) {assert_eq!(a.fact_key,b.fact_key);assert_eq!(a.event_id,b.event_id);}
+}
+
+#[test]
+fn codex_multiple_user_messages_in_one_turn_do_not_collide() {
+    let strategy=CodexStrategy::new(secret(),PathBuf::from("/tmp"),SkillBook::new(),Arc::new(|_,_|1));
+    let mut state=DecoderState::default();
+    let mut keys=Vec::new();
+    for offset in [100_u64,200] {
+        let record=RawRecord {ordinal:offset,byte_start:Some(offset),byte_end:Some(offset+100),native_rowid:None,file_mtime_ms:None,
+            payload:json!({"type":"response_item","timestamp":"2026-09-13T01:00:01Z","session_id":"session","turn_id":"turn","payload":{"type":"message","role":"user"}}).to_string().into_bytes()};
+        let DecodeOutcome::Emit(facts)=strategy.decode(&record,&mut state,"stable-session").unwrap() else {panic!("missing activity")};
+        keys.push(facts[0].fact_key);
+    }
+    assert_ne!(keys[0],keys[1]);
+}
+
+#[test]
+fn codex_fork_skips_inherited_history_across_checkpoints() {
+    let strategy=CodexStrategy::new(secret(),PathBuf::from("/tmp"),SkillBook::new(),Arc::new(|_,_|1));
+    let mut state=DecoderState::default();
+    let raw=|offset,payload:serde_json::Value|RawRecord{ordinal:0,byte_start:Some(offset),byte_end:Some(offset+100),native_rowid:None,file_mtime_ms:None,payload:payload.to_string().into_bytes()};
+    strategy.decode(&raw(0,json!({"type":"session_meta","timestamp":"2026-09-13T01:00:00Z","payload":{"id":"child","subagent_history_start_ordinal":3}})),&mut state,"file").unwrap();
+    assert!(matches!(strategy.decode(&raw(100,json!({"type":"session_meta","timestamp":"2026-09-13T01:00:00Z","payload":{"id":"parent"}})),&mut state,"file").unwrap(),DecodeOutcome::ContextOnly));
+    state.json=serde_json::from_str(&serde_json::to_string(&state.json).unwrap()).unwrap();
+    let usage=json!({"type":"event_msg","timestamp":"2026-09-13T01:00:01Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}}}});
+    assert!(matches!(strategy.decode(&raw(200,usage.clone()),&mut state,"file").unwrap(),DecodeOutcome::ContextOnly));
+    assert!(matches!(strategy.decode(&raw(300,usage),&mut state,"file").unwrap(),DecodeOutcome::Emit(_)));
+    assert_eq!(state.json["codex_session_id"],"child");
+}
+
+#[test]
+fn codex_same_session_rollout_segments_do_not_collide() {
+    let strategy=CodexStrategy::new(secret(),PathBuf::from("/tmp"),SkillBook::new(),Arc::new(|_,_|1));
+    let decode=|path:&str| {
+        let mut state=DecoderState::default();state.json=json!({"codex_session_id":"same-session"});
+        let record=RawRecord{ordinal:0,byte_start:Some(100),byte_end:Some(200),native_rowid:None,file_mtime_ms:None,payload:json!({"type":"event_msg","timestamp":"2026-09-13T01:00:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"total_tokens":10}}}}).to_string().into_bytes()};
+        let DecodeOutcome::Emit(facts)=strategy.decode(&record,&mut state,path).unwrap() else {panic!("missing usage")};facts[0].fact_key
+    };
+    assert_ne!(decode("/sessions/rollout-a.jsonl"),decode("/sessions/rollout-b.jsonl"));
+    assert_eq!(decode("/sessions/rollout-a.jsonl"),decode("/archived_sessions/rollout-a.jsonl"));
+}
+
+#[test]
+fn workbuddy_provider_data_model_is_allocated_for_pricing() {
+    let mut strategy=JsonlHarnessStrategy::new(super::jsonl_harness::WORKBUDDY,secret(),PathBuf::from("/tmp"),SkillBook::new(),Arc::new(|_,_|1));
+    strategy.set_model_allocator(Arc::new(|_,model|{assert!(model=="hy3" || model=="deepseek-v4.1-flash");Ok(42)}));
+    for model in ["hy3","deepseek-v4.1-flash"] {
+        let r=RawRecord{ordinal:0,byte_start:Some(100),byte_end:Some(200),native_rowid:None,file_mtime_ms:None,payload:json!({"id":"request","timestamp":"2026-09-13T01:00:00Z","type":"message","role":"assistant","providerData":{"model":model},"message":{"usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110}}}).to_string().into_bytes()};
+        let DecodeOutcome::Emit(facts)=strategy.decode(&r,&mut DecoderState::default(),"session").unwrap() else {panic!("missing usage")};
+        let f=facts.iter().find(|f|f.event_type=="model_usage_recorded").unwrap();
+        assert_eq!(f.model_key,42);assert_eq!(f.model_identity,Some(("workbuddy".into(),model.into())));assert_eq!(f.fact_revision,2);
+    }
 }

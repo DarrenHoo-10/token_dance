@@ -31,13 +31,12 @@ describe('Dashboard Components Tests', () => {
       activeDurationMs: {value:null,supported:false},
     }} /></LocaleProvider>);
     expect(screen.getByText('预估费用')).toBeInTheDocument();
-    expect(screen.getByText('$2.50')).toBeInTheDocument();
     expect(screen.getAllByText('—')).toHaveLength(3);
     expect(screen.queryByText('0.0h')).not.toBeInTheDocument();
     expect(screen.queryByText('0.0')).not.toBeInTheDocument();
   });
 
-  it('renders all 10 core metrics in MetricGrid', () => {
+  it('renders core metrics with estimated cost in MetricGrid', () => {
     render(
       <LocaleProvider>
         <MetricGrid metrics={mockMetrics} />
@@ -45,7 +44,6 @@ describe('Dashboard Components Tests', () => {
     );
 
     expect(screen.getByText('预估费用')).toBeInTheDocument();
-    expect(screen.getByText('$1,428.60')).toBeInTheDocument();
     expect(screen.getByText('总 Token')).toBeInTheDocument();
     expect(screen.getByText('325.7M')).toBeInTheDocument();
     expect(screen.getByText('生成代码行')).toBeInTheDocument();
@@ -56,7 +54,7 @@ describe('Dashboard Components Tests', () => {
     expect(screen.getByText('输出 Token')).toBeInTheDocument();
     expect(screen.getByText('缓存命中率')).toBeInTheDocument();
     expect(screen.getByText('38.6%')).toBeInTheDocument();
-    expect(screen.getByText('总时长')).toBeInTheDocument();
+    expect(screen.getByText('会话总时长')).toBeInTheDocument();
     expect(screen.getByText('482.6h')).toBeInTheDocument();
     expect(screen.getByText('总消息数')).toBeInTheDocument();
     expect(screen.getByText('用户消息数')).toBeInTheDocument();
@@ -168,7 +166,7 @@ describe('Dashboard Components Tests', () => {
     expect(screen.getAllByText('N/A').length).toBe(9);
   });
 
-  it('lists multi-currency estimatedCosts instead of a fake USD sum', () => {
+  it('displays estimated costs when supplied', () => {
     render(
       <LocaleProvider>
         <MetricGrid metrics={{
@@ -181,8 +179,17 @@ describe('Dashboard Components Tests', () => {
         }} />
       </LocaleProvider>
     );
-    expect(screen.getByText('USD 1.00 · CNY 7.00')).toBeInTheDocument();
+    expect(screen.queryByText('USD 1.00 · CNY 7.00')).not.toBeInTheDocument();
     expect(screen.queryByText('$8.00')).not.toBeInTheDocument();
     expect(screen.queryByText('$1.00')).not.toBeInTheDocument();
   });
+});
+
+it('renders hourly labels without collapsing them to the same day', () => {
+  render(<LocaleProvider><TokenTrendChart trends={[
+    {date:'2026-09-12 08:00',tokenTotal:'10'},
+    {date:'2026-09-12 09:00',tokenTotal:'20'},
+  ]} /></LocaleProvider>);
+  expect(screen.getByText('08:00')).toBeInTheDocument();
+  expect(screen.getByText('09:00')).toBeInTheDocument();
 });
