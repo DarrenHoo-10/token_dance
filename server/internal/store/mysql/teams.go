@@ -18,6 +18,7 @@ import (
 	"tokendance/internal/crypto"
 	"tokendance/internal/domain"
 	"tokendance/internal/store"
+	"tokendance/internal/teammetrics"
 )
 
 type teamsStore struct {
@@ -531,7 +532,15 @@ func (s *teamsStore) occupyMembership(ctx context.Context, tx *sql.Tx, in occupy
 		}
 		return fmt.Errorf("insert current team: %w", err)
 	}
-	if err := s.insertEnabledGrants(ctx, tx, in.MembershipID, in.Sharing, in.JoinedAt); err != nil {
+	full := domain.SharingFlags{Base: true, Named: true, Classification: true, Cost: true}
+	if err := s.insertEnabledGrants(ctx, tx, in.MembershipID, full, in.JoinedAt); err != nil {
+		return err
+	}
+	nowMs := in.JoinedAt.UTC().UnixMilli()
+	if _, err := teammetrics.BindContributorTx(ctx, tx, in.TeamID, in.UserID, in.MembershipID, nowMs); err != nil {
+		return err
+	}
+	if err := teammetrics.RefreshCurrentTeamDaysTx(ctx, tx, in.UserID, nil, nowMs); err != nil {
 		return err
 	}
 	return s.registerOpenDeletionBarriers(ctx, tx, in.UserID, in.TeamID, in.JoinedAt)
@@ -761,19 +770,20 @@ func (s *teamsStore) replayTeamContext(ctx context.Context, tx *sql.Tx, actorUse
 }
 
 func (s *teamsStore) closeMembership(ctx context.Context, tx *sql.Tx, mem *domain.TeamMembership, reason domain.TeamMembershipEndReason, now time.Time) error {
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE team_memberships
-		SET ended_at = ?, end_reason = ?
-		WHERE membership_id = ? AND ended_at IS NULL`,
-		now, reason, mem.MembershipID,
-	); err != nil {
-		return fmt.Errorf("close membership: %w", err)
+	nowMs := now.UTC().UnixMilli()
+	if reason != domain.TeamEndReasonDissolved {
+		if err := teammetrics.UnbindContributorTx(ctx, tx, mem.TeamID, mem.UserID, nowMs); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM user_current_teams WHERE membership_id = ?`, mem.MembershipID); err != nil {
 		return fmt.Errorf("delete current team: %w", err)
 	}
 	if err := s.revokeAllActiveGrants(ctx, tx, mem.MembershipID, now); err != nil {
 		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM team_sharing_grants WHERE membership_id = ?`, mem.MembershipID); err != nil {
+		return fmt.Errorf("delete grants: %w", err)
 	}
 	if err := s.revokeInvitationsFromUser(ctx, tx, mem.TeamID, mem.UserID, now); err != nil {
 		return err
@@ -783,6 +793,9 @@ func (s *teamsStore) closeMembership(ctx context.Context, tx *sql.Tx, mem *domai
 	}
 	if err := s.revokePendingInvitesForUserEmail(ctx, tx, mem.TeamID, mem.UserID, now); err != nil {
 		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM team_memberships WHERE membership_id = ?`, mem.MembershipID); err != nil {
+		return fmt.Errorf("delete membership: %w", err)
 	}
 	ended := now
 	mem.EndedAt = &ended
@@ -2340,6 +2353,9 @@ func (s *teamsStore) DissolveTeamTx(ctx context.Context, in store.DissolveTeamTx
 			return err
 		}
 		rows.Close()
+		if err := teammetrics.DeleteTeamStaticTx(ctx, tx, in.TeamID); err != nil {
+			return err
+		}
 		for _, mem := range mems {
 			if err := s.closeMembership(ctx, tx, mem, domain.TeamEndReasonDissolved, now); err != nil {
 				return err
@@ -2422,4 +2438,70 @@ func derefTime(t *time.Time) time.Time {
 		return time.Time{}
 	}
 	return *t
+}
+
+func (s *teamsStore) ListStaticDayMetrics(ctx context.Context, teamID string, from, toExclusive time.Time) ([]domain.TeamAnalysisRow, []domain.TeamUsageContributor, error) {
+	days, err := teammetrics.ListDayMetrics(ctx, s.db, teamID, from, toExclusive)
+	if err != nil {
+		return nil, nil, err
+	}
+	contribs, err := teammetrics.ListContributors(ctx, s.db, teamID)
+	if err != nil {
+		return nil, nil, err
+	}
+	byKey := map[string]teammetrics.Contributor{}
+	outC := make([]domain.TeamUsageContributor, 0, len(contribs))
+	for _, c := range contribs {
+		byKey[c.ContributorKey] = c
+		outC = append(outC, domain.TeamUsageContributor{ContributorKey: c.ContributorKey, UserID: c.UserID, MembershipID: c.MembershipID})
+	}
+	rows := make([]domain.TeamAnalysisRow, 0, len(days))
+	for _, d := range days {
+		c := byKey[d.ContributorKey]
+		var mem *string
+		if c.MembershipID != nil {
+			mem = c.MembershipID
+		}
+		date := d.MetricDate
+		row := domain.TeamAnalysisRow{
+			MembershipID: mem, MetricDate: &date, AgentID: d.AgentID, ProviderID: d.ProviderID, ModelID: d.ModelID,
+			Currency: d.Currency, TokenExactTotal: d.TokenExact, TokenDerivedTotal: d.TokenDerived,
+			UsageEventCount: d.UsageEventCount, ReportedCostAmount: d.ReportedCost, EstimatedCostAmount: d.EstimatedCost,
+			MaxReceivedAt: d.MaxReceivedAt, RowKey: d.RowKey, ContributorKey: d.ContributorKey,
+			VisibilityMask: domain.TeamAnalysisAutoShareMask,
+		}
+		if d.MetricKind == teammetrics.KindUsage {
+			row.TokenSupportedEventCount = d.UsageEventCount
+		}
+		if d.MetricKind == teammetrics.KindActivity || d.MetricKind == teammetrics.KindSkill {
+			row.TokenExactTotal = "0"
+			row.TokenDerivedTotal = "0"
+		}
+		row.ResourcesJSON = d.Resources
+		row.ActivityJSON = d.Activity
+		row.SkillUseCount = d.SkillUseCount
+		row.SkillID = d.SkillID
+		row.SkillPublicName = d.PublicName
+		if row.SkillPublicName == "" {
+			row.SkillPublicName = teammetrics.DecodeSkillPublicName(d.SkillStats)
+		}
+		rows = append(rows, row)
+	}
+	return rows, outC, nil
+}
+
+func (s *teamsStore) EnsureStaticAnalysisHandle(ctx context.Context, teamID string, from, toExclusive time.Time, authRevision, sourceRevision uint64, asOf, now time.Time) (*domain.TeamAnalysisSnapshot, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	snap, err := teammetrics.EnsureHandleTx(ctx, tx, teamID, from, toExclusive, authRevision, sourceRevision, asOf, now)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return snap, nil
 }

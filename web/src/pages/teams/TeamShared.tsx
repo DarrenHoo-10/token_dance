@@ -1,15 +1,15 @@
-import React from 'react';
-import { ArrowRight, CalendarDays } from 'lucide-react';
+import React, { useEffect } from 'react';
+import { ArrowRight } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ApiError } from '@/api/client';
 import type { SharingFlags, Team, TeamRole } from '@/api/teams';
 import { Badge } from '@/components/common/Badge';
-import { Input } from '@/components/common/Input';
 import { Switch } from '@/components/common/Switch';
 import { useLocale } from '@/context/LocaleContext';
+import { TeamDateField } from './TeamDateField';
 import { getApiErrorMessage } from '@/i18n';
 import { avatarUrl } from '@/utils/avatar';
-import { TEAM_RANGE_MAX_DAYS, firstGrapheme, inclusiveDaySpan } from './teamUtils';
+import { TEAM_RANGE_MAX_DAYS, calendarDateInTimeZone, firstGrapheme, inclusiveDaySpan, rankPageCount, TEAM_RANK_PAGE_SIZE } from './teamUtils';
 import './teams.css';
 
 export function teamErrorMessage(t: (key: string, params?: Record<string, string | number>) => string, error: ApiError): string {
@@ -97,42 +97,61 @@ export const SharingControls: React.FC<{
   );
 };
 
+function shiftIsoDate(iso: string, days: number): string {
+  const [year, month, day] = iso.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
 export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) => {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const [params, setParams] = useSearchParams();
   const range = params.get('range') || 'today';
   const from = params.get('from') || '';
   const to = params.get('to') || '';
-  const hintId = React.useId();
   const spanError = range === 'custom' && from && to && inclusiveDaySpan(from, to) > TEAM_RANGE_MAX_DAYS;
-  const dateParts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
-  const today = ['year', 'month', 'day'].map((key) => dateParts.find((part) => part.type === key)?.value).join('-');
+  const today = calendarDateInTimeZone(new Date(), timezone);
+  const displayedFrom = range === 'custom' ? from : range === '7d' ? shiftIsoDate(today, -6) : range === '30d' ? shiftIsoDate(today, -29) : today;
+  const displayedTo = range === 'custom' ? (to || today) : today;
 
   const setRange = (next: string) => {
     const nextParams = new URLSearchParams(params);
     nextParams.set('range', next);
-    if (next !== 'custom') {
-      nextParams.delete('from');
-      nextParams.delete('to');
-    }
+    nextParams.delete('from');
+    nextParams.delete('to');
     setParams(nextParams, { replace: true });
   };
 
   const setDate = (key: 'from' | 'to', value: string) => {
     const nextParams = new URLSearchParams(params);
     nextParams.set('range', 'custom');
-    nextParams.set(key, value);
+    if (value) nextParams.set(key, value);
+    else nextParams.delete(key);
+    const nextFrom = key === 'from' ? value : (nextParams.get('from') || from);
+    let nextTo = key === 'to' ? value : (nextParams.get('to') || to);
+    if (nextFrom && !nextTo) {
+      nextTo = today;
+      nextParams.set('to', today);
+    }
+    if (nextFrom && nextTo && nextTo < nextFrom) {
+      nextParams.set('to', nextFrom);
+    }
     setParams(nextParams, { replace: true });
   };
 
+  useEffect(() => {
+    if (range !== 'custom' || !from || to) return;
+    const nextParams = new URLSearchParams(params);
+    nextParams.set('to', today);
+    setParams(nextParams, { replace: true });
+  }, [from, params, range, setParams, to, today]);
+
   return (
-    <div className={`team-date-toolbar${range === 'custom' ? ' is-custom' : ''}`}>
+    <div className="team-date-toolbar">
       <div className="segmented-control team-date-presets" role="tablist" aria-label={t('dashboard.timeRangeSelector')}>
         {[
           { key: 'today', label: t('common.today') },
           { key: '7d', label: t('common.days7') },
           { key: '30d', label: t('common.days30') },
-          { key: 'custom', label: t('common.custom') },
         ].map((item) => (
           <button
             key={item.key}
@@ -146,19 +165,33 @@ export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) =
           </button>
         ))}
       </div>
-      {range === 'custom' && (
-        <div className="team-date-custom">
-          <div className="team-date-fields">
-            <CalendarDays className="team-date-icon" size={18} aria-hidden="true" />
-            <Input type="date" label={t('teams.range.from')} max={today} value={from} aria-describedby={hintId} aria-invalid={Boolean(spanError)} onChange={(e) => setDate('from', e.target.value)} />
-            <ArrowRight className="team-date-arrow" size={16} aria-hidden="true" />
-            <Input type="date" label={t('teams.range.to')} min={from || undefined} max={today} value={to} aria-describedby={hintId} aria-invalid={Boolean(spanError)} onChange={(e) => setDate('to', e.target.value)} />
-          </div>
-          <p id={hintId} className={`team-date-hint${spanError ? ' is-error' : ''}`} role={spanError ? 'alert' : 'status'}>
-            {spanError ? t('teams.range.tooLong') : <>{(!from || !to) && <span>{t('teams.range.chooseDates')}<span aria-hidden="true"> · </span></span>}{t('teams.range.customHint')}</>}
-          </p>
+      <div className="team-date-custom">
+        <div className="team-date-fields">
+          <TeamDateField
+            value={displayedFrom}
+            onChange={(next) => setDate('from', next)}
+            label={t('teams.range.from')}
+            max={today}
+            locale={locale}
+            invalid={Boolean(spanError)}
+            align="start"
+          />
+          <ArrowRight className="team-date-arrow" size={16} aria-hidden="true" />
+          <TeamDateField
+            value={displayedTo}
+            onChange={(next) => setDate('to', next)}
+            label={t('teams.range.to')}
+            min={range === 'custom' && from ? from : undefined}
+            max={today}
+            locale={locale}
+            invalid={Boolean(spanError)}
+            align="end"
+          />
         </div>
-      )}
+        {spanError && (
+          <p className="team-date-hint is-error" role="alert">{t('teams.range.tooLong')}</p>
+        )}
+      </div>
     </div>
   );
 };
@@ -190,3 +223,28 @@ export const TeamGateLink: React.FC<{ to: string; children: React.ReactNode }> =
     {children}
   </Link>
 );
+
+export const TeamRankPager: React.FC<{
+  page: number;
+  total: number;
+  onPage: (next: number) => void;
+  label: string;
+}> = ({ page, total, onPage, label }) => {
+  const { t } = useLocale();
+  const pages = rankPageCount(total);
+  if (total <= TEAM_RANK_PAGE_SIZE) return null;
+  const safe = Math.min(Math.max(1, page), pages);
+  return (
+    <nav className="team-rank-pager" aria-label={label}>
+      <span>{t('teams.insights.pageStatus', { page: safe, pages })}</span>
+      <div>
+        <button type="button" className="btn btn-sm" disabled={safe <= 1} onClick={() => onPage(safe - 1)}>
+          {t('teams.insights.prevPage')}
+        </button>
+        <button type="button" className="btn btn-sm" disabled={safe >= pages} onClick={() => onPage(safe + 1)}>
+          {t('teams.insights.nextPage')}
+        </button>
+      </div>
+    </nav>
+  );
+};

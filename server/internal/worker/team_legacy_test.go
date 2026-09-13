@@ -111,7 +111,7 @@ func TestTeamLegacySummaryMySQL(t *testing.T) {
 	if err != nil || len(records) != 2 || records[0][len(records[0])-1] != "data_source" || records[1][len(records[1])-1] != "includes_legacy_daily_utc" {
 		t.Fatalf("export provenance missing: %s err=%v", data, err)
 	}
-	if _, err := st.DB().Exec(`UPDATE telemetry_events SET delete_at=? WHERE user_id=?`, now.UnixMilli(), user); err != nil {
+	if _, err := st.DB().Exec(`UPDATE telemetry_events SET delete_at=? WHERE installation_id IN (SELECT installation_id FROM installations WHERE user_id=?)`, now.UnixMilli(), user); err != nil {
 		t.Fatal(err)
 	}
 	check(read(day, day.AddDate(0, 0, 1), grants), "150", 0, true)

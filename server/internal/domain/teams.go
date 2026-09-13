@@ -6,7 +6,7 @@ import (
 )
 
 // TeamAnalysisRuleVersion invalidates snapshots and exports built under older disclosure rules.
-const TeamAnalysisRuleVersion = "5"
+const TeamAnalysisRuleVersion = "6"
 
 const (
 	TeamIDPrefix           = "tem_"
@@ -19,6 +19,7 @@ const (
 	AuditIDPrefix          = "tau_"
 	TeamObjectIDPrefix     = "tob_"
 	CommandReceiptIDPrefix = "tcr_"
+	ContributorIDPrefix    = "tco_"
 )
 
 const (
@@ -32,6 +33,8 @@ const (
 	InviteLinkMaxUsesMax = 100
 	TeamAnalysisMaxDays  = 90
 	JSONIDVersionString  = true
+	// TeamAnalysisAutoShareMask is named+classification+cost; in-team usage is auto-shared.
+	TeamAnalysisAutoShareMask uint32 = (1 << 0) | (1 << 1) | (1 << 2)
 )
 
 type TeamStatus string
@@ -93,10 +96,10 @@ const (
 type InviteLinkEffectiveState string
 
 const (
-	InviteLinkStateActive     InviteLinkEffectiveState = "active"
-	InviteLinkStateRevoked    InviteLinkEffectiveState = "revoked"
-	InviteLinkStateExpired    InviteLinkEffectiveState = "expired"
-	InviteLinkStateExhausted  InviteLinkEffectiveState = "exhausted"
+	InviteLinkStateActive    InviteLinkEffectiveState = "active"
+	InviteLinkStateRevoked   InviteLinkEffectiveState = "revoked"
+	InviteLinkStateExpired   InviteLinkEffectiveState = "expired"
+	InviteLinkStateExhausted InviteLinkEffectiveState = "exhausted"
 )
 
 type SnapshotStatus string
@@ -169,18 +172,18 @@ func (s SharingFlags) DimensionEnabled(dim SharingDimension) bool {
 }
 
 type Team struct {
-	TeamID          string     `json:"id"`
-	Name            string     `json:"name"`
-	Description     string     `json:"description"`
-	TimezoneName    string     `json:"timezone"`
-	OwnerUserID     string     `json:"-"`
-	Status          TeamStatus `json:"status"`
-	Visibility      string     `json:"visibility"`
-	ProfileVersion  uint64     `json:"profileVersion"`
-	AuthRevision    uint64     `json:"authRevision"`
-	AvatarObjectID  *string    `json:"avatarObjectId,omitempty"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	DissolvedAt     *time.Time `json:"dissolvedAt,omitempty"`
+	TeamID         string     `json:"id"`
+	Name           string     `json:"name"`
+	Description    string     `json:"description"`
+	TimezoneName   string     `json:"timezone"`
+	OwnerUserID    string     `json:"-"`
+	Status         TeamStatus `json:"status"`
+	Visibility     string     `json:"visibility"`
+	ProfileVersion uint64     `json:"profileVersion"`
+	AuthRevision   uint64     `json:"authRevision"`
+	AvatarObjectID *string    `json:"avatarObjectId,omitempty"`
+	CreatedAt      time.Time  `json:"createdAt"`
+	DissolvedAt    *time.Time `json:"dissolvedAt,omitempty"`
 }
 
 // FormatTeamCalendarDate returns the team-local calendar date for an instant.
@@ -234,21 +237,21 @@ type TeamSharingGrant struct {
 }
 
 type TeamInvitation struct {
-	InvitationID          string           `json:"id"`
-	TeamID                string           `json:"teamId"`
-	InviterUserID         string           `json:"inviterUserId"`
-	InvitedRole           TeamBaseRole     `json:"role"`
-	RecipientLookupHash   [32]byte         `json:"-"`
-	LookupKeyVersion      uint16           `json:"-"`
-	RecipientCiphertext   []byte           `json:"-"`
-	EncryptionKeyVersion  uint16           `json:"-"`
-	Status                InvitationStatus `json:"status"`
-	ActiveRecipientHash   *[32]byte        `json:"-"`
-	CreatedAt             time.Time        `json:"createdAt"`
-	ExpiresAt             time.Time        `json:"expiresAt"`
-	AcceptedByUserID      *string          `json:"acceptedByUserId,omitempty"`
-	AcceptedMembershipID  *string          `json:"acceptedMembershipId,omitempty"`
-	Version               uint64           `json:"version"`
+	InvitationID         string           `json:"id"`
+	TeamID               string           `json:"teamId"`
+	InviterUserID        string           `json:"inviterUserId"`
+	InvitedRole          TeamBaseRole     `json:"role"`
+	RecipientLookupHash  [32]byte         `json:"-"`
+	LookupKeyVersion     uint16           `json:"-"`
+	RecipientCiphertext  []byte           `json:"-"`
+	EncryptionKeyVersion uint16           `json:"-"`
+	Status               InvitationStatus `json:"status"`
+	ActiveRecipientHash  *[32]byte        `json:"-"`
+	CreatedAt            time.Time        `json:"createdAt"`
+	ExpiresAt            time.Time        `json:"expiresAt"`
+	AcceptedByUserID     *string          `json:"acceptedByUserId,omitempty"`
+	AcceptedMembershipID *string          `json:"acceptedMembershipId,omitempty"`
+	Version              uint64           `json:"version"`
 }
 
 type TeamInviteLink struct {
@@ -304,6 +307,12 @@ type TeamSourceRevision struct {
 	ChangedAt      time.Time `json:"changedAt"`
 }
 
+type TeamUsageContributor struct {
+	ContributorKey string  `json:"-"`
+	UserID         string  `json:"-"`
+	MembershipID   *string `json:"-"`
+}
+
 type TeamAnalysisSnapshot struct {
 	SnapshotID          string         `json:"id"`
 	TeamID              string         `json:"teamId"`
@@ -327,53 +336,59 @@ type TeamAnalysisSnapshot struct {
 }
 
 type TeamAnalysisRow struct {
-	LegacyAggregate            bool      `json:"legacyAggregate,omitempty"`
-	SnapshotID                 string    `json:"-"`
-	BuildGeneration            uint64    `json:"-"`
-	RowKey                     string    `json:"-"`
-	MembershipID               *string   `json:"membershipId,omitempty"`
-	MetricDate                 *string   `json:"metricDate,omitempty"`
-	VisibilityMask             uint32    `json:"-"`
-	AgentID                    *string   `json:"agentId,omitempty"`
-	ProviderID                 *string   `json:"providerId,omitempty"`
-	ModelID                    *string   `json:"modelId,omitempty"`
-	Currency                   *string   `json:"currency,omitempty"`
-	TokenExactTotal            string    `json:"tokenExactTotal"`
-	TokenDerivedTotal          string    `json:"tokenDerivedTotal"`
-	UsageEventCount            string    `json:"usageEventCount"`
-	TokenSupportedEventCount   string    `json:"tokenSupportedEventCount"`
-	ReportedCostAmount         string    `json:"reportedCostAmount"`
-	EstimatedCostAmount        string    `json:"estimatedCostAmount"`
-	ReportedCostEventCount     string    `json:"reportedCostEventCount"`
-	EstimatedCostEventCount    string    `json:"estimatedCostEventCount"`
-	ReportedCoveredUsageCount  string    `json:"reportedCoveredUsageCount"`
-	EstimatedCoveredUsageCount string    `json:"estimatedCoveredUsageCount"`
-	UnattributedCostCount      string    `json:"unattributedCostCount"`
+	LegacyAggregate            bool       `json:"legacyAggregate,omitempty"`
+	SnapshotID                 string     `json:"-"`
+	BuildGeneration            uint64     `json:"-"`
+	RowKey                     string     `json:"-"`
+	MembershipID               *string    `json:"membershipId,omitempty"`
+	MetricDate                 *string    `json:"metricDate,omitempty"`
+	VisibilityMask             uint32     `json:"-"`
+	AgentID                    *string    `json:"agentId,omitempty"`
+	ProviderID                 *string    `json:"providerId,omitempty"`
+	ModelID                    *string    `json:"modelId,omitempty"`
+	Currency                   *string    `json:"currency,omitempty"`
+	TokenExactTotal            string     `json:"tokenExactTotal"`
+	TokenDerivedTotal          string     `json:"tokenDerivedTotal"`
+	UsageEventCount            string     `json:"usageEventCount"`
+	TokenSupportedEventCount   string     `json:"tokenSupportedEventCount"`
+	ReportedCostAmount         string     `json:"reportedCostAmount"`
+	EstimatedCostAmount        string     `json:"estimatedCostAmount"`
+	ReportedCostEventCount     string     `json:"reportedCostEventCount"`
+	EstimatedCostEventCount    string     `json:"estimatedCostEventCount"`
+	ReportedCoveredUsageCount  string     `json:"reportedCoveredUsageCount"`
+	EstimatedCoveredUsageCount string     `json:"estimatedCoveredUsageCount"`
+	UnattributedCostCount      string     `json:"unattributedCostCount"`
 	MaxReceivedAt              *time.Time `json:"maxReceivedAt,omitempty"`
+	ResourcesJSON              []byte     `json:"-"`
+	ActivityJSON               []byte     `json:"-"`
+	SkillUseCount              string     `json:"-"`
+	SkillID                    *int64     `json:"-"`
+	SkillPublicName            string     `json:"-"`
+	ContributorKey             string     `json:"-"`
 }
 
 type TeamExportJob struct {
-	ExportID               string           `json:"id"`
-	TeamID                 string           `json:"teamId"`
-	RequesterUserID        string           `json:"requesterUserId"`
-	RequesterMembershipID  string           `json:"requesterMembershipId"`
-	SnapshotID             string           `json:"snapshotId"`
-	AuthRevision           uint64           `json:"authRevision"`
-	Kind                   TeamExportKind   `json:"kind"`
-	FilterJSON             string           `json:"-"`
-	FiltersHash            string           `json:"filtersHash"`
-	Status                 TeamExportStatus `json:"status"`
-	LeaseToken             *string          `json:"-"`
-	LeaseGeneration        uint64           `json:"-"`
-	LeaseExpiresAt         *time.Time       `json:"-"`
-	AttemptCount           uint16           `json:"-"`
-	NextAttemptAt          time.Time        `json:"-"`
-	ObjectKey              *string          `json:"-"`
-	FileSHA256             *[32]byte        `json:"-"`
-	FileSize               *uint64          `json:"fileSize,omitempty"`
-	CreatedAt              time.Time        `json:"createdAt"`
-	ExpiresAt              time.Time        `json:"expiresAt"`
-	ErrorCode              *string          `json:"errorCode,omitempty"`
+	ExportID              string           `json:"id"`
+	TeamID                string           `json:"teamId"`
+	RequesterUserID       string           `json:"requesterUserId"`
+	RequesterMembershipID string           `json:"requesterMembershipId"`
+	SnapshotID            string           `json:"snapshotId"`
+	AuthRevision          uint64           `json:"authRevision"`
+	Kind                  TeamExportKind   `json:"kind"`
+	FilterJSON            string           `json:"-"`
+	FiltersHash           string           `json:"filtersHash"`
+	Status                TeamExportStatus `json:"status"`
+	LeaseToken            *string          `json:"-"`
+	LeaseGeneration       uint64           `json:"-"`
+	LeaseExpiresAt        *time.Time       `json:"-"`
+	AttemptCount          uint16           `json:"-"`
+	NextAttemptAt         time.Time        `json:"-"`
+	ObjectKey             *string          `json:"-"`
+	FileSHA256            *[32]byte        `json:"-"`
+	FileSize              *uint64          `json:"fileSize,omitempty"`
+	CreatedAt             time.Time        `json:"createdAt"`
+	ExpiresAt             time.Time        `json:"expiresAt"`
+	ErrorCode             *string          `json:"errorCode,omitempty"`
 }
 
 type TeamAuditEvent struct {
@@ -388,17 +403,17 @@ type TeamAuditEvent struct {
 }
 
 type TeamUploadObject struct {
-	ObjectID     string     `json:"id"`
-	TeamID       string     `json:"teamId"`
-	UploaderID   string     `json:"uploaderUserId"`
-	ObjectKey    string     `json:"-"`
-	ContentType  string     `json:"contentType"`
-	ByteSize     uint64     `json:"byteSize"`
-	ImageWidth   uint32     `json:"imageWidth"`
-	ImageHeight  uint32     `json:"imageHeight"`
-	SHA256       [32]byte   `json:"-"`
-	Status       string     `json:"status"`
-	ExpiresAt    *time.Time `json:"expiresAt,omitempty"`
+	ObjectID    string     `json:"id"`
+	TeamID      string     `json:"teamId"`
+	UploaderID  string     `json:"uploaderUserId"`
+	ObjectKey   string     `json:"-"`
+	ContentType string     `json:"contentType"`
+	ByteSize    uint64     `json:"byteSize"`
+	ImageWidth  uint32     `json:"imageWidth"`
+	ImageHeight uint32     `json:"imageHeight"`
+	SHA256      [32]byte   `json:"-"`
+	Status      string     `json:"status"`
+	ExpiresAt   *time.Time `json:"expiresAt,omitempty"`
 }
 
 type TeamDeletionBarrier struct {
@@ -435,18 +450,18 @@ func PermissionsFor(role TeamPublicRole) TeamPermissions {
 }
 
 type TeamContext struct {
-	Team        Team             `json:"team"`
-	Membership  TeamMembership   `json:"membership"`
-	Role        TeamPublicRole   `json:"role"`
-	Permissions TeamPermissions  `json:"permissions"`
-	AlreadyMember bool           `json:"alreadyMember,omitempty"`
+	Team          Team            `json:"team"`
+	Membership    TeamMembership  `json:"membership"`
+	Role          TeamPublicRole  `json:"role"`
+	Permissions   TeamPermissions `json:"permissions"`
+	AlreadyMember bool            `json:"alreadyMember,omitempty"`
 }
 
 type TeamSharingState struct {
-	MembershipID    string        `json:"membershipId"`
-	SharingVersion  uint64        `json:"sharingVersion"`
-	Sharing         SharingFlags  `json:"sharing"`
-	EffectiveFrom   map[string]time.Time `json:"effectiveFrom,omitempty"`
+	MembershipID   string               `json:"membershipId"`
+	SharingVersion uint64               `json:"sharingVersion"`
+	Sharing        SharingFlags         `json:"sharing"`
+	EffectiveFrom  map[string]time.Time `json:"effectiveFrom,omitempty"`
 }
 
 type DecimalMetric struct {
@@ -460,27 +475,27 @@ type TeamCostAmount struct {
 }
 
 type TeamAnalysisResult struct {
-	State      string               `json:"state"`
-	Snapshot   *TeamAnalysisSnapshot `json:"snapshot,omitempty"`
-	Range      *TeamAnalysisRange   `json:"range,omitempty"`
-	Filters    TeamAnalysisFilters  `json:"filters,omitempty"`
-	Summary    *TeamAnalysisSummary `json:"summary,omitempty"`
-	Costs      *TeamAnalysisCosts   `json:"costs,omitempty"`
-	Trend      []TeamTrendPoint     `json:"trend,omitempty"`
-	Agents     *TeamPagedItems      `json:"agents,omitempty"`
-	Models     *TeamPagedItems      `json:"models,omitempty"`
-	Contributions *TeamPagedItems   `json:"contributions,omitempty"`
-	Quality    *TeamAnalysisQuality `json:"quality,omitempty"`
-	AuthRevision *string            `json:"authRevision,omitempty"`
-	RetryAfterMs *int               `json:"retryAfterMs,omitempty"`
-	MessageKey *string              `json:"messageKey,omitempty"`
+	State         string                `json:"state"`
+	Snapshot      *TeamAnalysisSnapshot `json:"snapshot,omitempty"`
+	Range         *TeamAnalysisRange    `json:"range,omitempty"`
+	Filters       TeamAnalysisFilters   `json:"filters,omitempty"`
+	Summary       *TeamAnalysisSummary  `json:"summary,omitempty"`
+	Costs         *TeamAnalysisCosts    `json:"costs,omitempty"`
+	Trend         []TeamTrendPoint      `json:"trend,omitempty"`
+	Agents        *TeamPagedItems       `json:"agents,omitempty"`
+	Models        *TeamPagedItems       `json:"models,omitempty"`
+	Contributions *TeamPagedItems       `json:"contributions,omitempty"`
+	Quality       *TeamAnalysisQuality  `json:"quality,omitempty"`
+	AuthRevision  *string               `json:"authRevision,omitempty"`
+	RetryAfterMs  *int                  `json:"retryAfterMs,omitempty"`
+	MessageKey    *string               `json:"messageKey,omitempty"`
 }
 
 type TeamAnalysisRange struct {
-	Timezone         string    `json:"timezone"`
-	From             time.Time `json:"from"`
-	ToExclusive      time.Time `json:"toExclusive"`
-	DataToExclusive  time.Time `json:"dataToExclusive"`
+	Timezone        string    `json:"timezone"`
+	From            time.Time `json:"from"`
+	ToExclusive     time.Time `json:"toExclusive"`
+	DataToExclusive time.Time `json:"dataToExclusive"`
 }
 
 type TeamAnalysisFilters struct {
@@ -490,19 +505,22 @@ type TeamAnalysisFilters struct {
 }
 
 type TeamAnalysisSummary struct {
-	Tokens                 DecimalMetric `json:"tokens"`
-	ActiveMembers          string        `json:"activeMembers"`
-	CurrentMembers         string        `json:"currentMembers"`
-	CurrentSharingMembers  string        `json:"currentSharingMembers"`
-	Comparison             *string       `json:"comparison"`
-	ComparisonReason       *string       `json:"comparisonReason,omitempty"`
+	Tokens                DecimalMetric            `json:"tokens"`
+	ActiveMembers         string                   `json:"activeMembers"`
+	CurrentMembers        string                   `json:"currentMembers"`
+	CurrentSharingMembers string                   `json:"currentSharingMembers"`
+	CurrentMemberTokens   string                   `json:"currentMemberTokens,omitempty"`
+	HistoricalTokens      string                   `json:"historicalTokens,omitempty"`
+	Comparison            *string                  `json:"comparison"`
+	ComparisonReason      *string                  `json:"comparisonReason,omitempty"`
+	Metrics               map[string]DecimalMetric `json:"metrics,omitempty"`
 }
 
 type TeamAnalysisCosts struct {
-	Reported           []TeamCostAmount `json:"reported"`
-	EstimatedUncovered []TeamCostAmount `json:"estimatedUncovered"`
-	Coverage           TeamCostCoverage `json:"coverage"`
-	UnattributedCostCount string        `json:"unattributedCostCount"`
+	Reported              []TeamCostAmount `json:"reported"`
+	EstimatedUncovered    []TeamCostAmount `json:"estimatedUncovered"`
+	Coverage              TeamCostCoverage `json:"coverage"`
+	UnattributedCostCount string           `json:"unattributedCostCount"`
 }
 
 type TeamCostCoverage struct {
@@ -516,14 +534,23 @@ type TeamTrendPoint struct {
 }
 
 type TeamPagedItems struct {
-	Items      []map[string]any `json:"items"`
-	NextCursor *string          `json:"nextCursor"`
+	Items      []map[string]any        `json:"items"`
+	NextCursor *string                 `json:"nextCursor"`
+	Historical *TeamHistoricalSubtotal `json:"historical,omitempty"`
+}
+
+type TeamHistoricalSubtotal struct {
+	Tokens string  `json:"tokens"`
+	Share  *string `json:"share,omitempty"`
 }
 
 type TeamAnalysisQuality struct {
-	HasLegacyAggregates bool `json:"hasLegacyAggregates,omitempty"`
-	UnsupportedEvents string `json:"unsupportedEvents"`
-	EstimatedEvents   string `json:"estimatedEvents"`
+	HasLegacyAggregates     bool   `json:"hasLegacyAggregates,omitempty"`
+	UnsupportedEvents       string `json:"unsupportedEvents"`
+	EstimatedEvents         string `json:"estimatedEvents"`
+	IncludesHistoricalUsers bool   `json:"includesHistoricalUsers,omitempty"`
+	HourCoverage            string `json:"hourCoverage,omitempty"`
+	UnbucketedTokenTotal    string `json:"unbucketedTokenTotal,omitempty"`
 }
 
 type TeamFeatureFlags struct {

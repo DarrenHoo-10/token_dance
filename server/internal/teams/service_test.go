@@ -136,6 +136,12 @@ func (stubTeamsStore) GetReadySnapshot(context.Context, string, string) (*domain
 func (stubTeamsStore) ListAnalysisRows(context.Context, string, uint64) ([]domain.TeamAnalysisRow, error) {
 	return nil, stubErr()
 }
+func (stubTeamsStore) ListStaticDayMetrics(context.Context, string, time.Time, time.Time) ([]domain.TeamAnalysisRow, []domain.TeamUsageContributor, error) {
+	return nil, nil, stubErr()
+}
+func (stubTeamsStore) EnsureStaticAnalysisHandle(context.Context, string, time.Time, time.Time, uint64, uint64, time.Time, time.Time) (*domain.TeamAnalysisSnapshot, error) {
+	return nil, stubErr()
+}
 func (stubTeamsStore) ClaimAnalysis(context.Context, string, time.Duration, time.Time) (*domain.TeamAnalysisSnapshot, error) {
 	return nil, stubErr()
 }
@@ -345,6 +351,7 @@ func TestAssembleAnalysisCollectionsMatchWeb(t *testing.T) {
 	row := domain.TeamAnalysisRow{
 		MembershipID: &mem, MetricDate: &date, AgentID: &agent, ProviderID: &provider, ModelID: &model,
 		TokenExactTotal: "123", TokenDerivedTotal: "0", UsageEventCount: "1",
+		ActivityJSON:   []byte(`{"schemaVersion":1,"generatedCodeLines":{"sum":"10"}}`),
 		VisibilityMask: VisibilityNamed | VisibilityClassification,
 	}
 	team := &domain.Team{TimezoneName: "Asia/Shanghai"}
@@ -357,11 +364,29 @@ func TestAssembleAnalysisCollectionsMatchWeb(t *testing.T) {
 	if len(dto.Agents.Items) != 1 || dto.Agents.Items[0]["id"] != "codex" || dto.Agents.Items[0]["label"] != "codex" {
 		t.Fatalf("agents %+v", dto.Agents.Items)
 	}
-	if dto.Models.Items[0]["id"] != "gpt-test" || dto.Models.Items[0]["label"] != "openai/gpt-test" {
+	if dto.Models.Items[0]["id"] != "openai/gpt-test" || dto.Models.Items[0]["label"] != "openai/gpt-test" {
 		t.Fatalf("models %+v", dto.Models.Items)
+	}
+	agentMembers, _ := dto.Agents.Items[0]["members"].([]map[string]any)
+	if dto.Agents.Items[0]["memberCount"] != "1" || len(agentMembers) != 1 || agentMembers[0]["displayName"] != "Ada" {
+		t.Fatalf("agent members %+v", dto.Agents.Items[0])
+	}
+	modelMembers, _ := dto.Models.Items[0]["members"].([]map[string]any)
+	if dto.Models.Items[0]["memberCount"] != "1" || len(modelMembers) != 1 || modelMembers[0]["displayName"] != "Ada" {
+		t.Fatalf("model members %+v", dto.Models.Items[0])
 	}
 	if dto.Contributions.Items[0]["displayName"] != "Ada" || dto.Contributions.Items[0]["rank"] != "1" || dto.Contributions.Items[0]["membershipId"] != mem {
 		t.Fatalf("contributions %+v", dto.Contributions.Items)
+	}
+	if dto.Contributions.Items[0]["generatedCodeLines"] != "10" || dto.Contributions.Items[0]["tokensPerCodeLine"] != "12" {
+		t.Fatalf("token efficiency %+v", dto.Contributions.Items[0])
+	}
+	if len(dto.EfficiencyTrend) == 0 || dto.EfficiencyTrend[0].Date != "2026-09-06" || dto.EfficiencyTrend[0].Tokens.Value != "12" {
+		t.Fatalf("efficiency trend %+v", dto.EfficiencyTrend)
+	}
+	memberEff, _ := dto.Contributions.Items[0]["efficiencyTrend"].([]domain.TeamTrendPoint)
+	if len(memberEff) == 0 || memberEff[0].Date != "2026-09-06" || memberEff[0].Tokens.Value != "12" || memberEff[0].Tokens.State != domain.MetricAvailable {
+		t.Fatalf("member efficiency trend %+v", dto.Contributions.Items[0]["efficiencyTrend"])
 	}
 	opts := setToOptions(map[string]struct{}{"codex": {}})
 	if len(opts) != 1 || opts[0]["id"] != "codex" || opts[0]["label"] != "codex" {

@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ApiError } from '@/api/client';
 import { teamsApi } from '@/api/teams';
-import { Badge } from '@/components/common/Badge';
 import { Button } from '@/components/common/Button';
 import { ErrorState } from '@/components/states/ErrorState';
 import { LoadingState } from '@/components/states/LoadingState';
@@ -10,7 +9,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { useTeam } from '@/context/TeamContext';
 import { InviteDialog } from './InviteDialog';
-import { RoleBadge, TeamAvatar, teamErrorMessage } from './TeamShared';
+import { TeamAvatar, teamErrorMessage } from './TeamShared';
 
 export const TeamLayout: React.FC = () => {
   const { teamId } = useParams<{ teamId: string }>();
@@ -58,7 +57,7 @@ export const TeamLayout: React.FC = () => {
   if (pageError) return <ErrorState error={pageError} description={teamErrorMessage(t, pageError)} onRetry={() => void refresh()} />;
   if (!scope || !teamId || scope.team.id !== teamId) return <LoadingState />;
 
-  const { team, membership, permissions } = scope;
+  const { team, permissions } = scope;
   const query = location.search;
 
   return (
@@ -70,26 +69,21 @@ export const TeamLayout: React.FC = () => {
             <span>{t('teams.label')}</span>
             <h1>{team.name}</h1>
             <p>{team.description || t('teams.overview.noDescription')}</p>
-            <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-              <Badge>{t('common.private')}</Badge>
-              <RoleBadge role={membership.role} />
-            </div>
           </div>
         </div>
-        <div>
+        <div className="team-heading-actions">
           {permissions.inviteMembers ? (
             <Button variant="primary" onClick={() => setInviteOpen(true)}>{t('teams.invite.action')}</Button>
           ) : (
-            <Button variant="outline" onClick={() => navigate(`/teams/${team.id}/settings`)}>{t('teams.settings.mySharing')}</Button>
+            <Button variant="outline" onClick={() => navigate(`/teams/${team.id}/settings`)}>{t('teams.nav.settings')}</Button>
           )}
         </div>
       </div>
 
       <nav className="team-tabs" aria-label={t('teams.nav.tabs')}>
-        <NavLink to={`/teams/${team.id}${query}`} end className={({ isActive }) => (isActive ? 'active' : '')}>{t('teams.nav.overview')}</NavLink>
+        <NavLink to={`/teams/${team.id}${query}`} end className={({ isActive }) => (isActive ? 'active' : '')}>{t('teams.nav.panel')}</NavLink>
         <NavLink to={`/teams/${team.id}/members${query}`} className={({ isActive }) => (isActive ? 'active' : '')}>{t('teams.nav.members')}</NavLink>
-        <NavLink to={`/teams/${team.id}/analytics${query}`} className={({ isActive }) => (isActive ? 'active' : '')}>{t('teams.nav.analytics')}</NavLink>
-        <NavLink to={`/teams/${team.id}/settings`} className={({ isActive }) => (isActive ? 'active' : '')}>{t('teams.nav.settings')}</NavLink>
+        <NavLink to={`/teams/${team.id}/settings${query}`} className={({ isActive }) => (isActive ? 'active' : '')}>{t('teams.nav.settings')}</NavLink>
       </nav>
 
       <Outlet context={{ openInvite: () => setInviteOpen(true) }} />

@@ -11,6 +11,7 @@ import (
 
 	"tokendance/internal/domain"
 	"tokendance/internal/store/sqlcgen"
+	"tokendance/internal/teammetrics"
 )
 
 type privacyStore struct {
@@ -517,48 +518,45 @@ func closeUserTeamOnAccountDeletion(ctx context.Context, tx *sql.Tx, userID stri
 	var teamID, membershipID string
 	err = tx.QueryRowContext(ctx, `
 		SELECT team_id, membership_id FROM user_current_teams WHERE user_id = ?`, userID).Scan(&teamID, &membershipID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("lookup current team for deletion: %w", err)
 	}
-	if err := tx.QueryRowContext(ctx, `
-		SELECT team_id FROM teams WHERE team_id = ? FOR UPDATE`, teamID).Scan(&teamID); err != nil {
-		return fmt.Errorf("lock current team for deletion: %w", err)
+	if err == nil {
+		if err := tx.QueryRowContext(ctx, `
+			SELECT team_id FROM teams WHERE team_id = ? FOR UPDATE`, teamID).Scan(&teamID); err != nil {
+			return fmt.Errorf("lock current team for deletion: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM team_sharing_grants WHERE membership_id = ?`, membershipID); err != nil {
+			return fmt.Errorf("delete grants on account deletion: %w", err)
+		}
+		nowMs := now.UTC().UnixMilli()
+		if err := teammetrics.UnbindContributorTx(ctx, tx, teamID, userID, nowMs); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM user_current_teams WHERE user_id = ?`, userID); err != nil {
+			return fmt.Errorf("clear current team on account deletion: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM team_memberships WHERE membership_id = ?`, membershipID); err != nil {
+			return fmt.Errorf("delete membership on account deletion: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE team_invitations
+			SET status = 'revoked', active_recipient_hash = NULL, version = version + 1
+			WHERE team_id = ? AND inviter_user_id = ? AND status = 'pending'`, teamID, userID); err != nil {
+			return fmt.Errorf("revoke invitations on account deletion: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE team_invite_links
+			SET status = 'revoked', revoked_at = ?, version = version + 1
+			WHERE team_id = ? AND creator_user_id = ? AND status = 'active'`, now, teamID, userID); err != nil {
+			return fmt.Errorf("revoke invite links on account deletion: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE teams SET auth_revision = auth_revision + 1 WHERE team_id = ?`, teamID); err != nil {
+			return fmt.Errorf("bump auth revision on account deletion: %w", err)
+		}
 	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE team_memberships
-		SET ended_at = ?, end_reason = 'account_deleted'
-		WHERE membership_id = ? AND ended_at IS NULL`, now, membershipID); err != nil {
-		return fmt.Errorf("close membership on account deletion: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM user_current_teams WHERE user_id = ?`, userID); err != nil {
-		return fmt.Errorf("clear current team on account deletion: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE team_sharing_grants
-		SET ends_at = ?, revoked_at = ?, active_dimension = NULL
-		WHERE membership_id = ? AND revoked_at IS NULL`, now, now, membershipID); err != nil {
-		return fmt.Errorf("revoke grants on account deletion: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE team_invitations
-		SET status = 'revoked', active_recipient_hash = NULL, version = version + 1
-		WHERE team_id = ? AND inviter_user_id = ? AND status = 'pending'`, teamID, userID); err != nil {
-		return fmt.Errorf("revoke invitations on account deletion: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE team_invite_links
-		SET status = 'revoked', revoked_at = ?, version = version + 1
-		WHERE team_id = ? AND creator_user_id = ? AND status = 'active'`, now, teamID, userID); err != nil {
-		return fmt.Errorf("revoke invite links on account deletion: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE teams SET auth_revision = auth_revision + 1 WHERE team_id = ?`, teamID); err != nil {
-		return fmt.Errorf("bump auth revision on account deletion: %w", err)
-	}
-	return nil
+	return teammetrics.DeleteUserStaticTx(ctx, tx, userID)
 }
 
 func revokeUserTeamAccessOnSuspend(ctx context.Context, tx *sql.Tx, userID string, now time.Time) error {

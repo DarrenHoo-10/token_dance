@@ -208,8 +208,11 @@ export interface AnalysisSummary {
   activeMembers: string;
   currentMembers: string;
   currentSharingMembers: string;
+  currentMemberTokens?: string;
+  historicalTokens?: string;
   comparison: { tokensDelta?: string; tokensDeltaPct?: string } | null;
   comparisonReason?: ComparisonReason | null;
+  metrics?: Record<string, MetricValue>;
 }
 
 export interface AnalysisCosts {
@@ -233,6 +236,8 @@ export interface AnalysisBucketItem {
   usageEvents?: string | null;
   costType?: 'reported' | 'estimated' | 'none';
   coverage?: string | null;
+  memberCount?: string;
+  members?: SkillMemberUse[];
 }
 
 export interface ContributionItem {
@@ -243,7 +248,28 @@ export interface ContributionItem {
   tokens: MetricValue;
   namedShare?: boolean;
   share?: string | null;
+  generatedCodeLines?: string;
+  tokensPerCodeLine?: string;
   trend?: AnalysisTrendPoint[];
+  efficiencyTrend?: AnalysisTrendPoint[];
+}
+
+export interface SkillMemberUse {
+  membershipId: string;
+  displayName: string;
+  handle?: string | null;
+  useCount: string;
+  share?: string | null;
+}
+
+export interface SkillItem {
+  id: string;
+  label: string;
+  agentId?: string;
+  useCount: string;
+  share?: string | null;
+  memberCount?: string;
+  members?: SkillMemberUse[];
 }
 
 export interface CursorPage<T> {
@@ -255,6 +281,7 @@ export interface AnalysisQuality {
   hasLegacyAggregates?: boolean;
   unsupportedEvents: string;
   estimatedEvents: string;
+  includesHistoricalUsers?: boolean;
 }
 
 export interface TeamAnalysisReady {
@@ -265,9 +292,11 @@ export interface TeamAnalysisReady {
   summary: AnalysisSummary;
   costs: AnalysisCosts;
   trend: AnalysisTrendPoint[];
+  efficiencyTrend?: AnalysisTrendPoint[];
   agents: CursorPage<AnalysisBucketItem>;
   models: CursorPage<AnalysisBucketItem>;
-  contributions: CursorPage<ContributionItem>;
+  contributions: CursorPage<ContributionItem> & { historical?: { tokens: string; share?: string | null } };
+  skills?: CursorPage<SkillItem> & { historical?: { tokens: string; share?: string | null } };
   quality: AnalysisQuality;
   filtersHash?: string;
 }

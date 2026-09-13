@@ -307,10 +307,6 @@ func (s *teamsStore) acceptInviteLinkTx(ctx context.Context, tx *sql.Tx, in stor
 	if err != nil {
 		return nil, err
 	}
-	history, err := s.lockLatestHistory(ctx, tx, team.TeamID, in.ActorUserID)
-	if err != nil {
-		return nil, err
-	}
 	join, err := s.lockLinkJoin(ctx, tx, in.LinkID, in.ActorUserID)
 	if err != nil {
 		return nil, err
@@ -346,9 +342,6 @@ func (s *teamsStore) acceptInviteLinkTx(ctx context.Context, tx *sql.Tx, in stor
 			Outcome: store.TeamsTxAlreadyMember,
 			Context: teamContextOf(*team, *mem, true),
 		}, nil
-	}
-	if history != nil && history.EndReason != nil && *history.EndReason == domain.TeamEndReasonRemoved {
-		return nil, errReinvitationRequired()
 	}
 	if link.Status != domain.InviteLinkActive {
 		return nil, errInviteLinkRevoked()

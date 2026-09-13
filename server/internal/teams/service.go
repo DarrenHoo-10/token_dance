@@ -28,23 +28,24 @@ import (
 	"tokendance/internal/domain"
 	"tokendance/internal/provider"
 	"tokendance/internal/store"
+	"tokendance/internal/teammetrics"
 )
 
 const (
-	teamJSONLimit          = 16 * 1024
-	teamAvatarMaxBytes     = 2 * 1024 * 1024
-	teamAvatarMaxEdge      = 4096
-	defaultPageLimit       = 20
-	maxPageLimit           = 100
-	invitationTTL          = 7 * 24 * time.Hour
-	inviteLinkDefaultDays  = 7
-	inviteLinkDefaultUses  = 50
-	analysisRetryAfterMS   = 500
-	avatarIntentTTL        = 10 * time.Minute
-	timeJSON               = "2006-01-02T15:04:05.000Z"
-	dateLayout             = "2006-01-02"
-	invitationTemplateKey  = "teams.invitation"
-	exportContentTypeCSV   = "text/csv; charset=utf-8"
+	teamJSONLimit         = 16 * 1024
+	teamAvatarMaxBytes    = 2 * 1024 * 1024
+	teamAvatarMaxEdge     = 4096
+	defaultPageLimit      = 20
+	maxPageLimit          = 100
+	invitationTTL         = 7 * 24 * time.Hour
+	inviteLinkDefaultDays = 7
+	inviteLinkDefaultUses = 50
+	analysisRetryAfterMS  = 500
+	avatarIntentTTL       = 10 * time.Minute
+	timeJSON              = "2006-01-02T15:04:05.000Z"
+	dateLayout            = "2006-01-02"
+	invitationTemplateKey = "teams.invitation"
+	exportContentTypeCSV  = "text/csv; charset=utf-8"
 )
 
 type Service struct {
@@ -246,10 +247,10 @@ type MembershipDTO struct {
 }
 
 type ContextDTO struct {
-	Team          TeamDTO                 `json:"team"`
-	Membership    MembershipDTO           `json:"membership"`
-	Permissions   domain.TeamPermissions  `json:"permissions"`
-	AlreadyMember bool                    `json:"alreadyMember,omitempty"`
+	Team          TeamDTO                `json:"team"`
+	Membership    MembershipDTO          `json:"membership"`
+	Permissions   domain.TeamPermissions `json:"permissions"`
+	AlreadyMember bool                   `json:"alreadyMember,omitempty"`
 }
 
 type SharingDTO struct {
@@ -278,14 +279,14 @@ type InvitationDTO struct {
 }
 
 type InboxInvitationDTO struct {
-	ID                 string             `json:"id"`
-	Team               InvitationTeamDTO  `json:"team"`
-	InviterDisplayName string             `json:"inviterDisplayName"`
-	InvitedRole        string             `json:"invitedRole"`
-	CreatedAt          string             `json:"createdAt"`
-	ExpiresAt          string             `json:"expiresAt"`
-	Version            string             `json:"version"`
-	Status             string             `json:"status"`
+	ID                 string            `json:"id"`
+	Team               InvitationTeamDTO `json:"team"`
+	InviterDisplayName string            `json:"inviterDisplayName"`
+	InvitedRole        string            `json:"invitedRole"`
+	CreatedAt          string            `json:"createdAt"`
+	ExpiresAt          string            `json:"expiresAt"`
+	Version            string            `json:"version"`
+	Status             string            `json:"status"`
 }
 
 type InvitationPreviewDTO struct {
@@ -313,15 +314,15 @@ type InviteLinkDTO struct {
 }
 
 type InviteLinkPreviewDTO struct {
-	TeamName              string `json:"teamName"`
-	InviterDisplayName    string `json:"inviterDisplayName"`
-	Role                  string `json:"role"`
-	ExpiresAt             string `json:"expiresAt"`
-	LinkVersion           string `json:"linkVersion"`
-	EffectiveState        string `json:"effectiveState"`
-	AlreadyMember         bool   `json:"alreadyMember"`
-	ReinvitationRequired  bool   `json:"reinvitationRequired"`
-	CanJoin               bool   `json:"canJoin"`
+	TeamName             string `json:"teamName"`
+	InviterDisplayName   string `json:"inviterDisplayName"`
+	Role                 string `json:"role"`
+	ExpiresAt            string `json:"expiresAt"`
+	LinkVersion          string `json:"linkVersion"`
+	EffectiveState       string `json:"effectiveState"`
+	AlreadyMember        bool   `json:"alreadyMember"`
+	ReinvitationRequired bool   `json:"reinvitationRequired"`
+	CanJoin              bool   `json:"canJoin"`
 }
 
 type MemberDTO struct {
@@ -374,21 +375,24 @@ type FilterOptionsDTO struct {
 }
 
 type AnalysisDTO struct {
-	State        string                     `json:"state"`
-	Snapshot     *snapshotDTO               `json:"snapshot,omitempty"`
-	Range        *domain.TeamAnalysisRange  `json:"range,omitempty"`
-	Filters      domain.TeamAnalysisFilters `json:"filters,omitempty"`
-	Summary      *domain.TeamAnalysisSummary `json:"summary,omitempty"`
-	Costs        *domain.TeamAnalysisCosts  `json:"costs,omitempty"`
-	Trend        []domain.TeamTrendPoint    `json:"trend"`
-	Agents       *domain.TeamPagedItems     `json:"agents,omitempty"`
-	Models       *domain.TeamPagedItems     `json:"models,omitempty"`
-	Contributions *domain.TeamPagedItems    `json:"contributions,omitempty"`
-	Quality      *domain.TeamAnalysisQuality `json:"quality,omitempty"`
-	FiltersHash  string                     `json:"filtersHash,omitempty"`
-	AuthRevision *string                    `json:"authRevision,omitempty"`
-	RetryAfterMs *int                       `json:"retryAfterMs,omitempty"`
-	MessageKey   *string                    `json:"messageKey,omitempty"`
+	State           string                      `json:"state"`
+	SchemaVersion   int                         `json:"schemaVersion,omitempty"`
+	Snapshot        *snapshotDTO                `json:"snapshot,omitempty"`
+	Range           *domain.TeamAnalysisRange   `json:"range,omitempty"`
+	Filters         domain.TeamAnalysisFilters  `json:"filters,omitempty"`
+	Summary         *domain.TeamAnalysisSummary `json:"summary,omitempty"`
+	Costs           *domain.TeamAnalysisCosts   `json:"costs,omitempty"`
+	Trend           []domain.TeamTrendPoint     `json:"trend"`
+	EfficiencyTrend []domain.TeamTrendPoint     `json:"efficiencyTrend,omitempty"`
+	Agents          *domain.TeamPagedItems      `json:"agents,omitempty"`
+	Models          *domain.TeamPagedItems      `json:"models,omitempty"`
+	Contributions   *domain.TeamPagedItems      `json:"contributions,omitempty"`
+	Skills          *domain.TeamPagedItems      `json:"skills,omitempty"`
+	Quality         *domain.TeamAnalysisQuality `json:"quality,omitempty"`
+	FiltersHash     string                      `json:"filtersHash,omitempty"`
+	AuthRevision    *string                     `json:"authRevision,omitempty"`
+	RetryAfterMs    *int                        `json:"retryAfterMs,omitempty"`
+	MessageKey      *string                     `json:"messageKey,omitempty"`
 }
 
 type snapshotDTO struct {
@@ -595,8 +599,8 @@ func (s *Service) ListMembers(ctx context.Context, userID, teamID string, q Memb
 		}
 		item := MemberDTO{
 			MembershipID: m.MembershipID, UserID: m.UserID, DisplayName: u.DisplayName, Handle: u.Handle,
-			Role: string(team.PublicRoleFor(m.UserID, m.BaseRole)),
-			JoinedAt: formatTime(m.JoinedAt), Sharing: sharing, CanOpenDetail: sharing.Base,
+			Role:     string(team.PublicRoleFor(m.UserID, m.BaseRole)),
+			JoinedAt: formatTime(m.JoinedAt), Sharing: sharing, CanOpenDetail: true,
 		}
 		if received, ok := receivedByMem[m.MembershipID]; ok {
 			formatted := formatTime(received)
@@ -635,9 +639,6 @@ func (s *Service) GetMember(ctx context.Context, userID, teamID, membershipID, s
 	sharing := domain.SharingFlags{}
 	if st, err := s.teams.GetMySharing(ctx, teamID, target.UserID); err == nil && st != nil {
 		sharing = st.Sharing
-	}
-	if !sharing.Base {
-		return nil, errPermissionDenied()
 	}
 	snap, err := s.teams.GetReadySnapshot(ctx, teamID, snapshotID)
 	if err != nil || snap == nil {
@@ -782,7 +783,7 @@ func (s *Service) CreateInvitation(ctx context.Context, user *domain.User, teamI
 	outbox := domain.EmailOutbox{
 		EmailID: emailID, TeamInvitationID: &invitationID, TeamInvitationVersion: &invVer,
 		IdempotencyKey: crypto.SHA256([]byte("teams.invitation:" + invitationID)),
-		TemplateKey: invitationTemplateKey, Locale: localeOrDefault(user.Locale),
+		TemplateKey:    invitationTemplateKey, Locale: localeOrDefault(user.Locale),
 		RecipientCiphertext: recipientCT, PayloadCiphertext: payloadCT,
 		EncryptionKeyVersion: cipher.KeyVersion(), DeliveryStatus: "pending",
 		NextAttemptAt: now, ExpiresAt: inv.ExpiresAt, CreatedAt: now, UpdatedAt: now,
@@ -896,7 +897,7 @@ func (s *Service) ResendInvitation(ctx context.Context, user *domain.User, teamI
 	outbox := domain.EmailOutbox{
 		EmailID: emailID, TeamInvitationID: &newID, TeamInvitationVersion: &invVer,
 		IdempotencyKey: crypto.SHA256([]byte("teams.invitation.resend:" + newID)),
-		TemplateKey: invitationTemplateKey, Locale: localeOrDefault(user.Locale),
+		TemplateKey:    invitationTemplateKey, Locale: localeOrDefault(user.Locale),
 		RecipientCiphertext: recipientCT, PayloadCiphertext: payloadCT,
 		EncryptionKeyVersion: cipher.KeyVersion(), DeliveryStatus: "pending",
 		NextAttemptAt: now, ExpiresAt: inv.ExpiresAt, CreatedAt: now, UpdatedAt: now,
@@ -948,10 +949,10 @@ func (s *Service) PreviewInvitation(ctx context.Context, user *domain.User, invi
 		inviterName = u.DisplayName
 	}
 	return &InvitationPreviewDTO{
-		ID: inv.InvitationID,
-		Team: InvitationTeamDTO{ID: team.TeamID, Name: team.Name, Description: team.Description},
+		ID:                 inv.InvitationID,
+		Team:               InvitationTeamDTO{ID: team.TeamID, Name: team.Name, Description: team.Description},
 		InviterDisplayName: inviterName,
-		InvitedRole: string(inv.InvitedRole), Status: string(status), Version: formatUint(inv.Version),
+		InvitedRole:        string(inv.InvitedRole), Status: string(status), Version: formatUint(inv.Version),
 		CreatedAt: formatTime(inv.CreatedAt), ExpiresAt: formatTime(inv.ExpiresAt),
 		CanAccept: status == domain.InvitationPending,
 	}, nil
@@ -1047,7 +1048,7 @@ func (s *Service) CreateInviteLink(ctx context.Context, userID, teamID string, i
 		LinkID: linkID, TeamID: teamID, CreatorUserID: userID,
 		TokenHash: HashInviteToken(raw), TokenCiphertext: ct,
 		EncryptionKeyVersion: s.auth.Cipher().KeyVersion(),
-		Status: domain.InviteLinkActive, Version: 1,
+		Status:               domain.InviteLinkActive, Version: 1,
 		MaxUses: uint32(uses), UsedCount: 0, CreatedAt: now,
 		ExpiresAt: now.Add(time.Duration(days) * 24 * time.Hour),
 	}
@@ -1164,7 +1165,7 @@ func (s *Service) RegenerateInviteLink(ctx context.Context, userID, teamID, link
 		LinkID: newID, TeamID: teamID, CreatorUserID: userID,
 		TokenHash: HashInviteToken(raw), TokenCiphertext: ct,
 		EncryptionKeyVersion: s.auth.Cipher().KeyVersion(),
-		Status: domain.InviteLinkActive, Version: 1,
+		Status:               domain.InviteLinkActive, Version: 1,
 		MaxUses: uint32(uses), CreatedAt: now,
 		ExpiresAt: now.Add(time.Duration(days) * 24 * time.Hour),
 	}
@@ -1317,6 +1318,9 @@ func (s *Service) GetAnalysis(ctx context.Context, userID, teamID string, q Anal
 	if err != nil {
 		return nil, 0, mapStoreError(err, "TEAM_NOT_FOUND")
 	}
+	if blocked {
+		return updatingDTO(team.AuthRevision), analysisRetryAfterMS, nil
+	}
 	var snap *domain.TeamAnalysisSnapshot
 	if q.SnapshotID != "" {
 		snap, err = s.teams.GetReadySnapshot(ctx, teamID, q.SnapshotID)
@@ -1330,32 +1334,20 @@ func (s *Service) GetAnalysis(ctx context.Context, userID, teamID string, q Anal
 			return nil, 0, domain.NewAppError(409, "TEAM_SNAPSHOT_OBSOLETE", "teams.snapshotObsolete", "analysis snapshot is obsolete", nil, domain.ErrConflict)
 		}
 	} else {
-		var queued bool
-		snap, queued, err = s.teams.GetOrQueueAnalysis(ctx, teamID, from, toEx, team.AuthRevision, AnalysisRuleVersion, now)
+		snap, err = s.teams.EnsureStaticAnalysisHandle(ctx, teamID, from, toEx, team.AuthRevision, 0, now, now)
 		if err != nil {
 			return nil, 0, mapStoreError(err, "TEAM_NOT_FOUND")
 		}
-		if queued || snap == nil || snap.Status != domain.SnapshotReady || blocked {
-			return updatingDTO(team.AuthRevision), analysisRetryAfterMS, nil
-		}
 	}
-	if snap.Status != domain.SnapshotReady || blocked {
-		return updatingDTO(team.AuthRevision), analysisRetryAfterMS, nil
-	}
-	rows, err := s.teams.ListAnalysisRows(ctx, snap.SnapshotID, snap.PublishedGeneration)
+	rows, _, err := s.teams.ListStaticDayMetrics(ctx, teamID, from, toEx)
 	if err != nil {
-		return nil, 0, mapStoreError(err, "RESOURCE_NOT_FOUND")
+		return nil, 0, mapStoreError(err, "TEAM_NOT_FOUND")
 	}
 	members, users, _, err := s.teams.ListMembers(ctx, teamID, "", "", 100)
 	if err != nil {
 		return nil, 0, mapStoreError(err, "TEAM_NOT_FOUND")
 	}
-	sharingCount := 0
-	for _, m := range members {
-		if st, e := s.teams.GetMySharing(ctx, teamID, m.UserID); e == nil && st != nil && st.Sharing.Base {
-			sharingCount++
-		}
-	}
+	sharingCount := len(members)
 	filters := domain.TeamAnalysisFilters{}
 	if q.Agent != "" && q.Agent != "all" {
 		filters.Agent = &q.Agent
@@ -1367,6 +1359,37 @@ func (s *Service) GetAnalysis(ctx context.Context, userID, teamID string, q Anal
 		filters.Model = &q.Model
 	}
 	dto := assembleAnalysis(team, snap, rows, members, users, sharingCount, from, toEx, filters, q)
+	dto.SchemaVersion = 2
+	hist := "0"
+	named := "0"
+	occ := map[string]struct{}{}
+	for _, m := range members {
+		occ[m.MembershipID] = struct{}{}
+	}
+	for _, row := range rows {
+		tok := AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal))
+		if row.MembershipID != nil {
+			if _, ok := occ[*row.MembershipID]; ok {
+				named = AddIntDecimal(named, tok)
+				continue
+			}
+		}
+		hist = AddIntDecimal(hist, tok)
+	}
+	if dto.Summary != nil {
+		dto.Summary.CurrentSharingMembers = dto.Summary.CurrentMembers
+		dto.Summary.CurrentMemberTokens = named
+		dto.Summary.HistoricalTokens = hist
+		dto.Summary.Metrics = staticTenMetrics(rows, dto.Summary.Tokens)
+	}
+	if dto.Contributions != nil && hist != "0" {
+		share := tokenShare(hist, dto.Summary.Tokens.Value)
+		dto.Contributions.Historical = &domain.TeamHistoricalSubtotal{Tokens: hist, Share: share}
+	}
+	if dto.Quality != nil {
+		dto.Quality.IncludesHistoricalUsers = hist != "0"
+	}
+	dto.Skills = assembleStaticSkills(rows, members, users, q)
 	return dto, 0, nil
 }
 
@@ -1387,11 +1410,7 @@ func (s *Service) GetFilterOptions(ctx context.Context, userID, teamID, snapshot
 	}
 	agents, providers, models := map[string]struct{}{}, map[string]struct{}{}, map[string]struct{}{}
 	for _, row := range rows {
-		if row.VisibilityMask&VisibilityClassification == 0 {
-			agents[BucketUnsharedClassification] = struct{}{}
-			continue
-		}
-		if row.AgentID != nil && *row.AgentID != "" {
+		if row.AgentID != nil && *row.AgentID != "" && *row.AgentID != BucketUnsharedClassification {
 			agents[*row.AgentID] = struct{}{}
 		}
 		if row.ProviderID != nil && *row.ProviderID != "" {
@@ -1686,7 +1705,7 @@ func (s *Service) CreateAvatarIntent(ctx context.Context, userID, teamID string,
 	expires := now.Add(avatarIntentTTL)
 	obj := domain.TeamUploadObject{
 		ObjectID: objectID, TeamID: teamID, UploaderID: userID,
-		ObjectKey: fmt.Sprintf("teams/%s/avatars/%s", teamID, objectID),
+		ObjectKey:   fmt.Sprintf("teams/%s/avatars/%s", teamID, objectID),
 		ContentType: ct, ByteSize: in.ByteSize, SHA256: digest, Status: "pending", ExpiresAt: &expires,
 	}
 	created, err := s.teams.CreateTeamAvatarUploadIntent(ctx, obj)
@@ -1849,7 +1868,7 @@ func (s *Service) rowsForSnapshot(ctx context.Context, team *domain.Team, snapsh
 	if snap.AuthRevision != team.AuthRevision {
 		return nil, domain.NewAppError(409, "TEAM_SNAPSHOT_OBSOLETE", "teams.snapshotObsolete", "analysis snapshot is obsolete", nil, domain.ErrConflict)
 	}
-	rows, err := s.teams.ListAnalysisRows(ctx, snap.SnapshotID, snap.PublishedGeneration)
+	rows, _, err := s.teams.ListStaticDayMetrics(ctx, team.TeamID, snap.FromDate, snap.ToDateExclusive)
 	if err != nil {
 		return nil, mapStoreError(err, "RESOURCE_NOT_FOUND")
 	}
@@ -2015,6 +2034,21 @@ func localMidnight(t time.Time) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
 }
 
+func dailyEfficiencyPoints(from, end time.Time, tokens, code map[string]string) []domain.TeamTrendPoint {
+	out := make([]domain.TeamTrendPoint, 0)
+	for d := localMidnight(from); d.Before(end) && len(out) < domain.TeamAnalysisMaxDays; d = d.AddDate(0, 0, 1) {
+		day := d.Format(dateLayout)
+		point := domain.TeamTrendPoint{Date: day, Tokens: domain.DecimalMetric{State: domain.MetricEmpty}}
+		if den, ok := new(big.Int).SetString(emptyZero(code[day]), 10); ok && den.Sign() > 0 {
+			if num, ok := new(big.Int).SetString(emptyZero(tokens[day]), 10); ok {
+				point.Tokens = domain.DecimalMetric{Value: new(big.Int).Quo(num, den).String(), State: domain.MetricAvailable}
+			}
+		}
+		out = append(out, point)
+	}
+	return out
+}
+
 func parseLocalDate(value string, loc *time.Location) (time.Time, error) {
 	return time.ParseInLocation(dateLayout, strings.TrimSpace(value), loc)
 }
@@ -2026,10 +2060,15 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 	hasLegacy := false
 	active := map[string]struct{}{}
 	byDate := map[string]string{}
+	byDateCode := map[string]string{}
 	agentTok := map[string]string{}
 	modelTok := map[string]string{}
+	agentMem := map[string]map[string]string{}
+	modelMem := map[string]map[string]string{}
 	contribTok := map[string]string{}
+	memberCode := map[string]string{}
 	memberDays := map[string]map[string]string{}
+	memberCodeDays := map[string]map[string]string{}
 	reported := map[string]*bigRatAcc{}
 	estimatedCost := map[string]*bigRatAcc{}
 	unattributed := "0"
@@ -2043,26 +2082,52 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 		}
 		if row.MetricDate != nil && *row.MetricDate != "" {
 			byDate[*row.MetricDate] = AddIntDecimal(byDate[*row.MetricDate], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
+			if lines := generatedCodeLineSum(row.ActivityJSON); lines != "0" {
+				byDateCode[*row.MetricDate] = AddIntDecimal(byDateCode[*row.MetricDate], lines)
+			}
 		}
+		tokens := AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal))
 		if row.AgentID != nil {
-			agentTok[*row.AgentID] = AddIntDecimal(agentTok[*row.AgentID], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
+			agentTok[*row.AgentID] = AddIntDecimal(agentTok[*row.AgentID], tokens)
+			if row.MembershipID != nil && tokens != "0" {
+				if agentMem[*row.AgentID] == nil {
+					agentMem[*row.AgentID] = map[string]string{}
+				}
+				agentMem[*row.AgentID][*row.MembershipID] = AddIntDecimal(agentMem[*row.AgentID][*row.MembershipID], tokens)
+			}
 		}
-		if row.ModelID != nil {
+		if row.ModelID != nil && strings.TrimSpace(*row.ModelID) != "" {
 			key := ""
 			if row.ProviderID != nil {
 				key = *row.ProviderID + "/"
 			}
 			key += *row.ModelID
-			modelTok[key] = AddIntDecimal(modelTok[key], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
+			modelTok[key] = AddIntDecimal(modelTok[key], tokens)
+			if row.MembershipID != nil && tokens != "0" {
+				if modelMem[key] == nil {
+					modelMem[key] = map[string]string{}
+				}
+				modelMem[key][*row.MembershipID] = AddIntDecimal(modelMem[key][*row.MembershipID], tokens)
+			}
 		}
 		if row.MembershipID != nil {
 			contribTok[*row.MembershipID] = AddIntDecimal(contribTok[*row.MembershipID], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
+			lines := generatedCodeLineSum(row.ActivityJSON)
+			if lines != "0" {
+				memberCode[*row.MembershipID] = AddIntDecimal(memberCode[*row.MembershipID], lines)
+			}
 			if row.MetricDate != nil && *row.MetricDate != "" {
 				if memberDays[*row.MembershipID] == nil {
 					memberDays[*row.MembershipID] = map[string]string{}
 				}
 				day := *row.MetricDate
 				memberDays[*row.MembershipID][day] = AddIntDecimal(memberDays[*row.MembershipID][day], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
+				if lines != "0" {
+					if memberCodeDays[*row.MembershipID] == nil {
+						memberCodeDays[*row.MembershipID] = map[string]string{}
+					}
+					memberCodeDays[*row.MembershipID][day] = AddIntDecimal(memberCodeDays[*row.MembershipID][day], lines)
+				}
 			}
 		}
 		if row.Currency != nil && row.ReportedCostAmount != "" && row.ReportedCostAmount != "0" {
@@ -2100,6 +2165,8 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 	limit := clampLimit(q.Limit)
 	agents := pageBuckets(sortKV(agentTok), "agent", q.Collection == "agents", q.Cursor, limit, tokenTotal)
 	models := pageBuckets(sortKV(modelTok), "model", q.Collection == "models", q.Cursor, limit, tokenTotal)
+	attachBucketMembers(agents, "agent", agentMem, members, users)
+	attachBucketMembers(models, "model", modelMem, members, users)
 	contribs := pageContributions(sortKV(contribTok), members, users, q.Collection == "contributions", q.Cursor, limit)
 	// Only attach data to the authorized, paginated contribution identities.
 	loc, err := time.LoadLocation(team.TimezoneName)
@@ -2110,6 +2177,7 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 	if !snap.AsOf.IsZero() && snap.AsOf.Before(toEx) {
 		end = localMidnight(snap.AsOf.In(loc)).AddDate(0, 0, 1)
 	}
+	efficiencyTrend := dailyEfficiencyPoints(from.In(loc), end, byDate, byDateCode)
 	for _, item := range contribs.Items {
 		id, _ := item["membershipId"].(string)
 		points := make([]domain.TeamTrendPoint, 0)
@@ -2123,7 +2191,15 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 			points = append(points, domain.TeamTrendPoint{Date: day, Tokens: domain.DecimalMetric{Value: value, State: state}})
 		}
 		item["trend"] = points
+		item["efficiencyTrend"] = dailyEfficiencyPoints(from.In(loc), end, memberDays[id], memberCodeDays[id])
 		item["share"] = tokenShare(contribTok[id], tokenTotal)
+		lines := emptyZero(memberCode[id])
+		item["generatedCodeLines"] = lines
+		if den, ok := new(big.Int).SetString(lines, 10); ok && den.Sign() > 0 {
+			if num, ok := new(big.Int).SetString(emptyZero(contribTok[id]), 10); ok {
+				item["tokensPerCodeLine"] = new(big.Int).Quo(num, den).String()
+			}
+		}
 	}
 	costList := make([]domain.TeamCostAmount, 0, len(reported))
 	for cur, acc := range reported {
@@ -2147,20 +2223,20 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 		},
 		Filters: filters,
 		Summary: &domain.TeamAnalysisSummary{
-			Tokens: domain.DecimalMetric{Value: tokenTotal, State: state},
-			ActiveMembers: formatUint(uint64(len(active))),
-			CurrentMembers: formatUint(uint64(len(members))),
+			Tokens:                domain.DecimalMetric{Value: tokenTotal, State: state},
+			ActiveMembers:         formatUint(uint64(len(active))),
+			CurrentMembers:        formatUint(uint64(len(members))),
 			CurrentSharingMembers: formatUint(uint64(sharingCount)),
-			ComparisonReason: &reason,
+			ComparisonReason:      &reason,
 		},
 		Costs: &domain.TeamAnalysisCosts{
 			Reported: costList, EstimatedUncovered: estimatedList,
-			Coverage: domain.TeamCostCoverage{ReportedUsageEvents: formatUint(reportedUsage), EligibleUsageEvents: formatUint(eligibleUsage)},
+			Coverage:              domain.TeamCostCoverage{ReportedUsageEvents: formatUint(reportedUsage), EligibleUsageEvents: formatUint(eligibleUsage)},
 			UnattributedCostCount: unattributed,
 		},
-		Trend: trend,
+		Trend: trend, EfficiencyTrend: efficiencyTrend,
 		Agents: agents, Models: models, Contributions: contribs,
-		Quality: &domain.TeamAnalysisQuality{UnsupportedEvents: formatUint(unsupported), EstimatedEvents: formatUint(estimated), HasLegacyAggregates: hasLegacy},
+		Quality:     &domain.TeamAnalysisQuality{UnsupportedEvents: formatUint(unsupported), EstimatedEvents: formatUint(estimated), HasLegacyAggregates: hasLegacy},
 		FiltersHash: analysisFiltersHash(filters),
 	}
 }
@@ -2186,16 +2262,16 @@ func sortKV(m map[string]string) []kv {
 }
 
 func pageWindow(items []kv, paging bool, cursor string, limit int) (page []kv, start, end int, next *string) {
+	if !paging {
+		return items, 0, len(items), nil
+	}
 	start = 0
-	if paging && cursor != "" {
+	if cursor != "" {
 		if n, err := strconv.Atoi(cursor); err == nil && n > 0 {
 			start = n
 		}
 	}
-	end = start + 20
-	if paging {
-		end = start + limit
-	}
+	end = start + limit
 	if end > len(items) {
 		end = len(items)
 	}
@@ -2208,6 +2284,82 @@ func pageWindow(items []kv, paging bool, cursor string, limit int) (page []kv, s
 		next = &n
 	}
 	return page, start, end, next
+}
+
+func attachBucketMembers(page *domain.TeamPagedItems, kind string, byBucket map[string]map[string]string, members []domain.TeamMembership, users []domain.User) {
+	if page == nil {
+		return
+	}
+	current := map[string]struct{}{}
+	userByMem := map[string]domain.User{}
+	for _, mem := range members {
+		if mem.EndedAt != nil {
+			continue
+		}
+		current[mem.MembershipID] = struct{}{}
+	}
+	for _, u := range users {
+		for _, mem := range members {
+			if mem.UserID == u.UserID {
+				userByMem[mem.MembershipID] = u
+			}
+		}
+	}
+	for _, item := range page.Items {
+		lookup, _ := item["id"].(string)
+		if kind == "model" {
+			if label, ok := item["label"].(string); ok && label != "" {
+				lookup = label
+			}
+			if lookup == "" {
+				lookup, _ = item["id"].(string)
+			}
+		}
+		dist, named := namedMemberCounts(byBucket[lookup], current, userByMem)
+		item["memberCount"] = strconv.Itoa(named)
+		item["members"] = dist
+	}
+}
+
+func namedMemberCounts(byMem map[string]string, current map[string]struct{}, userByMem map[string]domain.User) ([]map[string]any, int) {
+	dist := make([]map[string]any, 0)
+	named := 0
+	total := "0"
+	for _, uses := range byMem {
+		total = AddIntDecimal(total, emptyZero(uses))
+	}
+	for memID, uses := range byMem {
+		if emptyZero(uses) == "0" {
+			continue
+		}
+		if _, ok := current[memID]; !ok && len(current) > 0 {
+			continue
+		}
+		named++
+		display := memID
+		var handle *string
+		if u, ok := userByMem[memID]; ok {
+			display = u.DisplayName
+			handle = u.Handle
+		}
+		m := map[string]any{"membershipId": memID, "displayName": display, "useCount": uses}
+		if handle != nil {
+			m["handle"] = *handle
+		}
+		if share := tokenShare(uses, total); share != nil {
+			m["share"] = *share
+		}
+		dist = append(dist, m)
+	}
+	sort.Slice(dist, func(i, j int) bool {
+		a, _ := new(big.Int).SetString(emptyZero(dist[i]["useCount"].(string)), 10)
+		b, _ := new(big.Int).SetString(emptyZero(dist[j]["useCount"].(string)), 10)
+		if a.Cmp(b) != 0 {
+			return a.Cmp(b) > 0
+		}
+		return dist[i]["displayName"].(string) < dist[j]["displayName"].(string)
+	})
+	return dist, named
 }
 
 func pageBuckets(items []kv, kind string, paging bool, cursor string, limit int, tokenTotal string) *domain.TeamPagedItems {
@@ -2272,11 +2424,7 @@ func bucketIdentity(kind, key string) (id, label, bucketType string) {
 		return key, key, "unshared_classification"
 	}
 	if kind == "model" {
-		id, label = key, key
-		if idx := strings.LastIndex(key, "/"); idx >= 0 && idx+1 < len(key) {
-			id = key[idx+1:]
-		}
-		return id, label, "model"
+		return key, key, "model"
 	}
 	return key, key, "agent"
 }
@@ -2342,14 +2490,14 @@ func assembleMemberDetail(target *domain.TeamMembership, user *domain.User, team
 	models := pageBuckets(sortKV(modelTok), "model", false, "", 20, tokens)
 	return map[string]any{
 		"membershipId": target.MembershipID, "displayName": display, "handle": handle,
-		"role": string(team.PublicRoleFor(target.UserID, target.BaseRole)),
+		"role":     string(team.PublicRoleFor(target.UserID, target.BaseRole)),
 		"joinedAt": formatTime(target.JoinedAt),
-		"range": domain.TeamAnalysisRange{Timezone: team.TimezoneName, From: snap.FromDate, ToExclusive: snap.ToDateExclusive, DataToExclusive: snap.AsOf},
-		"sharing": sharing,
-		"tokens": domain.DecimalMetric{Value: tokens, State: state},
+		"range":    domain.TeamAnalysisRange{Timezone: team.TimezoneName, From: snap.FromDate, ToExclusive: snap.ToDateExclusive, DataToExclusive: snap.AsOf},
+		"sharing":  sharing,
+		"tokens":   domain.DecimalMetric{Value: tokens, State: state},
 		"costs": domain.TeamAnalysisCosts{
 			Reported: rollup.reported, EstimatedUncovered: rollup.estimated,
-			Coverage: domain.TeamCostCoverage{ReportedUsageEvents: formatUint(rollup.reportedUsage), EligibleUsageEvents: formatUint(rollup.eligibleUsage)},
+			Coverage:              domain.TeamCostCoverage{ReportedUsageEvents: formatUint(rollup.reportedUsage), EligibleUsageEvents: formatUint(rollup.eligibleUsage)},
 			UnattributedCostCount: rollup.unattributed,
 		},
 		"agents": agents.Items, "models": models.Items,
@@ -2413,7 +2561,7 @@ func classificationTotals(rows []domain.TeamAnalysisRow) (map[string]string, map
 		if row.AgentID != nil {
 			agentTok[*row.AgentID] = AddIntDecimal(agentTok[*row.AgentID], tokens)
 		}
-		if row.ModelID != nil {
+		if row.ModelID != nil && strings.TrimSpace(*row.ModelID) != "" {
 			key := ""
 			if row.ProviderID != nil {
 				key = *row.ProviderID + "/"
@@ -2465,6 +2613,261 @@ func filterRows(rows []domain.TeamAnalysisRow, filters domain.TeamAnalysisFilter
 	return out
 }
 
+func generatedCodeLineSum(raw []byte) string {
+	if len(raw) == 0 {
+		return "0"
+	}
+	var act struct {
+		GeneratedCodeLines struct {
+			Sum *string `json:"sum"`
+		} `json:"generatedCodeLines"`
+	}
+	if json.Unmarshal(raw, &act) != nil || act.GeneratedCodeLines.Sum == nil {
+		return "0"
+	}
+	return emptyZero(*act.GeneratedCodeLines.Sum)
+}
+
+func metricFromSum(sum string) domain.DecimalMetric {
+	if sum == "" || sum == "0" {
+		return domain.DecimalMetric{Value: "0", State: domain.MetricEmpty}
+	}
+	return domain.DecimalMetric{Value: sum, State: domain.MetricAvailable}
+}
+
+func staticTenMetrics(rows []domain.TeamAnalysisRow, tokens domain.DecimalMetric) map[string]domain.DecimalMetric {
+	input, output, code, dur, msgs, userMsgs, skills := "0", "0", "0", "0", "0", "0", "0"
+	cacheRead, cacheIn := "0", "0"
+	type actV1 struct {
+		GeneratedCodeLines struct {
+			Sum *string `json:"sum"`
+		} `json:"generatedCodeLines"`
+		ActiveDurationMs struct {
+			Sum *string `json:"sum"`
+		} `json:"activeDurationMs"`
+		MessageCount struct {
+			Sum *string `json:"sum"`
+		} `json:"messageCount"`
+		UserMessageCount struct {
+			Sum *string `json:"sum"`
+		} `json:"userMessageCount"`
+	}
+	type resV1 struct {
+		InputContextTokens struct {
+			Sum *string `json:"sum"`
+		} `json:"inputContextTokens"`
+		OutputTokens struct {
+			Sum *string `json:"sum"`
+		} `json:"outputTokens"`
+	}
+	var estAcc bigRatAcc
+	for _, row := range rows {
+		skills = AddIntDecimal(skills, emptyZero(row.SkillUseCount))
+		if row.EstimatedCostAmount != "" && row.EstimatedCostAmount != "0" {
+			estAcc.add(row.EstimatedCostAmount)
+		}
+		if len(row.ResourcesJSON) > 0 {
+			var res resV1
+			_ = json.Unmarshal(row.ResourcesJSON, &res)
+			if res.InputContextTokens.Sum != nil {
+				input = AddIntDecimal(input, emptyZero(*res.InputContextTokens.Sum))
+			}
+			if res.OutputTokens.Sum != nil {
+				output = AddIntDecimal(output, emptyZero(*res.OutputTokens.Sum))
+			}
+			rd, in, err := teammetrics.DecodeCachePairs(row.ResourcesJSON)
+			if err == nil {
+				cacheRead = AddIntDecimal(cacheRead, rd)
+				cacheIn = AddIntDecimal(cacheIn, in)
+			}
+		}
+		if len(row.ActivityJSON) > 0 {
+			var act actV1
+			_ = json.Unmarshal(row.ActivityJSON, &act)
+			if act.GeneratedCodeLines.Sum != nil {
+				code = AddIntDecimal(code, emptyZero(*act.GeneratedCodeLines.Sum))
+			}
+			if act.ActiveDurationMs.Sum != nil {
+				dur = AddIntDecimal(dur, emptyZero(*act.ActiveDurationMs.Sum))
+			}
+			if act.MessageCount.Sum != nil {
+				msgs = AddIntDecimal(msgs, emptyZero(*act.MessageCount.Sum))
+			}
+			if act.UserMessageCount.Sum != nil {
+				userMsgs = AddIntDecimal(userMsgs, emptyZero(*act.UserMessageCount.Sum))
+			}
+		}
+	}
+	out := map[string]domain.DecimalMetric{
+		"totalTokens":        tokens,
+		"inputContextTokens": metricFromSum(input),
+		"outputTokens":       metricFromSum(output),
+		"generatedCodeLines": metricFromSum(code),
+		"activeDurationMs":   metricFromSum(dur),
+		"messageCount":       metricFromSum(msgs),
+		"userMessageCount":   metricFromSum(userMsgs),
+		"skillUseCount":      metricFromSum(skills),
+	}
+	if estAcc.set {
+		out["estimatedCosts"] = domain.DecimalMetric{Value: estAcc.string(), State: domain.MetricAvailable}
+	} else {
+		out["estimatedCosts"] = domain.DecimalMetric{State: domain.MetricEmpty}
+	}
+	if rate, err := teammetrics.CacheHitRate(cacheRead, cacheIn); err == nil && rate != nil {
+		out["cacheHitRate"] = domain.DecimalMetric{Value: *rate, State: domain.MetricAvailable}
+	} else {
+		out["cacheHitRate"] = domain.DecimalMetric{State: domain.MetricEmpty}
+	}
+	out["tokensPerCodeLine"] = domain.DecimalMetric{State: domain.MetricEmpty}
+	if tok, ok := new(big.Int).SetString(emptyZero(tokens.Value), 10); ok {
+		if den, ok := new(big.Int).SetString(code, 10); ok && den.Sign() > 0 {
+			out["tokensPerCodeLine"] = domain.DecimalMetric{Value: new(big.Int).Quo(tok, den).String(), State: domain.MetricAvailable}
+		}
+	}
+	return out
+}
+
+func assembleStaticSkills(rows []domain.TeamAnalysisRow, members []domain.TeamMembership, users []domain.User, q AnalysisQuery) *domain.TeamPagedItems {
+	type group struct {
+		label   string
+		uses    string
+		members map[string]string
+	}
+	byKey := map[string]*group{}
+	current := map[string]struct{}{}
+	userByMem := map[string]domain.User{}
+	for _, mem := range members {
+		if mem.EndedAt != nil {
+			continue
+		}
+		current[mem.MembershipID] = struct{}{}
+	}
+	for _, u := range users {
+		for _, mem := range members {
+			if mem.UserID == u.UserID {
+				userByMem[mem.MembershipID] = u
+			}
+		}
+	}
+	for _, row := range rows {
+		if emptyZero(row.SkillUseCount) == "0" {
+			continue
+		}
+		label := strings.TrimSpace(row.SkillPublicName)
+		if label == "" && row.SkillID != nil {
+			label = fmt.Sprintf("skill-%d", *row.SkillID)
+		}
+		if label == "" {
+			label = "unnamed"
+		}
+		key := label
+		g := byKey[key]
+		if g == nil {
+			g = &group{label: label, uses: "0", members: map[string]string{}}
+			byKey[key] = g
+		}
+		g.uses = AddIntDecimal(g.uses, emptyZero(row.SkillUseCount))
+		if row.MembershipID != nil {
+			g.members[*row.MembershipID] = AddIntDecimal(g.members[*row.MembershipID], emptyZero(row.SkillUseCount))
+		}
+	}
+	type scored struct {
+		key  string
+		g    *group
+		uses *big.Int
+	}
+	list := make([]scored, 0, len(byKey))
+	total := "0"
+	for key, g := range byKey {
+		n, ok := new(big.Int).SetString(emptyZero(g.uses), 10)
+		if !ok {
+			n = big.NewInt(0)
+		}
+		list = append(list, scored{key: key, g: g, uses: n})
+		total = AddIntDecimal(total, g.uses)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].uses.Cmp(list[j].uses) != 0 {
+			return list[i].uses.Cmp(list[j].uses) > 0
+		}
+		return list[i].g.label < list[j].g.label
+	})
+	limit := clampLimit(q.Limit)
+	page := list
+	var next *string
+	if q.Collection == "skills" {
+		start := 0
+		if q.Cursor != "" {
+			for i, it := range list {
+				if it.key == q.Cursor {
+					start = i + 1
+					break
+				}
+			}
+		}
+		end := start + limit
+		if end > len(list) {
+			end = len(list)
+		}
+		page = list[start:end]
+		if end < len(list) {
+			n := list[end-1].key
+			next = &n
+		}
+	}
+	out := make([]map[string]any, 0, len(page))
+	for _, it := range page {
+		item := map[string]any{
+			"id": it.key, "label": it.g.label,
+			"useCount": it.g.uses, "bucketType": "skill",
+			"tokens": domain.DecimalMetric{Value: it.g.uses, State: domain.MetricAvailable},
+		}
+		if share := tokenShare(it.g.uses, total); share != nil {
+			item["share"] = *share
+		}
+		named := 0
+		dist := make([]map[string]any, 0)
+		for memID, uses := range it.g.members {
+			if emptyZero(uses) == "0" {
+				continue
+			}
+			if _, ok := current[memID]; !ok && len(current) > 0 {
+				continue
+			}
+			named++
+			display := memID
+			var handle *string
+			if u, ok := userByMem[memID]; ok {
+				display = u.DisplayName
+				handle = u.Handle
+			}
+			m := map[string]any{"membershipId": memID, "displayName": display, "useCount": uses}
+			if handle != nil {
+				m["handle"] = *handle
+			}
+			if share := tokenShare(uses, it.g.uses); share != nil {
+				m["share"] = *share
+			}
+			dist = append(dist, m)
+		}
+		sort.Slice(dist, func(i, j int) bool {
+			a, _ := new(big.Int).SetString(emptyZero(dist[i]["useCount"].(string)), 10)
+			b, _ := new(big.Int).SetString(emptyZero(dist[j]["useCount"].(string)), 10)
+			if a.Cmp(b) != 0 {
+				return a.Cmp(b) > 0
+			}
+			return dist[i]["displayName"].(string) < dist[j]["displayName"].(string)
+		})
+		item["memberCount"] = strconv.Itoa(named)
+		item["members"] = dist
+		out = append(out, item)
+	}
+	return &domain.TeamPagedItems{
+		Items: out, NextCursor: next,
+		Historical: &domain.TeamHistoricalSubtotal{Tokens: total},
+	}
+}
+
 func memberLastReceived(rows []domain.TeamAnalysisRow) map[string]time.Time {
 	out := map[string]time.Time{}
 	for _, row := range rows {
@@ -2479,9 +2882,6 @@ func memberLastReceived(rows []domain.TeamAnalysisRow) map[string]time.Time {
 }
 
 func memberPeriodMetric(sharing domain.SharingFlags, tokens string) *domain.DecimalMetric {
-	if !sharing.Base {
-		return &domain.DecimalMetric{Value: "0", State: domain.MetricNotShared}
-	}
 	if strings.TrimSpace(tokens) == "" || tokens == "0" {
 		return &domain.DecimalMetric{Value: "0", State: domain.MetricEmpty}
 	}
@@ -2618,14 +3018,14 @@ func (s *Service) inboxInvitationDTO(ctx context.Context, inv domain.TeamInvitat
 		status = domain.InvitationExpired
 	}
 	return InboxInvitationDTO{
-		ID: inv.InvitationID,
-		Team: InvitationTeamDTO{ID: team.TeamID, Name: team.Name, Description: team.Description},
+		ID:                 inv.InvitationID,
+		Team:               InvitationTeamDTO{ID: team.TeamID, Name: team.Name, Description: team.Description},
 		InviterDisplayName: inviterName,
-		InvitedRole: string(inv.InvitedRole),
-		CreatedAt: formatTime(inv.CreatedAt),
-		ExpiresAt: formatTime(inv.ExpiresAt),
-		Version: formatUint(inv.Version),
-		Status: string(status),
+		InvitedRole:        string(inv.InvitedRole),
+		CreatedAt:          formatTime(inv.CreatedAt),
+		ExpiresAt:          formatTime(inv.ExpiresAt),
+		Version:            formatUint(inv.Version),
+		Status:             string(status),
 	}, nil
 }
 

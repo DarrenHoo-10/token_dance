@@ -225,6 +225,8 @@ type TeamsStore interface {
 	GetOrQueueAnalysis(ctx context.Context, teamID string, from, toExclusive time.Time, authRevision uint64, ruleVersion string, now time.Time) (*domain.TeamAnalysisSnapshot, bool, error)
 	GetReadySnapshot(ctx context.Context, teamID, snapshotID string) (*domain.TeamAnalysisSnapshot, error)
 	ListAnalysisRows(ctx context.Context, snapshotID string, generation uint64) ([]domain.TeamAnalysisRow, error)
+	ListStaticDayMetrics(ctx context.Context, teamID string, from, toExclusive time.Time) ([]domain.TeamAnalysisRow, []domain.TeamUsageContributor, error)
+	EnsureStaticAnalysisHandle(ctx context.Context, teamID string, from, toExclusive time.Time, authRevision, sourceRevision uint64, asOf, now time.Time) (*domain.TeamAnalysisSnapshot, error)
 	ClaimAnalysis(ctx context.Context, workerID string, lease time.Duration, now time.Time) (*domain.TeamAnalysisSnapshot, error)
 	PublishAnalysis(ctx context.Context, snapshotID, leaseToken string, leaseGeneration, capturedAuth, capturedSource, publishedGeneration uint64, now time.Time) error
 	MarkAnalysisFailed(ctx context.Context, snapshotID, leaseToken string, leaseGeneration uint64, errorCode string, now time.Time) error

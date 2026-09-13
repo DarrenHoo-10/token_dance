@@ -17,11 +17,12 @@ import (
 // never fabricates legacy usage_events or mixes them into this fact stream.
 func readTeamTelemetry(ctx context.Context, tx *sql.Tx, userID string, from, to, asOf time.Time) ([]teamFactEvent, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT e.id, e.user_id, e.installation_id, e.harness_id, m.provider_id, m.model_id,
+		SELECT e.id, i.user_id, e.installation_id, e.harness_id, m.provider_id, m.model_id,
 		       e.event_type, e.occurred_at, e.created_at, e.cost_scope_key, e.payload_json
 		FROM telemetry_events e
+		JOIN installations i ON i.installation_id = e.installation_id
 		LEFT JOIN telemetry_models m ON m.id = e.model_key
-		WHERE e.user_id = ? AND e.delete_at IS NULL
+		WHERE i.user_id = ? AND e.delete_at IS NULL
 		  AND e.occurred_at < ?
 		  AND (e.event_type = 'cost_recorded' OR (e.occurred_at >= ? AND e.occurred_at < ?))
 		  AND e.schema_version = 2 AND e.metric_semantics_version = 1

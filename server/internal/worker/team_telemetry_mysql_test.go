@@ -216,7 +216,7 @@ func TestTeamTelemetrySharingCostExportMySQL(t *testing.T) {
 	}
 	assertTotals(queue(from, to), "10", "1001", "0")
 	// A tombstone cannot reappear in a newly computed snapshot.
-	if _, err := st.DB().Exec(`UPDATE telemetry_events SET delete_at = ? WHERE user_id = ? AND event_type = 'model_usage_recorded'`, now.UnixMilli(), user); err != nil {
+	if _, err := st.DB().Exec(`UPDATE telemetry_events SET delete_at = ? WHERE event_type = 'model_usage_recorded' AND installation_id IN (SELECT installation_id FROM installations WHERE user_id = ?)`, now.UnixMilli(), user); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := st.DB().Exec(`UPDATE team_analysis_snapshots SET status = 'obsolete' WHERE team_id = ?`, team); err != nil {

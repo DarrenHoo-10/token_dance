@@ -12,26 +12,51 @@ import (
 // Compare actual team inputs rather than the mirror execution time. An unchanged
 // five-minute refresh must not invalidate otherwise reusable team snapshots.
 func (m *Mirror) teamSummaryDigest(ctx context.Context, tx *sql.Tx, ids []string) ([32]byte, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT user_id, DATE_FORMAT(metric_date, '%Y-%m-%d'), agent_id,
-		exact_token_total, derived_token_total, computed_at
-		FROM `+quote(m.cfg.TargetSchema)+`.daily_user_agent_metrics
-		WHERE user_id IN `+inClause(len(ids))+` ORDER BY user_id, metric_date, agent_id`, anyStrings(ids)...)
-	if err != nil {
-		return [32]byte{}, err
-	}
-	defer rows.Close()
 	h := sha256.New()
 	enc := json.NewEncoder(h)
-	for rows.Next() {
-		var user, day, agent, exact, derived, computed string
-		if err := rows.Scan(&user, &day, &agent, &exact, &derived, &computed); err != nil {
-			return [32]byte{}, err
+	hash := func(query string, cols int) error {
+		rows, err := tx.QueryContext(ctx, query, anyStrings(ids)...)
+		if err != nil {
+			return err
 		}
-		if err := enc.Encode([]string{user, day, agent, exact, derived, computed}); err != nil {
-			return [32]byte{}, err
+		defer rows.Close()
+		for rows.Next() {
+			vals := make([]sql.NullString, cols)
+			dest := make([]any, cols)
+			for i := range vals {
+				dest[i] = &vals[i]
+			}
+			if err := rows.Scan(dest...); err != nil {
+				return err
+			}
+			line := make([]string, cols)
+			for i, v := range vals {
+				line[i] = v.String
+			}
+			if err := enc.Encode(line); err != nil {
+				return err
+			}
 		}
+		return rows.Err()
 	}
-	if err := rows.Err(); err != nil {
+	in := inClause(len(ids))
+	schema := quote(m.cfg.TargetSchema)
+	if err := hash(`SELECT user_id, DATE_FORMAT(metric_date, '%Y-%m-%d'), agent_id,
+		CAST(exact_token_total AS CHAR), CAST(derived_token_total AS CHAR), computed_at
+		FROM `+schema+`.daily_user_agent_metrics
+		WHERE user_id IN `+in+` ORDER BY user_id, metric_date, agent_id`, 6); err != nil {
+		return [32]byte{}, err
+	}
+	if err := hash(`SELECT user_id, DATE_FORMAT(metric_date, '%Y-%m-%d'), agent_id, provider_id, model_id,
+		CAST(exact_token_total AS CHAR), CAST(derived_token_total AS CHAR), computed_at
+		FROM `+schema+`.daily_user_agent_model_metrics
+		WHERE user_id IN `+in+` ORDER BY user_id, metric_date, agent_id, provider_id, model_id`, 8); err != nil {
+		return [32]byte{}, err
+	}
+	if err := hash(`SELECT user_id, DATE_FORMAT(metric_date, '%Y-%m-%d'), agent_id, HEX(skill_key),
+		COALESCE(skill_public_name, ''), CAST(use_count AS CHAR), computed_at
+		FROM `+schema+`.daily_skill_metrics
+		WHERE user_id IN `+in+` ORDER BY user_id, metric_date, agent_id, skill_key`, 7); err != nil {
 		return [32]byte{}, err
 	}
 	var out [32]byte

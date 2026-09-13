@@ -19,7 +19,7 @@ import { useLocale } from '@/context/LocaleContext';
 import { useNotification } from '@/context/NotificationContext';
 import { useTeam } from '@/context/TeamContext';
 import { createIdempotencyKey, formatDecimalAmount, formatTokenCompact, metricDisplay } from './teamUtils';
-import { AnalysisSkeleton, RoleBadge, TeamAvatar, TeamDateRangeBar, teamErrorMessage, useTeamSearchFilters } from './TeamShared';
+import { AnalysisSkeleton, RoleBadge, TeamAvatar, teamErrorMessage, useTeamSearchFilters } from './TeamShared';
 import { useTeamAnalysis } from './useTeamAnalysis';
 
 type MemberTab = 'joined' | 'pending' | 'links';
@@ -80,8 +80,8 @@ export const TeamMembersPage: React.FC = () => {
   }, [canManage, query, scope, snapshotId]);
 
   if (!scope) return null;
-  if (analysisError) return <div><TeamDateRangeBar timezone={scope.team.timezone} /><ErrorState error={analysisError} description={teamErrorMessage(t, analysisError)} /></div>;
-  if (updating && !analysis) return <div><TeamDateRangeBar timezone={scope.team.timezone} /><AnalysisSkeleton /></div>;
+  if (analysisError) return <ErrorState error={analysisError} description={teamErrorMessage(t, analysisError)} />;
+  if (updating && !analysis) return <AnalysisSkeleton />;
   if (error) return <ErrorState error={error} description={teamErrorMessage(t, error)} />;
 
   const openDetail = async (member: TeamMember) => {
@@ -108,7 +108,6 @@ export const TeamMembersPage: React.FC = () => {
 
   return (
     <div>
-      <TeamDateRangeBar timezone={scope.team.timezone} />
       <div className="segmented-control" role="tablist" style={{ marginBottom: 16 }}>
         <button type="button" className={`segmented-item ${tab === 'joined' ? 'active' : ''}`} onClick={() => setTab('joined')}>
           {t('teams.members.joined', { count: members.length })}

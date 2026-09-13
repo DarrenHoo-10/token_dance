@@ -10,6 +10,7 @@ import (
 
 	"tokendance/internal/crypto"
 	mysqlstore "tokendance/internal/store/mysql"
+	"tokendance/internal/teammetrics"
 )
 
 const aggregationVersion = 2
@@ -278,7 +279,10 @@ func rebuildUserAggregates(ctx context.Context, tx *sql.Tx, userID string, affec
 	}
 	// Team snapshots now consume these summaries. Invalidate after projection,
 	// not only on ingest, or a snapshot built between the two can stay stale.
-	return bumpSourceRevisionsForUsers(ctx, tx, map[string]struct{}{userID: {}}, time.Now().UTC())
+	if err := bumpSourceRevisionsForUsers(ctx, tx, map[string]struct{}{userID: {}}, time.Now().UTC()); err != nil {
+		return err
+	}
+	return teammetrics.RefreshCurrentTeamDaysTx(ctx, tx, userID, affectedDates, time.Now().UTC().UnixMilli())
 }
 
 func (w *Worker) ProcessAggregates(ctx context.Context) (int, error) {

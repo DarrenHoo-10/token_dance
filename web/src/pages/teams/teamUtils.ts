@@ -5,6 +5,18 @@ export const TEAM_NAME_MIN = 2;
 export const TEAM_NAME_MAX = 40;
 export const TEAM_DESCRIPTION_MAX = 120;
 export const TEAM_RANGE_MAX_DAYS = 90;
+export const TEAM_RANK_PAGE_SIZE = 10;
+
+export function rankPageCount(total: number, size = TEAM_RANK_PAGE_SIZE): number {
+  return Math.max(1, Math.ceil(total / size));
+}
+
+export function rankPageSlice<T>(items: T[], page: number, size = TEAM_RANK_PAGE_SIZE): T[] {
+  const pages = rankPageCount(items.length, size);
+  const safe = Math.min(Math.max(1, page), pages);
+  const start = (safe - 1) * size;
+  return items.slice(start, start + size);
+}
 export const JOIN_TOKEN_TTL_MS = 15 * 60 * 1000;
 export const CREATE_DRAFT_KEY = 'td.team-create-draft';
 const JOIN_TOKEN_PREFIX = 'td.team-join.';
@@ -72,6 +84,21 @@ function formatScaled(value: bigint, scale: bigint, suffix: string): string {
   const whole = abs / scale;
   const frac = scale >= 10n ? (abs % scale) / (scale / 10n) : 0n;
   return `${negative ? '-' : ''}${whole.toString()}.${frac.toString()}${suffix}`;
+}
+
+export function formatDurationHours(msStr: string | null | undefined): string | null {
+  if (!msStr) return null;
+  const ms = Number(msStr);
+  if (!Number.isFinite(ms)) return null;
+  return `${(ms / 3_600_000).toFixed(1)} h`;
+}
+
+export function formatRatePercent(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  const pct = num <= 1 ? num * 100 : num;
+  return `${pct.toFixed(1)}%`;
 }
 
 export function formatTokenCompact(value: string): string {
@@ -233,6 +260,11 @@ export function writeCreateDraft(draft: CreateDraft): void {
 
 export function clearCreateDraft(): void {
   sessionStorage.removeItem(CREATE_DRAFT_KEY);
+}
+
+export function calendarDateInTimeZone(now: Date, timeZone: string): string {
+  const dateParts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
+  return ['year', 'month', 'day'].map((key) => dateParts.find((part) => part.type === key)?.value).join('-');
 }
 
 export function inclusiveDaySpan(from: string, to: string): number {
