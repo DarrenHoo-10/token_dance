@@ -56,7 +56,7 @@ export function UsagePanel() {
     void load();
     void loadQuotas();
     const timer = window.setInterval(load, 3000);
-    const quotaTimer = window.setInterval(loadQuotas, 60000);
+    const quotaTimer = window.setInterval(loadQuotas, 3000);
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') void hideWindow(); };
     window.addEventListener('keydown', onKey);
     window.addEventListener('focus', load);

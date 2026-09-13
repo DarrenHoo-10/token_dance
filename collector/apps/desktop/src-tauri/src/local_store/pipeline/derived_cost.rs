@@ -190,3 +190,43 @@ impl PipelineStore {
         Ok(rows.len())
     }
 }
+
+impl PipelineStore {
+    /// Repair only the known pre-wire-source hash bug, in bounded writer batches.
+    /// Preserve fact/event IDs, revisions, amounts and every local metric lane.
+    pub fn repair_cost_upload_hashes(&mut self, limit: usize) -> Result<usize, PipelineError> {
+        use base64::Engine;
+        let now = self.now_ms();
+        let ids = {
+            let mut q = self.conn.prepare("SELECT id FROM events WHERE id>?1 AND event_type='cost_recorded' AND delete_at IS NULL AND expire_at>?2 ORDER BY id LIMIT ?3")?;
+            let rows=q.query_map(params![self.cost_hash_repair_cursor,now,limit.clamp(1,512) as i64],|r|r.get::<_,i64>(0))?.collect::<Result<Vec<_>,_>>()?;
+            rows
+        };
+        for id in &ids {
+            let status:i64=self.conn.query_row("SELECT json_extract(status_json,'$.upload') FROM events WHERE id=?1",[id],|r|r.get(0))?;
+            // Do not mutate a hash while an upload holds a frozen envelope.
+            if status == ConsumerStatus::InFlight as i64 { return Ok(0); }
+            if matches!(status,0|1|6) {
+                let row=self.load_upload_events(&[*id])?.remove(0);
+                let envelope=crate::upload_pipeline::encode_wire_event(&row).map_err(PipelineError::InvalidArgument)?;
+                let wire=serde_json::to_value(envelope).map_err(|e|PipelineError::InvalidArgument(e.to_string()))?;
+                let corrected=protocol::v2::compute_content_hash(&wire).map_err(|e|PipelineError::InvalidArgument(e.to_string()))?;
+                let mut legacy=wire.clone();
+                legacy["payload"]["cost"]["source"]=serde_json::json!("estimated_price_table");
+                let legacy_hash=protocol::v2::compute_content_hash(&legacy).map_err(|e|PipelineError::InvalidArgument(e.to_string()))?;
+                let stored=base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(row.content_hash);
+                if corrected != stored && legacy_hash == stored && wire["payload"]["cost"]["source"] == "calculated_price" {
+                    let hash=base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(corrected).map_err(|e|PipelineError::InvalidArgument(e.to_string()))?;
+                    let tx=self.conn.transaction()?;
+                    let updated=tx.execute("UPDATE events SET content_hash=?1,status_json=json_set(status_json,'$.upload',0),updated_at=?2 WHERE id=?3 AND content_hash=?4 AND json_extract(status_json,'$.upload') IN (0,1,6)",params![hash,now,id,row.content_hash.as_slice()])?;
+                    if updated == 1 {
+                        tx.execute("INSERT INTO processing_tasks(created_at,updated_at,event_row_id,consumer,runnable_at) VALUES(?1,?1,?2,'upload',?1) ON CONFLICT(event_row_id,consumer) DO UPDATE SET updated_at=excluded.updated_at,delete_at=NULL,runnable_at=excluded.runnable_at,lease_token=NULL,lease_until=NULL,last_error_code=NULL",params![now,id])?;
+                    }
+                    tx.commit()?;
+                }
+            }
+            self.cost_hash_repair_cursor=*id;
+        }
+        Ok(ids.len())
+    }
+}

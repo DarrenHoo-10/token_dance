@@ -28,6 +28,7 @@ pub struct PipelineStore {
     /// Injected clock for deterministic tests (UTC ms).
     clock_ms: Option<i64>,
     maintenance_cursor: i64,
+    cost_hash_repair_cursor: i64,
     price_catalog: crate::pricing::Catalog,
     price_stamp: Option<(SystemTime, u64)>,
 }
@@ -43,6 +44,7 @@ impl PipelineStore {
             path,
             clock_ms: None,
             maintenance_cursor: 0,
+            cost_hash_repair_cursor: 0,
             price_catalog: crate::pricing::Catalog::default(),
             price_stamp: None,
         };
@@ -58,6 +60,7 @@ impl PipelineStore {
             path: PathBuf::from(":memory:"),
             clock_ms: None,
             maintenance_cursor: 0,
+            cost_hash_repair_cursor: 0,
             price_catalog: crate::pricing::Catalog::default(),
             price_stamp: None,
         };
