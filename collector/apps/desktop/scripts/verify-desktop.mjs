@@ -107,9 +107,13 @@ assert(
   "Windows user-level HKCU Run autostart implementation"
 );
 assert(
-  autostartContent.includes("LaunchAgents") && autostartContent.includes("RunAtLoad"),
-  "macOS user-level LaunchAgents plist autostart implementation"
+  autostartContent.includes("SMAppService") && autostartContent.includes("login_items"),
+  "macOS SMAppService.mainApp login-item autostart implementation"
 );
+const stateRs = fs.readFileSync(path.join(srcTauriRoot, "src", "state.rs"), "utf-8");
+assert(stateRs.includes("fn apply_default_autostart"), "First launch enables autostart by default");
+const settingsPage = fs.readFileSync(path.join(desktopRoot, "src", "SettingsPage.tsx"), "utf-8");
+assert(settingsPage.includes("autostart.enabled ?? true"), "Settings launch-at-login switch defaults on");
 
 // 4. Verify Frontend Components & UX Reusability
 console.log("\n[4/5] Verifying Frontend Components...");
@@ -131,7 +135,8 @@ try {
   // Local HTTP fixtures must not pass through the machine's system proxy.
   // This exception is limited to the test child; production follows the system.
   const noProxy = [process.env.NO_PROXY, process.env.no_proxy, "localhost,127.0.0.1,::1"].filter(Boolean).join(",");
-  const env = { ...process.env, PATH: `${process.env.PATH};${cargoBinPath}`, NO_PROXY: noProxy, no_proxy: noProxy };
+  const pathSep = process.platform === "win32" ? ";" : ":";
+  const env = { ...process.env, PATH: `${process.env.PATH}${pathSep}${cargoBinPath}`, NO_PROXY: noProxy, no_proxy: noProxy };
   const cargoOutput = execSync("cargo test --locked -- --nocapture", {
     cwd: srcTauriRoot,
     env,

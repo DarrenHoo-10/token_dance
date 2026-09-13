@@ -1,6 +1,6 @@
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 use std::fs;
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 use std::path::Path;
 use std::path::PathBuf;
 #[cfg(target_os = "windows")]
@@ -23,6 +23,10 @@ pub trait AutostartPlatform: Send + Sync {
     fn details(&self) -> String;
     fn is_enabled(&self) -> Result<bool, String>;
     fn set_enabled(&self, enabled: bool) -> Result<(), String>;
+    fn login_status(&self) -> Result<crate::state::AutostartStatus, String> {
+        self.is_enabled()
+            .map(crate::state::AutostartStatus::from_enabled)
+    }
 }
 
 pub struct SystemAutostartManager {
@@ -31,6 +35,11 @@ pub struct SystemAutostartManager {
 
 impl SystemAutostartManager {
     pub fn new(app_name: &str) -> Self {
+        if crate::local_test::enabled() {
+            return Self {
+                platform: Arc::new(LocalTestAutostart),
+            };
+        }
         let exe_path =
             std::env::current_exe().unwrap_or_else(|_| PathBuf::from("tokendance-desktop"));
         Self {
@@ -43,13 +52,40 @@ impl SystemAutostartManager {
         Self { platform }
     }
 
-    fn info(&self, enabled: bool) -> AutostartInfo {
+    fn info(&self, status: crate::state::AutostartStatus) -> AutostartInfo {
         AutostartInfo {
-            enabled,
+            enabled: status.is_enabled(),
+            status,
             platform: self.platform.platform().into(),
             method: self.platform.method().into(),
             target_path: self.platform.target_path(),
             details: self.platform.details(),
+        }
+    }
+}
+
+struct LocalTestAutostart;
+impl AutostartPlatform for LocalTestAutostart {
+    fn platform(&self) -> &'static str {
+        "local-test"
+    }
+    fn method(&self) -> &'static str {
+        "disabled"
+    }
+    fn target_path(&self) -> String {
+        String::new()
+    }
+    fn details(&self) -> String {
+        "Local test does not register a login item".into()
+    }
+    fn is_enabled(&self) -> Result<bool, String> {
+        Ok(false)
+    }
+    fn set_enabled(&self, enabled: bool) -> Result<(), String> {
+        if enabled {
+            Err("Local test does not register a login item".into())
+        } else {
+            Ok(())
         }
     }
 }
@@ -70,7 +106,7 @@ impl AutostartProvider for SystemAutostartManager {
     }
 
     fn get_info(&self) -> Result<AutostartInfo, String> {
-        self.is_enabled().map(|enabled| self.info(enabled))
+        self.platform.login_status().map(|status| self.info(status))
     }
 }
 
@@ -198,15 +234,61 @@ impl AutostartPlatform for WindowsAutostart {
 
 #[cfg(target_os = "macos")]
 fn native_platform(_app_name: &str, exe_path: PathBuf) -> Arc<dyn AutostartPlatform> {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_default();
-    Arc::new(FileAutostart {
-        platform: "macos",
-        method: "LaunchAgents_Plist",
-        path: home.join("Library/LaunchAgents/io.tokendance.collector.plist"),
-        content: macos_plist(&exe_path),
-    })
+    Arc::new(MacosAutostart { exe_path })
+}
+
+#[cfg(target_os = "macos")]
+struct MacosAutostart {
+    exe_path: PathBuf,
+}
+
+#[cfg(target_os = "macos")]
+impl AutostartPlatform for MacosAutostart {
+    fn platform(&self) -> &'static str {
+        "macos"
+    }
+    fn method(&self) -> &'static str {
+        "SMAppService_mainApp"
+    }
+    fn target_path(&self) -> String {
+        "SMAppService.mainApp".into()
+    }
+    fn details(&self) -> String {
+        "macOS 13+ login item via SMAppService.mainApp".into()
+    }
+    fn is_enabled(&self) -> Result<bool, String> {
+        Ok(self.login_status()?.is_enabled())
+    }
+    fn login_status(&self) -> Result<crate::state::AutostartStatus, String> {
+        use platform_macos::login_items::LoginItemStatus;
+        match platform_macos::login_items::status().map_err(|error| error.to_string())? {
+            LoginItemStatus::Enabled => Ok(crate::state::AutostartStatus::Enabled),
+            LoginItemStatus::RequiresApproval => {
+                Ok(crate::state::AutostartStatus::RequiresApproval)
+            }
+            LoginItemStatus::Unavailable | LoginItemStatus::NotFound => {
+                Ok(crate::state::AutostartStatus::Unavailable)
+            }
+            LoginItemStatus::Disabled => Ok(crate::state::AutostartStatus::Disabled),
+        }
+    }
+    fn set_enabled(&self, enabled: bool) -> Result<(), String> {
+        if enabled && !platform_macos::login_items::running_from_install_location(&self.exe_path) {
+            return Err(
+                "Move TokenDance to /Applications or ~/Applications before enabling login start"
+                    .into(),
+            );
+        }
+        let status =
+            platform_macos::login_items::set_enabled(enabled).map_err(|error| error.to_string())?;
+        // Keep the existing launch item until its replacement is enabled.
+        // Registration may fail or require approval in System Settings.
+        if enabled && status == platform_macos::login_items::LoginItemStatus::Enabled {
+            platform_macos::login_items::migrate_legacy_plist()
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -225,7 +307,7 @@ fn native_platform(_app_name: &str, exe_path: PathBuf) -> Arc<dyn AutostartPlatf
     })
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 struct FileAutostart {
     platform: &'static str,
     method: &'static str,
@@ -233,7 +315,7 @@ struct FileAutostart {
     content: String,
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 impl AutostartPlatform for FileAutostart {
     fn platform(&self) -> &'static str {
         self.platform
@@ -265,15 +347,7 @@ impl AutostartPlatform for FileAutostart {
     }
 }
 
-#[cfg(target_os = "macos")]
-fn macos_plist(exe_path: &Path) -> String {
-    format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\"><dict><key>Label</key><string>io.tokendance.collector</string><key>ProgramArguments</key><array><string>{}</string><string>--minimized</string></array><key>RunAtLoad</key><true/></dict></plist>\n",
-        exe_path.display()
-    )
-}
-
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
 fn write_atomic(path: &Path, content: &[u8]) -> Result<(), String> {
     let temporary = path.with_extension("tmp");
     fs::write(&temporary, content).map_err(|error| error.to_string())?;

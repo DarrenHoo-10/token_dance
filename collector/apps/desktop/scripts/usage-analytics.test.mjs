@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { usageTokens, usageCosts, annualUsage, usageTrend, quotaStale, quotaStatusText, quotaWindowLabel } from '../src/usage-analytics.ts';
+import { collectionStatusText, usageTokens, usageCosts, annualUsage, usageTrend, quotaStale, quotaStatusText, quotaWindowLabel } from '../src/usage-analytics.ts';
 import { lastSevenDays } from '../src/weekly-usage.ts';
 const now = new Date(2026, 8, 5, 12);
 const dates = lastSevenDays(now);
@@ -82,12 +82,13 @@ test('annual calendar includes leap day and local date boundaries', () => {
   assert.equal(year.days.length, 366);
   assert.ok(year.days.some(day => day.date === '2024-02-29'));
 });
-test('quota cannot remain current after reset or stale observation', () => {
+test('quota age does not expire a valid reading, but reset and invalid timestamps do', () => {
   const time = now.getTime();
   const quota = { observedAt: now.toISOString() };
   assert.equal(quotaStale(quota, time / 1000 + 600, time), false);
   assert.equal(quotaStale(quota, time / 1000 - 1, time), true);
-  assert.equal(quotaStale(quota, null, time + 31 * 60000), true);
+  assert.equal(quotaStale(quota, null, time + 31 * 60000), false);
+  assert.equal(quotaStale(quota, time / 1000 + 7 * 86400, time + 86400000), false);
   assert.equal(quotaStale({ observedAt: 'invalid' }, null, time), true);
 });
 
@@ -133,4 +134,20 @@ test('pipeline pricing preserves currencies and does not count the legacy USD mi
   const free = usageCosts([{ ...agent, totalCosts: {}, pricing: { ...pricing,
     estimatedUsd: 0, estimatedCosts: { CNY: 0 }, estimatedRequests: 1 } }], 'all', now);
   assert.deepEqual(free.currencies, { CNY: 0 });
+});
+
+test('collector status follows the actual feed without asking for unspecified configuration', () => {
+  const agent = {name:'Cursor',enabled:true,status:'ACTIVE'};
+  assert.equal(collectionStatusText(agent,'today',false,true),'今日暂无用量');
+  assert.equal(collectionStatusText({...agent,status:'CONNECTING'},'today',false,true),'正在连接用量来源');
+  assert.equal(collectionStatusText({...agent,status:'AUTH_REQUIRED'},'today',false,true),'请在 Cursor 重新登录');
+  assert.equal(collectionStatusText({...agent,status:'ERROR'},'today',false,true),'用量读取失败，将自动重试');
+  assert.equal(collectionStatusText({...agent,status:'AUTH_REQUIRED'},'today',true,true),'已暂停');
+});
+
+test('Doubao activity does not imply known Token usage', () => {
+  const item = { id: 'doubao-work', enabled: true, status: 'ACTIVE', accuracy: 'unknown' };
+  assert.equal(collectionStatusText(item, 'today', false, true), '活动采集中，Token 不可用');
+  assert.equal(collectionStatusText(item, 'today', true, true), '已暂停');
+  assert.equal(usageTokens(item, 'today', now), null);
 });

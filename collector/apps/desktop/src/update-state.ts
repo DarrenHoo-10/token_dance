@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import { isTauriEnvironment } from './tauri-bridge';
 
 export interface UpdateStatus {
+  minimumVersion?: string | null;
+  required?: boolean;
   currentVersion: string;
   version: string | null;
   notes: string;
@@ -27,13 +29,14 @@ async function refresh() {
   catch { /* Update polling must never prevent first paint or collector use. */ }
   finally { reading = false; }
 }
+const onOnline = () => { void checkUpdates().catch(() => {}); };
 export function useUpdates() {
   const [status, setStatus] = useState(current);
   useEffect(() => {
     subscribers.add(setStatus);
     setStatus(current);
-    if (!timer) { void refresh(); timer = setInterval(() => void refresh(), 1000); }
-    return () => { subscribers.delete(setStatus); if (!subscribers.size) { clearInterval(timer); timer = undefined; } };
+    if (!timer) { window.addEventListener("online", onOnline); void refresh(); timer = setInterval(() => void refresh(), 1000); }
+    return () => { subscribers.delete(setStatus); if (!subscribers.size) { window.removeEventListener("online", onOnline); clearInterval(timer); timer = undefined; } };
   }, []);
   return status;
 }
@@ -47,12 +50,22 @@ export async function setAutoUpdate(enabled: boolean) {
 }
 export async function installUpdate() { if (isTauriEnvironment()) await invoke('install_update'); }
 
+export async function openUpdateDownloads() {
+  // Include prereleases: macOS DMGs are currently published on the release list.
+  const url = 'https://github.com/DarrenHoo-10/token_dance/releases';
+  if (isTauriEnvironment()) await invoke('open_website', { url });
+  else window.open(url, '_blank', 'noopener,noreferrer');
+}
+
 export function updateBusy(status: UpdateStatus | null) { return !!status && ['checking', 'downloading', 'installing'].includes(status.phase); }
 export function updateError(code: string | null, zh: boolean): string {
   const errors: Record<string, [string, string]> = {
     network: ['网络暂不可用，请稍后重试', 'Network unavailable. Try again later.'],
+    download_network: ['安装包下载失败，请检查网络后重试', 'Package download failed. Check your connection and retry.'],
+    download_failed: ['下载服务暂不可用，请稍后重试', 'The download service is unavailable. Try again later.'],
     rate_limited: ['检查过于频繁，请稍后重试', 'Too many requests. Try again later.'],
     asset_missing: ['新版安装包尚未就绪，请稍后重试', 'The new package is not ready yet.'],
+    minimum_unavailable: ['满足最低版本要求的安装包尚未发布，请稍后重试', 'The required update package is not published yet. Please try again later.'],
     unverified_release: ['新版校验信息不完整，暂不能更新', 'Release verification is unavailable.'],
     integrity: ['安装包校验未通过，请重试', 'Package verification failed. Please retry.'],
     storage: ['无法保存更新，请检查磁盘空间和目录权限', 'Cannot save update. Check disk space and permissions.'],
@@ -60,12 +73,13 @@ export function updateError(code: string | null, zh: boolean): string {
     restore_failed: ['更新未完成，请从官网下载程序重新运行，数据仍保留在本机', 'Update could not complete. Download the app again; your local data is preserved.'],
     busy: ['更新正在进行，请稍候', 'An update is already in progress.'],
     no_update: ['当前已是最新版本', 'You are up to date.'],
+    unsupported: ['请从发布页下载安装包进行更新', 'Download an installer from the release page to update.'],
   };
   return (errors[code ?? ''] ?? ['暂时无法检查更新，请重试', 'Cannot check for updates. Please retry.'])[zh ? 0 : 1];
 }
 export function updateStatusText(status: UpdateStatus, zh: boolean): string {
   const t = (cn: string, en: string) => zh ? cn : en;
-  if (!status.supported) return t('此平台暂不支持应用内更新', 'In-app updates are not available on this platform yet.');
+  if (!status.supported) return t('此平台暂不支持应用内更新，请从发布页下载安装包', 'In-app updates are not available on this platform. Download an installer from the release page.');
   switch (status.phase) {
     case 'checking': return t('正在检查更新…', 'Checking for updates…');
     case 'downloading': return t(`正在后台下载 · ${status.progress}%`, `Downloading in background · ${status.progress}%`);

@@ -560,6 +560,7 @@ impl OrbController {
                     }
                     Err(error) => {
                         inner.build_failed = true;
+                        collector_service::runtime::append_log(&inner.state.log_dir_path(), &format!("orb creation failed: {error}"));
                         eprintln!("optional orb creation failed: {error}");
                     }
                 }

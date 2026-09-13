@@ -45,4 +45,6 @@ pub enum KeyError {
     Unavailable(String),
     #[error("device data key is invalid")]
     Invalid,
+    #[error("device data key is missing")]
+    NotFound,
 }

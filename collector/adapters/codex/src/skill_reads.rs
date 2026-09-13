@@ -1,8 +1,9 @@
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Default)]
-pub(crate) struct SkillReads {
+#[derive(Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct SkillReads {
     session: String,
     turn: String,
     pending: BTreeMap<String, (String, String, String)>,

@@ -1,4 +1,5 @@
 use crate::state::AppState;
+use platform_credentials::{CredentialError, DESKTOP_SERVICE};
 use crate::upload_pipeline::{session_bearer_from_cookies, UploadConsumer, UploadCredentials};
 use std::collections::BTreeMap;
 use std::fs;
@@ -239,7 +240,11 @@ impl Connection {
 }
 
 impl Connection {
-    async fn register_sync_device(&mut self, signer: Arc<dyn DeviceSigner>) -> Result<(), String> {
+    async fn register_sync_device(
+        &mut self,
+        signer: Arc<dyn DeviceSigner>,
+        user_id: &str,
+    ) -> Result<(), String> {
         let grant = self
             .request(Method::POST, "/api/v1/me/device-grants", Some(json!({})))
             .await?
@@ -248,6 +253,16 @@ impl Connection {
             .ok_or("INVALID_RESPONSE")?;
         let public_key = signer
             .public_key()
+            .map_err(|_| "DEVICE_KEY_ERROR")?
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        let proof_timestamp = chrono::Utc::now().timestamp().to_string();
+        let proof_message = format!(
+            "tokendance-device-binding\nregister:{user_id}\n{public_key}\n{proof_timestamp}"
+        );
+        let proof_signature = signer
+            .sign(proof_message.as_bytes())
             .map_err(|_| "DEVICE_KEY_ERROR")?
             .iter()
             .map(|byte| format!("{byte:02x}"))
@@ -261,7 +276,7 @@ impl Connection {
             )
             .bearer_auth(grant)
             .json(&json!({
-                "publicKey": public_key, "deviceName": "TokenDance Desktop",
+                "publicKey": public_key, "proofTimestamp": proof_timestamp, "proofSignature": proof_signature, "deviceName": "TokenDance Desktop",
                 "osType": std::env::consts::OS, "architecture": std::env::consts::ARCH,
                 "collectorVersion": env!("CARGO_PKG_VERSION")
             }))
@@ -270,7 +285,8 @@ impl Connection {
             .map_err(|_| "NETWORK_ERROR")?;
         if !response.status().is_success() {
             return Err(match response.status().as_u16() {
-                401 | 403 | 409 => "DEVICE_UNAVAILABLE",
+                409 => "DEVICE_BOUND_ELSEWHERE",
+                401 | 403 => "DEVICE_UNAVAILABLE",
                 _ => "NETWORK_ERROR",
             }
             .into());
@@ -306,6 +322,9 @@ impl Connection {
     }
 
     async fn sync_once(&mut self, app: &AppState) -> Result<&'static str, String> {
+        if crate::updates::upgrade_required() {
+            return Ok("CLIENT_UPGRADE_REQUIRED");
+        }
         if self.cookies.is_empty() {
             let _ = app.deactivate_sync_account();
             return Ok("LOGIN_REQUIRED");
@@ -337,11 +356,19 @@ impl Connection {
             *app.sync_status.write().await = "SYNCING".into();
         }
         if self.telemetry_v2.is_none() {
-            let seed = OsKeyProvider::new("io.tokendance.desktop", "collector-device-ed25519")
+            let create = !app.control_dir_path().join("device-registered").exists();
+            let seed = OsKeyProvider::device_seed(create)
                 .data_key()
                 .map_err(|_| "DEVICE_KEY_ERROR")?;
-            self.register_sync_device(Arc::new(InMemoryDeviceSigner::from_seed(seed)))
-                .await?;
+            self.register_sync_device(
+                Arc::new(InMemoryDeviceSigner::from_seed(seed)),
+                &user.user_id,
+            )
+            .await?;
+            collector_service::platform::write_private_file(
+                &app.control_dir_path().join("device-registered"),
+                b"1",
+            )?;
         }
         let Some(session_bearer) = session_bearer_from_cookies(&self.cookies) else {
             return Ok("LOGIN_REQUIRED");
@@ -351,10 +378,8 @@ impl Connection {
             return Ok("WAITING");
         };
         if self.upload_consumer.is_none() {
-            let transport = self
-                .telemetry_v2
-                .clone()
-                .ok_or("DEVICE_UNAVAILABLE")? as Arc<dyn TelemetryV2Transport>;
+            let transport = self.telemetry_v2.clone().ok_or("DEVICE_UNAVAILABLE")?
+                as Arc<dyn TelemetryV2Transport>;
             self.upload_consumer = Some(UploadConsumer::new(writer, transport));
         }
         let creds = UploadCredentials {
@@ -380,6 +405,28 @@ impl Connection {
 }
 
 impl AccountState {
+    pub async fn rebuild_local_data(
+        &self,
+        app: &AppState,
+    ) -> Result<crate::local_store::pipeline::reconstruction::RebuildStatus, String> {
+        let mut guard = self.0.lock().await;
+        if let Some(connection) = guard.as_mut() {
+            if let Some(mut uploader) = connection.upload_consumer.take() {
+                uploader.finish_in_flight().await;
+            }
+        }
+        let runtime = app.pipeline_runtime().ok_or("PIPELINE_UNAVAILABLE")?;
+        app.set_rebuilding(true);
+        let result = tauri::async_runtime::spawn_blocking(move || runtime.rebuild())
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|result| result);
+        if result.is_err() {
+            app.set_rebuilding(false);
+        }
+        result
+    }
+
     async fn auto_sync_tick(&self, app: &AppState) {
         // Keep one batch serialized with login/logout; after sign-out completes
         // no request can use an old account or device transport.
@@ -410,6 +457,7 @@ impl AccountState {
                 current.blocked = matches!(
                     error.as_str(),
                     "DEVICE_UNAVAILABLE"
+                        | "DEVICE_BOUND_ELSEWHERE"
                         | "DEVICE_KEY_ERROR"
                         | "REJECTED_EVENTS"
                         | "EVENT_TOO_LARGE"
@@ -421,9 +469,15 @@ impl AccountState {
                     current.retry_at = Some(Instant::now() + Duration::from_secs(300));
                     if matches!(error.as_str(), "REJECTED_EVENTS" | "EVENT_TOO_LARGE") {
                         "DATA_REJECTED"
+                    } else if error == "DEVICE_BOUND_ELSEWHERE" {
+                        "DEVICE_BOUND_ELSEWHERE"
                     } else {
                         "NEEDS_ATTENTION"
                     }
+                } else if error == "SYNC_ENDPOINT_INVALID" {
+                    "SYNC_ENDPOINT_INVALID"
+                } else if error == "SYNC_PROTOCOL_UNSUPPORTED" {
+                    "SYNC_PROTOCOL_UNSUPPORTED"
                 } else {
                     "RETRYING"
                 }
@@ -441,6 +495,9 @@ impl AccountState {
 }
 
 pub fn start_auto_sync(handle: tauri::AppHandle, app: AppState) {
+    if crate::local_test::enabled() {
+        return;
+    }
     tauri::async_runtime::spawn(async move {
         let account = handle.state::<AccountState>();
         {
@@ -471,17 +528,34 @@ pub fn start_auto_sync(handle: tauri::AppHandle, app: AppState) {
 }
 
 const SESSION_TTL_SECS: u64 = 30 * 24 * 60 * 60;
+const SESSION_VERSION: u32 = 1;
 
 #[derive(Serialize, Deserialize)]
 struct PersistedAccount {
+    #[serde(default = "session_version")]
+    version: u32,
     origin: String,
     cookies: BTreeMap<String, String>,
     csrf: String,
     expires_at: u64,
 }
 
+fn session_version() -> u32 {
+    SESSION_VERSION
+}
+
+#[derive(Serialize, Deserialize)]
+struct SessionIndex {
+    origin: String,
+    expires_at: u64,
+}
+
 fn persist_path() -> std::path::PathBuf {
     crate::state::app_data_root().join("account-session.json")
+}
+
+fn index_path() -> std::path::PathBuf {
+    crate::state::app_data_root().join("account-session.index.json")
 }
 
 fn unix_now() -> u64 {
@@ -491,37 +565,98 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
+fn session_account(origin: &str) -> String {
+    let digest = Sha256::digest(origin.as_bytes());
+    format!("account-session-{}", hex_encode(&digest[..16]))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
 fn save_account(connection: &Connection) {
+    let origin = connection.origin.as_str().to_string();
+    let account = session_account(&origin);
     if connection.cookies.is_empty() {
+        let _ = platform_credentials::delete(DESKTOP_SERVICE, &account);
+        let _ = fs::remove_file(index_path());
         let _ = fs::remove_file(persist_path());
         return;
     }
-    let path = persist_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
     let payload = PersistedAccount {
-        origin: connection.origin.as_str().to_string(),
+        version: SESSION_VERSION,
+        origin: origin.clone(),
         cookies: connection.cookies.clone(),
         csrf: connection.csrf.clone(),
         expires_at: unix_now().saturating_add(SESSION_TTL_SECS),
     };
-    if let Ok(body) = serde_json::to_vec(&payload) {
-        let _ = fs::write(path, body);
+    let Ok(secret) = serde_json::to_string(&payload) else {
+        return;
+    };
+    if platform_credentials::put(DESKTOP_SERVICE, &account, &secret).is_err() {
+        return;
+    }
+    match platform_credentials::get(DESKTOP_SERVICE, &account) {
+        Ok(readback) if readback == secret => {}
+        _ => return,
+    }
+    let index = SessionIndex {
+        origin,
+        expires_at: payload.expires_at,
+    };
+    if let Ok(body) = serde_json::to_vec(&index) {
+        let _ = collector_service::platform::write_private_file(&index_path(), body);
+    }
+    if persist_path().exists() {
+        let _ = fs::remove_file(persist_path());
     }
 }
 
 fn load_account(origin: &Url) -> Option<(BTreeMap<String, String>, String)> {
-    let body = fs::read(persist_path()).ok()?;
-    let stored: PersistedAccount = serde_json::from_slice(&body).ok()?;
-    if stored.origin != origin.as_str()
-        || stored.expires_at <= unix_now()
-        || stored.cookies.is_empty()
-    {
-        let _ = fs::remove_file(persist_path());
+    let origin_s = origin.as_str();
+    let account = session_account(origin_s);
+    match platform_credentials::get(DESKTOP_SERVICE, &account) {
+        Ok(secret) => parse_session_secret(&secret, origin_s),
+        Err(CredentialError::NotFound) => migrate_legacy_session(origin_s),
+        Err(_) => None,
+    }
+}
+
+fn parse_session_secret(secret: &str, origin: &str) -> Option<(BTreeMap<String, String>, String)> {
+    let stored: PersistedAccount = serde_json::from_str(secret).ok()?;
+    if stored.origin != origin || stored.expires_at <= unix_now() || stored.cookies.is_empty() {
         return None;
     }
     Some((stored.cookies, stored.csrf))
+}
+
+fn migrate_legacy_session(origin: &str) -> Option<(BTreeMap<String, String>, String)> {
+    let body = fs::read(persist_path()).ok()?;
+    let stored: PersistedAccount = serde_json::from_slice(&body).ok()?;
+    if stored.origin != origin || stored.expires_at <= unix_now() || stored.cookies.is_empty() {
+        return None;
+    }
+    let cookies = stored.cookies.clone();
+    let csrf = stored.csrf.clone();
+    if let Ok(secret) = serde_json::to_string(&stored) {
+        let account = session_account(origin);
+        if platform_credentials::put(DESKTOP_SERVICE, &account, &secret).is_ok() {
+            if platform_credentials::get(DESKTOP_SERVICE, &account)
+                .ok()
+                .as_deref()
+                == Some(secret.as_str())
+            {
+                let _ = fs::remove_file(persist_path());
+            }
+        }
+    }
+    Some((cookies, csrf))
 }
 
 fn connection(state: &mut Option<Connection>, origin: Url) -> Result<&mut Connection, String> {
@@ -539,6 +674,9 @@ pub async fn get_account_session(
     website: String,
     state: State<'_, AccountState>,
 ) -> Result<AccountSession, String> {
+    if crate::local_test::enabled() {
+        return Ok(AccountSession { user: None });
+    }
     let mut guard = state.0.lock().await;
     if website.is_empty() {
         *guard = None;
@@ -564,6 +702,28 @@ pub async fn get_account_session(
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
+pub(crate) async fn authorize_saved_credentials(website: Option<String>) -> Result<(), String> {
+    if crate::local_test::enabled() || !platform_credentials::uses_login_keychain() {
+        return Ok(());
+    }
+    let mut accounts = vec![
+        platform_credentials::WAL_KEY_ACCOUNT.to_owned(),
+        platform_credentials::DEVICE_SEED_ACCOUNT.to_owned(),
+    ];
+    let saved_origin = website.or_else(|| {
+        let bytes = fs::read(index_path()).ok()?;
+        let index: SessionIndex = serde_json::from_slice(&bytes).ok()?;
+        Some(index.origin)
+    });
+    if let Some(origin) = saved_origin.and_then(|value| account_origin(&value).ok()) {
+        accounts.push(session_account(origin.as_str()));
+    }
+    tokio::task::spawn_blocking(move || platform_credentials::authorize_login_keychain(&accounts))
+        .await
+        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 pub async fn login_account(
     website: String,
@@ -571,6 +731,10 @@ pub async fn login_account(
     state: State<'_, AccountState>,
     app: State<'_, AppState>,
 ) -> Result<AccountSession, String> {
+    if crate::local_test::enabled() {
+        return Err("LOCAL_TEST_MODE".into());
+    }
+    authorize_saved_credentials(Some(website.clone())).await?;
     wait_for_login(browser_login(website, mode, state, app)).await
 }
 
@@ -645,6 +809,7 @@ async fn browser_login(
     .await
     .map_err(|_| "BROWSER_OPEN_FAILED")??;
     let (mut stream, code) = wait_browser_callback(&listener, &redirect, &nonce).await?;
+    let home = origin.clone();
     let mut current = Connection::new(origin)?;
     let result: Result<AccountSession, String> = async {
         let session = current
@@ -659,18 +824,40 @@ async fn browser_login(
         Ok(session)
     }
     .await;
-    let message = if result.is_ok() {
-        "TokenDance 登录成功。可以关闭此页面并返回桌面应用。<br>Signed in. You can close this page and return to TokenDance."
+    if result.is_ok() {
+        // Skip any success interstitial — send the browser straight to the site home.
+        let _ = send_browser_redirect(&mut stream, home.as_str()).await;
     } else {
-        "登录未完成，请返回 TokenDance 重试。<br>Sign-in failed. Return to TokenDance and retry."
-    };
-    let _ = send_browser_result(&mut stream, "200 OK", message).await;
+        let _ = send_browser_result(
+            &mut stream,
+            "200 OK",
+            "登录未完成，请返回 TokenDance 重试。<br>Sign-in failed. Return to TokenDance and retry.",
+        )
+        .await;
+    }
     let session = result?;
     if let Some(user) = &session.user {
         let _ = app.activate_sync_account(&user.user_id).await;
     }
     *app.sync_status.write().await = "WAITING".into();
     Ok(session)
+}
+
+async fn send_browser_redirect(
+    stream: &mut tokio::net::TcpStream,
+    location: &str,
+) -> Result<(), String> {
+    let response = format!(
+        "HTTP/1.1 302 Found\r\nLocation: {location}\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nContent-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+    );
+    tokio::time::timeout(
+        Duration::from_secs(3),
+        stream.write_all(response.as_bytes()),
+    )
+    .await
+    .map_err(|_| "CALLBACK_ERROR")?
+    .map_err(|_| "CALLBACK_ERROR")?;
+    Ok(())
 }
 
 async fn send_browser_result(
@@ -767,6 +954,9 @@ pub async fn logout_account(
     state: State<'_, AccountState>,
     app: State<'_, AppState>,
 ) -> Result<(), String> {
+    if crate::local_test::enabled() {
+        return Ok(());
+    }
     state.2.fetch_add(1, Ordering::SeqCst);
     let mut guard = state.0.lock().await;
     let origin = account_origin(&website)?;
@@ -876,6 +1066,29 @@ mod tests {
         ] {
             assert!(callback_code(&invalid, redirect, "expected").is_none());
         }
+    }
+
+    #[tokio::test]
+    async fn successful_browser_callback_redirects_to_website_home() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = tokio::spawn(async move {
+            let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            let mut buf = [0u8; 1024];
+            let n = tokio::io::AsyncReadExt::read(&mut stream, &mut buf)
+                .await
+                .unwrap();
+            String::from_utf8_lossy(&buf[..n]).into_owned()
+        });
+        let (mut stream, _) = listener.accept().await.unwrap();
+        send_browser_redirect(&mut stream, "https://example.test/token-dance/")
+            .await
+            .unwrap();
+        let response = client.await.unwrap();
+        assert!(response.starts_with("HTTP/1.1 302 Found\r\n"));
+        assert!(response.contains("Location: https://example.test/token-dance/\r\n"));
+        assert!(!response.contains("登录成功"));
+        assert!(!response.contains("Signed in"));
     }
 
     #[tokio::test]
@@ -1014,7 +1227,10 @@ mod tests {
             .insert("tokendance_session".into(), "fixture-session".into());
         client.csrf = "fixture-csrf".into();
         client
-            .register_sync_device(Arc::new(InMemoryDeviceSigner::from_seed([7; 32])))
+            .register_sync_device(
+                Arc::new(InMemoryDeviceSigner::from_seed([7; 32])),
+                "usr_fixture",
+            )
             .await
             .unwrap();
         let account = AccountState(Mutex::new(Some(client)), Mutex::new(()), AtomicU64::new(0));

@@ -41,6 +41,7 @@ collector/apps/desktop/src-tauri/target/
 collector/apps/desktop/node_modules/
 collector/apps/desktop/dist/
 collector/apps/desktop/release/
+collector/packaging/macos/release/
 **/*.rs.bk
 
 # Collector local state

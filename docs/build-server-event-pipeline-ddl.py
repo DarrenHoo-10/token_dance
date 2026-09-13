@@ -47,7 +47,6 @@ table('telemetry_skills', '设备范围的匿名技能身份与公开标签', co
     'CONSTRAINT fk_ep_skill_device FOREIGN KEY (installation_id) REFERENCES installations(installation_id)'])
 
 event_columns = common() + [
-    col('user_id', UID, '首次接收时由服务端认证确定的账号；不接受客户端提供的归属'),
     col('installation_id', UID, '签名所证明的稳定设备身份；事件幂等键不包含账号'),
     col('event_id', 'BINARY(32) NOT NULL', '不可变事件版本的业务幂等键'),
     col('fact_key', 'BINARY(32) NOT NULL', '逻辑事实稳定身份；不是批次或数据库行序号'),
@@ -69,13 +68,12 @@ event_columns = common() + [
 event_rules = [
     'UNIQUE KEY uk_te_event (installation_id,event_id)',
     'UNIQUE KEY uk_te_fact (installation_id,fact_key,fact_revision)',
-    'KEY idx_te_user_time (user_id,delete_at,occurred_at,id)',
+    'KEY idx_te_user_time (installation_id,delete_at,occurred_at,id)',
     'KEY idx_te_retention (occurred_at,id)',
     'KEY idx_te_session (installation_id,harness_id,session_key,occurred_at,id)',
     'KEY idx_te_cost (installation_id,harness_id,cost_scope_key,occurred_at,id)',
     'KEY idx_te_model_fk (model_key)',
     'KEY idx_te_skill_fk (skill_id)',
-    'CONSTRAINT fk_ep_event_user FOREIGN KEY (user_id) REFERENCES users(user_id)',
     'CONSTRAINT fk_ep_event_device FOREIGN KEY (installation_id) REFERENCES installations(installation_id)',
     'CONSTRAINT fk_ep_event_model FOREIGN KEY (model_key) REFERENCES telemetry_models(id)',
     'CONSTRAINT fk_ep_event_skill FOREIGN KEY (skill_id) REFERENCES telemetry_skills(id)',
@@ -124,7 +122,6 @@ def local_business_columns(name):
 
 def metric_columns(local_name):
     columns = common() + [
-        col('user_id', UID, '统计贡献所属账号；取首次接收事实归属，不跟随当前设备绑定变更'),
     col('installation_id', UID, '统计贡献所属设备；用于多设备汇总和按设备删除贡献'),
     ]
     for field, definition, comment in local_business_columns(local_name):
@@ -152,9 +149,8 @@ for theme in ('harness', 'model', 'skill', 'cost'):
     prefix = {'harness': 'thm', 'model': 'tmm', 'skill': 'tsm', 'cost': 'tcm'}[theme]
     suffix = {'harness': '', 'model': ',model_key', 'skill': ',skill_id', 'cost': ',model_key,currency'}[theme]
     rules = [
-        f'UNIQUE KEY uk_{prefix}_bucket (user_id,grain,bucket_start,installation_id,harness_id{suffix})',
+        f'UNIQUE KEY uk_{prefix}_bucket (installation_id,grain,bucket_start,harness_id{suffix})',
         f'KEY idx_{prefix}_device (installation_id,id)',
-        f'CONSTRAINT fk_{prefix}_user FOREIGN KEY (user_id) REFERENCES users(user_id)',
         f'CONSTRAINT fk_{prefix}_device FOREIGN KEY (installation_id) REFERENCES installations(installation_id)',
         "CHECK (grain IN ('hour','day','month'))",
         'CHECK (metric_semantics_version>0)',
@@ -169,9 +165,9 @@ for theme in ('harness', 'model', 'skill', 'cost'):
                   'CHECK (exact_use_count+derived_use_count+correlated_use_count<=use_count)',
                   'CHECK (duration_known_count<=use_count)']
     if theme in ('harness', 'model'):
-        rules += [f'KEY idx_{prefix}_harness (user_id,grain,harness_id,bucket_start{suffix})']
+        rules += [f'KEY idx_{prefix}_harness (installation_id,grain,harness_id,bucket_start{suffix})']
     if theme == 'model':
-        rules += ['KEY idx_tmm_model_filter (user_id,grain,model_key,bucket_start,harness_id)',
+        rules += ['KEY idx_tmm_model_filter (installation_id,grain,model_key,bucket_start,harness_id)',
                   'CHECK (cache_eligible_read_tokens<=cache_eligible_input_tokens)']
         for field, _, _ in local_business_columns('model_metrics'):
             if field.endswith('_known_count'):
@@ -182,10 +178,9 @@ for theme in ('harness', 'model', 'skill', 'cost'):
     for line in columns:
         if 'DECIMAL(' in line:
             rules.append(f'CHECK ({line.strip().split()[0]}>=0)')
-    table(name, '按账号与设备分 grain 保存的' + theme + '统计', columns, rules)
+    table(name, '按设备分 grain 保存的' + theme + '统计', columns, rules)
 
 entity_columns = common() + [
-    col('user_id', UID, '实体统计所属账号；固定于事实接收归属'),
     col('installation_id', UID, '实体匿名命名空间所属设备'),
 ]
 for field, definition, comment in local_business_columns('bucket_entity_state'):
@@ -203,10 +198,9 @@ for field, definition, comment in local_business_columns('bucket_entity_state'):
         typ = 'BIGINT UNSIGNED' + (' NOT NULL' if 'NOT NULL' in definition else ' NULL')
     entity_columns.append(col(field, typ, comment))
 table('telemetry_bucket_entities', '粒度内会话轮次成员与必要状态；不是永久事件账本', entity_columns, [
-    'UNIQUE KEY uk_tbe_entity (user_id,installation_id,grain,bucket_start,harness_id,entity_kind,entity_key)',
-    'KEY idx_tbe_related (installation_id,user_id,harness_id,entity_kind,entity_key,grain,bucket_start)',
-    'KEY idx_tbe_parent (user_id,installation_id,grain,bucket_start,harness_id,parent_key)',
-    'CONSTRAINT fk_tbe_user FOREIGN KEY (user_id) REFERENCES users(user_id)',
+    'UNIQUE KEY uk_tbe_entity (installation_id,grain,bucket_start,harness_id,entity_kind,entity_key)',
+    'KEY idx_tbe_related (installation_id,harness_id,entity_kind,entity_key,grain,bucket_start)',
+    'KEY idx_tbe_parent (installation_id,grain,bucket_start,harness_id,parent_key)',
     'CONSTRAINT fk_tbe_device FOREIGN KEY (installation_id) REFERENCES installations(installation_id)',
     "CHECK (grain IN ('hour','day','month'))",
     "CHECK (entity_kind IN ('session','turn'))",
@@ -274,7 +268,7 @@ def validate():
         assert parsed == physical - {'id', 'created_at', 'updated_at', 'delete_at', 'extra'}, local_name
         server_body = next(sql for name, _, sql in TABLES if name == 'telemetry_' + local_name)
         server_fields = set(re.findall(r'^ ([a-z_]+) ', server_body, re.M))
-        assert server_fields == physical | {'user_id', 'installation_id'}, local_name
+        assert server_fields == physical | {'installation_id'}, local_name
     names = {name for name, _, _ in TABLES}
     for name, _, sql in TABLES:
         for target in re.findall(r'REFERENCES ([a-z_]+)\(', sql):
@@ -282,13 +276,15 @@ def validate():
     return count
 
 
+VIEWS = '\n'.join(f"CREATE OR REPLACE VIEW bound_telemetry_{theme}_metrics AS SELECT m.*,i.user_id FROM telemetry_{theme}_metrics m JOIN installations i ON i.installation_id=m.installation_id WHERE i.installation_status <> 'revoked' AND i.revoked_at IS NULL;" for theme in ('harness','model','skill','cost'))
+
 if __name__ == '__main__':
     count = validate()
-    sql = HEADER + '\n'.join(t[2] for t in TABLES) + '\n' + SEED
-    (ROOT / 'event-pipeline-server-schema-v1.mysql.sql').write_text(sql, encoding='utf-8')
+    sql = HEADER + '\n'.join(t[2] for t in TABLES) + '\n' + SEED + '\n' + VIEWS + '\n'
+    (ROOT / 'event-pipeline-server-schema-v1.mysql.sql').write_text(sql, encoding='utf-8', newline='\n')
     lines = [
         '# 服务端事件流水线完整 DDL v1', '',
-        '状态：2026-09-12 修订，尚未实施。内测旧采集/统计数据不迁移。共 10 张目标表：9 张新事件业务表及空表重建的 aggregate_dirty_days；均采用 id 主键和 created_at、updated_at、delete_at、extra 公共字段。installations 继续复用现有结构，不为历史兼容新增字段或改主键。', '',
+        '状态：2026-09-12 修订；设备归属变更在 0014_device_owned_telemetry.sql 实施，尚未发布。内测旧采集/统计数据不迁移。共 10 张目标表：9 张新事件业务表及空表重建的 aggregate_dirty_days；均采用 id 主键和 created_at、updated_at、delete_at、extra 公共字段。installations 继续复用现有结构，不为历史兼容新增字段或改主键。', '',
         '[完整技术方案](event-pipeline-refactor-technical-plan-v1.md) · [SQL 文件](event-pipeline-server-schema-v1.mysql.sql) · [本地 DDL](event-pipeline-ddl-v3.md)', '',
         '## 执行边界和类型', '',
         'SQL 以 MySQL 8.4/InnoDB 为设计基线，依赖现有 users.user_id 和 installations.installation_id（CHAR(30) ASCII ascii_bin）唯一身份。这里给出空表初始化的完整目标 CREATE TABLE，不执行旧业务记录转换。账号、会话、设备及认证设施保留；排行榜和 community 复用结构/刷新机制但清空旧统计与发布待办，旧快照退出读写链路；不在本方案复制整套认证系统。', '',
@@ -296,19 +292,19 @@ if __name__ == '__main__':
         '服务器管理时间和事件时间均用 BIGINT UNSIGNED UTC 毫秒；业务日用 DATE；固定摘要 BINARY(32)、租约 BINARY(16)、短标识 VARCHAR/CHAR、扩展与分组数据原生 JSON。大 Token/金额累计用 DECIMAL(38,0)，其他计数用 BIGINT UNSIGNED；业务代码受检运算，不允许负差额落库或隐式浮点转换。所有索引均围绕已知查询/唯一性/外键，不建立通用 JSON GIN 或每个状态独立索引。', '',
         'extra 仅放可选扩展；必需字段不能藏到其中。status_json 是各自统计完成状态唯一来源，任务表不重复存完成状态。delete_at 不释放任何业务唯一键；软删不自动撤销统计，必须由业务事务处理。', '',
         'MySQL 不提供 SQLite 式部分索引；due 查询以 consumer/delete_at/runnable_at 定位，租约回收包含软删行。外键列的辅助索引已明确列出，避免把 InnoDB 自动创建的索引漏算。字段范围、隐私白名单、JSON 类型和状态转换仍必须经过类型化 API 校验，DDL 不等于完整协议验证器。', '',
-        '模型 provider_id/model_id 使用 utf8mb4_0900_bin，保持大小写和尾部空格区分；入口拒绝空或带不合法空白的标识。设备和用户自然 ID 的 ASCII 定义与既有 users 外键一致。所有外键支持用户归属固定、设备可重新绑定，不设置 (installation_id,user_id) 外键去强迫历史归属随设备当前账号改变。', '',
+        '模型 provider_id/model_id 使用 utf8mb4_0900_bin，保持大小写和尾部空格区分；入口拒绝空或带不合法空白的标识。设备和用户自然 ID 的 ASCII 定义与既有 users 外键一致。事件和设备统计不保存 user_id；查询视图关联 installations 的当前有效绑定，用户汇总和缓存仍使用 user_id。', '',
         '## 表目录', '',
         '| 表 | 用途 |', '| --- | --- |',
     ]
     lines += [f'| {name} | {title} |' for name, title, _ in TABLES]
     for name, title, body in TABLES:
         lines += ['', f'## {name}', '', title + '。', '', '```sql', body.rstrip(), '```']
-    lines += ['', '## 空表初始化要求', '', '```sql', SEED.rstrip(), '```', '',
+    lines += ['', '## 当前绑定的用户统计视图', '', '视图不复制数据、不增加实体表；解绑立即排除，重新绑定计入新账号。', '', '```sql', VIEWS, '```', '', '## 空表初始化要求', '', '```sql', SEED.rstrip(), '```', '',
               'unknown 必须在任何事件写入之前初始化。先停止旧接收、聚合和缓存发布工作器，再按外键依赖清理旧统计业务数据并创建空目标表；不复制旧明细、日快照、统计或任务。installations 的身份、主键、注册时间沿用现表，账号和设备数据不属于本次统计重置范围。初始化完成后重复启动不得再清库。', '',
               'aggregate_dirty_days 按目标结构空表重建，不迁移旧 claim_token、租约、版本或时间字段；旧消费者同时停用。新任务领取时把 next_attempt_at 置 NULL，执行期间新变更只增加 dirty_version；完成只确认领取版本 v，若 dirty_version>v 则重排，不能混用旧 ClearAggregateDirtyDaysTx。', '',
-              '服务器事件不直接照搬客户端 created_at+14 天硬 TTL。先关闭 occurred_at 对应接收窗口，再在任务与关联依赖完成后清理；窗口内已计数身份不能提前物理删除。模型/技能软删标签不能让历史外键失效；物理删除账号/设备数据遵循依赖顺序和服务端授权归属。', '',
+              '服务器事件不直接照搬客户端 created_at+14 天硬 TTL。服务端保留事件身份及统计完成状态，保证任意历史重建仍能去重；不能按 occurred_at 窗口清掉已计数身份。模型/技能软删标签不能让历史外键失效；物理删除账号/设备数据遵循依赖顺序和服务端授权归属。', '',
               '## 本轮验证', '',
               f'生成器结构检查：10 张表、{count} 个有 COMMENT 的字段、每表五个公共字段及 id 主键、索引字段存在、显式外键名称不冲突，且不存在逐设备协议切换字段。与本地四个统计主题共享字段来源，防止两端漏列。该检查不执行 MySQL SQL，不验证锁、优化器、真实外键或性能。', '',
-              '当前机器 Docker Linux 引擎不可用，本轮未在真实 MySQL 执行。实施前必须在实际目标版本的临时数据库执行完整 DDL、非法写入、EXPLAIN 以及多连接并发/删除/改绑测试；不能将上述结构检查报告为数据库执行通过。', '']
-    (ROOT / 'event-pipeline-server-ddl-v1.md').write_text('\n'.join(lines), encoding='utf-8')
+              '本轮另在云端隔离测试 schema 验证了实际迁移、并发幂等、历史重建和解绑/重新绑定。此生成器自身仍仅做结构检查，不能代替真实数据库测试。', '']
+    (ROOT / 'event-pipeline-server-ddl-v1.md').write_text('\n'.join(lines), encoding='utf-8', newline='\n')
     print(f'Generated 10 MySQL target tables, {count} commented fields; structural validation only, no database connection.')

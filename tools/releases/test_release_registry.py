@@ -72,6 +72,12 @@ class RegistryTests(unittest.TestCase):
         self.release = json.loads((ROOT / 'schemas/fixtures/desktop-release-manifest.json').read_text())['releases'][0]
 
     def build(self, release):
+        if release['platform'].startswith('macos-'):
+            return {'branch':'main','version':release['version'],'commit':'a'*40,'dirty':False,'profile':'release',
+                    'architecture':'arm64','bundleId':'io.tokendance.desktop','minimumSystemVersion':'13.0',
+                    'notarized':True,'teamIdentifier':'ABCDEFGHIJ','signingAuthority':'Developer ID Application: Test',
+                    'appNotaryId':'11111111-1111-1111-1111-111111111111','dmgNotaryId':'22222222-2222-2222-2222-222222222222',
+                    'dmg':release['dmg']}
         return {'branch': 'main', 'version': release['version'], 'commit': 'a' * 40,
                 'sha256': release['exe']['sha256']}
 
@@ -139,10 +145,13 @@ class RegistryTests(unittest.TestCase):
 
     def test_reconcile_recovers_deleted_file_and_preserves_other_platforms(self):
         self.publish()
-        self.publish({**self.release, 'platform': 'macos-arm64'})
+        mac = {key:value for key,value in self.release.items() if key != 'exe'}
+        mac.update(platform='macos-arm64', minimumSystemVersion='13.0', notarized=True, dmg={**self.release['exe'],'url':'https://downloads.example.com/mac.dmg'})
+        self.publish(mac)
         self.path.unlink()
         registry.reconcile(self.db, self.path)
-        self.assertEqual(len(json.loads(self.path.read_text())['releases']), 2)
+        self.assertEqual(len(json.loads(self.path.read_text())['releases']), 1)
+        self.assertEqual(len(json.loads(self.path.with_name('macos.json').read_text())['releases']), 1)
 
     def test_concurrent_publishers_cannot_overwrite_newer_release(self):
         self.publish()

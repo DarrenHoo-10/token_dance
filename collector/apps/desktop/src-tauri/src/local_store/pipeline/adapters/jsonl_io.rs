@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 
 use crate::local_store::pipeline::runner::{
-    read_jsonl_budgeted, CheckpointView, RawBatch, RawRecord, ReadBudget, RunnerError, SourceChange,
+    read_jsonl_budgeted_with_state, CheckpointView, RawBatch, RawRecord, ReadBudget, RunnerError,
+    SourceChange,
 };
 
 pub fn read_jsonl_source(
@@ -22,7 +23,12 @@ pub fn read_jsonl_source(
         .observed_boundary_json
         .get("len")
         .and_then(|v| v.as_u64());
-    let result = read_jsonl_budgeted(path, offset, expected_len, budget)?;
+    let skipping = committed
+        .cursor_json
+        .get("skipping_oversized")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let result = read_jsonl_budgeted_with_state(path, offset, expected_len, budget, skipping)?;
     if let Some(change) = result.source_change {
         match change {
             SourceChange::Truncated | SourceChange::IdentityMismatch => {
@@ -45,7 +51,7 @@ pub fn read_jsonl_source(
         .collect();
     Ok(RawBatch {
         records,
-        next_cursor_json: json!({ "offset": result.next_offset }),
+        next_cursor_json: json!({ "offset": result.next_offset, "skipping_oversized": result.skipping_oversized }),
         next_observed_boundary_json: json!({ "len": result.file_len }),
         has_more: result.has_more,
         bytes_read: result.bytes_read,
@@ -98,8 +104,12 @@ pub fn discover_jsonl_files_in_roots<'a>(
     if all.is_empty() {
         return (Vec::new(), resume_after.map(|s| s.to_string()));
     }
+    // Path equality and string ordering differ on Windows (mixed separators).
+    // Deduplicate before sorting; equal paths are not necessarily adjacent in
+    // string order when multiple roots describe the same directory.
+    let mut seen = std::collections::HashSet::new();
+    all.retain(|path| seen.insert(path.clone()));
     all.sort_by(|a, b| a.to_string_lossy().cmp(&b.to_string_lossy()));
-    all.dedup();
 
     let start = resume_after
         .and_then(|after| {
@@ -154,4 +164,39 @@ fn walkdir_shallow(root: &Path, max_depth: usize) -> Vec<PathBuf> {
     }
     out.sort();
     out
+}
+
+#[cfg(test)]
+mod union_tests {
+    use super::*;
+    #[test]
+    fn overlapping_roots_do_not_duplicate_sources_or_page_entries() {
+        let temp = tempfile::tempdir().unwrap();
+        let child = temp.path().join("nested");
+        std::fs::create_dir_all(&child).unwrap();
+        for file in ["a.jsonl", "b.jsonl"] {
+            std::fs::write(child.join(file), "{}\n").unwrap();
+        }
+        let alternate = PathBuf::from(child.to_string_lossy().replace('\\', "/"));
+        let (files, _) = discover_jsonl_files_in_roots(
+            [child.as_path(), alternate.as_path(), temp.path()],
+            ".jsonl",
+            10,
+            None,
+        );
+        assert_eq!(files.len(), 2);
+        let (first, cursor) = discover_jsonl_files_in_roots(
+            [child.as_path(), alternate.as_path()],
+            ".jsonl",
+            1,
+            None,
+        );
+        let (second, _) = discover_jsonl_files_in_roots(
+            [child.as_path(), alternate.as_path()],
+            ".jsonl",
+            1,
+            cursor.as_deref(),
+        );
+        assert_ne!(first, second);
+    }
 }

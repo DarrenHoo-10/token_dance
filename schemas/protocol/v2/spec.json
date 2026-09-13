@@ -28,11 +28,35 @@
       "conflict",
       "invalid"
     ],
-    "Accuracy": ["exact", "derived", "correlated", "estimated"],
-    "TimeSource": ["source_record", "prior_record", "file_mtime", "unknown"],
-    "CostSource": ["provider_reported", "calculated_price"],
-    "TurnTrigger": ["user", "system", "scheduled", "subagent"],
-    "SessionEndReason": ["completed", "cancelled", "error", "timeout", "unknown"],
+    "Accuracy": [
+      "exact",
+      "derived",
+      "correlated",
+      "estimated"
+    ],
+    "TimeSource": [
+      "source_record",
+      "prior_record",
+      "file_mtime",
+      "unknown"
+    ],
+    "CostSource": [
+      "provider_reported",
+      "calculated_price"
+    ],
+    "TurnTrigger": [
+      "user",
+      "system",
+      "scheduled",
+      "subagent"
+    ],
+    "SessionEndReason": [
+      "completed",
+      "cancelled",
+      "error",
+      "timeout",
+      "unknown"
+    ],
     "AckErrorCode": [
       "outside_window",
       "deleted",
@@ -125,7 +149,8 @@
     "TelemetryEventsRequest": {
       "protocolVersion": "uint32",
       "requestId": "shortString",
-      "events": "EventEnvelope[]"
+      "events": "EventEnvelope[]",
+      "reconstruction?": "boolean"
     },
     "EventAck": {
       "eventId": "base64url32",
@@ -173,22 +198,63 @@
       "costScopeKey",
       "payload"
     ],
-    "SkillRef": ["skillKey"],
-    "ModelRef": ["providerId", "modelId"],
-    "EventPayload": ["usage", "cost", "code", "activity", "context", "meta"],
-    "MetaPayload": ["accuracy", "time_source", "safe_tags"]
+    "SkillRef": [
+      "skillKey"
+    ],
+    "ModelRef": [
+      "providerId",
+      "modelId"
+    ],
+    "EventPayload": [
+      "usage",
+      "cost",
+      "code",
+      "activity",
+      "context",
+      "meta"
+    ],
+    "MetaPayload": [
+      "accuracy",
+      "time_source",
+      "safe_tags"
+    ]
   },
   "hashExcluded": {
-    "SkillRef": ["publicName"],
-    "EventEnvelope": ["contentHash"]
+    "SkillRef": [
+      "publicName"
+    ],
+    "EventEnvelope": [
+      "contentHash"
+    ]
   },
   "ackUploadMapping": {
-    "accepted": { "upload": 3, "action": "delete_upload_task" },
-    "duplicate": { "upload": 3, "action": "delete_upload_task" },
-    "discarded": { "upload": 4, "action": "finish_upload_task_not_applicable" },
-    "retry": { "upload": 1, "action": "reschedule_runnable_at" },
-    "blocked": { "upload": 5, "action": "wait_for_compat" },
-    "conflict": { "upload": 6, "action": "quarantine_stop_retry" },
-    "invalid": { "upload": 6, "action": "quarantine_stop_retry" }
+    "accepted": {
+      "upload": 3,
+      "action": "delete_upload_task"
+    },
+    "duplicate": {
+      "upload": 3,
+      "action": "delete_upload_task"
+    },
+    "discarded": {
+      "upload": 4,
+      "action": "finish_upload_task_not_applicable"
+    },
+    "retry": {
+      "upload": 1,
+      "action": "reschedule_runnable_at"
+    },
+    "blocked": {
+      "upload": 5,
+      "action": "wait_for_compat"
+    },
+    "conflict": {
+      "upload": 6,
+      "action": "quarantine_stop_retry"
+    },
+    "invalid": {
+      "upload": 6,
+      "action": "quarantine_stop_retry"
+    }
   }
 }

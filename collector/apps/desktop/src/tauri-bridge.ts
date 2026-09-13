@@ -30,7 +30,7 @@ export interface AgentConfig {
   name: string;
   adapterId: string;
   adapterVersion: string;
-  status: "UNDETECTED" | "DETECTED" | "ACTIVE" | "CONFIGURING" | "NEEDS_PERMISSION" | "DISABLED" | "DEGRADED" | "ERROR" | "PAUSED";
+  status: "CONNECTING" | "AUTH_REQUIRED" | "UNDETECTED" | "DETECTED" | "ACTIVE" | "CONFIGURING" | "NEEDS_PERMISSION" | "DISABLED" | "DEGRADED" | "ERROR" | "PAUSED";
   setupPlanStatus: "APPLIED" | "PROPOSED" | "ROLLED_BACK";
   enabled: boolean;
   accuracy: "exact" | "derived" | "correlated" | "estimated" | "unknown";
@@ -101,7 +101,7 @@ export interface UploadBatchPreview {
 }
 
 export interface DaemonStatus {
-  syncStatus?: "LOGIN_REQUIRED" | "WAITING" | "SYNCING" | "SYNCED" | "RETRYING" | "PAUSED" | "NEEDS_PROFILE" | "NEEDS_ATTENTION";
+  syncStatus?: "LOGIN_REQUIRED" | "WAITING" | "SYNCING" | "SYNCED" | "RETRYING" | "PAUSED" | "NEEDS_PROFILE" | "NEEDS_ATTENTION" | "CLIENT_UPGRADE_REQUIRED" | "DEVICE_BOUND_ELSEWHERE";
   lastSyncAt?: string | null;
   status: "RUNNING" | "PAUSED" | "DEGRADED" | "STOPPED" | "REBUILDING" | "STORAGE_ERROR";
   globalPaused: boolean;
@@ -118,6 +118,7 @@ export interface DaemonStatus {
   totalAdaptersCount: number;
   autostartEnabled: boolean;
   lastHeartbeatAt: string;
+  initError?: string | null;
 }
 
 export interface CollectorMetrics {
@@ -131,6 +132,7 @@ export interface CollectorMetrics {
 
 export interface AutostartInfo {
   enabled: boolean;
+  status?: "enabled" | "disabled" | "requires_approval" | "unavailable";
   platform: string;
   method: string;
   targetPath: string;
@@ -392,6 +394,13 @@ const mockState = {
 
 // Tauri IPC Command Implementations
 
+export async function retryRuntimeInit(): Promise<DaemonStatus> {
+  if (isTauriEnvironment()) {
+    return await invoke<DaemonStatus>("retry_runtime_init");
+  }
+  return getDaemonStatus();
+}
+
 export async function getDaemonStatus(): Promise<DaemonStatus> {
   if (isTauriEnvironment()) {
     return await invoke<DaemonStatus>("get_daemon_status");
@@ -638,15 +647,21 @@ export async function getAutostartStatus(): Promise<AutostartInfo> {
   const isWin = typeof navigator !== "undefined" && navigator.userAgent.includes("Windows");
   return {
     enabled: mockState.autostartEnabled,
+    status: mockState.autostartEnabled ? "enabled" : "disabled",
     platform: isWin ? "windows" : "macos",
-    method: isWin ? "HKCU_Registry_Run" : "LaunchAgents_Plist",
+    method: isWin ? "HKCU_Registry_Run" : "SMAppService_mainApp",
     targetPath: isWin
       ? "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\TokenDance"
-      : "~/Library/LaunchAgents/io.tokendance.collector.plist",
+      : "SMAppService.mainApp",
     details: isWin
       ? 'Command: "TokenDance.exe" --minimized'
-      : "User-level LaunchAgents plist",
+      : "macOS 13+ login item via SMAppService.mainApp",
+
   };
+}
+
+export async function openLoginItemsSettings(): Promise<void> {
+  if (isTauriEnvironment()) await invoke("open_login_items_settings");
 }
 
 export async function setAutostart(enabled: boolean): Promise<AutostartInfo> {
@@ -655,6 +670,12 @@ export async function setAutostart(enabled: boolean): Promise<AutostartInfo> {
   }
   mockState.autostartEnabled = enabled;
   return await getAutostartStatus();
+}
+
+export async function startWindowDrag(): Promise<void> {
+  if (!isTauriEnvironment()) return;
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  await getCurrentWindow().startDragging();
 }
 
 export async function hideWindow(): Promise<void> {

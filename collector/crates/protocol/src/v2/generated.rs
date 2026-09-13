@@ -300,6 +300,8 @@ pub struct TelemetryEventsRequest {
     pub protocol_version: u32,
     pub request_id: String,
     pub events: Vec<EventEnvelope>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reconstruction: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

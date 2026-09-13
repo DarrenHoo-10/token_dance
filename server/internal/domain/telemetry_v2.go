@@ -9,6 +9,7 @@ import (
 // TelemetryEventsV2Input is the authenticated, validated batch handed to the
 // ingest transaction. user_id comes from the login session, never the payload.
 type TelemetryEventsV2Input struct {
+	Reconstruction       bool
 	InstallationID       string
 	UserID               string
 	BindingStatusVersion uint64

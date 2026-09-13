@@ -103,6 +103,12 @@ html.tokendance-orb body {
 }
 .orb-copy.is-paused .orb-status { opacity: 1; }
 .orb-status { font-weight: 600; font-size: 9cqw; }
+@container (max-width: 80px) {
+  .orb-kicker { display: none; }
+  .orb-copy { gap: 4cqw; padding-top: 0; }
+  .orb-value { max-width: 84%; }
+  .orb-status { font-size: clamp(9px, 14cqw, 11px); max-width: 82%; }
+}
 .orb-skeleton {
   display: flex;
   flex-direction: column;

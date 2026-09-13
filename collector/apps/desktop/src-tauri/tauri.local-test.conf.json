@@ -1,0 +1,9 @@
+{
+  "productName": "TokenDance Test",
+  "identifier": "io.tokendance.desktop.local-test",
+  "bundle": {
+    "macOS": {
+      "infoPlist": "macos-local-test-info.plist"
+    }
+  }
+}

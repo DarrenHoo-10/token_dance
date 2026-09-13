@@ -1,0 +1,15 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-__NONCE__'">
+<title>TokenDance · 继续启动</title><style>
+*{box-sizing:border-box}body{margin:0;padding:38px;font:15px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif;background:#fbfcf9;color:#17261b}main{max-width:480px;margin:auto}.badge{display:inline-grid;place-items:center;width:44px;height:44px;border:1px solid #d5e4c8;border-radius:13px;background:#eef7df;color:#2d4b21;font-size:23px;margin-bottom:20px}h1{font-size:25px;line-height:1.4;margin:0 0 12px;letter-spacing:-.5px}p{margin:10px 0;color:#52644d}button{width:100%;border:1px solid #b5df5d;border-radius:10px;padding:13px 20px;margin:17px 0 0;background:#c5ef71;color:#1a2e13;font:inherit;font-weight:600;cursor:pointer}button:disabled{cursor:wait;opacity:.65}button:focus-visible,summary:focus-visible{outline:3px solid #3c6b24;outline-offset:3px}#status{min-height:25px;font-size:13px;margin-top:13px}#status[data-error=true]{color:#a33f30}.hint{font-size:12px;color:#697963}details{border-top:1px solid #e3e8df;margin-top:24px;padding-top:14px;font-size:12px}summary{cursor:pointer;color:#697963}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.6 ui-monospace,monospace;padding:12px;background:#f1f4ed;border-radius:6px}
+</style></head><body><main><div class="badge" aria-hidden="true">↗</div><h1>__TITLE__</h1>
+<p>__INTRO__</p><p class="hint">__HINT__</p><button id="continue" type="button">__BUTTON__</button>
+<p id="status" role="status" aria-live="polite">本机数据和原有密钥会保留。</p>
+<details><summary>查看技术信息</summary><pre id="detail">__DETAIL__</pre></details>
+</main><script nonce="__NONCE__">
+const button=document.getElementById('continue'), status=document.getElementById('status');
+const idleLabel=button.textContent, autoTest=__AUTO_TEST__; let attempts=0, observedBusy=false;
+button.addEventListener('click',()=>{if(button.disabled)return;attempts++;button.disabled=true;button.setAttribute('aria-busy','true');button.textContent='正在处理…';status.dataset.error='false';status.textContent='请按系统提示完成确认。';observedBusy=true;window.location.href='__ACTION__';});
+window.recoveryUpdate=({phase,message,detail})=>{status.textContent=message;status.dataset.error=String(phase==='error');button.disabled=phase!=='error';button.setAttribute('aria-busy',String(phase==='busy'));button.textContent=phase==='error'?idleLabel:phase==='done'?'已完成':'正在继续启动…';if(detail)document.getElementById('detail').textContent=detail;if(autoTest&&phase==='error'&&attempts===1)setTimeout(()=>button.click(),50);if(autoTest&&phase==='done'&&attempts===2&&observedBusy)window.location.href='__TEST_DONE__';};
+if(autoTest)setTimeout(()=>{button.click();button.click();},100);
+</script></body></html>

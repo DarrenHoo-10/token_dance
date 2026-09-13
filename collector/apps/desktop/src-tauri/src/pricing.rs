@@ -136,11 +136,18 @@ pub struct Request {
     pub matched_model: Option<String>,
 }
 pub fn estimate(m: &Model, u: &Request) -> Option<u64> {
+    estimate_with_input_semantics(m,u,u.agent=="codex")
+}
+/// Pipeline input_context_tokens already includes cache for every harness.
+pub fn estimate_context(m: &Model, u: &Request) -> Option<u64> {
+    estimate_with_input_semantics(m,u,true)
+}
+fn estimate_with_input_semantics(m:&Model,u:&Request,input_includes_cache:bool)->Option<u64> {
     if !u.eligible {
         return None;
     }
     let (mut input, output) = (u.input?, u.output?);
-    let prompt_size = if u.agent == "codex" {
+    let prompt_size = if input_includes_cache {
         input
     } else {
         input.checked_add(u.read)?.checked_add(u.write)?
@@ -187,7 +194,7 @@ pub fn estimate(m: &Model, u: &Request) -> Option<u64> {
             .or(rates.prompt.as_deref())?,
     )?;
     let request = rate(rates.request.as_deref().unwrap_or("0"))?;
-    if u.agent == "codex" {
+    if input_includes_cache {
         input = input.checked_sub(u.read.checked_add(u.write)?)?;
     }
     let total = (input as u128)

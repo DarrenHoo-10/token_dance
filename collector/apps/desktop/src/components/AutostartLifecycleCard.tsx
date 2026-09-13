@@ -21,8 +21,8 @@ export const AutostartLifecycleCard: React.FC<AutostartLifecycleCardProps> = ({
           <h2>{isZh ? "开机自启动与后台常驻生命周期" : "Autostart & Background Lifecycle"}</h2>
           <p>
             {isZh
-              ? "配置 Windows (注册表 Run 项) / macOS (LaunchAgents plist) 用户级静默自启；关闭窗口保持常驻"
-              : "User-level autostart via Windows Registry or macOS LaunchAgents. Background service runs continuously"}
+              ? "配置 Windows (注册表 Run 项) / macOS (SMAppService 登录项) 用户级静默自启；关闭窗口保持常驻"
+              : "User-level autostart via Windows Registry or macOS SMAppService. Background collection continues while the panel is hidden"}
           </p>
         </div>
       </div>
@@ -36,7 +36,7 @@ export const AutostartLifecycleCard: React.FC<AutostartLifecycleCardProps> = ({
                 {autostartInfo?.platform === "windows"
                   ? "Windows (HKCU)"
                   : autostartInfo?.platform === "macos"
-                    ? "macOS (LaunchAgents)"
+                    ? "macOS (SMAppService)"
                     : "Linux (XDG)"}
               </span>
             </div>

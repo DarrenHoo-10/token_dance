@@ -27,6 +27,7 @@ jobs:
           go-version-file: server/go.mod
           cache-dependency-path: server/go.sum
       - run: python3 -m pip install -r tools/releases/requirements.txt
+      - run: python3 tools/releases/test_release_projection.py
       - run: python3 tools/releases/test_release_registry.py
       - run: npm --prefix web ci
       - run: npm --prefix web run typecheck

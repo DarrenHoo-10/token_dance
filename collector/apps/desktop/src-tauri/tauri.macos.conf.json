@@ -1,0 +1,59 @@
+{
+  "productName": "TokenDance",
+  "identifier": "io.tokendance.desktop",
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "TokenDance · 我的用量",
+        "width": 480,
+        "height": 780,
+        "resizable": false,
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": { "x": 16, "y": 20 },
+        "acceptFirstMouse": true,
+        "center": true,
+        "alwaysOnTop": false,
+        "fullscreen": false,
+        "visible": false,
+        "skipTaskbar": true
+      },
+      {
+        "label": "settings",
+        "title": "TokenDance",
+        "url": "index.html?view=settings",
+        "width": 680,
+        "height": 600,
+        "minWidth": 560,
+        "minHeight": 560,
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
+        "trafficLightPosition": { "x": 16, "y": 20 },
+        "acceptFirstMouse": true,
+        "center": true,
+        "visible": false,
+        "skipTaskbar": false
+      }
+    ],
+    "trayIcon": {
+      "id": "main-tray",
+      "tooltip": "TokenDance",
+      "iconPath": "icons/tray-template.png",
+      "iconAsTemplate": true,
+      "showMenuOnLeftClick": false
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "infoPlist": "macos-info.plist",
+      "entitlements": "entitlements.plist"
+    }
+  }
+}

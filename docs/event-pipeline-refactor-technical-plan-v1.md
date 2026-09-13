@@ -1,6 +1,6 @@
 # 采集、事件同步与统计重构技术方案 v1
 
-状态：设计稿，2026-09-12 修订。覆盖 Rust/Tauri 客户端、Go/MySQL 服务端和现有统计接口；尚未实施或发布。项目仍在内测，用户已确认旧采集和统计数据不需要迁移；本方案采用空库初始化、直接启用新事件链路。
+状态：2026-09-12 修订，事件链路已实施，本轮重建、设备归属与动态更新策略在功能分支实现，尚未发布。实施补充见 [0.1.27 重建与设备归属](reconstruction-and-device-ownership-0.1.27.md)。覆盖 Rust/Tauri 客户端、Go/MySQL 服务端和现有统计接口。项目仍在内测，用户已确认旧采集和统计数据不需要迁移；本方案采用空库初始化、直接启用新事件链路。
 
 ## 1. 目标、边界和交付物
 
@@ -22,7 +22,7 @@
 | 全表公共字段 | 所有本次新建/重构的表均有 id、created_at、updated_at、delete_at、extra，且所有字段有注释 |
 | 拒绝冗余设计 | 不恢复 data_owners、sync_targets、source_generation、fact_versions、event_identity_ledger 或投影代次表 |
 | 内测旧数据不迁移 | 丢弃旧采集明细、游标、待办和统计；不做历史导入、双协议过渡、切换日期或旧库兼容读取；登录和设备注册设施继续复用 |
-| 不做原库任意历史重放 | 普通重启/升级恢复游标；确需重新采集，通过重新安装并初始化本地数据，不叠加旧库统计 |
+| 历史重建 | 新库、指定软件版本和设置中的手动重建全量回放 raw；重建前清本地统计和游标；普通重启续跑；日常采集保持当天准入 |
 
 本轮不涉及 Teams 产品、聊天内容采集、跨设备私有会话自动合并、历史估算修复或通用数据湖。原始提示词、代码正文、完整路径、凭据不进入同步协议。
 
@@ -55,7 +55,7 @@
 | local_store/sync.rs 等 | 按日期的 ACK 水位可能覆盖尚未确认的内容 | 新链路彻底取消 ackThroughDay；只按 event_id + hash 精确确认 |
 | server/internal/store/mysql/ingest.go | 接收对 installations、users 使用 FOR UPDATE；重复事件不核对内容 | 授权共享锁、唯一键竞争、逐事件内容冲突判断；不在接收事务聚合 |
 | server/internal/worker/aggregation.go | GET_LOCK 全局串行；按明细/日快照重建用户日统计 | 停用旧投影，清理旧统计；新事件按任务和统计桶并发 |
-| server/internal/store/mysql/device.go | 同公钥绑定其他账号返回 PublicKeyConflict | 新协议支持经当前登录与设备证明的重新绑定；历史事件归属不迁移 |
+| server/internal/store/mysql/device.go | 同公钥绑定其他账号返回 PublicKeyConflict | 新协议支持经当前登录与设备证明的重新绑定；设备事实不变，历史贡献按当前绑定归属 |
 | server/internal/store/mysql/window_scores.go | 清 dirty 时直接令 applied_version=dirty_version | 并发刷新必须确认领取时的版本，不能吞掉执行期间新变更 |
 
 现有迁移、旧 WAL、旧服务器 raw events 不是新事件库的第二份真相。新链路启用后，业务事件可靠队列只保留 SQLite events + processing_tasks；SQLite 自己的 WAL 仍是数据库实现机制。
@@ -72,7 +72,7 @@ flowchart LR
   F --> G[Go 接收 API\n鉴权 + 签名 + 幂等事务]
   G --> H[MySQL 事件 + 任务]
   H --> I[服务端 hour/day/month 消费者]
-  I --> J[按账号/设备保存的四类统计表]
+  I --> J[按设备保存的四类统计表]
   J --> K[个人 API / 异步公共读模型]
   L[每 5 秒补偿] --> D
   L --> F
@@ -262,7 +262,7 @@ SET status_json=json_set(status_json,'$.day',3), updated_at=:now
 WHERE id=:event_row_id AND delete_at IS NULL AND expire_at>:now;
 ```
 
-账号缺失只阻塞 upload；本地统计继续。已 ACK 的事件换号不重传；未 ACK 的事件在未来成功同步时由服务端按当次认证确认归属。一个已发出请求的认证、设备绑定版本、事件与 hash 必须冻结，不能拿 B 登录后的状态解释 A 请求的迟到响应。
+账号缺失只阻塞 upload；本地统计继续。已 ACK 的事件换号不重传；未 ACK 的事件继续上传到同一设备；服务端只按当前绑定计算账号贡献。一个已发出请求的认证、设备绑定版本、事件与 hash 必须冻结，不能拿 B 登录后的状态解释 A 请求的迟到响应。
 
 ### 6.2 统计计算及重复处理
 
@@ -386,7 +386,7 @@ capabilities 返回支持 schema/semantics 版本、批次字节/事件上限、
 
 服务端过滤依据始终是事件 `occurred_at`，不取本地 created_at、HTTP 接收时间或重放时间作为事件归属。不能把最大已收到 occurred_at 当作所有更早事件已收齐。
 
-建议首版允许**北京时间今天及此前 14 个自然日**，即 15 个日期：`lower = start_of_beijing_day(server_now) - 14 days`。这覆盖新事件链路中“当天晚些时候首次本地入库，随后保留 14 天”的正常重试；仅允许今天会在午夜拒绝原已入库事件。此窗口用于新事件重试，不用于导入旧库数据，也不需要逐设备切换日期。
+建议首版允许**北京时间今天及此前 14 个自然日**，即 15 个日期：`lower = start_of_beijing_day(server_now) - 14 days`。这覆盖新事件链路中“当天晚些时候首次本地入库，随后保留 14 天”的正常重试；仅允许今天会在午夜拒绝原已入库事件。此窗口用于日常首次上传和重试。指定软件版本或用户发起的 raw 重建通过签名请求 reconstruction=true 接收更早事件；occurred_at 和 event_id 不改变。
 
 未来事件容忍建议 5 分钟，越界为 retryable future_event_time，不能改写时间；超过本地 TTL 仍按本地规则清理。客户端本机严重时钟偏差应阻塞新准入并提示时间异常，不自动移动历史统计日期。
 
@@ -398,11 +398,11 @@ capabilities 返回支持 schema/semantics 版本、批次字节/事件上限、
 
 v2 请求同时验证当前登录凭据和设备 Ed25519 签名；签名包含 method/path/body_hash/timestamp/nonce/installation_id/binding_status_version。服务端在事务中核验当前账号等于设备当前绑定账号，且 status_version 未变化。客户端不持久化账号到采集库；可复用现有认证组件的安全凭据处理，不新增账号缓存表。
 
-服务端 events.user_id 是首次接收的归属事实；不信任客户端 payload 中的账号。`UNIQUE(installation_id,event_id)` 不含 user_id：换号不能让同一设备事件在第二个账号再计一次。相同事件已属于 A，B 发来重复，只返回与此次设备证明相符的 duplicate/discarded 结果，不暴露 A 的账号信息，不转移历史事件。
+服务端事件和四类统计表只保存 installation_id，不保存 user_id。`UNIQUE(installation_id,event_id)` 保证重建和换号不会重复入账；同 ID 内容哈希不同仍拒绝。用户统计通过当前绑定关系汇总设备贡献，解绑后立即排除该设备，重新绑定后全部历史贡献归新账号。
 
-现有设备注册拒绝同公钥换号，因此需要改造已存在的绑定服务：当前 B 登录授权 + 设备私钥证明 → 事务更新 installations.user_id，递增 status_version。复用现有字段即可，不为改绑增加协议模式字段；不能创建新设备键绕过幂等身份。旧上传入口在本次内测切换时全局关闭。
+绑定复用 installations：active/disabled 是有效绑定，revoked 表示解绑。未解绑不能转给另一个账号；解绑保留设备数据、公钥和 installation_id。注册恢复绑定必须携带与目标用户、时间和设备公钥绑定的 Ed25519 私钥证明；已有签名 rebind 路由也可恢复绑定。绑定变化使用户窗口、排行榜和社区统计失效并重算；不复制事件、不改事件幂等键。
 
-历史统计查询、用户删除、设备贡献删除都以事件/统计行保存的 user_id 为准，不能 JOIN installations 当前 user_id 后把 A 的历史归给 B。设备名称/当前控制权和历史贡献归属是两件事。服务端保留业务账号字段合理，本地则没有这些字段。
+服务端保留事件身份和完成状态，以支持跨越客户端 14 天保留期的重复重建。14 天清理仅适用于本地明细，服务端不能照搬这一删除策略，否则无从保证历史重建幂等。用户显式数据删除是另一条业务流程，不等同解绑。
 
 账号/设备撤销、改绑、删除与接收采用一致锁顺序；v2 接收只取得 users、installations 必要记录的共享锁，控制操作取得排他锁。签名和 JSON 解码在事务外；事务内再次核验状态。禁止接收时升级共享锁去写 last_seen_at，心跳使用独立节流更新，避免并发上传又被设备行串行化。共享锁与队列锁的语义见 [MySQL 锁定读取文档](https://dev.mysql.com/doc/refman/8.4/en/innodb-locking-reads.html)。
 

@@ -15,6 +15,8 @@ TOKENDANCE_ENVIRONMENT=development go run ./cmd/event-pipeline-reset --confirm -
 
 ## 客户端
 
+0.1.27 起，在空库 rollout 之后按软件发布点执行 raw 全量重建；手动重建入口位于设置。设备身份保持稳定，详情见 [0.1.27 实施说明](reconstruction-and-device-ownership-0.1.27.md)。
+
 - 首次启动走 `local_store::pipeline::rollout::ensure_rollout`
 - `schema_meta.event_pipeline_v3=1` + `extra.rollout_phase=ready` 后才启 writer
 - 重复启动不清 events；初始化中断可恢复

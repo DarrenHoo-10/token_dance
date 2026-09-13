@@ -1,5 +1,6 @@
 use std::sync::Mutex;
 
+use platform_credentials::{CredentialError, DESKTOP_SERVICE};
 use rand::RngCore;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
@@ -46,37 +47,92 @@ impl KeyProvider for UnavailableKeyProvider {
 pub struct OsKeyProvider {
     service: String,
     user: String,
+    create_if_missing: bool,
+    cached: Mutex<Option<[u8; DATA_KEY_LEN]>>,
 }
 
 impl OsKeyProvider {
+    /// Create the secret on first use. Callers must use [`existing`] when an
+    /// encrypted WAL or registered device identity is already on disk.
     pub fn new(service: impl Into<String>, user: impl Into<String>) -> Self {
         Self {
             service: service.into(),
             user: user.into(),
+            create_if_missing: true,
+            cached: Mutex::new(None),
         }
+    }
+
+    /// Read only. Missing entries do not mint a replacement key.
+    pub fn existing(service: impl Into<String>, user: impl Into<String>) -> Self {
+        Self {
+            service: service.into(),
+            user: user.into(),
+            create_if_missing: false,
+            cached: Mutex::new(None),
+        }
+    }
+
+    pub fn wal_key(create_if_missing: bool) -> Self {
+        Self {
+            service: DESKTOP_SERVICE.into(),
+            user: platform_credentials::WAL_KEY_ACCOUNT.into(),
+            create_if_missing,
+            cached: Mutex::new(None),
+        }
+    }
+
+    pub fn device_seed(create_if_missing: bool) -> Self {
+        Self {
+            service: DESKTOP_SERVICE.into(),
+            user: platform_credentials::DEVICE_SEED_ACCOUNT.into(),
+            create_if_missing,
+            cached: Mutex::new(None),
+        }
+    }
+
+    pub fn identity_secret(create_if_missing: bool) -> Self {
+        Self {
+            service: DESKTOP_SERVICE.into(),
+            user: platform_credentials::IDENTITY_SECRET_ACCOUNT.into(),
+            create_if_missing,
+            cached: Mutex::new(None),
+        }
+    }
+
+    fn remember(&self, key: [u8; DATA_KEY_LEN]) -> [u8; DATA_KEY_LEN] {
+        *self.cached.lock().expect("os key cache") = Some(key);
+        key
     }
 }
 
 impl KeyProvider for OsKeyProvider {
     fn data_key(&self) -> Result<[u8; DATA_KEY_LEN], KeyError> {
-        let entry = keyring::Entry::new(&self.service, &self.user)
-            .map_err(|err| KeyError::Unavailable(format!("os keystore entry failed: {err}")))?;
-        match entry.get_password() {
-            Ok(secret) => decode_key(&secret),
-            Err(keyring::Error::NoEntry) => {
+        if let Some(key) = *self.cached.lock().expect("os key cache") {
+            return Ok(key);
+        }
+        match platform_credentials::get(&self.service, &self.user) {
+            Ok(secret) => Ok(self.remember(decode_key(&secret)?)),
+            Err(CredentialError::NotFound) if self.create_if_missing => {
                 let mut key = [0u8; DATA_KEY_LEN];
                 rand::rngs::OsRng.fill_bytes(&mut key);
                 let encoded = hex_encode(&key);
-                entry.set_password(&encoded).map_err(|err| {
+                if let Err(error) = platform_credentials::put(&self.service, &self.user, &encoded) {
                     key.zeroize();
-                    KeyError::Unavailable(format!("os keystore write failed: {err}"))
-                })?;
-                Ok(key)
+                    return Err(map_credential_error(error));
+                }
+                Ok(self.remember(key))
             }
-            Err(err) => Err(KeyError::Unavailable(format!(
-                "os keystore read failed: {err}"
-            ))),
+            Err(error) => Err(map_credential_error(error)),
         }
+    }
+}
+
+fn map_credential_error(error: CredentialError) -> KeyError {
+    match error {
+        CredentialError::NotFound => KeyError::NotFound,
+        CredentialError::Invalid => KeyError::Invalid,
+        other => KeyError::Unavailable(other.to_string()),
     }
 }
 
@@ -149,5 +205,18 @@ fn from_hex(byte: u8) -> Option<u8> {
         b'a'..=b'f' => Some(byte - b'a' + 10),
         b'A'..=b'F' => Some(byte - b'A' + 10),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_roundtrip() {
+        let key = [0xab; DATA_KEY_LEN];
+        assert_eq!(decode_key(&hex_encode(&key)).unwrap(), key);
+        assert!(decode_key("zz").is_err());
+        assert!(decode_key("ab").is_err());
     }
 }

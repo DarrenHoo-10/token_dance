@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 ) STRICT;
 "#;
 
-pub const BUSINESS_TABLES: [&str; 10] = [
+pub const BUSINESS_TABLES: [&str; 11] = [
     "collection_sources",
     "model_dimensions",
     "skill_dimensions",
@@ -28,6 +28,7 @@ pub const BUSINESS_TABLES: [&str; 10] = [
     "skill_metrics",
     "cost_metrics",
     "bucket_entity_state",
+    "session_extents",
 ];
 
 pub fn configure_connection(conn: &Connection) -> Result<(), PipelineError> {
@@ -92,11 +93,9 @@ pub fn initialize_empty(conn: &mut Connection, now_ms: i64) -> Result<bool, Pipe
     tx.execute_batch(META_DDL)?;
     // Preserve any rollout stamp already stored in schema_meta.extra.
     let prior_extra: String = tx
-        .query_row(
-            "SELECT extra FROM schema_meta WHERE id = 1",
-            [],
-            |r| r.get(0),
-        )
+        .query_row("SELECT extra FROM schema_meta WHERE id = 1", [], |r| {
+            r.get(0)
+        })
         .optional()?
         .unwrap_or_else(|| "{}".into());
     // Strip leading PRAGMA from the mirrored DDL; connection already configured.
@@ -146,7 +145,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn initializes_ten_tables_and_is_idempotent() {
+    fn initializes_business_tables_and_is_idempotent() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("t.sqlite3");
         let mut conn = Connection::open(&path).unwrap();
@@ -161,7 +160,7 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(count, 10);
+        assert_eq!(count, 11);
 
         let unknown: i64 = conn
             .query_row(
@@ -202,4 +201,54 @@ mod tests {
             .unwrap();
         assert!(extra.contains("initializing"));
     }
+}
+
+pub fn ensure_session_extents(conn: &Connection) -> Result<(), PipelineError> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_extents')",
+        [],
+        |r| r.get(0),
+    )?;
+    if exists {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute_batch(
+        r#"
+ CREATE TABLE IF NOT EXISTS session_extents (
+ id INTEGER PRIMARY KEY, -- 本地代理主键
+ created_at INTEGER NOT NULL, -- 首次创建 UTC 毫秒
+ updated_at INTEGER NOT NULL, -- 最近更新 UTC 毫秒
+ delete_at INTEGER, -- 删除 UTC 毫秒；NULL 未删除
+ extra TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(extra)), -- 可选扩展；不存必需业务状态
+ harness_id TEXT NOT NULL, -- 工具标识
+ session_key BLOB NOT NULL CHECK(length(session_key)=32), -- 稳定匿名会话身份
+ grain TEXT NOT NULL CHECK(grain IN ('hour','day','month')), -- 独立消费者的处理进度
+ first_event_at INTEGER NOT NULL, -- 已处理的最早事件 UTC 毫秒
+ last_event_at INTEGER NOT NULL CHECK(last_event_at>=first_event_at), -- 已处理的最晚事件 UTC 毫秒
+ UNIQUE(harness_id,session_key,grain)
+ ) STRICT;
+ "#,
+    )?;
+    // Old duration aggregates measured explicit activity; do not add a different
+    // session-span measure onto those values. The bounded worker replays details.
+    tx.execute(
+        "UPDATE harness_metrics SET active_duration_ms=0,duration_known_count=0",
+        [],
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// Re-read existing WorkBuddy sources once to attach the native model to revision 2.
+/// The transaction runs before the writer/workers start and never deletes events.
+pub fn repair_workbuddy_models(conn: &Connection) -> Result<(), PipelineError> {
+    let tx = conn.unchecked_transaction()?;
+    let done: bool = tx.query_row("SELECT coalesce(json_extract(extra,'$.workbuddy_model_repair'),0)>=1 FROM schema_meta WHERE id=1", [], |r|r.get(0))?;
+    if !done {
+        tx.execute("UPDATE collection_sources SET cursor_json='{}',decoder_state_json='{}',commit_seq=commit_seq+1,lease_token=NULL,lease_until=NULL,next_poll_at=0,observed_boundary_json=json_set(observed_boundary_json,'$._rebuild_pending',json('true')) WHERE harness_id='workbuddy' AND delete_at IS NULL AND EXISTS(SELECT 1 FROM events WHERE events.collection_source_id=collection_sources.id AND events.event_type='model_usage_recorded' AND events.model_key=0)", [])?;
+        tx.execute("UPDATE schema_meta SET extra=json_set(extra,'$.workbuddy_model_repair',1) WHERE id=1", [])?;
+    }
+    tx.commit()?;
+    Ok(())
 }

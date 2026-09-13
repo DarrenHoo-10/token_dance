@@ -9,19 +9,19 @@ export interface WindowsRelease {
 }
 type JsonObject = Record<string, unknown>;
 const object = (value: unknown): value is JsonObject => value !== null && typeof value === 'object' && !Array.isArray(value);
-function version(value: unknown): bigint[] {
+export function version(value: unknown): bigint[] {
   if (typeof value !== 'string' || !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value)) throw new Error('Invalid version');
   const parts = value.split('.').map(BigInt);
   if (parts.some(part => part > 18446744073709551615n)) throw new Error('Invalid version');
   return parts;
 }
-function compareVersions(left: bigint[], right: bigint[]): number {
+export function compareVersions(left: bigint[], right: bigint[]): number {
   for (let i = 0; i < 3; i++) {
     if (left[i] !== right[i]) return left[i] > right[i] ? 1 : -1;
   }
   return 0;
 }
-function validDate(value: unknown): value is string {
+export function validDate(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   const match = /^(\d{4})-(\d{2})-(\d{2})T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.exec(value);
   if (!match || !Number.isFinite(Date.parse(value))) return false;
@@ -68,7 +68,7 @@ export function selectWindowsRelease(payload: unknown): WindowsRelease | null {
     prerelease: release.prerelease === true, bytes: exe.size, sha256: exe.sha256,
     exeUrl: exe.url, zipUrl: zip?.url, notes: release.notes };
 }
-async function readManifest(response: Response): Promise<unknown> {
+export async function readManifest(response: Response): Promise<unknown> {
   if (!response.ok || response.redirected || !response.body) throw new Error('Release lookup failed');
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];

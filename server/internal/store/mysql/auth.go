@@ -440,6 +440,51 @@ func (s *authStore) CompleteRegistrationTx(ctx context.Context, in store.Registr
 		return nil, err
 	}
 
+	if in.User.Handle != nil && *in.User.Handle != "" {
+		profileStatus := domain.ProfileStatusHidden
+		var publishedAt *time.Time
+		if in.Privacy.PublicProfileEnabled &&
+			in.User.AccountStatus == domain.AccountStatusActive &&
+			in.User.OnboardingCompletedAt != nil {
+			profileStatus = domain.ProfileStatusPublished
+			publishedAt = &now
+		}
+		var bioPtr *string
+		if in.Privacy.ShowBio {
+			bioPtr = in.User.Bio
+		}
+		upsertPubSQL := `
+			INSERT INTO public_user_profiles (
+				user_id, handle, display_name, avatar_url, bio,
+				profile_status, show_bio, show_token_total, show_trends,
+				show_activity_calendar, show_agent_breakdown, show_skill_ranking,
+				show_achievements, source_profile_version, source_privacy_version,
+				projection_version, published_at, created_at, updated_at
+			) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
+		if _, err := tx.ExecContext(ctx, upsertPubSQL,
+			in.User.UserID,
+			*in.User.Handle,
+			in.User.DisplayName,
+			nullStringFromPtr(in.User.AvatarURL),
+			nullStringFromPtr(bioPtr),
+			profileStatus,
+			in.Privacy.ShowBio,
+			in.Privacy.ShowTokenTotal,
+			in.Privacy.ShowTrends,
+			in.Privacy.ShowActivityCalendar,
+			in.Privacy.ShowAgentBreakdown,
+			in.Privacy.ShowSkillRanking,
+			in.Privacy.ShowAchievements,
+			in.User.ProfileVersion,
+			privVersion,
+			nullTimeFromPtr(publishedAt),
+			now,
+			now,
+		); err != nil {
+			return nil, fmt.Errorf("failed to insert public user profile projection: %w", err)
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("failed to commit registration: %w", err)
 	}

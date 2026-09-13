@@ -46,11 +46,14 @@ pub fn compute_p0_content_hash(
     event.insert("harnessId".into(), json!(harness_id));
     event.insert("eventType".into(), json!(draft.event_type.clone()));
     event.insert("occurredAt".into(), json!(draft.occurred_at.to_string()));
-    if let Some(skill_key) = draft.skill_key.as_ref() {
+    if let Some((provider, model)) = &draft.model_identity {
         event.insert(
-            "skill".into(),
-            json!({ "skillKey": b64_32(skill_key) }),
+            "model".into(),
+            json!({"providerId":provider,"modelId":model}),
         );
+    }
+    if let Some(skill_key) = draft.skill_key.as_ref() {
+        event.insert("skill".into(), json!({ "skillKey": b64_32(skill_key) }));
     }
     if let Some(session) = draft.session_key.as_ref() {
         event.insert("sessionKey".into(), json!(b64_32(session)));
@@ -62,8 +65,8 @@ pub fn compute_p0_content_hash(
         event.insert("costScopeKey".into(), json!(b64_32(cost)));
     }
     event.insert("payload".into(), wire_payload);
-    let hash_b64 = protocol::v2::compute_content_hash(&Value::Object(event))
-        .map_err(|e| e.to_string())?;
+    let hash_b64 =
+        protocol::v2::compute_content_hash(&Value::Object(event)).map_err(|e| e.to_string())?;
     decode_b64_32(&hash_b64)
 }
 
@@ -78,15 +81,22 @@ fn local_payload_to_hash_payload(local: &Value) -> Result<Value, String> {
         }
         match key.as_str() {
             "usage" => {
-                out.insert("usage".into(), stringify_allowed_counts(value, USAGE_COUNT_KEYS)?);
+                out.insert(
+                    "usage".into(),
+                    stringify_allowed_counts(value, USAGE_COUNT_KEYS)?,
+                );
             }
             "code" => {
-                out.insert("code".into(), stringify_allowed_counts(value, CODE_COUNT_KEYS)?);
+                out.insert(
+                    "code".into(),
+                    stringify_allowed_counts(value, CODE_COUNT_KEYS)?,
+                );
             }
             "cost" => {
                 let mut cost = value.clone();
                 if let Some(map) = cost.as_object_mut() {
                     stringify_uint_leaves(map);
+                    normalize_cost_source(map);
                 }
                 out.insert("cost".into(), cost);
             }
@@ -201,10 +211,7 @@ fn decode_b64_32(text: &str) -> Result<[u8; 32], String> {
         .decode(text)
         .map_err(|e| format!("content_hash decode: {e}"))?;
     if bytes.len() != 32 {
-        return Err(format!(
-            "content_hash length {}, expected 32",
-            bytes.len()
-        ));
+        return Err(format!("content_hash length {}, expected 32", bytes.len()));
     }
     let mut out = [0u8; 32];
     out.copy_from_slice(&bytes);
@@ -227,6 +234,7 @@ mod tests {
             occurred_at: 1_700_000_000_000,
             time_source: TimeSource::SourceRecord,
             model_key: 0,
+            model_identity: None,
             skill_id: None,
             skill_key: None,
             session_key: Some([3u8; 32]),
@@ -263,5 +271,12 @@ mod tests {
         );
         let c = compute_p0_content_hash("codex", &draft2, &payload2).unwrap();
         assert_ne!(a, c);
+    }
+}
+
+/// Shared by hashing and upload serialization: wire business values must agree.
+pub(crate) fn normalize_cost_source(cost: &mut Map<String, Value>) {
+    if cost.get("source").and_then(Value::as_str) == Some("estimated_price_table") {
+        cost.insert("source".into(), Value::String("calculated_price".into()));
     }
 }

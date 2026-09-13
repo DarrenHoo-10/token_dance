@@ -27,6 +27,7 @@ pub const STREAM_SESSIONS: &str = "sessions-jsonl";
 pub const STREAM_OTLP: &str = "otlp";
 
 pub struct CodexStrategy {
+    model_allocator: Option<crate::local_store::pipeline::runner::ModelAllocator>,
     pub identity_secret: Vec<u8>,
     /// Detection source_id → root path (sessions, archived_sessions, …).
     pub roots: Vec<(String, PathBuf)>,
@@ -56,6 +57,7 @@ impl CodexStrategy {
         skill_allocator: Arc<dyn Fn([u8; 32], &str) -> i64 + Send + Sync>,
     ) -> Self {
         Self {
+            model_allocator: None,
             identity_secret: identity_secret.into(),
             roots,
             skill_book,
@@ -83,14 +85,16 @@ fn read_usage_counts(usage: &Map<String, Value>) -> (u64, u64, u64, Option<u64>,
     let total = u64_field(usage, "total_tokens")
         .or_else(|| u64_field(usage, "totalTokens"))
         .unwrap_or(input.saturating_add(output));
-    let cache = u64_field(usage, "cached_input_tokens")
-        .or_else(|| u64_field(usage, "cache_read_tokens"));
+    let cache =
+        u64_field(usage, "cached_input_tokens").or_else(|| u64_field(usage, "cache_read_tokens"));
     let reasoning = u64_field(usage, "reasoning_output_tokens")
         .or_else(|| u64_field(usage, "reasoning_tokens"));
     (input, output, total, cache, reasoning)
 }
 
 impl HarnessStrategy for CodexStrategy {
+    fn set_model_allocator(&mut self, allocator:crate::local_store::pipeline::runner::ModelAllocator) {self.model_allocator=Some(allocator);}
+
     fn harness_id(&self) -> &str {
         HARNESS_ID
     }
@@ -141,7 +145,32 @@ impl HarnessStrategy for CodexStrategy {
         read_jsonl_source(Path::new(locator_ref), committed, budget)
     }
 
-    fn decode(
+    fn decode(&self, record:&RawRecord, state:&mut DecoderState, logical_scope:&str)->Result<DecodeOutcome,RunnerError> {
+        let mut result=self.decode_with_context(record,state,logical_scope)?;
+        if let Some(model)=state.json.get("codex_model").and_then(Value::as_str).filter(|s|!s.is_empty()) {
+            let provider=state.json.get("codex_provider").and_then(Value::as_str).unwrap_or("openai");
+            if let DecodeOutcome::Emit(facts)=&mut result {
+                for fact in facts.iter_mut().filter(|f|f.event_type=="model_usage_recorded") {
+                    fact.model_identity=Some((provider.into(),model.into()));
+                    if let Some(allocate)=&self.model_allocator {fact.model_key=allocate(provider,model)?;}
+                    fact.fact_revision=2;
+                    fact.event_id=super::identity::event_id(&self.identity_secret,&fact.fact_key,2);
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    fn native_identity(&self, _record: &RawRecord, fact: &FactDraft) -> NativeFactKey {
+        NativeFactKey {
+            fact_key: fact.fact_key,
+            fact_revision: fact.fact_revision,
+        }
+    }
+}
+
+impl CodexStrategy {
+    fn decode_with_context(
         &self,
         record: &RawRecord,
         state: &mut DecoderState,
@@ -166,6 +195,51 @@ impl HarnessStrategy for CodexStrategy {
         }
 
         let kind = str_field(o, "type").unwrap_or_default();
+        // Fork headers describe how many inherited records precede this agent's
+        // own history. Persist the remaining count because reads are batched.
+        if let Some(remaining) = state.json.get("codex_inherited_remaining").and_then(Value::as_u64).filter(|n| *n > 0) {
+            state.json["codex_inherited_remaining"] = json!(remaining - 1);
+            return Ok(DecodeOutcome::ContextOnly);
+        }
+        if kind == "session_meta" {
+            if state.json.get("codex_header_seen").and_then(Value::as_bool) == Some(true) {
+                return Ok(DecodeOutcome::ContextOnly);
+            }
+            state.json["codex_header_seen"] = json!(true);
+            if let Some(start) = value.pointer("/payload/subagent_history_start_ordinal").and_then(Value::as_u64) {
+                state.json["codex_inherited_remaining"] = json!(start.saturating_sub(1));
+            }
+        }
+
+        if let Some(model)=value.pointer("/payload/model").or_else(||value.get("model")).and_then(Value::as_str).filter(|s|!s.is_empty()) {
+            state.json["codex_model"]=json!(model);
+        }
+        if let Some(provider)=value.pointer("/payload/model_provider").or_else(||value.get("model_provider")).and_then(Value::as_str).filter(|s|!s.is_empty()) {
+            state.json["codex_provider"]=json!(provider);
+        }
+        // Only call/session records can change this state. Token records must not
+        // deserialize the skill history on the hot collection path.
+        let tracks_skills = kind == "session_meta"
+            || kind == "turn_context"
+            || (kind == "event_msg"
+                && value.pointer("/payload/type").and_then(Value::as_str) == Some("task_started"))
+            || (kind == "response_item" && value.pointer("/payload/call_id").is_some());
+        let skill_read = if tracks_skills {
+            let mut reads: adapter_codex::SkillReads = serde_json::from_value(
+                state
+                    .json
+                    .get("skill_reads")
+                    .cloned()
+                    .unwrap_or(Value::Null),
+            )
+            .unwrap_or_default();
+            let result = reads.observe(&value);
+            state.json["skill_reads"] =
+                serde_json::to_value(reads).expect("serializable skill reader");
+            result
+        } else {
+            None
+        };
         // The native session header survives archive/unarchive. Persist its ID
         // with the cursor so later batches keep the same logical fact scope.
         if kind == "session_meta" {
@@ -182,7 +256,10 @@ impl HarnessStrategy for CodexStrategy {
             .json
             .get("codex_session_id")
             .and_then(|v| v.as_str())
-            .map(|id| format!("codex-session:{id}"));
+            .map(|id| {
+                let segment = Path::new(logical_scope).file_name().and_then(|n| n.to_str()).unwrap_or(logical_scope);
+                format!("codex-session:{id}:segment:{segment}")
+            });
         // Headerless secondary formats still use the file scope: equal byte
         // offsets or turn labels in independent files must not collide.
         let logical_scope = session_scope.as_deref().unwrap_or(logical_scope);
@@ -202,7 +279,165 @@ impl HarnessStrategy for CodexStrategy {
                     .and_then(|v| v.as_str())
                     .map(str::to_owned)
             });
-        let turn = str_field(o, "turn_id");
+
+        if let Some(skill) = skill_read {
+            let name = skill["skill_name"].as_str().expect("skill identity");
+            let fallback = super::common::skill_display_name(name);
+            let public = skill["skill_public_name"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .unwrap_or(&fallback);
+            let alloc = |key, _: &str| (self.skill_allocator)(key, public);
+            let mut fact = emit_skill_fact(
+                &self.identity_secret,
+                HARNESS_ID,
+                logical_scope,
+                TypedNativeKey::Str(
+                    skill["invocation_id"]
+                        .as_str()
+                        .expect("invocation identity")
+                        .into(),
+                ),
+                occurred_at,
+                time_source,
+                name,
+                &self.skill_book,
+                &alloc,
+                session.as_deref(),
+            );
+            fact.accuracy = TokenAccuracy::Correlated;
+            fact.payload_sections = json!({"activity":{"success":true}});
+            return Ok(DecodeOutcome::Emit(vec![fact]));
+        }
+        let nested = o.get("payload").and_then(Value::as_object);
+        let turn = str_field(o, "turn_id")
+            .or_else(|| nested.and_then(|p| str_field(p, "turn_id")))
+            .or_else(|| {
+                state
+                    .json
+                    .get("active_turn_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            });
+        if let Some(session) = session.as_deref() {
+            let payload_type = nested
+                .and_then(|p| str_field(p, "type"))
+                .unwrap_or_default();
+            let mut activity = json!({});
+            let lifecycle = if kind == "session_meta" {
+                Some(("session_started", session.to_string(), None))
+            } else if kind == "event_msg" && payload_type == "task_started" {
+                if let Some(t) = turn.as_deref() {
+                    state.json["active_turn_id"] = json!(t);
+                    state.json["active_turn_started_at"] = json!(occurred_at);
+                    Some(("turn_started", t.to_string(), Some(t)))
+                } else {
+                    None
+                }
+            } else if kind == "event_msg" && payload_type == "task_complete" {
+                if let Some(t) = turn.as_deref() {
+                    if state.json.get("active_turn_id").and_then(Value::as_str) == Some(t) {
+                        if let Some(start) = state
+                            .json
+                            .get("active_turn_started_at")
+                            .and_then(Value::as_i64)
+                        {
+                            if occurred_at >= start {
+                                activity["duration_ms"] = json!(occurred_at - start);
+                            }
+                        }
+                    }
+                    state.json["active_turn_id"] = Value::Null;
+                    state.json["active_turn_started_at"] = Value::Null;
+                    activity["success"] = json!(true);
+                    Some(("turn_completed", t.to_string(), Some(t)))
+                } else {
+                    None
+                }
+            } else if kind == "response_item"
+                && payload_type == "message"
+                && nested.and_then(|p| str_field(p, "role")).as_deref() == Some("user")
+            {
+                turn.as_deref().map(|t| {
+                    activity["trigger"] = json!("user");
+                    ("turn_started", format!("{t}:user:{}", record.byte_start.unwrap_or(record.ordinal)), Some(t))
+                })
+            } else {
+                None
+            };
+            if let Some((event_type, native, turn)) = lifecycle {
+                return Ok(DecodeOutcome::Emit(vec![
+                    super::common::emit_activity_fact(
+                        &self.identity_secret,
+                        HARNESS_ID,
+                        logical_scope,
+                        TypedNativeKey::Str(native),
+                        event_type,
+                        occurred_at,
+                        time_source,
+                        session,
+                        turn,
+                        activity,
+                    ),
+                ]));
+            }
+        }
+        if kind == "response_item" {
+            if let Some(p) = nested {
+                let ty = str_field(p, "type").unwrap_or_default();
+                if ty == "custom_tool_call"
+                    && str_field(p, "name").as_deref() == Some("apply_patch")
+                {
+                    if let (Some(call), Some(patch)) = (
+                        str_field(p, "call_id"),
+                        p.get("input").and_then(Value::as_str),
+                    ) {
+                        if let Some(code) = super::common::patch_code_payload(patch) {
+                            if !state.json["pending_code"].is_object() {
+                                state.json["pending_code"] = json!({});
+                            }
+                            // Persist only counts, never raw code or paths.
+                            if state.json["pending_code"]
+                                .as_object()
+                                .map_or(0, |m| m.len())
+                                < 128
+                            {
+                                state.json["pending_code"][call] = code;
+                            }
+                        }
+                    }
+                } else if ty == "custom_tool_call_output" {
+                    if let Some(call) = str_field(p, "call_id") {
+                        let code = state.json["pending_code"]
+                            .as_object_mut()
+                            .and_then(|m| m.remove(&call));
+                        let output = p.get("output").and_then(Value::as_str).unwrap_or("");
+                        let parsed = serde_json::from_str::<Value>(output).ok();
+                        let success = parsed.as_ref().is_some_and(|v| {
+                            v.pointer("/metadata/exit_code").and_then(Value::as_i64) == Some(0)
+                        }) || output
+                            .starts_with("Success. Updated the following files:");
+                        if success {
+                            if let Some(code) = code {
+                                let mut fact = super::common::emit_code_fact(
+                                    &self.identity_secret,
+                                    HARNESS_ID,
+                                    logical_scope,
+                                    TypedNativeKey::Str(call),
+                                    occurred_at,
+                                    time_source,
+                                    session.as_deref(),
+                                    0,
+                                    0,
+                                );
+                                fact.payload_sections = json!({"code":code});
+                                return Ok(DecodeOutcome::Emit(vec![fact]));
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let byte_native = TypedNativeKey::ByteOffset(record.byte_start.unwrap_or(record.ordinal));
 
         match kind.as_str() {
@@ -264,17 +499,22 @@ impl HarnessStrategy for CodexStrategy {
                     reasoning_tokens: reasoning,
                 })]))
             }
-            "skill.execution.failed" | "skill.injected" | "skill_invoked" => {
-                let name = str_field(o, "skill_name")
-                    .or_else(|| str_field(o, "skill"))
-                    .unwrap_or_else(|| "unknown-skill".into());
-                let native = TypedNativeKey::Str(format!(
-                    "skill:{}:{}",
-                    session.as_deref().unwrap_or(""),
-                    name
-                ));
-                let alloc = self.skill_allocator.clone();
-                Ok(DecodeOutcome::Emit(vec![emit_skill_fact(
+            "skill.injected" | "skill.loaded" | "skill.execution.started" => {
+                Ok(DecodeOutcome::ContextOnly)
+            }
+            "skill.execution.failed" | "skill.execution.completed" | "skill_invoked" => {
+                let Some(name) = str_field(o, "skill_name").or_else(|| str_field(o, "skill"))
+                else {
+                    return Ok(DecodeOutcome::Ignore(IgnoreCode::MalformedRecord));
+                };
+                let native = str_field(o, "invocation_id")
+                    .or_else(|| str_field(o, "call_id"))
+                    .or_else(|| str_field(o, "id"))
+                    .map(TypedNativeKey::Str)
+                    .unwrap_or(TypedNativeKey::ByteOffset(
+                        record.byte_start.unwrap_or(record.ordinal),
+                    ));
+                let mut fact = emit_skill_fact(
                     &self.identity_secret,
                     HARNESS_ID,
                     logical_scope,
@@ -283,9 +523,18 @@ impl HarnessStrategy for CodexStrategy {
                     time_source,
                     &name,
                     &self.skill_book,
-                    &*alloc,
+                    &*self.skill_allocator,
                     session.as_deref(),
-                )]))
+                );
+                let success = match kind.as_str() {
+                    "skill.execution.failed" => Some(false),
+                    "skill.execution.completed" => Some(true),
+                    _ => o.get("success").and_then(|v| v.as_bool()),
+                };
+                if let Some(success) = success {
+                    fact.payload_sections["activity"]["success"] = json!(success);
+                }
+                Ok(DecodeOutcome::Emit(vec![fact]))
             }
             "thread.started" | "turn.started" | "session_meta" | "turn_context" => {
                 Ok(DecodeOutcome::ContextOnly)
@@ -301,15 +550,6 @@ impl HarnessStrategy for CodexStrategy {
         }
     }
 
-    fn native_identity(&self, _record: &RawRecord, fact: &FactDraft) -> NativeFactKey {
-        NativeFactKey {
-            fact_key: fact.fact_key,
-            fact_revision: fact.fact_revision,
-        }
-    }
-}
-
-impl CodexStrategy {
     fn decode_token_count(
         &self,
         payload: &Map<String, Value>,
@@ -357,9 +597,8 @@ impl CodexStrategy {
             if total == 0 && input == 0 && output == 0 {
                 return Ok(DecodeOutcome::ContextOnly);
             }
-            let native = turn
-                .map(|t| TypedNativeKey::Str(format!("turn:{t}")))
-                .unwrap_or(byte_native);
+            // A turn can contain many model requests; its ID is context, not request identity.
+            let native = byte_native;
             return Ok(DecodeOutcome::Emit(vec![emit_usage_fact(UsageFactArgs {
                 secret: &self.identity_secret,
                 harness: HARNESS_ID,
@@ -386,9 +625,7 @@ impl CodexStrategy {
             if delta.total == 0 && delta.input == 0 && delta.output == 0 {
                 return Ok(DecodeOutcome::ContextOnly);
             }
-            let native = turn
-                .map(|t| TypedNativeKey::Str(format!("cum-turn:{}", t)))
-                .unwrap_or(byte_native);
+            let native = byte_native;
             return Ok(DecodeOutcome::Emit(vec![emit_usage_fact(UsageFactArgs {
                 secret: &self.identity_secret,
                 harness: HARNESS_ID,

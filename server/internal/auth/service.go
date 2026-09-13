@@ -568,7 +568,7 @@ func (s *Service) CompleteRegistration(ctx context.Context, email, code, passwor
 		DisplayName:           displayName,
 		AvatarURL:             &avatarURL,
 		AccountStatus:         domain.AccountStatusActive,
-		LeaderboardVisibility: domain.LeaderboardVisibilityPrivate,
+		LeaderboardVisibility: domain.LeaderboardVisibilityPublic,
 		TimezoneName:          timezone,
 		Locale:                locale,
 		EmailVerifiedAt:       &now,
@@ -591,8 +591,8 @@ func (s *Service) CompleteRegistration(ctx context.Context, email, code, passwor
 
 	privacy := domain.UserPrivacySettings{
 		UserID:                userID,
-		PublicProfileEnabled:  false,
-		LeaderboardVisibility: domain.LeaderboardVisibilityPrivate,
+		PublicProfileEnabled:  true,
+		LeaderboardVisibility: domain.LeaderboardVisibilityPublic,
 		ShowBio:               false,
 		ShowTokenTotal:        false,
 		ShowTrends:            false,

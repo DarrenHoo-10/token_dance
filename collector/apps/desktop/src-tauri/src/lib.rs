@@ -3,11 +3,17 @@ pub mod autostart;
 pub mod commands;
 pub mod daemon;
 pub mod local_store;
+pub mod local_test;
+#[cfg(target_os = "macos")]
+pub mod macos_tray;
 pub mod orb;
 pub mod pricing;
 pub mod rebuild;
 mod single_instance;
 pub mod state;
+mod startup_recovery;
+#[cfg(all(target_os = "macos", debug_assertions))]
+mod reopen_smoke;
 pub mod tray_state;
 pub mod updates;
 pub mod upload_pipeline;
@@ -23,16 +29,33 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{Manager, WindowEvent};
 
 fn crash_log_path() -> std::path::PathBuf {
-    state::app_data_root().join("crash.log")
+    state::crash_log_path()
 }
 
 fn write_crash_log(message: &str) {
     let path = crash_log_path();
+    append_crash_record(&path, message);
+    use std::io::Write;
+    let _ = writeln!(
+        std::io::stderr(),
+        "{message}\ncrash log: {}",
+        path.display()
+    );
+}
+
+fn append_crash_record(path: &std::path::Path, message: &str) {
+    use std::io::Write;
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let _ = fs::write(&path, message);
-    eprintln!("{message}\ncrash log: {}", path.display());
+    // A panic crossing an Objective-C callback triggers a second panic. Keep
+    // the original error, rather than replacing it with "cannot unwind".
+    if fs::metadata(path).is_ok_and(|meta| meta.len() > 256 * 1024) {
+        let _ = fs::rename(path, path.with_extension("previous.log"));
+    }
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(file, "\n[{}]\n{message}", chrono::Utc::now().to_rfc3339());
+    }
 }
 
 fn install_panic_hook() {
@@ -42,7 +65,25 @@ fn install_panic_hook() {
     }));
 }
 
-fn install_tray(app: &tauri::App) -> tauri::Result<()> {
+fn app_context() -> tauri::Context<tauri::Wry> {
+    tauri::generate_context!()
+}
+
+fn recovery_context() -> tauri::Context<tauri::Wry> {
+    let mut context = app_context();
+    // Recovery has no AppState: do not construct normal windows or the tray.
+    context.config_mut().app.windows.clear();
+    context.config_mut().app.tray_icon = None;
+    context
+}
+
+fn startup_error_smoke() -> bool {
+    cfg!(debug_assertions)
+        && local_test::enabled()
+        && std::env::args().any(|arg| arg == "--smoke-startup-error")
+}
+
+fn install_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     let english = tray_state::saved_english();
     let labels = tray_state::menu_labels(
         english,
@@ -93,7 +134,7 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
             quit_item,
         ],
     ));
-    tray_state::start(app.handle().clone());
+    tray_state::start(app.clone());
     tray.on_menu_event(|app, event| match event.id.as_ref() {
         "open_settings" => {
             let _ = commands::window::open_settings(app.clone());
@@ -152,6 +193,10 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
 
 pub fn run() {
     install_panic_hook();
+    if std::env::args().any(|arg| arg == "--smoke-startup-error") && !startup_error_smoke() {
+        eprintln!("Recovery smoke testing requires a debug build and --local-test");
+        std::process::exit(2);
+    }
     let instance = match single_instance::InstanceGuard::acquire(
         !std::env::args().any(|arg| arg == "--minimized"),
     ) {
@@ -162,23 +207,22 @@ pub fn run() {
             return;
         }
     };
-    if updates::apply_pending_before_start(|| instance.release()) {
+    if !local_test::enabled() && updates::apply_pending_before_start(|| instance.release()) {
         return;
     }
 
-    let app_state = match tauri::async_runtime::block_on(AppState::production()) {
-        Ok(state) => state,
-        Err(error) => {
-            write_crash_log(&format!(
-                "failed to initialize service-backed desktop state: {error}"
-            ));
-            panic!("initialize service-backed desktop state: {error}");
-        }
+    let initial_state = if startup_error_smoke() {
+        Err("恢复页面测试：模拟钥匙串暂不可用，未读取生产凭据。".into())
+    } else {
+        tauri::async_runtime::block_on(AppState::production())
     };
+    if initial_state.as_ref().err().is_some_and(|error| error.contains("already running")) {
+        return;
+    }
 
     let builder = tauri::Builder::default()
         .manage(instance)
-        .manage(app_state)
+        .manage(DesktopStarted::default())
         .manage(commands::account::AccountState::default())
         .manage(commands::window::WindowPresentation::default())
         .manage(std::sync::Arc::new(updates::UpdateState::default()))
@@ -189,9 +233,12 @@ pub fn run() {
             updates::set_auto_update,
             updates::install_update,
             commands::daemon::get_daemon_status,
+            commands::daemon::rebuild_local_data,
+            commands::daemon::get_rebuild_status,
             commands::daemon::toggle_global_pause,
             commands::daemon::set_global_pause,
             commands::daemon::get_collector_metrics,
+            commands::daemon::retry_runtime_init,
             commands::agents::get_agent_configs,
             commands::quotas::get_agent_quotas,
             commands::agents::toggle_agent,
@@ -208,6 +255,7 @@ pub fn run() {
             commands::deletion::purge_local_cache,
             commands::autostart::get_autostart_status,
             commands::autostart::set_autostart,
+            commands::autostart::open_login_items_settings,
             commands::window::hide_window,
             commands::window::window_ready,
             commands::window::show_window,
@@ -231,7 +279,16 @@ pub fn run() {
         ])
         .on_page_load(|webview, payload| {
             if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
+                if webview.label() == "startup-error" {
+                    if startup_error_smoke() { println!("TOKENDANCE_STARTUP_ERROR_READY"); }
+                    return;
+                }
                 commands::window::page_loaded(webview.app_handle(), webview.label());
+                if startup_error_smoke() && webview.label() == "main" {
+                    println!("TOKENDANCE_DESKTOP_READY");
+                    #[cfg(all(target_os = "macos", debug_assertions))]
+                    reopen_smoke::start(webview.app_handle());
+                }
             }
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -244,6 +301,14 @@ pub fn run() {
             _ => {}
         })
         .on_window_event(|window, event| {
+            // Closing recovery must quit, not hide an app with no usable windows.
+            if window.label() == "startup-error" {
+                if matches!(event, WindowEvent::CloseRequested { .. })
+                    && !window.state::<DesktopStarted>().0.load(std::sync::atomic::Ordering::Acquire) {
+                    window.app_handle().exit(0);
+                }
+                return;
+            }
             if commands::orb::is_orb_window(window.label()) {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     api.prevent_close();
@@ -259,17 +324,21 @@ pub fn run() {
                     if *focused {
                         presentation.on_focus_change(window.label(), true);
                     } else if presentation.on_focus_change(window.label(), false) {
+                        let generation = presentation.blur_generation(window.label());
                         let window = window.clone();
+                        let handle = window.app_handle().clone();
                         tauri::async_runtime::spawn(async move {
                             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                            if window.is_visible().unwrap_or(false)
-                                && !window.is_focused().unwrap_or(true)
-                            {
-                                window
-                                    .state::<commands::window::WindowPresentation>()
-                                    .mark_hidden(window.label());
-                                let _ = window.hide();
-                            }
+                            let _ = handle.run_on_main_thread(move || {
+                                let presentation = window.state::<commands::window::WindowPresentation>();
+                                if presentation.blur_generation(window.label()) != generation { return; }
+                                if window.is_visible().unwrap_or(false)
+                                    && !window.is_minimized().unwrap_or(true)
+                                    && !window.is_focused().unwrap_or(true) {
+                                    presentation.mark_hidden(window.label());
+                                    let _ = window.hide();
+                                }
+                            });
                         });
                     }
                 }
@@ -282,33 +351,153 @@ pub fn run() {
                 let _ = window.hide();
             }
         })
-        .setup(|app| {
-            // Keep the native WebView hidden until React has committed its
-            // first layout, including loading state. Autostart never requests presentation.
-            if !std::env::args().any(|arg| arg == "--minimized") {
-                let _ = commands::window::request_initial_panel(app.handle());
+        .setup(move |app| {
+            let outcome = initial_state.and_then(|state| complete_startup(app.handle(), state, !std::env::args().any(|arg| arg == "--minimized")));
+            if let Err(error) = outcome {
+                write_crash_log(&format!("desktop startup is waiting for recovery: {error}"));
+                if let Err(error) = startup_recovery::show(app.handle(), error) {
+                    write_crash_log(&format!("recovery window failed: {error}"));
+                    app.handle().exit(1);
+                }
             }
-            let state = app.state::<AppState>().inner().clone();
-            let orb = crate::orb::controller::OrbHandle::install(app.handle(), state.clone());
-            app.manage(orb);
-            CollectorDaemon::new(state.clone()).start();
-            commands::account::start_auto_sync(app.handle().clone(), state);
-            updates::start(app.handle());
-            if let Err(error) = install_tray(app) {
-                write_crash_log(&format!("tray setup failed: {error}"));
-            }
-            single_instance::listen(app.handle());
             Ok(())
         });
 
-    if let Err(error) = builder.run(tauri::generate_context!()) {
-        write_crash_log(&format!("run TokenDance desktop application: {error}"));
-        panic!("run TokenDance desktop application: {error}");
+    match builder.build(recovery_context()) {
+        Ok(app) => app.run(|app, event| {
+            #[cfg(target_os = "macos")]
+            if matches!(event, tauri::RunEvent::Reopen { .. }) {
+                // AppKit may report a minimized window as visible. Handle
+                // every explicit Dock reopen, irrespective of that flag.
+                if let Err(error) = commands::window::activate_primary_window(app) {
+                    write_crash_log(&format!("reopen TokenDance: {error}"));
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
+        }),
+        Err(error) => write_crash_log(&format!("run TokenDance desktop application: {error}")),
     }
+}
+
+#[derive(Default)]
+struct DesktopStarted(std::sync::atomic::AtomicBool);
+
+/// Complete startup on the UI thread, retaining credentials authorized in this process.
+fn complete_startup(app: &tauri::AppHandle, state: AppState, activate: bool) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+    if app.state::<DesktopStarted>().0.load(Ordering::Acquire) { return Ok(()); }
+    if app.try_state::<AppState>().is_none() { app.manage(state.clone()); }
+    for config in &app_context().config().app.windows {
+        if app.get_webview_window(&config.label).is_none() {
+            tauri::WebviewWindowBuilder::from_config(app, config)
+                .map_err(|e| e.to_string())?.build().map_err(|e| e.to_string())?;
+        }
+    }
+    // Tray fallbacks and window callbacks may use this state immediately.
+    let orb = crate::orb::controller::OrbHandle::install(app, state.clone());
+    app.manage(orb);
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        if let Err(error) = install_macos_menu(app) { eprintln!("macos menu setup failed: {error}"); }
+        if let Some(window) = app.get_webview_window("settings") { commands::window::apply_macos_settings_chrome(&window); }
+        if let Some(window) = app.get_webview_window("main") { commands::window::apply_macos_overlay_chrome(&window); }
+        if let Err(error) = macos_tray::install(app) {
+            write_crash_log(&format!("native status item failed: {error}"));
+            if let Err(error) = install_tray(app) { write_crash_log(&format!("tray setup failed: {error}")); }
+        }
+    }
+    if activate {
+        let _ = commands::window::request_initial_panel(app);
+    }
+    if !startup_error_smoke() { CollectorDaemon::new(state.clone()).start(); }
+    if !local_test::enabled() {
+        commands::account::start_auto_sync(app.clone(), state);
+        updates::start(app);
+    }
+    #[cfg(not(target_os = "macos"))]
+    if let Err(error) = install_tray(app) { write_crash_log(&format!("tray setup failed: {error}")); }
+    single_instance::listen(app);
+    app.state::<DesktopStarted>().0.store(true, Ordering::Release);
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn install_macos_menu(app: &tauri::AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
+
+    let about = PredefinedMenuItem::about(app, None, None)?;
+    let settings = MenuItem::with_id(app, "open_settings", "Settings…", true, Some("CmdOrCtrl+,"))?;
+    let hide = PredefinedMenuItem::hide(app, None)?;
+    let hide_others = PredefinedMenuItem::hide_others(app, None)?;
+    let quit = PredefinedMenuItem::quit(app, Some("Quit TokenDance"))?;
+    let app_menu = Submenu::with_items(
+        app,
+        "TokenDance",
+        true,
+        &[&about, &settings, &hide, &hide_others, &quit],
+    )?;
+    let edit = Submenu::with_items(
+        app,
+        "Edit",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, None)?,
+            &PredefinedMenuItem::redo(app, None)?,
+            &PredefinedMenuItem::cut(app, None)?,
+            &PredefinedMenuItem::copy(app, None)?,
+            &PredefinedMenuItem::paste(app, None)?,
+            &PredefinedMenuItem::select_all(app, None)?,
+        ],
+    )?;
+    let menu = Menu::with_items(app, &[&app_menu, &edit])?;
+    app.set_menu(menu)?;
+    app.on_menu_event(|app, event| {
+        if event.id().as_ref() == "open_settings" {
+            let _ = commands::window::open_settings(app.clone());
+        }
+    });
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn recovery_context_does_not_create_normal_windows_or_tray() {
+        let context = super::recovery_context();
+        assert!(context.config().app.windows.is_empty());
+        assert!(context.config().app.tray_icon.is_none());
+    }
+
+    #[test]
+    fn crash_log_retains_the_first_error_before_a_secondary_panic() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("crash.log");
+        super::append_crash_record(&path, "initial setup failure");
+        super::append_crash_record(&path, "panic cannot unwind");
+        let log = std::fs::read_to_string(path).unwrap();
+        assert!(
+            log.find("initial setup failure").unwrap() < log.find("panic cannot unwind").unwrap()
+        );
+    }
+
+    #[test]
+    fn crash_log_rotates_large_history_without_losing_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("crash.log");
+        let history = "x".repeat(256 * 1024 + 1);
+        std::fs::write(&path, &history).unwrap();
+        super::append_crash_record(&path, "new failure");
+        assert_eq!(
+            std::fs::read_to_string(path.with_extension("previous.log")).unwrap(),
+            history
+        );
+        assert!(std::fs::read_to_string(path)
+            .unwrap()
+            .contains("new failure"));
+    }
+
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
 
@@ -325,6 +514,7 @@ mod tests {
         fn info(&self) -> AutostartInfo {
             AutostartInfo {
                 enabled: self.0.load(Ordering::Acquire),
+                status: crate::state::AutostartStatus::from_enabled(self.0.load(Ordering::Acquire)),
                 platform: "test".into(),
                 method: "memory".into(),
                 target_path: "test://autostart".into(),
@@ -409,6 +599,66 @@ mod tests {
         assert!(state.set_autostart(true).unwrap().enabled);
         assert!(state.get_autostart_status().unwrap().enabled);
         state.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn first_launch_enables_autostart_by_default() {
+        let (_root, state) = state().await;
+        assert!(
+            state.get_autostart_status().unwrap().enabled,
+            "install / first launch must turn autostart on"
+        );
+    }
+
+    #[tokio::test]
+    async fn later_launch_does_not_override_disabled_autostart() {
+        let root = tempfile::tempdir().unwrap();
+        {
+            let state = AppState::test(root.path().to_path_buf(), Arc::new(MockAutostart::new()))
+                .await
+                .unwrap();
+            assert!(state.get_autostart_status().unwrap().enabled);
+            assert!(!state.set_autostart(false).unwrap().enabled);
+        }
+        let state = AppState::test(root.path().to_path_buf(), Arc::new(MockAutostart::new()))
+            .await
+            .unwrap();
+        assert!(
+            !state.get_autostart_status().unwrap().enabled,
+            "existing installs must keep a user-disabled autostart off"
+        );
+    }
+
+    #[tokio::test]
+    async fn first_launch_autostart_failure_does_not_block_startup() {
+        struct FailEnable;
+        impl AutostartProvider for FailEnable {
+            fn is_enabled(&self) -> Result<bool, String> {
+                Ok(false)
+            }
+            fn enable(&self) -> Result<AutostartInfo, String> {
+                Err("denied".into())
+            }
+            fn disable(&self) -> Result<AutostartInfo, String> {
+                Err("denied".into())
+            }
+            fn get_info(&self) -> Result<AutostartInfo, String> {
+                Ok(AutostartInfo {
+                    enabled: false,
+                    status: crate::state::AutostartStatus::Disabled,
+                    platform: "test".into(),
+                    method: "memory".into(),
+                    target_path: "test://autostart".into(),
+                    details: "test provider".into(),
+                })
+            }
+        }
+        let root = tempfile::tempdir().unwrap();
+        let state = AppState::test(root.path().to_path_buf(), Arc::new(FailEnable))
+            .await
+            .unwrap();
+        assert!(!state.get_autostart_status().unwrap().enabled);
+        assert_eq!(state.get_daemon_status().await.status, "RUNNING");
     }
 
     #[tokio::test]

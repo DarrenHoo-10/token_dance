@@ -9,20 +9,20 @@ use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Instant;
 
 use acquisition::SecretResolver;
+use adapter_grok_build::{hook_auth_token, write_session_end_hook};
 use adapter_sdk::{ConfigMutation, SetupPlan};
 use chrono::{Local, Utc};
-use adapter_grok_build::{hook_auth_token, write_session_end_hook};
 use collector_service::{
-    detect_local, grok_user_home, start_listener, DetectionSnapshot, ProductionService,
+    detect_local, grok_user_home, start_listener, AppPaths, DetectionSnapshot, InstanceLock,
+    ProductionService,
 };
 use config_executor::{EncryptedBackupStore, SemanticVerifier, SetupPlanExecutor};
 use protocol::EventEnvelope;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
-#[cfg(test)]
 use wal_spool::InjectedKeyProvider;
-use wal_spool::{AckPayload, KeyProvider, OsKeyProvider, WalStore};
+use wal_spool::{AckPayload, KeyProvider, WalStore};
 
 use crate::autostart::{AutostartProvider, SystemAutostartManager};
 use crate::local_store::pipeline::{event_pipeline_v2_client_enabled, Grain};
@@ -168,6 +168,8 @@ pub struct DaemonStatus {
     pub last_heartbeat_at: String,
     pub sync_status: String,
     pub last_sync_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub init_error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -181,14 +183,43 @@ pub struct CollectorMetrics {
     pub active_agent_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AutostartStatus {
+    Enabled,
+    Disabled,
+    RequiresApproval,
+    Unavailable,
+}
+
+impl AutostartStatus {
+    pub fn from_enabled(enabled: bool) -> Self {
+        if enabled {
+            Self::Enabled
+        } else {
+            Self::Disabled
+        }
+    }
+
+    pub fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct AutostartInfo {
     pub enabled: bool,
+    #[serde(default = "default_autostart_status")]
+    pub status: AutostartStatus,
     pub platform: String,
     pub method: String,
     pub target_path: String,
     pub details: String,
+}
+
+fn default_autostart_status() -> AutostartStatus {
+    AutostartStatus::Disabled
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -326,40 +357,57 @@ pub struct AppState {
     pipeline_runtime: Arc<StdMutex<Option<Arc<PipelineRuntime>>>>,
     storage_error: Arc<StdMutex<Option<String>>>,
     rebuilding: Arc<StdMutex<bool>>,
+    logs_dir: Arc<PathBuf>,
+    instance_lock: Arc<StdMutex<Option<InstanceLock>>>,
 }
 
 impl AppState {
     pub async fn production() -> Result<Self, String> {
-        let root = app_data_root();
-        let key_provider: Arc<dyn KeyProvider> = Arc::new(OsKeyProvider::new(
-            "io.tokendance.desktop",
-            "collector-wal-key",
-        ));
-        Self::build(
-            root,
+        let paths = AppPaths::production()?;
+        paths.ensure()?;
+        let lock = InstanceLock::acquire(&paths)?;
+        collector_service::platform::maybe_migrate_macos_home_dir(&paths)?;
+        let key_provider: Arc<dyn KeyProvider> = if crate::local_test::enabled() {
+            Arc::new(InjectedKeyProvider::new(crate::local_test::data_key(
+                &paths.collector,
+            )?))
+        } else {
+            collector_service::runtime::wal_key_provider(&paths.collector)?
+        };
+        let state = Self::build(
+            paths.collector.clone(),
+            paths.logs.clone(),
             key_provider,
             Arc::new(SystemAutostartManager::new("TokenDance")),
+            false,
         )
-        .await
+        .await?;
+        *state.instance_lock.lock().expect("instance lock") = Some(lock);
+        Ok(state)
     }
 
-    #[cfg(test)]
-    pub async fn test(
+    /// Isolated test sources; never install hooks in the user home.
+    #[cfg(any(test, debug_assertions))]
+    pub(crate) async fn test(
         root: PathBuf,
         autostart: Arc<dyn AutostartProvider>,
     ) -> Result<Self, String> {
         Self::build(
+            root.clone(),
             root,
             Arc::new(InjectedKeyProvider::new([0x61; 32])),
             autostart,
+            true,
         )
         .await
     }
 
     async fn build(
         root: PathBuf,
+        logs: PathBuf,
         key_provider: Arc<dyn KeyProvider>,
         autostart: Arc<dyn AutostartProvider>,
+        fixture: bool,
     ) -> Result<Self, String> {
         fs::create_dir_all(&root).map_err(|error| error.to_string())?;
         let key = key_provider.data_key().map_err(|error| error.to_string())?;
@@ -371,7 +419,7 @@ impl AppState {
         // after the drivers are built but before the first poll.
         let mut local_store = LocalStore::open(&root)?;
         let rescan_sources = local_store.pending_rescan_sources();
-        let detection = if cfg!(test) {
+        let detection = if fixture {
             DetectionSnapshot::default()
         } else {
             detect_local()
@@ -392,15 +440,32 @@ impl AppState {
             service.driver_registry.reset_source(source_id);
         }
         local_store.clear_rescan_markers(&rescan_sources)?;
-        if let Some(home) = grok_user_home() {
-            let _ = write_session_end_hook(&home, &key);
-            let _ = start_listener(hook_auth_token(&key), service.grok_hooks.clone());
+        if !fixture && !crate::local_test::enabled() {
+            if let Some(home) = grok_user_home() {
+                let _ = write_session_end_hook(&home, &key);
+                let _ = start_listener(hook_auth_token(&key), service.grok_hooks.clone());
+            }
         }
+        let existing_control = load_control(&root)?;
+        let first_launch = existing_control.is_none();
         let autostart_enabled = autostart.is_enabled()?;
-        let control = load_control(&root)?
+        let control = existing_control
             .unwrap_or_else(|| PersistedControl::initial(&installation_id, autostart_enabled));
+        if first_launch {
+            apply_default_autostart(autostart.as_ref());
+        }
         let pipeline_writer = match PipelineStore::open(&root) {
-            Ok(store) => {
+            Ok(mut store) => {
+                if !cfg!(test) {
+                    store
+                        .with_connection(|c| {
+                            crate::local_store::pipeline::reconstruction::ensure(
+                                c,
+                                env!("CARGO_PKG_VERSION"),
+                            )
+                        })
+                        .map_err(|e| e.to_string())?;
+                }
                 match store.workers_allowed() {
                     Ok(true) => Some(Arc::new(PipelineWriter::start(store))),
                     Ok(false) => {
@@ -421,11 +486,14 @@ impl AppState {
             }
         };
         let pipeline_runtime = pipeline_writer.as_ref().map(|writer| {
-            Arc::new(PipelineRuntime::start(
-                Arc::clone(writer),
-                key.to_vec(),
-                &detection,
-            ))
+            Arc::new(if fixture {
+                PipelineRuntime::from_roots(
+                    Arc::clone(writer),
+                    crate::local_store::pipeline::runtime::adapter_roots_for_fixture(key.to_vec(), &root),
+                )
+            } else {
+                PipelineRuntime::start(Arc::clone(writer), key.to_vec(), &detection)
+            })
         });
         let state = Self {
             service: Arc::new(Mutex::new(service)),
@@ -441,6 +509,8 @@ impl AppState {
             pipeline_runtime: Arc::new(StdMutex::new(pipeline_runtime)),
             storage_error: Arc::new(StdMutex::new(None)),
             rebuilding: Arc::new(StdMutex::new(false)),
+            logs_dir: Arc::new(logs),
+            instance_lock: Arc::new(StdMutex::new(None)),
         };
         state.apply_saved_agent_controls().await?;
         state.persist_control().await?;
@@ -449,6 +519,29 @@ impl AppState {
 
     pub fn control_dir_path(&self) -> PathBuf {
         (*self.control_dir).clone()
+    }
+
+    pub fn log_dir_path(&self) -> PathBuf {
+        (*self.logs_dir).clone()
+    }
+
+    pub fn onboarding_complete_path(&self) -> PathBuf {
+        self.control_dir.join(".onboarding-complete")
+    }
+
+    pub fn is_shutting_down(&self) -> bool {
+        *self.shutting_down.lock().expect("shutdown lock")
+    }
+
+    pub async fn retry_runtime_init(&self) -> Result<(), String> {
+        if crate::local_test::enabled() {
+            crate::local_test::data_key(&self.control_dir)?;
+        } else {
+            wal_spool::OsKeyProvider::wal_key(false)
+                .data_key()
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 
     pub(crate) fn lock_store(&self) -> std::sync::MutexGuard<'_, LocalStore> {
@@ -623,6 +716,11 @@ impl AppState {
         Ok(())
     }
 
+    /// Lightweight worker gate; does not query legacy stores or take the service lock.
+    pub async fn collection_paused(&self) -> bool {
+        self.control.read().await.global_paused
+    }
+
     pub async fn get_daemon_status(&self) -> DaemonStatus {
         let control = self.control.read().await;
         let sync_status = self.sync_status.read().await.clone();
@@ -673,10 +771,13 @@ impl AppState {
             last_heartbeat_at: Utc::now().to_rfc3339(),
             sync_status,
             last_sync_at: control.last_sync_time.clone(),
+            init_error: None,
         }
     }
 
-    pub async fn is_global_paused(&self) -> bool { self.control.read().await.global_paused }
+    pub async fn is_global_paused(&self) -> bool {
+        self.control.read().await.global_paused
+    }
 
     pub async fn set_global_pause(
         &self,
@@ -744,7 +845,16 @@ impl AppState {
                     name: name.into(),
                     adapter_id: runtime.adapter_id.clone(),
                     adapter_version: runtime.adapter_version.clone(),
-                    status: runtime_status(runtime, control.global_paused, enabled),
+                    status: if pipeline_enabled && enabled && !control.global_paused {
+                        self.pipeline_runtime()
+                            .and_then(|r| r.collection_status(id))
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| {
+                                runtime_status(runtime, control.global_paused, enabled)
+                            })
+                    } else {
+                        runtime_status(runtime, control.global_paused, enabled)
+                    },
                     setup_plan_status: runtime
                         .setup_plan_status
                         .map(|status| format!("{status:?}").to_uppercase())
@@ -1326,15 +1436,22 @@ fn pipeline_today_token_value(
 }
 
 pub(crate) fn app_data_root() -> PathBuf {
-    if let Some(path) = std::env::var_os("TOKENDANCE_DATA_DIR").filter(|p| !p.is_empty()) {
-        return PathBuf::from(path);
+    // The explicit local-test identity takes precedence over older partial
+    // test overrides, so no helper can accidentally reuse production state.
+    if !crate::local_test::enabled() {
+        if let Some(path) = std::env::var_os("TOKENDANCE_DATA_DIR").filter(|p| !p.is_empty()) {
+            return PathBuf::from(path);
+        }
     }
-    let base = std::env::var_os("LOCALAPPDATA")
-        .or_else(|| std::env::var_os("XDG_DATA_HOME"))
-        .or_else(|| std::env::var_os("HOME"))
-        .map(PathBuf::from)
-        .unwrap_or_else(std::env::temp_dir);
-    base.join("TokenDance").join("collector")
+    AppPaths::production()
+        .map(|paths| paths.collector)
+        .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+pub(crate) fn crash_log_path() -> PathBuf {
+    AppPaths::production()
+        .map(|paths| paths.crash_log_file())
+        .unwrap_or_else(|_| app_data_root().join("crash.log"))
 }
 
 fn load_or_create_installation_id(root: &Path) -> Result<String, String> {
@@ -1345,8 +1462,17 @@ fn load_or_create_installation_id(root: &Path) -> Result<String, String> {
             .map_err(|error| error.to_string());
     }
     let id = format!("ins_{}", ulid::Ulid::new());
-    fs::write(path, &id).map_err(|error| error.to_string())?;
+    collector_service::platform::write_private_file(&path, &id)?;
     Ok(id)
+}
+
+fn apply_default_autostart(autostart: &dyn AutostartProvider) {
+    if crate::local_test::enabled() {
+        return;
+    }
+    if let Err(error) = autostart.enable() {
+        eprintln!("first-launch autostart enable failed: {error}");
+    }
 }
 
 fn load_control(root: &Path) -> Result<Option<PersistedControl>, String> {

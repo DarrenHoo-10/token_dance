@@ -11,6 +11,11 @@ use tauri::{AppHandle, Manager, State};
 use tokio::sync::{Mutex, RwLock};
 
 const RELEASES: &str = "https://www.nexorai.com.cn/token-dance/releases/stable.json";
+const UPDATE_POLICY: &str = "https://www.nexorai.com.cn/token-dance/v1/update-policy";
+static REQUIRED_UNTIL: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+pub fn upgrade_required() -> bool {
+    REQUIRED_UNTIL.load(std::sync::atomic::Ordering::Acquire) > chrono::Utc::now().timestamp()
+}
 const MAX_DOWNLOAD: u64 = 150 * 1024 * 1024;
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
 const SUPPORTED: bool = cfg!(all(target_os = "windows", target_arch = "x86_64"));
@@ -18,6 +23,8 @@ const SUPPORTED: bool = cfg!(all(target_os = "windows", target_arch = "x86_64"))
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateStatus {
+    minimum_version: Option<String>,
+    required: bool,
     current_version: String,
     version: Option<String>,
     notes: String,
@@ -65,6 +72,7 @@ struct Release {
     platform: String,
     notes: String,
     published_at: String,
+    #[serde(default)]
     exe: Asset,
     zip: Option<Asset>,
 }
@@ -80,6 +88,12 @@ struct Candidate {
     notes: String,
     published_at: Option<String>,
     asset: Asset,
+}
+
+fn below_minimum(current: &str, minimum: &str) -> bool {
+    parse_version(current)
+        .zip(parse_version(minimum))
+        .is_some_and(|(current, minimum)| current < minimum)
 }
 
 fn parse_version(value: &str) -> Option<semver::Version> {
@@ -166,14 +180,46 @@ fn select_release(manifest: Manifest, current: &str) -> Result<Option<Candidate>
     }))
 }
 
-fn client(timeout: u64) -> Result<reqwest::Client, String> {
+fn client_builder(timeout: u64) -> reqwest::ClientBuilder {
     reqwest::Client::builder()
         .user_agent(concat!("TokenDance/", env!("CARGO_PKG_VERSION")))
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(timeout))
         .redirect(reqwest::redirect::Policy::none())
+}
+fn client(timeout: u64) -> Result<reqwest::Client, String> {
+    client_builder(timeout)
         .build()
         .map_err(|_| "network".into())
+}
+
+// Release assets are public, validated HTTPS URLs and carry no account credentials.
+// A configured proxy can reach the manifest but fail the package TLS handshake.
+// Retry transport failures once directly, keeping TLS and redirect checks intact.
+async fn asset_response(
+    primary: reqwest::Client,
+    url: &str,
+    timeout: u64,
+) -> Result<reqwest::Response, String> {
+    match primary.get(url).send().await {
+        Ok(response) => Ok(response),
+        Err(_) => client_builder(timeout)
+            .no_proxy()
+            .build()
+            .map_err(|_| "download_network")?
+            .get(url)
+            .send()
+            .await
+            .map_err(|_| "download_network".into()),
+    }
+}
+
+fn asset_status_error(status: reqwest::StatusCode) -> &'static str {
+    match status.as_u16() {
+        404 | 410 => "asset_missing",
+        429 => "rate_limited",
+        _ => "download_failed",
+    }
 }
 async fn latest() -> Result<Option<Candidate>, String> {
     let mut response = client(20)?
@@ -232,6 +278,8 @@ impl Default for UpdateState {
     fn default() -> Self {
         Self {
             snapshot: RwLock::new(UpdateStatus {
+                minimum_version: None,
+                required: false,
                 current_version: CURRENT.into(),
                 version: None,
                 notes: String::new(),
@@ -249,6 +297,57 @@ impl Default for UpdateState {
     }
 }
 impl UpdateState {
+    async fn refresh_policy(&self) {
+        let policy = async {
+            let response = client(8)
+                .map_err(|_| "network")?
+                .get(UPDATE_POLICY)
+                .header("Cache-Control", "no-cache")
+                .send()
+                .await
+                .map_err(|_| "network")?;
+            if !response.status().is_success()
+                || response.content_length().is_some_and(|n| n > 4096)
+            {
+                return Err("policy");
+            }
+            let mut response = response;
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await.map_err(|_| "network")? {
+                if bytes.len() + chunk.len() > 4096 {
+                    return Err("policy");
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| "policy")?;
+            let minimum = value["minimumVersion"].as_str().ok_or("policy")?;
+            if !minimum.is_empty() && parse_version(minimum).is_none() {
+                return Err("policy");
+            }
+            Ok::<_, &str>(minimum.to_owned())
+        }
+        .await;
+        self.apply_policy(policy.ok()).await;
+    }
+
+    async fn apply_policy(&self, minimum: Option<String>) {
+        let minimum = minimum.filter(|v| parse_version(v).is_some());
+        let required = minimum
+            .as_deref()
+            .is_some_and(|min| below_minimum(CURRENT, min));
+        REQUIRED_UNTIL.store(
+            if required {
+                chrono::Utc::now().timestamp() + 90
+            } else {
+                0
+            },
+            std::sync::atomic::Ordering::Release,
+        );
+        let mut view = self.snapshot.write().await;
+        view.minimum_version = minimum;
+        view.required = required;
+    }
+
     async fn failed(&self, error: String) {
         let mut view = self.snapshot.write().await;
         view.phase = "error".into();
@@ -281,6 +380,16 @@ impl UpdateState {
     }
     async fn download(&self) -> Result<(), String> {
         let candidate = self.candidate.read().await.clone().ok_or("no_update")?;
+        if self
+            .snapshot
+            .read()
+            .await
+            .minimum_version
+            .as_deref()
+            .is_some_and(|min| below_minimum(&candidate.version, min))
+        {
+            return Err("minimum_unavailable".into());
+        }
         if verified_cache(&candidate) {
             self.snapshot.write().await.phase = "ready".into();
             return Ok(());
@@ -291,16 +400,13 @@ impl UpdateState {
             view.progress = 0;
             view.error = None;
         }
-        let mut response = client(300)?
-            .get(&candidate.asset.url)
-            .send()
-            .await
-            .map_err(|_| "network")?;
+        let primary = client(300).map_err(|_| "download_network")?;
+        let mut response = asset_response(primary, &candidate.asset.url, 300).await?;
         if !response.status().is_success() {
-            return Err("network".into());
+            return Err(asset_status_error(response.status()).into());
         }
         let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await.map_err(|_| "network")? {
+        while let Some(chunk) = response.chunk().await.map_err(|_| "download_network")? {
             if bytes.len() as u64 + chunk.len() as u64 > candidate.asset.size {
                 return Err("integrity".into());
             }
@@ -338,10 +444,13 @@ impl UpdateState {
 
 #[tauri::command]
 pub async fn get_update_status(state: State<'_, Arc<UpdateState>>) -> Result<UpdateStatus, String> {
-    Ok(state.snapshot.read().await.clone())
+    let mut status = state.snapshot.read().await.clone();
+    status.required &= upgrade_required();
+    Ok(status)
 }
 #[tauri::command]
 pub async fn check_for_updates(state: State<'_, Arc<UpdateState>>) -> Result<UpdateStatus, String> {
+    state.refresh_policy().await;
     state.background_check().await;
     Ok(state.snapshot.read().await.clone())
 }
@@ -477,10 +586,20 @@ pub fn apply_pending_before_start(release_instance: impl FnOnce()) -> bool {
 pub fn start(app: &AppHandle) {
     let state = app.state::<Arc<UpdateState>>().inner().clone();
     tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        let mut last_check: Option<std::time::Instant> = None;
         loop {
-            state.background_check().await;
-            tokio::time::sleep(Duration::from_secs(4 * 60 * 60)).await;
+            state.refresh_policy().await;
+            if upgrade_required()
+                || last_check.is_none_or(|t| t.elapsed() >= Duration::from_secs(4 * 60 * 60))
+            {
+                // A slow package download must not delay the next policy refresh.
+                let updates = Arc::clone(&state);
+                tauri::async_runtime::spawn(async move {
+                    updates.background_check().await;
+                });
+                last_check = Some(std::time::Instant::now());
+            }
+            tokio::time::sleep(Duration::from_secs(60)).await;
         }
     });
 }
@@ -588,11 +707,41 @@ mod tests {
             assert!(!verify(bytes, &candidate));
         }
     }
+
+    #[test]
+    fn mac_dmg_entries_do_not_break_windows_release_selection() {
+        let input = include_str!("../../../../../schemas/fixtures/desktop-release-manifest.json");
+        let mut value: serde_json::Value = serde_json::from_str(input).unwrap();
+        value["releases"].as_array_mut().unwrap().push(serde_json::json!({
+            "version":"9.0.0", "platform":"macos-arm64", "notes":"Mac release",
+            "publishedAt":"2026-09-12T00:00:00Z", "minimumSystemVersion":"13.0",
+            "dmg":{"url":"https://downloads.example.com/mac.dmg","sha256":"a".repeat(64),"size":512}
+        }));
+        let manifest = serde_json::from_value(value).unwrap();
+        assert_eq!(select_release(manifest, "0.1.0").unwrap().unwrap().version, "0.2.0");
+    }
     #[tokio::test]
     async fn concurrent_operations_do_not_queue_a_second_install() {
         let state = UpdateState::default();
         let _first = state.operation.lock().await;
         assert!(state.operation.try_lock().is_err());
+    }
+
+    #[tokio::test]
+    async fn minimum_policy_is_numeric_and_network_failure_releases_requirement() {
+        assert!(below_minimum("0.1.9", "0.1.27"));
+        assert!(!below_minimum("0.2.0", "0.1.27"));
+        assert!(!below_minimum("0.1.27", "0.1.27"));
+        let state = UpdateState::default();
+        // Do not activate the process-wide gate while other upload tests run.
+        state.snapshot.write().await.required = true;
+        state.apply_policy(None).await;
+        assert!(!state.snapshot.read().await.required);
+        assert!(!upgrade_required());
+        state.apply_policy(Some("invalid".into())).await;
+        assert!(!state.snapshot.read().await.required);
+        state.apply_policy(Some(String::new())).await;
+        assert!(!state.snapshot.read().await.required);
     }
     #[test]
     fn failed_replacement_restores_original_without_touching_settings() {
@@ -613,6 +762,94 @@ mod tests {
     #[ignore = "live read-only check of the public release endpoint"]
     async fn live_release_feed() {
         assert!(latest().await.is_ok());
+    }
+
+    async fn one_reply(reply: &'static [u8]) -> (String, tokio::task::JoinHandle<()>) {
+        use tokio::{
+            io::{AsyncReadExt, AsyncWriteExt},
+            net::TcpListener,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/asset", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            let (mut stream, _) = tokio::time::timeout(Duration::from_secs(3), listener.accept())
+                .await
+                .unwrap()
+                .unwrap();
+            let mut request = [0; 4096];
+            let _ = stream.read(&mut request).await.unwrap();
+            stream.write_all(reply).await.unwrap();
+        });
+        (url, task)
+    }
+
+    #[tokio::test]
+    async fn asset_transport_failure_retries_directly() {
+        let (asset, asset_server) =
+            one_reply(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nMZ").await;
+        let (proxy, proxy_server) = one_reply(b"").await;
+        let primary = client_builder(2)
+            .no_proxy()
+            .proxy(reqwest::Proxy::all(&proxy).unwrap())
+            .build()
+            .unwrap();
+        let response = asset_response(primary, &asset, 2).await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(response.bytes().await.unwrap().as_ref(), b"MZ");
+        proxy_server.await.unwrap();
+        asset_server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn asset_http_errors_are_not_transport_retries_or_redirects() {
+        for (reply, status, error) in [
+            (b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/redirect\r\nContent-Length: 0\r\n\r\n".as_slice(), 302, "download_failed"),
+            (b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".as_slice(), 404, "asset_missing"),
+            (b"HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\n\r\n".as_slice(), 429, "rate_limited"),
+        ] {
+            let (url, server) = one_reply(reply).await;
+            let primary = client_builder(2).no_proxy().build().unwrap();
+            let response = asset_response(primary, &url, 2).await.unwrap();
+            assert_eq!(response.status().as_u16(), status);
+            assert_eq!(asset_status_error(response.status()), error);
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn asset_all_routes_unavailable_report_download_failure() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/asset", listener.local_addr().unwrap());
+        drop(listener);
+        let primary = client_builder(1).no_proxy().build().unwrap();
+        assert_eq!(
+            asset_response(primary, &url, 1).await.unwrap_err(),
+            "download_network"
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "downloads and verifies the current public release without installing it"]
+    async fn live_release_asset() {
+        let manifest: Manifest = client(20)
+            .unwrap()
+            .get(RELEASES)
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let candidate = select_release(manifest, "0.0.0").unwrap().unwrap();
+        let response = asset_response(client(60).unwrap(), &candidate.asset.url, 60)
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap();
+        let bytes = response.bytes().await.unwrap();
+        assert!(verify(&bytes, &candidate));
     }
 
     #[test]

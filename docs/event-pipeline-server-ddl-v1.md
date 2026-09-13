@@ -1,6 +1,6 @@
 # 服务端事件流水线完整 DDL v1
 
-状态：2026-09-12 修订，尚未实施。内测旧采集/统计数据不迁移。共 10 张目标表：9 张新事件业务表及空表重建的 aggregate_dirty_days；均采用 id 主键和 created_at、updated_at、delete_at、extra 公共字段。installations 继续复用现有结构，不为历史兼容新增字段或改主键。
+状态：2026-09-12 修订；设备归属变更在 0014_device_owned_telemetry.sql 实施，尚未发布。内测旧采集/统计数据不迁移。共 10 张目标表：9 张新事件业务表及空表重建的 aggregate_dirty_days；均采用 id 主键和 created_at、updated_at、delete_at、extra 公共字段。installations 继续复用现有结构，不为历史兼容新增字段或改主键。
 
 [完整技术方案](event-pipeline-refactor-technical-plan-v1.md) · [SQL 文件](event-pipeline-server-schema-v1.mysql.sql) · [本地 DDL](event-pipeline-ddl-v3.md)
 
@@ -16,7 +16,7 @@ extra 仅放可选扩展；必需字段不能藏到其中。status_json 是各�
 
 MySQL 不提供 SQLite 式部分索引；due 查询以 consumer/delete_at/runnable_at 定位，租约回收包含软删行。外键列的辅助索引已明确列出，避免把 InnoDB 自动创建的索引漏算。字段范围、隐私白名单、JSON 类型和状态转换仍必须经过类型化 API 校验，DDL 不等于完整协议验证器。
 
-模型 provider_id/model_id 使用 utf8mb4_0900_bin，保持大小写和尾部空格区分；入口拒绝空或带不合法空白的标识。设备和用户自然 ID 的 ASCII 定义与既有 users 外键一致。所有外键支持用户归属固定、设备可重新绑定，不设置 (installation_id,user_id) 外键去强迫历史归属随设备当前账号改变。
+模型 provider_id/model_id 使用 utf8mb4_0900_bin，保持大小写和尾部空格区分；入口拒绝空或带不合法空白的标识。设备和用户自然 ID 的 ASCII 定义与既有 users 外键一致。事件和设备统计不保存 user_id；查询视图关联 installations 的当前有效绑定，用户汇总和缓存仍使用 user_id。
 
 ## 表目录
 
@@ -26,10 +26,10 @@ MySQL 不提供 SQLite 式部分索引；due 查询以 consumer/delete_at/runnab
 | telemetry_skills | 设备范围的匿名技能身份与公开标签 |
 | telemetry_events | 已接收的标准事实；与统计完成分离 |
 | telemetry_tasks | 服务端事件统计执行队列；成功后删除 |
-| telemetry_harness_metrics | 按账号与设备分 grain 保存的harness统计 |
-| telemetry_model_metrics | 按账号与设备分 grain 保存的model统计 |
-| telemetry_skill_metrics | 按账号与设备分 grain 保存的skill统计 |
-| telemetry_cost_metrics | 按账号与设备分 grain 保存的cost统计 |
+| telemetry_harness_metrics | 按设备分 grain 保存的harness统计 |
+| telemetry_model_metrics | 按设备分 grain 保存的model统计 |
+| telemetry_skill_metrics | 按设备分 grain 保存的skill统计 |
+| telemetry_cost_metrics | 按设备分 grain 保存的cost统计 |
 | telemetry_bucket_entities | 粒度内会话轮次成员与必要状态；不是永久事件账本 |
 | aggregate_dirty_days | 重构已有用户日读模型刷新队列；合并多个事件变更 |
 
@@ -85,7 +85,6 @@ CREATE TABLE telemetry_events (
  updated_at BIGINT UNSIGNED NOT NULL COMMENT '本行最近一次实际更新的 UTC 毫秒时间；由同事务代码维护',
  delete_at BIGINT UNSIGNED NULL COMMENT '软删除的 UTC 毫秒时间；NULL 为未删除，不自动撤回统计或释放唯一键',
  extra JSON NOT NULL DEFAULT (JSON_OBJECT()) COMMENT '可选扩展对象；不放必需业务字段、任务状态、凭据或重复事件正文',
- user_id CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '首次接收时由服务端认证确定的账号；不接受客户端提供的归属',
  installation_id CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '签名所证明的稳定设备身份；事件幂等键不包含账号',
  event_id BINARY(32) NOT NULL COMMENT '不可变事件版本的业务幂等键',
  fact_key BINARY(32) NOT NULL COMMENT '逻辑事实稳定身份；不是批次或数据库行序号',
@@ -107,13 +106,12 @@ CREATE TABLE telemetry_events (
  CHECK (JSON_TYPE(extra)='OBJECT'),
  UNIQUE KEY uk_te_event (installation_id,event_id),
  UNIQUE KEY uk_te_fact (installation_id,fact_key,fact_revision),
- KEY idx_te_user_time (user_id,delete_at,occurred_at,id),
+ KEY idx_te_user_time (installation_id,delete_at,occurred_at,id),
  KEY idx_te_retention (occurred_at,id),
  KEY idx_te_session (installation_id,harness_id,session_key,occurred_at,id),
  KEY idx_te_cost (installation_id,harness_id,cost_scope_key,occurred_at,id),
  KEY idx_te_model_fk (model_key),
  KEY idx_te_skill_fk (skill_id),
- CONSTRAINT fk_ep_event_user FOREIGN KEY (user_id) REFERENCES users(user_id),
  CONSTRAINT fk_ep_event_device FOREIGN KEY (installation_id) REFERENCES installations(installation_id),
  CONSTRAINT fk_ep_event_model FOREIGN KEY (model_key) REFERENCES telemetry_models(id),
  CONSTRAINT fk_ep_event_skill FOREIGN KEY (skill_id) REFERENCES telemetry_skills(id),
@@ -160,7 +158,7 @@ CREATE TABLE telemetry_tasks (
 
 ## telemetry_harness_metrics
 
-按账号与设备分 grain 保存的harness统计。
+按设备分 grain 保存的harness统计。
 
 ```sql
 CREATE TABLE telemetry_harness_metrics (
@@ -169,7 +167,6 @@ CREATE TABLE telemetry_harness_metrics (
  updated_at BIGINT UNSIGNED NOT NULL COMMENT '本行最近一次实际更新的 UTC 毫秒时间；由同事务代码维护',
  delete_at BIGINT UNSIGNED NULL COMMENT '软删除的 UTC 毫秒时间；NULL 为未删除，不自动撤回统计或释放唯一键',
  extra JSON NOT NULL DEFAULT (JSON_OBJECT()) COMMENT '可选扩展对象；不放必需业务字段、任务状态、凭据或重复事件正文',
- user_id CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '统计贡献所属账号；取首次接收事实归属，不跟随当前设备绑定变更',
  installation_id CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '统计贡献所属设备；用于多设备汇总和按设备删除贡献',
  grain VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '时间粒度：hour 小时、day 自然日、month 自然月',
  bucket_start BIGINT UNSIGNED NOT NULL COMMENT '北京时间统计桶起点对应的 UTC 毫秒时间，按 occurred_at 归桶',
@@ -195,19 +192,18 @@ CREATE TABLE telemetry_harness_metrics (
  metric_semantics_version SMALLINT UNSIGNED NOT NULL COMMENT '统计含义与公式版本，正整数',
  PRIMARY KEY (id),
  CHECK (JSON_TYPE(extra)='OBJECT'),
- UNIQUE KEY uk_thm_bucket (user_id,grain,bucket_start,installation_id,harness_id),
+ UNIQUE KEY uk_thm_bucket (installation_id,grain,bucket_start,harness_id),
  KEY idx_thm_device (installation_id,id),
- CONSTRAINT fk_thm_user FOREIGN KEY (user_id) REFERENCES users(user_id),
  CONSTRAINT fk_thm_device FOREIGN KEY (installation_id) REFERENCES installations(installation_id),
  CHECK (grain IN ('hour','day','month')),
  CHECK (metric_semantics_version>0),
- KEY idx_thm_harness (user_id,grain,harness_id,bucket_start)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin COMMENT='按账号与设备分 grain 保存的harness统计';
+ KEY idx_thm_harness (installation_id,grain,harness_id,bucket_start)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin COMMENT='按设备分 grain 保存的harness统计';
 ```
 
 ## telemetry_model_metrics
 
-按账号与设备分 grain 保存的model统计。
+按设备分 grain 保存的model统计。
 
 ```sql
 CREATE TABLE telemetry_model_metrics (
@@ -216,7 +212,6 @@ CREATE TABLE telemetry_model_metrics (
  updated_at BIGINT UNSIGNED NOT NULL COMMENT '本行最近一次实际更新的 UTC 毫秒时间；由同事务代码维护',
  delete_at BIGINT UNSIGNED NULL COMMENT '软删除的 UTC 毫秒时间；NULL 为未删除，不自动撤回统计或释放唯一键',
  extra JSON NOT NULL DEFAULT (JSON_OBJECT()) COMMENT '可选扩展对象；不放必需业务字段、任务状态、凭据或重复事件正文',
- user_id CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '统计贡献所属账号；取首次接收事实归属，不跟随当前设备绑定变更',
  installation_id CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '统计贡献所属设备；用于多设备汇总和按设备删除贡献',
  grain VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '时间粒度：hour 小时、day 自然日、month 自然月',
  bucket_start BIGINT UNSIGNED NOT NULL COMMENT '北京时间统计桶起点对应的 UTC 毫秒时间，按 occurred_at 归桶',
@@ -247,16 +242,15 @@ CREATE TABLE telemetry_model_metrics (
  metric_semantics_version SMALLINT UNSIGNED NOT NULL COMMENT '统计含义与公式版本，正整数',
  PRIMARY KEY (id),
  CHECK (JSON_TYPE(extra)='OBJECT'),
- UNIQUE KEY uk_tmm_bucket (user_id,grain,bucket_start,installation_id,harness_id,model_key),
+ UNIQUE KEY uk_tmm_bucket (installation_id,grain,bucket_start,harness_id,model_key),
  KEY idx_tmm_device (installation_id,id),
- CONSTRAINT fk_tmm_user FOREIGN KEY (user_id) REFERENCES users(user_id),
  CONSTRAINT fk_tmm_device FOREIGN KEY (installation_id) REFERENCES installations(installation_id),
  CHECK (grain IN ('hour','day','month')),
  CHECK (metric_semantics_version>0),
  KEY idx_tmm_model_fk (model_key),
  CONSTRAINT fk_tmm_model FOREIGN KEY (model_key) REFERENCES telemetry_models(id),
- KEY idx_tmm_harness (user_id,grain,harness_id,bucket_start,model_key),
- KEY idx_tmm_model_filter (user_id,grain,model_key,bucket_start,harness_id),
+ KEY idx_tmm_harness (installation_id,grain,harness_id,bucket_start,model_key),
+ KEY idx_tmm_model_filter (installation_id,grain,model_key,bucket_start,harness_id),
  CHECK (cache_eligible_read_tokens<=cache_eligible_input_tokens),
  CHECK (token_total_known_count<=usage_observed_count),
  CHECK (input_context_known_count<=usage_observed_count),
@@ -278,12 +272,12 @@ CREATE TABLE telemetry_model_metrics (
  CHECK (tool_extra_tokens>=0),
  CHECK (cache_eligible_input_tokens>=0),
  CHECK (cache_eligible_read_tokens>=0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin COMMENT='按账号与设备分 grain 保存的model统计';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin COMMENT='按设备分 grain 保存的model统计';
 ```
 
 ## telemetry_skill_metrics
 
-按账号与设备分 grain 保存的skill统计。
+按设备分 grain 保存的skill统计。
 
 ```sql
 CREATE TABLE telemetry_skill_metrics (
@@ -292,7 +286,6 @@ CREATE TABLE telemetry_skill_metrics (
  updated_at BIGINT UNSIGNED NOT NULL COMMENT '本行最近一次实际更新的 UTC 毫秒时间；由同事务代码维护',
  delete_at BIGINT UNSIGNED NULL COMMENT '软删除的 UTC 毫秒时间；NULL 为未删除，不自动撤回统计或释放唯一键',
  extra JSON NOT NULL DEFAULT (JSON_OBJECT()) COMMENT '可选扩展对象；不放必需业务字段、任务状态、凭据或重复事件正文',
- user_id CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '统计贡献所属账号；取首次接收事实归属，不跟随当前设备绑定变更',
  installation_id CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '统计贡献所属设备；用于多设备汇总和按设备删除贡献',
  grain VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '时间粒度：hour 小时、day 自然日、month 自然月',
  bucket_start BIGINT UNSIGNED NOT NULL COMMENT '北京时间统计桶起点对应的 UTC 毫秒时间，按 occurred_at 归桶',
@@ -309,9 +302,8 @@ CREATE TABLE telemetry_skill_metrics (
  metric_semantics_version SMALLINT UNSIGNED NOT NULL COMMENT '统计含义与公式版本，正整数',
  PRIMARY KEY (id),
  CHECK (JSON_TYPE(extra)='OBJECT'),
- UNIQUE KEY uk_tsm_bucket (user_id,grain,bucket_start,installation_id,harness_id,skill_id),
+ UNIQUE KEY uk_tsm_bucket (installation_id,grain,bucket_start,harness_id,skill_id),
  KEY idx_tsm_device (installation_id,id),
- CONSTRAINT fk_tsm_user FOREIGN KEY (user_id) REFERENCES users(user_id),
  CONSTRAINT fk_tsm_device FOREIGN KEY (installation_id) REFERENCES installations(installation_id),
  CHECK (grain IN ('hour','day','month')),
  CHECK (metric_semantics_version>0),
@@ -320,12 +312,12 @@ CREATE TABLE telemetry_skill_metrics (
  CHECK (success_count+failure_count<=use_count),
  CHECK (exact_use_count+derived_use_count+correlated_use_count<=use_count),
  CHECK (duration_known_count<=use_count)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin COMMENT='按账号与设备分 grain 保存的skill统计';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin COMMENT='按设备分 grain 保存的skill统计';
 ```
 
 ## telemetry_cost_metrics
 
-按账号与设备分 grain 保存的cost统计。
+按设备分 grain 保存的cost统计。
 
 ```sql
 CREATE TABLE telemetry_cost_metrics (
@@ -334,7 +326,6 @@ CREATE TABLE telemetry_cost_metrics (
  updated_at BIGINT UNSIGNED NOT NULL COMMENT '本行最近一次实际更新的 UTC 毫秒时间；由同事务代码维护',
  delete_at BIGINT UNSIGNED NULL COMMENT '软删除的 UTC 毫秒时间；NULL 为未删除，不自动撤回统计或释放唯一键',
  extra JSON NOT NULL DEFAULT (JSON_OBJECT()) COMMENT '可选扩展对象；不放必需业务字段、任务状态、凭据或重复事件正文',
- user_id CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '统计贡献所属账号；取首次接收事实归属，不跟随当前设备绑定变更',
  installation_id CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '统计贡献所属设备；用于多设备汇总和按设备删除贡献',
  grain VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '时间粒度：hour 小时、day 自然日、month 自然月',
  bucket_start BIGINT UNSIGNED NOT NULL COMMENT '北京时间统计桶起点对应的 UTC 毫秒时间，按 occurred_at 归桶',
@@ -350,9 +341,8 @@ CREATE TABLE telemetry_cost_metrics (
  metric_semantics_version SMALLINT UNSIGNED NOT NULL COMMENT '统计含义与公式版本，正整数',
  PRIMARY KEY (id),
  CHECK (JSON_TYPE(extra)='OBJECT'),
- UNIQUE KEY uk_tcm_bucket (user_id,grain,bucket_start,installation_id,harness_id,model_key,currency),
+ UNIQUE KEY uk_tcm_bucket (installation_id,grain,bucket_start,harness_id,model_key,currency),
  KEY idx_tcm_device (installation_id,id),
- CONSTRAINT fk_tcm_user FOREIGN KEY (user_id) REFERENCES users(user_id),
  CONSTRAINT fk_tcm_device FOREIGN KEY (installation_id) REFERENCES installations(installation_id),
  CHECK (grain IN ('hour','day','month')),
  CHECK (metric_semantics_version>0),
@@ -361,7 +351,7 @@ CREATE TABLE telemetry_cost_metrics (
  CHECK (REGEXP_LIKE(currency,'^[A-Z]{3}$','c')),
  CHECK (reported_cost_units>=0),
  CHECK (estimated_cost_units>=0)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin COMMENT='按账号与设备分 grain 保存的cost统计';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin COMMENT='按设备分 grain 保存的cost统计';
 ```
 
 ## telemetry_bucket_entities
@@ -375,7 +365,6 @@ CREATE TABLE telemetry_bucket_entities (
  updated_at BIGINT UNSIGNED NOT NULL COMMENT '本行最近一次实际更新的 UTC 毫秒时间；由同事务代码维护',
  delete_at BIGINT UNSIGNED NULL COMMENT '软删除的 UTC 毫秒时间；NULL 为未删除，不自动撤回统计或释放唯一键',
  extra JSON NOT NULL DEFAULT (JSON_OBJECT()) COMMENT '可选扩展对象；不放必需业务字段、任务状态、凭据或重复事件正文',
- user_id CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '实体统计所属账号；固定于事实接收归属',
  installation_id CHAR(30) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '实体匿名命名空间所属设备',
  grain VARCHAR(8) CHARACTER SET ascii COLLATE ascii_bin NOT NULL COMMENT '时间粒度：hour 小时、day 自然日、month 自然月',
  bucket_start BIGINT UNSIGNED NOT NULL COMMENT '北京时间统计桶起点对应的 UTC 毫秒时间，按 occurred_at 归桶',
@@ -390,10 +379,9 @@ CREATE TABLE telemetry_bucket_entities (
  turn_duration_ms BIGINT UNSIGNED NULL COMMENT '轮次耗时兜底，毫秒；未知为 NULL',
  PRIMARY KEY (id),
  CHECK (JSON_TYPE(extra)='OBJECT'),
- UNIQUE KEY uk_tbe_entity (user_id,installation_id,grain,bucket_start,harness_id,entity_kind,entity_key),
- KEY idx_tbe_related (installation_id,user_id,harness_id,entity_kind,entity_key,grain,bucket_start),
- KEY idx_tbe_parent (user_id,installation_id,grain,bucket_start,harness_id,parent_key),
- CONSTRAINT fk_tbe_user FOREIGN KEY (user_id) REFERENCES users(user_id),
+ UNIQUE KEY uk_tbe_entity (installation_id,grain,bucket_start,harness_id,entity_kind,entity_key),
+ KEY idx_tbe_related (installation_id,harness_id,entity_kind,entity_key,grain,bucket_start),
+ KEY idx_tbe_parent (installation_id,grain,bucket_start,harness_id,parent_key),
  CONSTRAINT fk_tbe_device FOREIGN KEY (installation_id) REFERENCES installations(installation_id),
  CHECK (grain IN ('hour','day','month')),
  CHECK (entity_kind IN ('session','turn')),
@@ -432,6 +420,17 @@ CREATE TABLE aggregate_dirty_days (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_bin COMMENT='重构已有用户日读模型刷新队列；合并多个事件变更';
 ```
 
+## 当前绑定的用户统计视图
+
+视图不复制数据、不增加实体表；解绑立即排除，重新绑定计入新账号。
+
+```sql
+CREATE OR REPLACE VIEW bound_telemetry_harness_metrics AS SELECT m.*,i.user_id FROM telemetry_harness_metrics m JOIN installations i ON i.installation_id=m.installation_id WHERE i.installation_status <> 'revoked' AND i.revoked_at IS NULL;
+CREATE OR REPLACE VIEW bound_telemetry_model_metrics AS SELECT m.*,i.user_id FROM telemetry_model_metrics m JOIN installations i ON i.installation_id=m.installation_id WHERE i.installation_status <> 'revoked' AND i.revoked_at IS NULL;
+CREATE OR REPLACE VIEW bound_telemetry_skill_metrics AS SELECT m.*,i.user_id FROM telemetry_skill_metrics m JOIN installations i ON i.installation_id=m.installation_id WHERE i.installation_status <> 'revoked' AND i.revoked_at IS NULL;
+CREATE OR REPLACE VIEW bound_telemetry_cost_metrics AS SELECT m.*,i.user_id FROM telemetry_cost_metrics m JOIN installations i ON i.installation_id=m.installation_id WHERE i.installation_status <> 'revoked' AND i.revoked_at IS NULL;
+```
+
 ## 空表初始化要求
 
 ```sql
@@ -445,10 +444,10 @@ unknown 必须在任何事件写入之前初始化。先停止旧接收、聚合
 
 aggregate_dirty_days 按目标结构空表重建，不迁移旧 claim_token、租约、版本或时间字段；旧消费者同时停用。新任务领取时把 next_attempt_at 置 NULL，执行期间新变更只增加 dirty_version；完成只确认领取版本 v，若 dirty_version>v 则重排，不能混用旧 ClearAggregateDirtyDaysTx。
 
-服务器事件不直接照搬客户端 created_at+14 天硬 TTL。先关闭 occurred_at 对应接收窗口，再在任务与关联依赖完成后清理；窗口内已计数身份不能提前物理删除。模型/技能软删标签不能让历史外键失效；物理删除账号/设备数据遵循依赖顺序和服务端授权归属。
+服务器事件不直接照搬客户端 created_at+14 天硬 TTL。服务端保留事件身份及统计完成状态，保证任意历史重建仍能去重；不能按 occurred_at 窗口清掉已计数身份。模型/技能软删标签不能让历史外键失效；物理删除账号/设备数据遵循依赖顺序和服务端授权归属。
 
 ## 本轮验证
 
-生成器结构检查：10 张表、184 个有 COMMENT 的字段、每表五个公共字段及 id 主键、索引字段存在、显式外键名称不冲突，且不存在逐设备协议切换字段。与本地四个统计主题共享字段来源，防止两端漏列。该检查不执行 MySQL SQL，不验证锁、优化器、真实外键或性能。
+生成器结构检查：10 张表、178 个有 COMMENT 的字段、每表五个公共字段及 id 主键、索引字段存在、显式外键名称不冲突，且不存在逐设备协议切换字段。与本地四个统计主题共享字段来源，防止两端漏列。该检查不执行 MySQL SQL，不验证锁、优化器、真实外键或性能。
 
-当前机器 Docker Linux 引擎不可用，本轮未在真实 MySQL 执行。实施前必须在实际目标版本的临时数据库执行完整 DDL、非法写入、EXPLAIN 以及多连接并发/删除/改绑测试；不能将上述结构检查报告为数据库执行通过。
+本轮另在云端隔离测试 schema 验证了实际迁移、并发幂等、历史重建和解绑/重新绑定。此生成器自身仍仅做结构检查，不能代替真实数据库测试。

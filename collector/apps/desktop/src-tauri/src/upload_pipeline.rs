@@ -6,15 +6,16 @@ use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
+#[cfg(test)]
+use protocol::v2::{Accuracy, TimeSource};
 use protocol::v2::{
-    AckResult, EventEnvelope, EventPayload, EventType, ModelRef, SkillRef,
-    TelemetryEventsResponse, Accuracy, TimeSource, PROTOCOL_VERSION_NUMBER, SCHEMA_VERSION,
-    METRIC_SEMANTICS_VERSION,
+    AckResult, EventEnvelope, EventPayload, EventType, ModelRef, SkillRef, TelemetryEventsResponse,
+    METRIC_SEMANTICS_VERSION, PROTOCOL_VERSION_NUMBER, SCHEMA_VERSION,
 };
 use serde_json::Value;
 use uploader::{
-    freeze_events_request, RetryPolicy, TelemetryV2Transport, TransportError, V2UploadAuth,
-    CLIENT_LEASE_MS, CLIENT_MAX_BATCH_BYTES, CLIENT_MAX_BATCH_EVENTS, CLIENT_MAX_IN_FLIGHT,
+    RetryPolicy, TelemetryV2Transport, TransportError, V2UploadAuth, CLIENT_LEASE_MS,
+    CLIENT_MAX_BATCH_BYTES, CLIENT_MAX_BATCH_EVENTS, CLIENT_MAX_IN_FLIGHT,
 };
 
 use crate::local_store::pipeline::{
@@ -86,12 +87,21 @@ impl UploadConsumer {
         }
     }
 
+    pub async fn finish_in_flight(&mut self) {
+        for flight in self.in_flight.drain(..) {
+            let _ = flight.handle.await;
+        }
+    }
+
     pub fn with_retry_policy(mut self, retry: RetryPolicy) -> Self {
         self.retry = retry;
         self
     }
 
-    pub async fn tick(&mut self, creds: Option<&UploadCredentials>) -> Result<UploadTickReport, String> {
+    pub async fn tick(
+        &mut self,
+        creds: Option<&UploadCredentials>,
+    ) -> Result<UploadTickReport, String> {
         let _ = self.writer.run_compensation().map_err(|e| e.to_string())?;
         self.poll_finished(creds).await?;
 
@@ -126,8 +136,8 @@ impl UploadConsumer {
                             .supported_metric_semantics_versions
                             .contains(&METRIC_SEMANTICS_VERSION)
                     {
-                        // Unsupported versions: leave tasks pending; do not auto-ACK.
-                        return Ok(report);
+                        // Leave tasks intact and expose the incompatible server contract.
+                        return Err("SYNC_PROTOCOL_UNSUPPORTED".into());
                     }
                     self.capabilities_ok = true;
                 }
@@ -136,7 +146,8 @@ impl UploadConsumer {
                     report.auth_blocked = true;
                     return Ok(report);
                 }
-                Err(_) => return Ok(report),
+                Err(TransportError::Decode(_)) => return Err("SYNC_ENDPOINT_INVALID".into()),
+                Err(_) => return Err("NETWORK_ERROR".into()),
             }
         }
 
@@ -166,10 +177,7 @@ impl UploadConsumer {
         Ok(report)
     }
 
-    async fn poll_finished(
-        &mut self,
-        creds: Option<&UploadCredentials>,
-    ) -> Result<(), String> {
+    async fn poll_finished(&mut self, creds: Option<&UploadCredentials>) -> Result<(), String> {
         let mut finished = Vec::new();
         for (idx, flight) in self.in_flight.iter_mut().enumerate() {
             if flight.handle.is_finished() {
@@ -208,10 +216,7 @@ impl UploadConsumer {
         Ok(())
     }
 
-    fn claim_and_freeze(
-        &self,
-        creds: &UploadCredentials,
-    ) -> Result<Option<FrozenBatch>, String> {
+    fn claim_and_freeze(&self, creds: &UploadCredentials) -> Result<Option<FrozenBatch>, String> {
         let claimed = self
             .writer
             .claim_tasks(Consumer::Upload, CLIENT_MAX_BATCH_EVENTS, CLIENT_LEASE_MS)
@@ -265,8 +270,16 @@ impl UploadConsumer {
         if envelopes.is_empty() {
             return Ok(None);
         }
+        let lower = (chrono::Utc::now().timestamp_millis() + 28_800_000).div_euclid(86_400_000)
+            * 86_400_000
+            - 28_800_000
+            - 14 * 86_400_000;
+        let historical = envelopes
+            .iter()
+            .any(|e| e.occurred_at.parse::<i64>().is_ok_and(|t| t < lower));
         let (request_id, body, body_hash) =
-            freeze_events_request(envelopes).map_err(|e| e.to_string())?;
+            uploader::freeze_events_request_with_reconstruction(envelopes, historical)
+                .map_err(|e| e.to_string())?;
         Ok(Some(FrozenBatch {
             request_id,
             body,
@@ -398,7 +411,9 @@ impl UploadConsumer {
                 runnable_at,
                 error_code: code.map(str::to_owned),
             }) {
-                Ok(()) | Err(PipelineError::TaskLeaseMismatch) | Err(PipelineError::TaskNotRunnable) => {}
+                Ok(())
+                | Err(PipelineError::TaskLeaseMismatch)
+                | Err(PipelineError::TaskNotRunnable) => {}
                 Err(e) => return Err(e.to_string()),
             }
         }
@@ -523,6 +538,9 @@ pub fn local_payload_to_wire(payload_json: &str) -> Result<EventPayload, String>
             }
         }
     }
+    if let Some(Value::Object(cost)) = obj.get_mut("cost") {
+        crate::local_store::pipeline::normalize_cost_source(cost);
+    }
     // Ensure required meta exists for wire types.
     if !obj.contains_key("meta") {
         obj.insert(
@@ -552,7 +570,9 @@ fn stringify_uint_leaves(map: &mut serde_json::Map<String, Value>) {
 }
 
 /// Extract session bearer from desktop cookie jar (cookie value == session token).
-pub fn session_bearer_from_cookies(cookies: &std::collections::BTreeMap<String, String>) -> Option<String> {
+pub fn session_bearer_from_cookies(
+    cookies: &std::collections::BTreeMap<String, String>,
+) -> Option<String> {
     cookies
         .get("__Host-tokendance_session")
         .or_else(|| cookies.get("tokendance_session"))
@@ -561,7 +581,7 @@ pub fn session_bearer_from_cookies(cookies: &std::collections::BTreeMap<String, 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::local_store::pipeline::{
         CursorKind, EventCandidate, PipelineStore, RegisterSource, SourceCommitBatch, SourceKind,
@@ -569,6 +589,66 @@ mod tests {
     };
     use protocol::v2::EventAck;
     use uploader::{ScriptedTelemetryV2, V2ScriptStep};
+
+    struct InvalidCapabilities;
+    #[async_trait::async_trait]
+    impl TelemetryV2Transport for InvalidCapabilities {
+        async fn capabilities(
+            &self,
+        ) -> Result<protocol::v2::TelemetryCapabilities, TransportError> {
+            Err(TransportError::Decode("HTML instead of JSON".into()))
+        }
+        async fn upload_events(
+            &self,
+            _: &V2UploadAuth,
+            _: &[u8],
+        ) -> Result<TelemetryEventsResponse, TransportError> {
+            panic!("must not upload before valid capabilities")
+        }
+    }
+    #[tokio::test]
+    async fn invalid_capabilities_are_visible_and_keep_tasks_unclaimed() {
+        let (store, _) = seed_store_with_upload_events(1);
+        let writer = Arc::new(PipelineWriter::start(store));
+        let mut consumer = UploadConsumer::new(Arc::clone(&writer), Arc::new(InvalidCapabilities));
+        let creds = UploadCredentials {
+            session_bearer: "fixture".into(),
+            binding_status_version: 1,
+            binding_generation: 1,
+        };
+        assert_eq!(
+            consumer.tick(Some(&creds)).await.unwrap_err(),
+            "SYNC_ENDPOINT_INVALID"
+        );
+        assert_eq!(writer.pending_upload_count().unwrap(), 1);
+        consumer.transport = Arc::new(ScriptedTelemetryV2::new(vec![]));
+        assert_eq!(
+            consumer.tick(Some(&creds)).await.unwrap().batches_started,
+            1
+        );
+    }
+    #[tokio::test]
+    async fn uploads_do_not_wait_for_rebuild_or_local_statistics() {
+        let (mut store, _) = seed_store_with_consumers(1, vec![Consumer::Hour, Consumer::Day, Consumer::Month, Consumer::Upload]);
+        store.with_connection(|c| {
+            c.execute("UPDATE schema_meta SET extra=json_set(extra,'$.rebuild',json('{\"active\":true}'))",[])?;
+            Ok(())
+        }).unwrap();
+        let writer = Arc::new(PipelineWriter::start(store));
+        let mut consumer = UploadConsumer::new(
+            Arc::clone(&writer),
+            Arc::new(ScriptedTelemetryV2::new(vec![])),
+        );
+        let creds = UploadCredentials {
+            session_bearer: "fixture".into(),
+            binding_status_version: 1,
+            binding_generation: 1,
+        };
+        assert_eq!(
+            consumer.tick(Some(&creds)).await.unwrap().batches_started,
+            1
+        );
+    }
 
     fn blob(seed: u8) -> [u8; 32] {
         [seed; 32]
@@ -579,7 +659,11 @@ mod tests {
             .into()
     }
 
-    fn seed_store_with_upload_events(n: u8) -> (PipelineStore, Vec<i64>) {
+    pub(crate) fn seed_store_with_upload_events(n: u8) -> (PipelineStore, Vec<i64>) {
+        seed_store_with_consumers(n, vec![Consumer::Upload])
+    }
+
+    pub(crate) fn seed_store_with_consumers(n: u8, consumers: Vec<Consumer>) -> (PipelineStore, Vec<i64>) {
         let mut store = PipelineStore::open_in_memory().unwrap();
         store.set_clock_ms(1_700_000_000_000);
         let source_id = store
@@ -614,7 +698,7 @@ mod tests {
                 turn_key: None,
                 cost_scope_key: None,
                 payload_json: payload_exact(),
-                applicable_consumers: vec![Consumer::Upload],
+                applicable_consumers: consumers.clone(),
             })
             .collect();
         store
@@ -809,7 +893,10 @@ mod tests {
         let bodies = transport.bodies();
         assert!(!bodies.is_empty());
         let first: Value = serde_json::from_slice(&bodies[0]).unwrap();
-        let hash1 = first["events"][0]["contentHash"].as_str().unwrap().to_string();
+        let hash1 = first["events"][0]["contentHash"]
+            .as_str()
+            .unwrap()
+            .to_string();
         // Force re-claim after retry runnable.
         tokio::time::sleep(Duration::from_millis(5)).await;
         let _ = consumer.tick(Some(&creds)).await.unwrap();
@@ -836,7 +923,9 @@ mod tests {
 
     #[async_trait::async_trait]
     impl TelemetryV2Transport for PartialAckTransport {
-        async fn capabilities(&self) -> Result<protocol::v2::TelemetryCapabilities, TransportError> {
+        async fn capabilities(
+            &self,
+        ) -> Result<protocol::v2::TelemetryCapabilities, TransportError> {
             self.inner.capabilities().await
         }
 

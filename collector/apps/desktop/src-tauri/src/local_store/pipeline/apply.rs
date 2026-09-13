@@ -7,7 +7,7 @@ use std::collections::{HashMap, HashSet};
 use rusqlite::{params, OptionalExtension, Transaction};
 use serde_json::Value;
 
-use super::buckets::{beijing_day_end, beijing_day_start, bucket_start, Grain};
+use super::buckets::{bucket_start, Grain};
 use super::types::{Consumer, ConsumerStatus, PipelineError};
 
 #[derive(Debug, Clone)]
@@ -37,22 +37,26 @@ pub fn apply_and_complete_in_tx(
     let grain = Grain::from_consumer(consumer)?;
     verify_lease_inflight(tx, task_id, event_row_id, consumer, lease_token, now_ms)?;
     let event = load_event_row(tx, event_row_id, consumer)?;
-    apply_event_metrics(tx, grain, &event, now_ms)?;
+    let apply = prepare_fact_revision(tx, consumer, &event, now_ms)?;
+    if apply {
+        apply_event_metrics(tx, grain, &event, now_ms)?;
+    }
     tx.execute(
         "UPDATE events
          SET status_json=json_set(status_json, ?1, ?2), updated_at=?3
          WHERE id=?4 AND delete_at IS NULL AND expire_at>?3",
         params![
             consumer.status_path(),
-            ConsumerStatus::Applied as i64,
+            if apply {
+                ConsumerStatus::Applied as i64
+            } else {
+                ConsumerStatus::NotApplicable as i64
+            },
             now_ms,
             event_row_id
         ],
     )?;
-    tx.execute(
-        "DELETE FROM processing_tasks WHERE id=?1",
-        params![task_id],
-    )?;
+    tx.execute("DELETE FROM processing_tasks WHERE id=?1", params![task_id])?;
     Ok(())
 }
 
@@ -83,10 +87,7 @@ fn verify_lease_inflight(
     let Some((row_event_id, row_consumer, token, lease_until, delete_at)) = row else {
         return Err(PipelineError::TaskNotRunnable);
     };
-    if delete_at.is_some()
-        || row_event_id != event_row_id
-        || row_consumer != consumer.as_str()
-    {
+    if delete_at.is_some() || row_event_id != event_row_id || row_consumer != consumer.as_str() {
         return Err(PipelineError::TaskNotRunnable);
     }
     match (token.as_deref(), lease_until) {
@@ -160,8 +161,10 @@ fn apply_event_metrics(
     let semantics = event.metric_semantics_version.max(1);
 
     match event.event_type.as_str() {
-        "model_usage_recorded" => apply_usage(tx, grain, bucket, event, &payload, semantics, now_ms)?,
-        "code_changed" => apply_code(tx, grain, bucket, event, &payload, semantics, now_ms)?,
+        "model_usage_recorded" => {
+            apply_usage(tx, grain, bucket, event, &payload, semantics, now_ms, 1)?
+        }
+        "code_changed" => apply_code(tx, grain, bucket, event, &payload, semantics, now_ms, 1)?,
         "tool_invoked" => {
             bump_harness(
                 tx,
@@ -182,6 +185,7 @@ fn apply_event_metrics(
             // Unknown types: no metrics contribution (still mark applied by caller).
         }
     }
+    apply_session_extent(tx, grain, event, semantics, now_ms)?;
     Ok(())
 }
 
@@ -193,7 +197,81 @@ fn accuracy(payload: &Value) -> &str {
 }
 
 fn json_i64(payload: &Value, path: &str) -> Option<i64> {
-    payload.pointer(path).and_then(|v| v.as_i64())
+    payload.pointer(path).and_then(|v| v.as_i64()).or_else(|| {
+        let alias = match path {
+            "/code/generated_lines" => "/code/generated",
+            "/code/added_lines" => "/code/added",
+            "/code/removed_lines" => "/code/removed",
+            "/code/accepted_lines" => "/code/accepted",
+            "/code/file_count" => "/code/file_touch_count",
+            _ => return None,
+        };
+        payload.pointer(alias).and_then(|v| v.as_i64())
+    })
+}
+
+/// Revisions replace an earlier usage or code contribution, including coverage/request counts.
+/// The writer transaction serializes peers; upload status is never changed here.
+fn prepare_fact_revision(
+    tx: &Transaction<'_>,
+    consumer: Consumer,
+    event: &EventRow,
+    now: i64,
+) -> Result<bool, PipelineError> {
+    if !matches!(
+        event.event_type.as_str(),
+        "model_usage_recorded" | "code_changed"
+    ) {
+        return Ok(true);
+    }
+    let (key, revision): (Vec<u8>, i64) = tx.query_row(
+        "SELECT fact_key,fact_revision FROM events WHERE id=?1",
+        [event.id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    let mut q=tx.prepare("SELECT id,fact_revision FROM events WHERE fact_key=?1 AND id<>?2 AND delete_at IS NULL AND CAST(json_extract(status_json,?3) AS INTEGER)=3 ORDER BY fact_revision DESC")?;
+    let peers = q
+        .query_map(params![key, event.id, consumer.status_path()], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    if peers.iter().any(|(_, r)| *r > revision) {
+        return Ok(false);
+    }
+    let grain = Grain::from_consumer(consumer)?;
+    for (id, _) in peers {
+        let old = load_event_row(tx, id, consumer)?;
+        let payload: Value = serde_json::from_str(&old.payload_json)
+            .map_err(|e| PipelineError::InvalidArgument(e.to_string()))?;
+        if old.event_type == "code_changed" {
+            apply_code(
+                tx,
+                grain,
+                bucket_start(grain, old.occurred_at),
+                &old,
+                &payload,
+                old.metric_semantics_version.max(1),
+                now,
+                -1,
+            )?;
+        } else {
+            apply_usage(
+                tx,
+                grain,
+                bucket_start(grain, old.occurred_at),
+                &old,
+                &payload,
+                old.metric_semantics_version.max(1),
+                now,
+                -1,
+            )?;
+        }
+        tx.execute(
+            "UPDATE events SET status_json=json_set(status_json,?1,4),updated_at=?2 WHERE id=?3",
+            params![consumer.status_path(), now, id],
+        )?;
+    }
+    Ok(true)
 }
 
 fn apply_usage(
@@ -204,12 +282,21 @@ fn apply_usage(
     payload: &Value,
     semantics: i64,
     now_ms: i64,
+    sign: i64,
 ) -> Result<(), PipelineError> {
     let acc = accuracy(payload);
     if acc != "exact" && acc != "derived" {
         return Ok(());
     }
-    ensure_model_metrics(tx, grain, bucket, &event.harness_id, event.model_key, semantics, now_ms)?;
+    ensure_model_metrics(
+        tx,
+        grain,
+        bucket,
+        &event.harness_id,
+        event.model_key,
+        semantics,
+        now_ms,
+    )?;
 
     let mut sets: Vec<(&str, i64)> = vec![("usage_observed_count", 1), ("model_request_count", 1)];
     if let Some(v) = json_i64(payload, "/usage/token_total") {
@@ -221,13 +308,41 @@ fn apply_usage(
         sets.push(("token_total_known_count", 1));
     }
     for (col, path, known) in [
-        ("input_context_tokens", "/usage/input_context_tokens", "input_context_known_count"),
-        ("input_uncached_tokens", "/usage/input_uncached_tokens", "input_uncached_known_count"),
-        ("output_tokens", "/usage/output_tokens", "output_known_count"),
-        ("cache_read_tokens", "/usage/cache_read_tokens", "cache_read_known_count"),
-        ("cache_write_tokens", "/usage/cache_write_tokens", "cache_write_known_count"),
-        ("reasoning_tokens", "/usage/reasoning_tokens", "reasoning_known_count"),
-        ("tool_extra_tokens", "/usage/tool_extra_tokens", "tool_extra_known_count"),
+        (
+            "input_context_tokens",
+            "/usage/input_context_tokens",
+            "input_context_known_count",
+        ),
+        (
+            "input_uncached_tokens",
+            "/usage/input_uncached_tokens",
+            "input_uncached_known_count",
+        ),
+        (
+            "output_tokens",
+            "/usage/output_tokens",
+            "output_known_count",
+        ),
+        (
+            "cache_read_tokens",
+            "/usage/cache_read_tokens",
+            "cache_read_known_count",
+        ),
+        (
+            "cache_write_tokens",
+            "/usage/cache_write_tokens",
+            "cache_write_known_count",
+        ),
+        (
+            "reasoning_tokens",
+            "/usage/reasoning_tokens",
+            "reasoning_known_count",
+        ),
+        (
+            "tool_extra_tokens",
+            "/usage/tool_extra_tokens",
+            "tool_extra_known_count",
+        ),
     ] {
         if let Some(v) = json_i64(payload, path) {
             sets.push((col, v));
@@ -243,7 +358,18 @@ fn apply_usage(
             sets.push(("cache_pair_known_count", 1));
         }
     }
-    bump_model_metrics(tx, grain, bucket, &event.harness_id, event.model_key, now_ms, &sets)?;
+    for (_, v) in &mut sets {
+        *v *= sign;
+    }
+    bump_model_metrics(
+        tx,
+        grain,
+        bucket,
+        &event.harness_id,
+        event.model_key,
+        now_ms,
+        &sets,
+    )?;
     Ok(())
 }
 
@@ -255,6 +381,7 @@ fn apply_code(
     payload: &Value,
     semantics: i64,
     now_ms: i64,
+    sign: i64,
 ) -> Result<(), PipelineError> {
     let acc = accuracy(payload);
     let mut sets: Vec<(&str, i64)> = Vec::new();
@@ -281,8 +408,19 @@ fn apply_code(
     if known {
         sets.push(("code_known_count", 1));
     }
+    for (_, value) in &mut sets {
+        *value *= sign;
+    }
     if !sets.is_empty() {
-        bump_harness(tx, grain, bucket, &event.harness_id, semantics, now_ms, &sets)?;
+        bump_harness(
+            tx,
+            grain,
+            bucket,
+            &event.harness_id,
+            semantics,
+            now_ms,
+            &sets,
+        )?;
     }
     Ok(())
 }
@@ -314,7 +452,15 @@ fn apply_skill(
             "skill_id {skill_id} not registered"
         )));
     }
-    ensure_skill_metrics(tx, grain, bucket, &event.harness_id, skill_id, semantics, now_ms)?;
+    ensure_skill_metrics(
+        tx,
+        grain,
+        bucket,
+        &event.harness_id,
+        skill_id,
+        semantics,
+        now_ms,
+    )?;
     let acc = accuracy(payload);
     let mut sets: Vec<(&str, i64)> = vec![("use_count", 1)];
     match acc {
@@ -332,7 +478,15 @@ fn apply_skill(
         sets.push(("duration_ms", d));
         sets.push(("duration_known_count", 1));
     }
-    bump_skill_metrics(tx, grain, bucket, &event.harness_id, skill_id, now_ms, &sets)?;
+    bump_skill_metrics(
+        tx,
+        grain,
+        bucket,
+        &event.harness_id,
+        skill_id,
+        now_ms,
+        &sets,
+    )?;
     bump_harness(
         tx,
         grain,
@@ -413,11 +567,6 @@ fn apply_activity(
                     "has_completed",
                     now_ms,
                 )?;
-                if let Some(dur) = json_i64(payload, "/activity/duration_ms") {
-                    apply_duration_with_session_end(
-                        tx, grain, event, session_key, dur, semantics, now_ms,
-                    )?;
-                }
             }
         }
         "turn_started" | "turn_completed" => {
@@ -519,49 +668,6 @@ fn apply_activity(
                         &[("turn_completed_count", 1), ("message_known_count", 1)],
                     )?;
                 }
-                if let Some(dur) = json_i64(payload, "/activity/duration_ms") {
-                    // Store turn duration on entity; adjust harness if no session_end authority.
-                    let old = get_turn_duration(tx, grain, bucket, &event.harness_id, turn_key)?;
-                    set_turn_duration(tx, grain, bucket, &event.harness_id, turn_key, dur, now_ms)?;
-                    if let Some(session_key) = event.session_key.as_deref() {
-                        apply_duration_turn_update(
-                            tx,
-                            grain,
-                            event,
-                            session_key,
-                            turn_key,
-                            old,
-                            dur,
-                            semantics,
-                            now_ms,
-                        )?;
-                    } else {
-                        // Orphan turn duration contributes to its bucket directly.
-                        let delta = dur - old.unwrap_or(0);
-                        if delta != 0 {
-                            bump_harness(
-                                tx,
-                                grain,
-                                bucket,
-                                &event.harness_id,
-                                semantics,
-                                now_ms,
-                                &[("active_duration_ms", delta)],
-                            )?;
-                            if old.is_none() {
-                                bump_harness(
-                                    tx,
-                                    grain,
-                                    bucket,
-                                    &event.harness_id,
-                                    semantics,
-                                    now_ms,
-                                    &[("duration_known_count", 1)],
-                                )?;
-                            }
-                        }
-                    }
-                }
             }
         }
         _ => {}
@@ -579,364 +685,6 @@ fn parse_hex32(s: &str) -> Option<[u8; 32]> {
         out[i] = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()?;
     }
     Some(out)
-}
-
-/// Duration authority helpers.
-fn apply_duration_with_session_end(
-    tx: &Transaction<'_>,
-    grain: Grain,
-    event: &EventRow,
-    session_key: &[u8],
-    session_dur: i64,
-    semantics: i64,
-    now_ms: i64,
-) -> Result<(), PipelineError> {
-    let day_start = beijing_day_start(event.occurred_at);
-    let day_end = beijing_day_end(event.occurred_at);
-
-    match grain {
-        Grain::Day | Grain::Month => {
-            // Month: authority is per business day, credited into the month bucket.
-            let metric_bucket = bucket_start(grain, event.occurred_at);
-            let old = session_day_authority(tx, grain, &event.harness_id, session_key, day_start, day_end)?;
-            // Record session duration on the day-scoped entity row inside this grain's bucket.
-            // For month grain, entity rows live under month bucket_start but we still key by day
-            // via storing duration on the session entity in this month bucket; day scoping for
-            // authority uses applied events query below. Store duration on entity for inspection.
-            let entity_bucket = metric_bucket;
-            set_session_duration(
-                tx,
-                grain,
-                entity_bucket,
-                &event.harness_id,
-                session_key,
-                session_dur,
-                now_ms,
-            )?;
-            let new = Some(session_dur);
-            let old_v = old.unwrap_or(0);
-            let new_v = new.unwrap_or(0);
-            let delta = new_v - old_v;
-            if delta != 0 || old.is_none() {
-                let mut sets = vec![("active_duration_ms", delta)];
-                if old.is_none() {
-                    sets.push(("duration_known_count", 1));
-                }
-                bump_harness(
-                    tx,
-                    grain,
-                    metric_bucket,
-                    &event.harness_id,
-                    semantics,
-                    now_ms,
-                    &sets,
-                )?;
-            }
-        }
-        Grain::Hour => {
-            // Withdraw turn fallbacks from their hour buckets for this biz day; credit session_end hour.
-            let turns = list_turn_durations_for_session_day(
-                tx,
-                &event.harness_id,
-                session_key,
-                day_start,
-                day_end,
-                Consumer::Hour,
-                event.id,
-            )?;
-            let already_had_session = session_end_duration_excluding(
-                tx,
-                &event.harness_id,
-                session_key,
-                day_start,
-                day_end,
-                Consumer::Hour,
-                event.id,
-            )?;
-            if already_had_session.is_none() {
-                // Withdraw each turn from its hour bucket once.
-                for (turn_occurred, turn_dur) in &turns {
-                    let b = bucket_start(Grain::Hour, *turn_occurred);
-                    bump_harness(
-                        tx,
-                        Grain::Hour,
-                        b,
-                        &event.harness_id,
-                        semantics,
-                        now_ms,
-                        &[("active_duration_ms", -turn_dur)],
-                    )?;
-                }
-            } else if let Some(prev) = already_had_session {
-                // Replace previous session_end contribution in its hour (same day).
-                // Find previous session_end occurred_at among applied (excluding candidate).
-                if let Some(prev_at) = session_end_occurred_excluding(
-                    tx,
-                    &event.harness_id,
-                    session_key,
-                    day_start,
-                    day_end,
-                    Consumer::Hour,
-                    event.id,
-                )? {
-                    let b = bucket_start(Grain::Hour, prev_at);
-                    bump_harness(
-                        tx,
-                        Grain::Hour,
-                        b,
-                        &event.harness_id,
-                        semantics,
-                        now_ms,
-                        &[("active_duration_ms", -prev)],
-                    )?;
-                }
-            }
-            let end_bucket = bucket_start(Grain::Hour, event.occurred_at);
-            set_session_duration(
-                tx,
-                Grain::Hour,
-                end_bucket,
-                &event.harness_id,
-                session_key,
-                session_dur,
-                now_ms,
-            )?;
-            let mut sets = vec![("active_duration_ms", session_dur)];
-            if already_had_session.is_none() && turns.is_empty() {
-                sets.push(("duration_known_count", 1));
-            } else if already_had_session.is_none() && !turns.is_empty() {
-                // duration_known_count already bumped by turns; keep as-is
-            }
-            bump_harness(
-                tx,
-                Grain::Hour,
-                end_bucket,
-                &event.harness_id,
-                semantics,
-                now_ms,
-                &sets,
-            )?;
-        }
-    }
-    Ok(())
-}
-
-fn apply_duration_turn_update(
-    tx: &Transaction<'_>,
-    grain: Grain,
-    event: &EventRow,
-    session_key: &[u8],
-    _turn_key: &[u8],
-    old_turn: Option<i64>,
-    new_turn: i64,
-    semantics: i64,
-    now_ms: i64,
-) -> Result<(), PipelineError> {
-    let day_start = beijing_day_start(event.occurred_at);
-    let day_end = beijing_day_end(event.occurred_at);
-    let consumer = match grain {
-        Grain::Hour => Consumer::Hour,
-        Grain::Day => Consumer::Day,
-        Grain::Month => Consumer::Month,
-    };
-    // If session_end already authoritative for this biz day, turns do not contribute.
-    if session_end_duration_excluding(
-        tx,
-        &event.harness_id,
-        session_key,
-        day_start,
-        day_end,
-        consumer,
-        event.id,
-    )?
-    .is_some()
-    {
-        return Ok(());
-    }
-
-    let metric_bucket = bucket_start(grain, event.occurred_at);
-    let delta = new_turn - old_turn.unwrap_or(0);
-    if delta == 0 && old_turn.is_some() {
-        return Ok(());
-    }
-    let mut sets = vec![("active_duration_ms", delta)];
-    if old_turn.is_none() {
-        sets.push(("duration_known_count", 1));
-    }
-    bump_harness(
-        tx,
-        grain,
-        metric_bucket,
-        &event.harness_id,
-        semantics,
-        now_ms,
-        &sets,
-    )?;
-    Ok(())
-}
-
-fn session_day_authority(
-    tx: &Transaction<'_>,
-    grain: Grain,
-    harness_id: &str,
-    session_key: &[u8],
-    day_start: i64,
-    day_end: i64,
-) -> Result<Option<i64>, PipelineError> {
-    let consumer = match grain {
-        Grain::Hour => Consumer::Hour,
-        Grain::Day => Consumer::Day,
-        Grain::Month => Consumer::Month,
-    };
-    if let Some(d) = session_end_duration_excluding(
-        tx, harness_id, session_key, day_start, day_end, consumer, -1,
-    )? {
-        return Ok(Some(d));
-    }
-    let turns = list_turn_durations_for_session_day(
-        tx, harness_id, session_key, day_start, day_end, consumer, -1,
-    )?;
-    if turns.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(turns.iter().map(|(_, d)| *d).sum()))
-}
-
-fn session_end_duration_excluding(
-    tx: &Transaction<'_>,
-    harness_id: &str,
-    session_key: &[u8],
-    day_start: i64,
-    day_end: i64,
-    consumer: Consumer,
-    exclude_id: i64,
-) -> Result<Option<i64>, PipelineError> {
-    // Prefer latest session_ended with duration among applied facts for this consumer.
-    let mut stmt = tx.prepare(
-        "SELECT id, payload_json FROM events
-         WHERE harness_id=?1 AND session_key=?2
-           AND event_type='session_ended'
-           AND delete_at IS NULL
-           AND occurred_at >= ?3 AND occurred_at < ?4
-           AND id != ?5
-           AND CAST(json_extract(status_json, ?6) AS INTEGER) = 3
-         ORDER BY occurred_at DESC, id DESC",
-    )?;
-    let mut rows = stmt.query(params![
-        harness_id,
-        session_key,
-        day_start,
-        day_end,
-        exclude_id,
-        consumer.status_path()
-    ])?;
-    while let Some(row) = rows.next()? {
-        let payload: String = row.get(1)?;
-        let v: Value = serde_json::from_str(&payload)
-            .map_err(|e| PipelineError::InvalidArgument(e.to_string()))?;
-        if let Some(d) = json_i64(&v, "/activity/duration_ms") {
-            return Ok(Some(d));
-        }
-    }
-    Ok(None)
-}
-
-fn session_end_occurred_excluding(
-    tx: &Transaction<'_>,
-    harness_id: &str,
-    session_key: &[u8],
-    day_start: i64,
-    day_end: i64,
-    consumer: Consumer,
-    exclude_id: i64,
-) -> Result<Option<i64>, PipelineError> {
-    let mut stmt = tx.prepare(
-        "SELECT occurred_at, payload_json FROM events
-         WHERE harness_id=?1 AND session_key=?2
-           AND event_type='session_ended'
-           AND delete_at IS NULL
-           AND occurred_at >= ?3 AND occurred_at < ?4
-           AND id != ?5
-           AND CAST(json_extract(status_json, ?6) AS INTEGER) = 3
-         ORDER BY occurred_at DESC, id DESC",
-    )?;
-    let mut rows = stmt.query(params![
-        harness_id,
-        session_key,
-        day_start,
-        day_end,
-        exclude_id,
-        consumer.status_path()
-    ])?;
-    while let Some(row) = rows.next()? {
-        let occurred: i64 = row.get(0)?;
-        let payload: String = row.get(1)?;
-        let v: Value = serde_json::from_str(&payload)
-            .map_err(|e| PipelineError::InvalidArgument(e.to_string()))?;
-        if json_i64(&v, "/activity/duration_ms").is_some() {
-            return Ok(Some(occurred));
-        }
-    }
-    Ok(None)
-}
-
-fn list_turn_durations_for_session_day(
-    tx: &Transaction<'_>,
-    harness_id: &str,
-    session_key: &[u8],
-    day_start: i64,
-    day_end: i64,
-    consumer: Consumer,
-    exclude_id: i64,
-) -> Result<Vec<(i64, i64)>, PipelineError> {
-    let mut stmt = tx.prepare(
-        "SELECT id, turn_key, occurred_at, payload_json FROM events
-         WHERE harness_id=?1 AND session_key=?2
-           AND event_type='turn_completed'
-           AND delete_at IS NULL
-           AND occurred_at >= ?3 AND occurred_at < ?4
-           AND id != ?5
-           AND CAST(json_extract(status_json, ?6) AS INTEGER) = 3",
-    )?;
-    let rows = stmt.query_map(
-        params![
-            harness_id,
-            session_key,
-            day_start,
-            day_end,
-            exclude_id,
-            consumer.status_path()
-        ],
-        |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, Option<Vec<u8>>>(1)?,
-                row.get::<_, i64>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        },
-    )?;
-    // Dedupe by turn_key: keep max duration / last.
-    let mut by_turn: HashMap<Vec<u8>, (i64, i64)> = HashMap::new();
-    for row in rows {
-        let (_id, turn_key, occurred, payload) = row?;
-        let Some(tk) = turn_key else { continue };
-        let v: Value = serde_json::from_str(&payload)
-            .map_err(|e| PipelineError::InvalidArgument(e.to_string()))?;
-        let Some(d) = json_i64(&v, "/activity/duration_ms") else {
-            continue;
-        };
-        by_turn
-            .entry(tk)
-            .and_modify(|(o, dur)| {
-                if occurred >= *o {
-                    *o = occurred;
-                    *dur = d;
-                }
-            })
-            .or_insert((occurred, d));
-    }
-    Ok(by_turn.into_values().collect())
 }
 
 fn apply_cost(
@@ -957,7 +705,12 @@ fn apply_cost(
     };
     let old = effective_cost_for_scope(tx, &event.harness_id, scope, consumer, event.id)?;
     let new = effective_cost_for_scope_with_candidate(
-        tx, &event.harness_id, scope, consumer, event, payload,
+        tx,
+        &event.harness_id,
+        scope,
+        consumer,
+        event,
+        payload,
     )?;
 
     // Apply deltas per (model_key, currency, source-bucket).
@@ -981,7 +734,14 @@ fn apply_cost(
             .unwrap_or((0, "", 0));
 
         ensure_cost_metrics(
-            tx, grain, bucket, &event.harness_id, model_key, &currency, semantics, now_ms,
+            tx,
+            grain,
+            bucket,
+            &event.harness_id,
+            model_key,
+            &currency,
+            semantics,
+            now_ms,
         )?;
 
         // Withdraw old contribution.
@@ -1000,7 +760,7 @@ fn apply_cost(
                     ("cost_known_count", -1),
                 ],
             )?;
-        } else if old_units.1 == "estimated_price_table" && old_units.0 > 0 {
+        } else if matches!(old_units.1, "estimated_price_table" | "calculated_price") {
             bump_cost(
                 tx,
                 grain,
@@ -1043,7 +803,7 @@ fn apply_cost(
                     ("cost_known_count", 1),
                 ],
             )?;
-        } else if new_units.1 == "estimated_price_table" {
+        } else if matches!(new_units.1, "estimated_price_table" | "calculated_price") {
             bump_cost(
                 tx,
                 grain,
@@ -1104,12 +864,14 @@ fn effective_cost_for_scope_with_candidate(
     payload: &Value,
 ) -> Result<Option<CostEffect>, PipelineError> {
     let mut facts = load_cost_facts(tx, harness_id, scope, consumer, event.id)?;
-    facts.push(cost_fact_from_event(event, payload)?);
+    facts.push(cost_fact_from_event(tx, event, payload)?);
     Ok(select_effective_cost(facts, consumer))
 }
 
 #[derive(Debug, Clone)]
 struct CostFact {
+    fact_key: Vec<u8>,
+    revision: i64,
     model_key: i64,
     currency: Option<String>,
     units: Option<i64>,
@@ -1125,7 +887,7 @@ fn load_cost_facts(
     exclude_id: i64,
 ) -> Result<Vec<CostFact>, PipelineError> {
     let mut stmt = tx.prepare(
-        "SELECT model_key, occurred_at, payload_json FROM events
+        "SELECT model_key, occurred_at, payload_json, fact_key, fact_revision FROM events
          WHERE harness_id=?1 AND cost_scope_key=?2
            AND event_type='cost_recorded'
            AND delete_at IS NULL
@@ -1139,15 +901,19 @@ fn load_cost_facts(
                 row.get::<_, i64>(0)?,
                 row.get::<_, i64>(1)?,
                 row.get::<_, String>(2)?,
+                row.get::<_, Vec<u8>>(3)?,
+                row.get::<_, i64>(4)?,
             ))
         },
     )?;
     let mut out = Vec::new();
     for row in rows {
-        let (model_key, occurred_at, payload) = row?;
+        let (model_key, occurred_at, payload, fact_key, revision) = row?;
         let v: Value = serde_json::from_str(&payload)
             .map_err(|e| PipelineError::InvalidArgument(e.to_string()))?;
         out.push(CostFact {
+            fact_key,
+            revision,
             model_key,
             currency: v
                 .pointer("/cost/currency")
@@ -1164,8 +930,19 @@ fn load_cost_facts(
     Ok(out)
 }
 
-fn cost_fact_from_event(event: &EventRow, payload: &Value) -> Result<CostFact, PipelineError> {
+fn cost_fact_from_event(
+    tx: &Transaction<'_>,
+    event: &EventRow,
+    payload: &Value,
+) -> Result<CostFact, PipelineError> {
+    let (fact_key, revision) = tx.query_row(
+        "SELECT fact_key,fact_revision FROM events WHERE id=?1",
+        [event.id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
     Ok(CostFact {
+        fact_key,
+        revision,
         model_key: event.model_key,
         currency: payload
             .pointer("/cost/currency")
@@ -1184,11 +961,20 @@ fn select_effective_cost(facts: Vec<CostFact>, consumer: Consumer) -> Option<Cos
     if facts.is_empty() {
         return None;
     }
+    let mut latest = HashMap::<Vec<u8>, i64>::new();
+    for fact in &facts {
+        latest.entry(fact.fact_key.clone()).and_modify(|v| *v=(*v).max(fact.revision)).or_insert(fact.revision);
+    }
+    let facts:Vec<_>=facts.into_iter().filter(|f| latest.get(&f.fact_key)==Some(&f.revision)).collect();
     let grain = Grain::from_consumer(consumer).ok()?;
     // Prefer any provider_reported; else sum/select estimated_price_table; else unpriced.
     let reported: Vec<_> = facts
         .iter()
-        .filter(|f| f.source.as_deref() == Some("provider_reported") && f.units.is_some() && f.currency.is_some())
+        .filter(|f| {
+            f.source.as_deref() == Some("provider_reported")
+                && f.units.is_some()
+                && f.currency.is_some()
+        })
         .collect();
     if !reported.is_empty() {
         // One effective amount: take the latest reported (bill replacement).
@@ -1209,8 +995,10 @@ fn select_effective_cost(facts: Vec<CostFact>, consumer: Consumer) -> Option<Cos
     let estimated: Vec<_> = facts
         .iter()
         .filter(|f| {
-            f.source.as_deref() == Some("estimated_price_table")
-                && f.units.is_some()
+            matches!(
+                f.source.as_deref(),
+                Some("estimated_price_table" | "calculated_price")
+            ) && f.units.is_some()
                 && f.currency.is_some()
         })
         .collect();
@@ -1232,10 +1020,7 @@ fn select_effective_cost(facts: Vec<CostFact>, consumer: Consumer) -> Option<Cos
     let latest = facts.iter().max_by_key(|f| f.occurred_at)?;
     Some(CostEffect {
         model_key: latest.model_key,
-        currency: latest
-            .currency
-            .clone()
-            .unwrap_or_else(|| "USD".into()),
+        currency: latest.currency.clone().unwrap_or_else(|| "USD".into()),
         units: 0,
         source: "unpriced".into(),
         request_count: facts.len() as i64,
@@ -1318,19 +1103,30 @@ fn bump_model_metrics(
     now_ms: i64,
     deltas: &[(&str, i64)],
 ) -> Result<(), PipelineError> {
-    for (col, delta) in deltas {
-        if *delta == 0 {
-            continue;
-        }
-        let sql = format!(
-            "UPDATE model_metrics SET {col} = {col} + ?1, updated_at=?2
-             WHERE grain=?3 AND bucket_start=?4 AND harness_id=?5 AND model_key=?6 AND delete_at IS NULL"
-        );
-        tx.execute(
-            &sql,
-            params![delta, now_ms, grain.as_str(), bucket, harness_id, model_key],
-        )?;
+    // Related counters have cross-column CHECKs. Update a full contribution
+    // atomically, especially when subtracting an obsolete revision.
+    let changes: Vec<_> = deltas.iter().filter(|(_, delta)| *delta != 0).collect();
+    if changes.is_empty() {
+        return Ok(());
     }
+    let assignments = changes
+        .iter()
+        .map(|(col, _)| format!("{col}={col}+?"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql=format!("UPDATE model_metrics SET {assignments},updated_at=? WHERE grain=? AND bucket_start=? AND harness_id=? AND model_key=? AND delete_at IS NULL");
+    let mut values: Vec<rusqlite::types::Value> = changes
+        .iter()
+        .map(|(_, v)| rusqlite::types::Value::Integer(*v))
+        .collect();
+    values.extend([
+        now_ms.into(),
+        grain.as_str().to_owned().into(),
+        bucket.into(),
+        harness_id.to_owned().into(),
+        model_key.into(),
+    ]);
+    tx.execute(&sql, rusqlite::params_from_iter(values))?;
     Ok(())
 }
 
@@ -1494,7 +1290,9 @@ fn set_entity_flag(
     now_ms: i64,
 ) -> Result<bool, PipelineError> {
     // Ensure row exists.
-    let _ = upsert_entity(tx, grain, bucket, harness_id, kind, entity_key, None, now_ms)?;
+    let _ = upsert_entity(
+        tx, grain, bucket, harness_id, kind, entity_key, None, now_ms,
+    )?;
     let sql = format!(
         "UPDATE bucket_entity_state
          SET {flag} = 1, updated_at=?1
@@ -1508,70 +1306,4 @@ fn set_entity_flag(
     Ok(n > 0)
 }
 
-fn get_turn_duration(
-    tx: &Transaction<'_>,
-    grain: Grain,
-    bucket: i64,
-    harness_id: &str,
-    turn_key: &[u8],
-) -> Result<Option<i64>, PipelineError> {
-    Ok(tx
-        .query_row(
-            "SELECT turn_duration_ms FROM bucket_entity_state
-             WHERE grain=?1 AND bucket_start=?2 AND harness_id=?3
-               AND entity_kind='turn' AND entity_key=?4 AND delete_at IS NULL",
-            params![grain.as_str(), bucket, harness_id, turn_key],
-            |r| r.get(0),
-        )
-        .optional()?
-        .flatten())
-}
-
-fn set_turn_duration(
-    tx: &Transaction<'_>,
-    grain: Grain,
-    bucket: i64,
-    harness_id: &str,
-    turn_key: &[u8],
-    dur: i64,
-    now_ms: i64,
-) -> Result<(), PipelineError> {
-    let _ = upsert_entity(tx, grain, bucket, harness_id, "turn", turn_key, None, now_ms)?;
-    tx.execute(
-        "UPDATE bucket_entity_state
-         SET turn_duration_ms=?1, updated_at=?2
-         WHERE grain=?3 AND bucket_start=?4 AND harness_id=?5
-           AND entity_kind='turn' AND entity_key=?6 AND delete_at IS NULL",
-        params![dur, now_ms, grain.as_str(), bucket, harness_id, turn_key],
-    )?;
-    Ok(())
-}
-
-fn set_session_duration(
-    tx: &Transaction<'_>,
-    grain: Grain,
-    bucket: i64,
-    harness_id: &str,
-    session_key: &[u8],
-    dur: i64,
-    now_ms: i64,
-) -> Result<(), PipelineError> {
-    let _ = upsert_entity(
-        tx,
-        grain,
-        bucket,
-        harness_id,
-        "session",
-        session_key,
-        None,
-        now_ms,
-    )?;
-    tx.execute(
-        "UPDATE bucket_entity_state
-         SET session_duration_ms=?1, updated_at=?2
-         WHERE grain=?3 AND bucket_start=?4 AND harness_id=?5
-           AND entity_kind='session' AND entity_key=?6 AND delete_at IS NULL",
-        params![dur, now_ms, grain.as_str(), bucket, harness_id, session_key],
-    )?;
-    Ok(())
-}
+include!("session_extent.rs");
