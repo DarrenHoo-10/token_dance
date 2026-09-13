@@ -54,7 +54,7 @@ func TestTeamDayConsumerSameTxWritesStaticMetricsMySQL(t *testing.T) {
 
 	var personal, teamTokens string
 	if err := st.DB().QueryRow(`SELECT CAST(COALESCE(SUM(exact_token_total),0) AS CHAR)
-		FROM telemetry_model_metrics WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL`, userID).Scan(&personal); err != nil {
+		FROM bound_telemetry_model_metrics WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL`, userID).Scan(&personal); err != nil {
 		t.Fatal(err)
 	}
 	if personal != "10" {
@@ -135,7 +135,7 @@ func TestTeamDayConsumerSameTxWritesStaticMetricsMySQL(t *testing.T) {
 	}
 	var personalAfterFail string
 	if err := st.DB().QueryRow(`SELECT CAST(COALESCE(SUM(exact_token_total),0) AS CHAR)
-		FROM telemetry_model_metrics WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL`, userID).Scan(&personalAfterFail); err != nil {
+		FROM bound_telemetry_model_metrics WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL`, userID).Scan(&personalAfterFail); err != nil {
 		t.Fatal(err)
 	}
 	if personalAfterFail != "10" {

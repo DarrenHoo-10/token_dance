@@ -43,7 +43,7 @@ func TestTeamCR015V2UploadReachesTeamAnalysis(t *testing.T) {
 	}
 	var personalTokens string
 	if err := st.DB().QueryRow(`SELECT CAST(SUM(exact_token_total) AS CHAR)
-		FROM telemetry_model_metrics WHERE user_id = ? AND grain = 'day'`, user).Scan(&personalTokens); err != nil {
+		FROM bound_telemetry_model_metrics WHERE user_id = ? AND grain = 'day'`, user).Scan(&personalTokens); err != nil {
 		t.Fatal(err)
 	}
 	if personalTokens != "10" {
