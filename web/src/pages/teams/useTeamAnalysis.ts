@@ -40,7 +40,6 @@ export function useTeamAnalysis(input: {
       shownAuthRef.current = null;
     }
     if (authRevision && shownAuthRef.current && shownAuthRef.current !== authRevision) {
-      setAnalysis(null);
       shownAuthRef.current = authRevision;
     }
   }, [authRevision, teamId]);

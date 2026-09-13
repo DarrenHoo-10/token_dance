@@ -136,6 +136,12 @@ func (stubTeamsStore) GetReadySnapshot(context.Context, string, string) (*domain
 func (stubTeamsStore) ListAnalysisRows(context.Context, string, uint64) ([]domain.TeamAnalysisRow, error) {
 	return nil, stubErr()
 }
+func (stubTeamsStore) ListStaticDayMetrics(context.Context, string, time.Time, time.Time) ([]domain.TeamAnalysisRow, []domain.TeamUsageContributor, error) {
+	return nil, nil, stubErr()
+}
+func (stubTeamsStore) EnsureStaticAnalysisHandle(context.Context, string, time.Time, time.Time, uint64, uint64, time.Time, time.Time) (*domain.TeamAnalysisSnapshot, error) {
+	return nil, stubErr()
+}
 func (stubTeamsStore) ClaimAnalysis(context.Context, string, time.Duration, time.Time) (*domain.TeamAnalysisSnapshot, error) {
 	return nil, stubErr()
 }

@@ -138,7 +138,7 @@ describe('Team analysis updating state', () => {
     rerender({ revision: '1', range: 'custom' });
     expect(result.current.analysis?.summary.tokens.value).toBe('120000');
     rerender({ revision: '2', range: 'custom' });
-    expect(result.current.analysis).toBeNull();
+    expect(result.current.analysis?.summary.tokens.value).toBe('120000');
     expect(query).toHaveBeenCalledTimes(2);
   });
 
@@ -156,6 +156,30 @@ describe('Team analysis updating state', () => {
     expect(screen.getByText('成员贡献')).toBeInTheDocument();
     expect(screen.queryByText(/仅显示主动授权/)).not.toBeInTheDocument();
     expect(screen.queryByText(/团队时区/)).not.toBeInTheDocument();
+  });
+
+  it('does not show usage-share toggles, private-team label, or in-page overview anchors', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
+    renderTeams(<TeamOverviewPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
+    await screen.findByRole('heading', { name: 'Token 趋势' });
+    expect(screen.queryByText('私密团队')).not.toBeInTheDocument();
+    expect(screen.queryByText('成员表现')).not.toBeInTheDocument();
+    expect(screen.queryByText('用量构成')).not.toBeInTheDocument();
+    expect(screen.queryByText('我的共享')).not.toBeInTheDocument();
+  });
+
+  it('shows a historical footnote and does not render a fake zero for empty ranges', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    const empty = readyAnalysis('1', '0');
+    empty.summary.tokens = { value: '0', state: 'empty' };
+    empty.quality.includesHistoricalUsers = true;
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(empty);
+    renderTeams(<TeamOverviewPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
+    expect(await screen.findByText('此范围没有数据。')).toBeInTheDocument();
+    expect(screen.getByText(/合计含已退出成员的历史用量/)).toBeInTheDocument();
   });
 
   it('shows a skeleton and never fakes 0 while the snapshot is updating', async () => {

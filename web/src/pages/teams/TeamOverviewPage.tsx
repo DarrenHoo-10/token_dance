@@ -1,7 +1,7 @@
 import React from 'react';
 import { TeamMemberInsights } from './TeamMemberInsights';
 import { TeamUsageDetails } from './TeamUsageDetails';
-import { useLocation, useNavigate, useOutletContext } from 'react-router-dom';
+import { useLocation, useOutletContext } from 'react-router-dom';
 import { AgentBreakdown } from '@/components/analytics/AgentBreakdown';
 import { MetricCard } from '@/components/analytics/MetricCard';
 import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
@@ -21,7 +21,6 @@ export const TeamOverviewPage: React.FC = () => {
   const { range, from, to, agent, provider, model, search } = useTeamSearchFilters();
   const { openInvite } = useOutletContext<{ openInvite: () => void }>();
   const location = useLocation();
-  const navigate = useNavigate();
   const justCreated = Boolean((location.state as { justCreated?: boolean } | null)?.justCreated);
   const { analysis, updating, updatingMessageKey, error } = useTeamAnalysis({
     teamId: scope?.team.id,
@@ -46,9 +45,7 @@ export const TeamOverviewPage: React.FC = () => {
   }
 
   const tokens = metricDisplay(analysis?.summary.tokens);
-  const sharingCount = analysis?.summary.currentSharingMembers;
   const currentMembers = analysis?.summary.currentMembers;
-  const noSharing = sharingCount === '0';
   const emptyTokens = analysis?.summary.tokens.state === 'empty';
   const reported = analysis?.costs.reported || [];
   const estimated = analysis?.costs.estimatedUncovered || [];
@@ -92,13 +89,10 @@ export const TeamOverviewPage: React.FC = () => {
         </p>
       )}
 
-      {noSharing && (
-        <div className="team-status-banner warn">
-          {t('teams.overview.notShared')}
-          <Button variant="ghost" size="sm" onClick={() => navigate(`/teams/${scope.team.id}/settings`)}>{t('teams.settings.mySharing')}</Button>
-        </div>
+      {emptyTokens && <div className="team-status-banner">{t('teams.overview.emptyRange')}</div>}
+      {analysis?.quality?.includesHistoricalUsers && (
+        <p className="text-muted" style={{ fontSize: 12 }}>{t('teams.overview.historicalNote')}</p>
       )}
-      {!noSharing && emptyTokens && <div className="team-status-banner">{t('teams.overview.waitingSync')}</div>}
 
       <div className="team-metric-grid-6">
         <MetricCard label={t('teams.metrics.tokens')} value={tokens.available ? tokens.text : null} supported={tokens.available} />
@@ -109,7 +103,7 @@ export const TeamOverviewPage: React.FC = () => {
         />
         <MetricCard
           label={t('teams.metrics.sharingMembers')}
-          value={sharingCount && currentMembers ? `${sharingCount}` : null}
+          value={currentMembers || null}
           supported={Boolean(analysis)}
         />
         <MetricCard label={costLabel} value={analysis ? costValue : null} supported={Boolean(analysis) && costValue !== '—'} />

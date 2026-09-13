@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"tokendance/internal/domain"
+	"tokendance/internal/teammetrics"
 )
 
 const (
@@ -292,33 +293,33 @@ func decideTeamExportAuth(
 }
 
 func (w *Worker) buildTeamExportCSV(ctx context.Context, claim *teamExportClaim) ([]byte, error) {
-	var publishedGeneration uint64
 	var snapshotAuth uint64
 	var snapshotStatus string
+	var fromDate, toExclusive time.Time
 	if err := w.db.QueryRowContext(ctx, `
-		SELECT published_generation, auth_revision, status
+		SELECT auth_revision, status, from_date, to_date_exclusive
 		FROM team_analysis_snapshots
 		WHERE snapshot_id = ? AND team_id = ? AND rule_version = ?`, claim.snapshotID, claim.teamID, domain.TeamAnalysisRuleVersion,
-	).Scan(&publishedGeneration, &snapshotAuth, &snapshotStatus); err != nil {
+	).Scan(&snapshotAuth, &snapshotStatus, &fromDate, &toExclusive); err != nil {
 		return nil, fmt.Errorf("load export snapshot: %w", err)
 	}
-	if snapshotStatus != string(domain.SnapshotReady) || snapshotAuth != claim.authRevision || publishedGeneration == 0 {
+	if snapshotStatus != string(domain.SnapshotReady) || snapshotAuth != claim.authRevision {
 		return nil, fmt.Errorf("export snapshot is not a ready match for auth_revision")
 	}
 
 	filters := parseTeamExportFilters(claim.filterJSON)
-	query := `
-		SELECT membership_id, metric_date, visibility_mask, agent_id, provider_id, model_id, currency,
-		       token_exact_total, token_derived_total, usage_event_count,
-		       reported_cost_amount, estimated_cost_amount, legacy_aggregate
-		FROM team_analysis_rows
-		WHERE snapshot_id = ? AND build_generation = ?
-		ORDER BY metric_date ASC, membership_id ASC, agent_id ASC, provider_id ASC, model_id ASC`
-	rows, err := w.db.QueryContext(ctx, query, claim.snapshotID, publishedGeneration)
+	days, err := teammetrics.ListDayMetrics(ctx, w.db, claim.teamID, fromDate, toExclusive)
 	if err != nil {
-		return nil, fmt.Errorf("read team export rows: %w", err)
+		return nil, fmt.Errorf("read static export rows: %w", err)
 	}
-	defer rows.Close()
+	contribs, err := teammetrics.ListContributors(ctx, w.db, claim.teamID)
+	if err != nil {
+		return nil, fmt.Errorf("read export contributors: %w", err)
+	}
+	byKey := map[string]teammetrics.Contributor{}
+	for _, c := range contribs {
+		byKey[c.ContributorKey] = c
+	}
 
 	buf := new(bytes.Buffer)
 	cw := csv.NewWriter(buf)
@@ -330,45 +331,41 @@ func (w *Worker) buildTeamExportCSV(ctx context.Context, claim *teamExportClaim)
 	acc := make(map[string][]string)
 	legacySources := make(map[string]bool)
 	order := make([]string, 0)
-	for rows.Next() {
-		var (
-			membershipID sql.NullString
-			metricDate   sql.NullTime
-			mask         uint32
-			agentID      sql.NullString
-			providerID   sql.NullString
-			modelID      sql.NullString
-			currency     sql.NullString
-			tokenExact   string
-			tokenDerived string
-			usageCount   string
-			reported     string
-			estimated    string
-			legacy       bool
-		)
-		if err := rows.Scan(
-			&membershipID, &metricDate, &mask, &agentID, &providerID, &modelID, &currency,
-			&tokenExact, &tokenDerived, &usageCount, &reported, &estimated, &legacy,
-		); err != nil {
-			return nil, fmt.Errorf("scan team export row: %w", err)
-		}
-		if !rowMatchesExportFilter(filters, agentID.String, providerID.String, modelID.String) {
+	for _, d := range days {
+		if d.MetricKind == teammetrics.KindActivity || d.MetricKind == teammetrics.KindSkill {
 			continue
 		}
-		if claim.kind == string(domain.TeamExportMembers) && mask&visNamed == 0 {
+		agent := ""
+		if d.AgentID != nil {
+			agent = *d.AgentID
+		}
+		provider := ""
+		if d.ProviderID != nil {
+			provider = *d.ProviderID
+		}
+		model := ""
+		if d.ModelID != nil {
+			model = *d.ModelID
+		}
+		currency := ""
+		if d.Currency != nil {
+			currency = *d.Currency
+		}
+		if !rowMatchesExportFilter(filters, agent, provider, model) {
 			continue
 		}
-		agent := agentID.String
-		if mask&visClassification == 0 {
-			agent = unsharedClassificationBucket
-			providerID.String = ""
-			modelID.String = ""
-			membershipID.Valid = membershipID.Valid && claim.kind != string(domain.TeamExportMembers)
-			if claim.kind != string(domain.TeamExportMembers) {
-				membershipID.Valid = false
-			}
+		var membershipID sql.NullString
+		if c, ok := byKey[d.ContributorKey]; ok && c.MembershipID != nil {
+			membershipID = sql.NullString{String: *c.MembershipID, Valid: true}
+		} else if claim.kind == string(domain.TeamExportMembers) {
+			membershipID = sql.NullString{String: "historical", Valid: true}
 		}
-		key, record := teamExportRecord(claim.kind, membershipID, metricDate, agent, providerID.String, modelID.String, currency.String, tokenExact, tokenDerived, usageCount, reported, estimated)
+		var metricDate sql.NullTime
+		if parsed, err := time.Parse("2006-01-02", d.MetricDate); err == nil {
+			metricDate = sql.NullTime{Time: parsed, Valid: true}
+		}
+		legacy := qualityLegacy(d.Quality)
+		key, record := teamExportRecord(claim.kind, membershipID, metricDate, agent, provider, model, currency, d.TokenExact, d.TokenDerived, d.UsageEventCount, d.ReportedCost, d.EstimatedCost)
 		legacySources[key] = legacySources[key] || legacy
 		if existing, ok := acc[key]; ok {
 			acc[key] = addExportNumeric(existing, record)
@@ -376,9 +373,6 @@ func (w *Worker) buildTeamExportCSV(ctx context.Context, claim *teamExportClaim)
 		}
 		acc[key] = record
 		order = append(order, key)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	for _, key := range order {
 		source := "telemetry_v2"
@@ -394,6 +388,17 @@ func (w *Worker) buildTeamExportCSV(ctx context.Context, claim *teamExportClaim)
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func qualityLegacy(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var q struct {
+		LegacyAggregate bool `json:"legacy_aggregate"`
+	}
+	_ = json.Unmarshal(raw, &q)
+	return q.LegacyAggregate
 }
 
 func (w *Worker) completeTeamExportJob(ctx context.Context, claim *teamExportClaim, objectKey string, digest [32]byte, size uint64) error {

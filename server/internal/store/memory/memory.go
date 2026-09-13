@@ -107,6 +107,9 @@ type MemoryStore struct {
 	teamAudits               map[string]*domain.TeamAuditEvent
 	teamUploadObjects        map[string]*domain.TeamUploadObject
 	teamBarriers             map[string]*domain.TeamDeletionBarrier
+	teamContributors         map[string]*domain.TeamUsageContributor // key team|user
+	teamDayMetrics           map[string][]domain.TeamAnalysisRow     // key teamID
+	teamPersonalDays         map[string][]domain.TeamAnalysisRow     // key userID; source for occupy/refresh overwrite
 }
 
 type communityAgentKey struct {
@@ -179,6 +182,9 @@ func NewMemoryStore() *MemoryStore {
 		teamAudits:               make(map[string]*domain.TeamAuditEvent),
 		teamUploadObjects:        make(map[string]*domain.TeamUploadObject),
 		teamBarriers:             make(map[string]*domain.TeamDeletionBarrier),
+		teamContributors:         make(map[string]*domain.TeamUsageContributor),
+		teamDayMetrics:           make(map[string][]domain.TeamAnalysisRow),
+		teamPersonalDays:         make(map[string][]domain.TeamAnalysisRow),
 	}
 }
 

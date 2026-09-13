@@ -434,6 +434,8 @@ export const enUS = {
       updatedAt: 'Updated {time}',
       notShared: 'You have not counted your usage toward the team yet.',
       waitingSync: 'Waiting for the first sync. Missing data is not shown as a real zero.',
+      emptyRange: 'No data in this range.',
+      historicalNote: 'Totals include retained usage from former members. The ranking lists current members only.',
       currentAuth: 'Counted under the current sharing grants',
       contributions: 'Member contributions',
       namedShare: 'Team contributions are counted automatically.',

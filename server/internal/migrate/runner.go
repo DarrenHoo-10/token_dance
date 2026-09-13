@@ -653,6 +653,8 @@ func (r *Runner) ResetCleanSchema(ctx context.Context) error {
 	}()
 
 	tables := []string{
+		"team_member_day_metrics",
+		"team_usage_contributors",
 		"team_deletion_barriers",
 		"team_audit_events",
 		"team_export_jobs",

@@ -265,65 +265,11 @@ func TestMySQLTeams_SharingOpenClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t10 := now.Add(time.Hour)
-	state, err := st.Teams().UpdateSharingTx(ctx, store.UpdateSharingTxInput{
-		ActorUserID:     alice,
-		TeamID:          created.Context.Team.TeamID,
-		ExpectedVersion: 1,
-		Sharing:         domain.SharingFlags{Base: true},
-		Now:             t10,
-	})
+	state, err := st.Teams().GetMySharing(ctx, created.Context.Team.TeamID, alice)
 	if err != nil {
-		t.Fatalf("open base: %v", err)
+		t.Fatal(err)
 	}
-	if !state.Sharing.Base || !state.Sharing.Named || state.SharingVersion != 2 {
-		t.Fatalf("after open base: %+v", state)
-	}
-	baseFrom := state.EffectiveFrom["base"]
-	if !state.EffectiveFrom["named"].Equal(baseFrom) {
-		t.Fatalf("named starts_at=%v base=%v", state.EffectiveFrom["named"], baseFrom)
-	}
-	t11 := now.Add(2 * time.Hour)
-	state, err = st.Teams().UpdateSharingTx(ctx, store.UpdateSharingTxInput{
-		ActorUserID:     alice,
-		TeamID:          created.Context.Team.TeamID,
-		ExpectedVersion: 2,
-		Sharing:         domain.SharingFlags{Base: true, Named: true},
-		Now:             t11,
-	})
-	if err != nil {
-		t.Fatalf("keep named: %v", err)
-	}
-	if !state.EffectiveFrom["base"].Equal(baseFrom) {
-		t.Fatalf("base starts_at reset %v -> %v", baseFrom, state.EffectiveFrom["base"])
-	}
-	if !state.EffectiveFrom["named"].Equal(baseFrom) {
-		t.Fatalf("named starts_at reset %v -> %v", baseFrom, state.EffectiveFrom["named"])
-	}
-	state, err = st.Teams().UpdateSharingTx(ctx, store.UpdateSharingTxInput{
-		ActorUserID:     alice,
-		TeamID:          created.Context.Team.TeamID,
-		ExpectedVersion: state.SharingVersion,
-		Sharing:         domain.SharingFlags{Base: true},
-		Now:             now.Add(3 * time.Hour),
-	})
-	if err != nil {
-		t.Fatalf("named follows base: %v", err)
-	}
-	if !state.Sharing.Named {
-		t.Fatal("named must stay open with base sharing")
-	}
-	state, err = st.Teams().UpdateSharingTx(ctx, store.UpdateSharingTxInput{
-		ActorUserID:     alice,
-		TeamID:          created.Context.Team.TeamID,
-		ExpectedVersion: state.SharingVersion,
-		Sharing:         domain.SharingFlags{},
-		Now:             now.Add(4 * time.Hour),
-	})
-	if err != nil {
-		t.Fatalf("close base: %v", err)
-	}
-	if state.Sharing.Base || state.Sharing.Named {
-		t.Fatalf("expected closed sharing, got %+v", state.Sharing)
+	if !state.Sharing.Base || !state.Sharing.Named || !state.Sharing.Classification || !state.Sharing.Cost {
+		t.Fatalf("in-team auto share all dimensions, got %+v", state.Sharing)
 	}
 }

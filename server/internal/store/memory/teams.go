@@ -15,6 +15,7 @@ import (
 	"tokendance/internal/crypto"
 	"tokendance/internal/domain"
 	"tokendance/internal/store"
+	"tokendance/internal/teammetrics"
 )
 
 const (
@@ -445,10 +446,68 @@ func (m *MemoryStore) occupyMembership(membershipID, teamID, userID string, role
 		MembershipID: membershipID,
 		JoinedAt:     at,
 	}
-	if err := m.insertEnabledGrants(membershipID, sharing, at); err != nil {
+	full := domain.SharingFlags{Base: true, Named: true, Classification: true, Cost: true}
+	if err := m.insertEnabledGrants(membershipID, full, at); err != nil {
+		return err
+	}
+	ck := teamID + "|" + userID
+	createdContributor := false
+	if existing, ok := m.teamContributors[ck]; ok {
+		mid := membershipID
+		existing.MembershipID = &mid
+	} else {
+		key, err := memNewID(domain.ContributorIDPrefix)
+		if err != nil {
+			return err
+		}
+		mid := membershipID
+		m.teamContributors[ck] = &domain.TeamUsageContributor{ContributorKey: key, UserID: userID, MembershipID: &mid}
+		createdContributor = true
+	}
+	if err := m.refreshCurrentTeamDaysLocked(userID); err != nil {
+		delete(m.userCurrentTeams, userID)
+		delete(m.teamMemberships, membershipID)
+		m.revokeAllGrants(membershipID, at)
+		if createdContributor {
+			delete(m.teamContributors, ck)
+		} else if existing, ok := m.teamContributors[ck]; ok {
+			existing.MembershipID = nil
+		}
 		return err
 	}
 	return m.registerOpenBarriers(userID, teamID, at)
+}
+
+func (m *MemoryStore) refreshCurrentTeamDaysLocked(userID string) error {
+	cur := m.userCurrentTeams[userID]
+	if cur == nil {
+		return nil
+	}
+	if teammetrics.AfterPersonalBeforeTeam != nil {
+		if err := teammetrics.AfterPersonalBeforeTeam(); err != nil {
+			return err
+		}
+	}
+	c := m.teamContributors[cur.TeamID+"|"+userID]
+	if c == nil || c.MembershipID == nil {
+		return nil
+	}
+	kept := make([]domain.TeamAnalysisRow, 0, len(m.teamDayMetrics[cur.TeamID]))
+	for _, row := range m.teamDayMetrics[cur.TeamID] {
+		if row.ContributorKey != c.ContributorKey {
+			kept = append(kept, row)
+		}
+	}
+	mid := *c.MembershipID
+	for _, src := range m.teamPersonalDays[userID] {
+		row := src
+		row.ContributorKey = c.ContributorKey
+		mem := mid
+		row.MembershipID = &mem
+		kept = append(kept, row)
+	}
+	m.teamDayMetrics[cur.TeamID] = kept
+	return nil
 }
 
 func (m *MemoryStore) insertEnabledGrants(membershipID string, flags domain.SharingFlags, at time.Time) error {
@@ -590,10 +649,18 @@ func (m *MemoryStore) closeMembership(mem *domain.TeamMembership, reason domain.
 	mem.EndedAt = &end
 	mem.EndReason = &reason
 	delete(m.userCurrentTeams, mem.UserID)
+	if c := m.teamContributors[mem.TeamID+"|"+mem.UserID]; c != nil && reason != domain.TeamEndReasonDissolved {
+		c.MembershipID = nil
+	}
+	if reason == domain.TeamEndReasonDissolved {
+		delete(m.teamDayMetrics, mem.TeamID)
+		delete(m.teamContributors, mem.TeamID+"|"+mem.UserID)
+	}
 	m.revokeAllGrants(mem.MembershipID, now)
 	m.revokeInvitesFromUser(mem.TeamID, mem.UserID, now)
 	m.revokeLinksFromUser(mem.TeamID, mem.UserID, now)
 	m.revokePendingForEmail(mem.TeamID, mem.UserID)
+	delete(m.teamMemberships, mem.MembershipID)
 }
 
 func (m *MemoryStore) revokeInvitesFromUser(teamID, userID string, now time.Time) {
@@ -1530,7 +1597,6 @@ func (m *MemoryStore) AcceptInviteLinkTx(ctx context.Context, in store.AcceptInv
 		return nil, memErrInviteLinkNotFound()
 	}
 	current := m.userCurrentTeams[in.ActorUserID]
-	history := m.latestHistory(team.TeamID, in.ActorUserID)
 	join := m.teamInviteLinkJoins[memJoinKey(in.LinkID, in.ActorUserID)]
 	if join != nil {
 		if current != nil && current.MembershipID == join.MembershipID {
@@ -1551,9 +1617,6 @@ func (m *MemoryStore) AcceptInviteLinkTx(ctx context.Context, in store.AcceptInv
 			Outcome: store.TeamsTxAlreadyMember,
 			Context: memContext(*memCloneTeam(team), *memCloneMem(m.teamMemberships[current.MembershipID]), true),
 		}, nil
-	}
-	if history != nil && history.EndReason != nil && *history.EndReason == domain.TeamEndReasonRemoved {
-		return nil, memErrReinvitationRequired()
 	}
 	if link.Status != domain.InviteLinkActive {
 		return nil, memErrInviteLinkRevoked()
@@ -1953,6 +2016,62 @@ func (m *MemoryStore) ClearTeamAvatar(ctx context.Context, teamID, actorUserID s
 func memAnalysisKey(teamID string, from, to time.Time, authRevision uint64, ruleVersion, timezone string) string {
 	return teamID + "|" + domain.FormatTeamCalendarDate(from, timezone) + "|" + domain.FormatTeamCalendarDate(to, timezone) + "|" +
 		strconv.FormatUint(authRevision, 10) + "|" + ruleVersion
+}
+
+func (m *MemoryStore) ListStaticDayMetrics(ctx context.Context, teamID string, from, toExclusive time.Time) ([]domain.TeamAnalysisRow, []domain.TeamUsageContributor, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	fromKey := domain.DayDate(from)
+	toKey := domain.DayDate(toExclusive)
+	byUser := map[string]*domain.TeamUsageContributor{}
+	var contribs []domain.TeamUsageContributor
+	prefix := teamID + "|"
+	for k, c := range m.teamContributors {
+		if strings.HasPrefix(k, prefix) {
+			cp := *c
+			contribs = append(contribs, cp)
+			byUser[c.ContributorKey] = &cp
+		}
+	}
+	var rows []domain.TeamAnalysisRow
+	for _, row := range m.teamDayMetrics[teamID] {
+		if row.MetricDate == nil {
+			continue
+		}
+		if *row.MetricDate < fromKey || *row.MetricDate >= toKey {
+			continue
+		}
+		copyRow := row
+		copyRow.VisibilityMask = domain.TeamAnalysisAutoShareMask
+		if c := byUser[row.ContributorKey]; c != nil {
+			copyRow.MembershipID = c.MembershipID
+		} else {
+			copyRow.MembershipID = nil
+		}
+		rows = append(rows, copyRow)
+	}
+	return rows, contribs, nil
+}
+
+func (m *MemoryStore) EnsureStaticAnalysisHandle(ctx context.Context, teamID string, from, toExclusive time.Time, authRevision, sourceRevision uint64, asOf, now time.Time) (*domain.TeamAnalysisSnapshot, error) {
+	snap, _, err := m.GetOrQueueAnalysis(ctx, teamID, from, toExclusive, authRevision, domain.TeamAnalysisRuleVersion, now)
+	if err != nil {
+		return nil, err
+	}
+	if snap == nil {
+		return nil, memErrTeamNotFound()
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	stored := m.teamSnapshots[snap.SnapshotID]
+	if stored == nil {
+		stored = snap
+		m.teamSnapshots[snap.SnapshotID] = stored
+	}
+	stored.Status = domain.SnapshotReady
+	stored.AsOf = asOf
+	stored.ActiveRequestKey = nil
+	return memCloneSnap(stored), nil
 }
 
 func (m *MemoryStore) GetOrQueueAnalysis(ctx context.Context, teamID string, from, toExclusive time.Time, authRevision uint64, ruleVersion string, now time.Time) (*domain.TeamAnalysisSnapshot, bool, error) {

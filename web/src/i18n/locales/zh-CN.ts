@@ -434,6 +434,8 @@ export const zhCN = {
       updatedAt: '数据更新于 {time}',
       notShared: '你尚未将用量计入团队。',
       waitingSync: '等待首次同步。尚未收到已授权数据时不会显示真实 0。',
+      emptyRange: '此范围没有数据。',
+      historicalNote: '合计含已退出成员的历史用量；贡献榜仅统计当前成员。',
       currentAuth: '按当前授权范围统计',
       contributions: '成员贡献',
       namedShare: '团队成员贡献自动计入，无需个人开启。',

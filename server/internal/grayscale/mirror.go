@@ -11,6 +11,7 @@ import (
 	"tokendance/internal/crypto"
 	"tokendance/internal/domain"
 	mysqlstore "tokendance/internal/store/mysql"
+	"tokendance/internal/teammetrics"
 )
 
 type Mirror struct {
@@ -148,6 +149,11 @@ func (m *Mirror) Run(ctx context.Context) (Result, error) {
 	if before != after {
 		if err := m.invalidateTeamSummaries(ctx, tx, ids, now); err != nil {
 			return Result{}, err
+		}
+		for _, id := range ids {
+			if err := teammetrics.RefreshCurrentTeamDaysTx(ctx, tx, id, nil, now.UnixMilli()); err != nil {
+				return Result{}, err
+			}
 		}
 	}
 

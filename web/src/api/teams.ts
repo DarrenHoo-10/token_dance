@@ -255,6 +255,7 @@ export interface AnalysisQuality {
   hasLegacyAggregates?: boolean;
   unsupportedEvents: string;
   estimatedEvents: string;
+  includesHistoricalUsers?: boolean;
 }
 
 export interface TeamAnalysisReady {
@@ -267,7 +268,7 @@ export interface TeamAnalysisReady {
   trend: AnalysisTrendPoint[];
   agents: CursorPage<AnalysisBucketItem>;
   models: CursorPage<AnalysisBucketItem>;
-  contributions: CursorPage<ContributionItem>;
+  contributions: CursorPage<ContributionItem> & { historical?: { tokens: string; share?: string | null } };
   quality: AnalysisQuality;
   filtersHash?: string;
 }

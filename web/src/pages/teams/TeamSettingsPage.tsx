@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ApiError } from '@/api/client';
-import { EMPTY_SHARING, teamsApi, type AuditEvent, type MySharingResponse, type SharingFlags, type TeamMember } from '@/api/teams';
+import { teamsApi, type AuditEvent, type TeamMember } from '@/api/teams';
 import { Button } from '@/components/common/Button';
 import { Card } from '@/components/common/Card';
 import { Input } from '@/components/common/Input';
@@ -17,27 +17,23 @@ import {
   TEAM_NAME_MIN,
   createIdempotencyKey,
   graphemeLength,
-  normalizeSharing,
   sha256Hex,
 } from './teamUtils';
-import { SharingControls, TeamAvatar, teamErrorMessage } from './TeamShared';
+import { TeamAvatar, teamErrorMessage } from './TeamShared';
 
 export const TeamSettingsPage: React.FC = () => {
   const { t } = useLocale();
   const { showToast } = useNotification();
-  const { scope, applyScope, clearScope, refresh } = useTeam();
+  const { scope, applyScope, clearScope } = useTeam();
   const navigate = useNavigate();
   const fileRef = useRef<HTMLInputElement>(null);
 
   const [name, setName] = useState(scope?.team.name || '');
   const [description, setDescription] = useState(scope?.team.description || '');
-  const [sharingServer, setSharingServer] = useState<MySharingResponse | null>(null);
-  const [sharingDraft, setSharingDraft] = useState<SharingFlags>(EMPTY_SHARING);
   const [audits, setAudits] = useState<AuditEvent[]>([]);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
-  const [confirmShare, setConfirmShare] = useState(false);
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [dissolveOpen, setDissolveOpen] = useState(false);
@@ -50,13 +46,10 @@ export const TeamSettingsPage: React.FC = () => {
     setDescription(scope.team.description);
     const controller = new AbortController();
     Promise.all([
-      teamsApi.getMySharing(scope.team.id, controller.signal),
       scope.permissions.inviteMembers ? teamsApi.getAuditEvents(scope.team.id, {}, controller.signal) : Promise.resolve({ events: [] as AuditEvent[], nextCursor: null }),
       scope.permissions.transferOwnership ? teamsApi.getMembers(scope.team.id, {}, controller.signal) : Promise.resolve({ members: [] as TeamMember[], nextCursor: null }),
     ])
-      .then(([sharing, auditRes, memberRes]) => {
-        setSharingServer(sharing);
-        setSharingDraft(sharing.sharing);
+      .then(([auditRes, memberRes]) => {
         setAudits(auditRes.events || []);
         setMembers(memberRes.members || []);
       })
@@ -82,43 +75,6 @@ export const TeamSettingsPage: React.FC = () => {
       showToast(t('common.saved'), 'success');
     } catch (err) {
       showToast(err instanceof ApiError ? teamErrorMessage(t, err) : t('errors.unknown'), 'error');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const reducing = Boolean(
-    sharingServer &&
-      ((sharingServer.sharing.base && !sharingDraft.base) ||
-        (sharingServer.sharing.classification && !sharingDraft.classification) ||
-        (sharingServer.sharing.cost && !sharingDraft.cost))
-  );
-
-  const saveSharing = async () => {
-    if (!sharingServer) return;
-    if (reducing && !confirmShare) {
-      setConfirmShare(true);
-      return;
-    }
-    setBusy(true);
-    try {
-      const next = await teamsApi.updateMySharing(scope.team.id, {
-        expectedSharingVersion: sharingServer.sharingVersion,
-        sharing: normalizeSharing(sharingDraft),
-      });
-      setSharingServer(next);
-      setSharingDraft(next.sharing);
-      setConfirmShare(false);
-      await refresh();
-      showToast(t('common.saved'), 'success');
-    } catch (err) {
-      if (err instanceof ApiError && err.code === 'TEAM_VERSION_CONFLICT') {
-        const latest = await teamsApi.getMySharing(scope.team.id);
-        setSharingServer(latest);
-        showToast(t('teams.settings.versionConflict'), 'error');
-      } else {
-        showToast(err instanceof ApiError ? teamErrorMessage(t, err) : t('errors.unknown'), 'error');
-      }
     } finally {
       setBusy(false);
     }
@@ -158,13 +114,6 @@ export const TeamSettingsPage: React.FC = () => {
       </Card>
 
       <Card>
-        <div className="panel-header"><h2>{t('teams.settings.mySharing')}</h2></div>
-        <SharingControls value={sharingDraft} onChange={setSharingDraft} disabled={busy} revealDetailsWithBase={false} />
-        <p className="text-muted" style={{ fontSize: 12, marginTop: 12 }}>{t('teams.sharing.closeBaseHint')}</p>
-        <Button variant="primary" loading={busy} onClick={() => void saveSharing()} style={{ marginTop: 16 }}>{t('teams.settings.saveSharing')}</Button>
-      </Card>
-
-      <Card>
         <div className="panel-header"><h2>{t('teams.settings.management')}</h2></div>
         {scope.permissions.leave && <Button variant="outline" onClick={() => setLeaveOpen(true)}>{t('teams.settings.leave')}</Button>}
         {scope.permissions.transferOwnership && <Button variant="outline" onClick={() => setTransferOpen(true)}>{t('teams.settings.transfer')}</Button>}
@@ -185,15 +134,6 @@ export const TeamSettingsPage: React.FC = () => {
           ))}
         </Card>
       )}
-
-      <Modal isOpen={confirmShare} onClose={() => setConfirmShare(false)} title={t('teams.settings.confirmShareTitle')} footer={
-        <>
-          <Button variant="outline" onClick={() => setConfirmShare(false)}>{t('common.cancel')}</Button>
-          <Button variant="danger" onClick={() => { setConfirmShare(true); void saveSharing(); }}>{t('common.confirm')}</Button>
-        </>
-      }>
-        <p>{sharingDraft.base ? t('teams.settings.confirmReduce') : t('teams.settings.confirmCloseBase')}</p>
-      </Modal>
 
       <Modal isOpen={leaveOpen} onClose={() => setLeaveOpen(false)} title={t('teams.settings.leave')} footer={
         <>

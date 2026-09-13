@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ApiError } from '@/api/client';
 import { teamsApi } from '@/api/teams';
-import { Badge } from '@/components/common/Badge';
 import { Button } from '@/components/common/Button';
 import { ErrorState } from '@/components/states/ErrorState';
 import { LoadingState } from '@/components/states/LoadingState';
@@ -71,7 +70,6 @@ export const TeamLayout: React.FC = () => {
             <h1>{team.name}</h1>
             <p>{team.description || t('teams.overview.noDescription')}</p>
             <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-              <Badge>{t('common.private')}</Badge>
               <RoleBadge role={membership.role} />
             </div>
           </div>
@@ -80,7 +78,7 @@ export const TeamLayout: React.FC = () => {
           {permissions.inviteMembers ? (
             <Button variant="primary" onClick={() => setInviteOpen(true)}>{t('teams.invite.action')}</Button>
           ) : (
-            <Button variant="outline" onClick={() => navigate(`/teams/${team.id}/settings`)}>{t('teams.settings.mySharing')}</Button>
+            <Button variant="outline" onClick={() => navigate(`/teams/${team.id}/settings`)}>{t('teams.nav.settings')}</Button>
           )}
         </div>
       </div>
