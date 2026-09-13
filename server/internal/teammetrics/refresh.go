@@ -241,6 +241,7 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 		return nil, fmt.Errorf("project harness metrics: %w", err)
 	}
 	defer arows.Close()
+	v2Activity := map[dayAgent]struct{}{}
 	for arows.Next() {
 		var date, agent, code, dur, msgs, userMsgs, codeKnown, durKnown, msgKnown string
 		if err := arows.Scan(&date, &agent, &code, &dur, &msgs, &userMsgs, &codeKnown, &durKnown, &msgKnown); err != nil {
@@ -251,10 +252,16 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 			return nil, err
 		}
 		out = append(out, row)
+		v2Activity[dayAgent{date, agent}] = struct{}{}
 	}
 	if err := arows.Err(); err != nil {
 		return nil, err
 	}
+	legacyActivity, err := projectLegacyActivityRows(ctx, tx, contrib, dates, v2Activity)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, legacyActivity...)
 
 	crows, err := tx.QueryContext(ctx, `
 		SELECT DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(m.bucket_start/1000), INTERVAL 8 HOUR), '%Y-%m-%d'),
@@ -501,6 +508,53 @@ func projectLegacyModelRows(ctx context.Context, tx *sql.Tx, contrib Contributor
 	return out, covered, rows.Err()
 }
 
+func projectLegacyActivityRows(ctx context.Context, tx *sql.Tx, contrib Contributor, dates []string, skip map[dayAgent]struct{}) ([]DayRow, error) {
+	if len(dates) == 0 {
+		return nil, nil
+	}
+	in := strings.Repeat("?,", len(dates))
+	in = in[:len(in)-1]
+	rows, err := tx.QueryContext(ctx, `
+		SELECT DATE_FORMAT(metric_date, '%Y-%m-%d'), agent_id,
+		       CAST(COALESCE(code_generated_lines, 0) AS CHAR),
+		       CAST(COALESCE(active_duration_ms, 0) AS CHAR),
+		       CAST(COALESCE(message_count, 0) AS CHAR),
+		       CAST(COALESCE(user_message_count, 0) AS CHAR)
+		FROM daily_user_agent_metrics
+		WHERE user_id = ? AND metric_date IN (`+in+`)`,
+		append([]any{contrib.UserID}, datesToAny(dates)...)...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("project legacy activity: %w", err)
+	}
+	defer rows.Close()
+	var out []DayRow
+	for rows.Next() {
+		var date, agent, code, dur, msgs, userMsgs string
+		if err := rows.Scan(&date, &agent, &code, &dur, &msgs, &userMsgs); err != nil {
+			return nil, err
+		}
+		if decOrZero(code) == "0" && decOrZero(dur) == "0" && decOrZero(msgs) == "0" && decOrZero(userMsgs) == "0" {
+			continue
+		}
+		if _, ok := skip[dayAgent{date, agent}]; ok {
+			continue
+		}
+		known := func(v string) string {
+			if decOrZero(v) == "0" {
+				return "0"
+			}
+			return "1"
+		}
+		row, err := activityRow(contrib, date, agent, code, dur, msgs, userMsgs, known(code), known(dur), known(msgs))
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
 func projectLegacySkillRows(ctx context.Context, tx *sql.Tx, contrib Contributor, dates []string, skip map[dayAgent]struct{}) ([]DayRow, error) {
 	if len(dates) == 0 {
 		return nil, nil
@@ -586,6 +640,16 @@ func ListStaleTeamProjectionUsers(ctx context.Context, q interface {
 		      SELECT 1 FROM team_member_day_metrics d
 		      WHERE d.contributor_key = k.contributor_key AND d.delete_at IS NULL
 		        AND d.metric_kind = 'skill'
+		    )
+		  ) OR (
+		    EXISTS (
+		      SELECT 1 FROM daily_user_agent_metrics m
+		      WHERE m.user_id = c.user_id AND m.code_generated_lines > 0
+		    )
+		    AND NOT EXISTS (
+		      SELECT 1 FROM team_member_day_metrics d
+		      WHERE d.contributor_key = k.contributor_key AND d.delete_at IS NULL
+		        AND d.metric_kind = 'activity'
 		    )
 		  )
 		)

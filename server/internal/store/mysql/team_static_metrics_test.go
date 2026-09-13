@@ -555,9 +555,9 @@ func TestMySQLTeamStaticMetrics_LegacyModelAndSkillProjection(t *testing.T) {
 	memberHash := seedMySQLTeamUser(t, db, member, "mem_lg", now)
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO daily_user_agent_metrics (
-			metric_date, user_id, agent_id, exact_token_total, derived_token_total,
+			metric_date, user_id, agent_id, exact_token_total, derived_token_total, code_generated_lines,
 			aggregation_version, computed_at, updated_at
-		) VALUES ('2026-09-10', ?, 'codex', 100, 0, 2, ?, ?)`, member, now, now); err != nil {
+		) VALUES ('2026-09-10', ?, 'codex', 100, 0, 10, 2, ?, ?)`, member, now, now); err != nil {
 		t.Fatal(err)
 	}
 
@@ -665,6 +665,12 @@ func TestMySQLTeamStaticMetrics_LegacyModelAndSkillProjection(t *testing.T) {
 	}
 	if dto.Skills == nil || len(dto.Skills.Items) != 1 || dto.Skills.Items[0]["label"] != "frontend-design" || dto.Skills.Items[0]["useCount"] != "12" {
 		t.Fatalf("skills %+v", dto.Skills)
+	}
+	if dto.Summary.Metrics == nil || dto.Summary.Metrics["tokensPerCodeLine"].Value != "10" {
+		t.Fatalf("team token efficiency %+v", dto.Summary.Metrics)
+	}
+	if dto.Contributions.Items[0]["generatedCodeLines"] != "10" || dto.Contributions.Items[0]["tokensPerCodeLine"] != "10" {
+		t.Fatalf("member token efficiency %+v", dto.Contributions.Items[0])
 	}
 	skillMembers, _ := dto.Skills.Items[0]["members"].([]map[string]any)
 	if len(skillMembers) != 1 {
