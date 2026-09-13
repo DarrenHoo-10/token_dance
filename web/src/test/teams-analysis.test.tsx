@@ -14,6 +14,15 @@ import { TeamMembersPage } from '@/pages/teams/TeamMembersPage';
 import { useTeamAnalysis } from '@/pages/teams/useTeamAnalysis';
 import { renderTeams, renderTeamWorkspace, sampleScope, signedInUser } from './teams-test-helpers';
 
+function pickIsoDate(label: string, iso: string) {
+  fireEvent.click(screen.getByLabelText(label));
+  const day = String(Number(iso.slice(8, 10)));
+  const dialog = screen.getByRole('dialog', { name: label });
+  const match = within(dialog).getAllByRole('button').filter((el) => el.textContent === day);
+  const enabled = match.find((el) => el.getAttribute('aria-disabled') !== 'true' && !(el as HTMLButtonElement).disabled);
+  fireEvent.click(enabled || match[0]);
+}
+
 const readyAnalysis = (authRevision: string, tokenValue: string): TeamAnalysisReady => ({
   state: 'ready',
   snapshot: {
@@ -73,17 +82,16 @@ describe('Team analysis updating state', () => {
     renderTeamWorkspace(`/teams/tem_0123456789abcdefghijklmnop${suffix}?range=custom`);
     await screen.findByLabelText('开始日期');
     await waitFor(() => expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument());
-    const from = screen.getByLabelText('开始日期');
-    const to = screen.getByLabelText('结束日期');
+    expect(screen.getByLabelText('开始日期')).toBeInTheDocument();
+    expect(screen.getByLabelText('结束日期')).toBeInTheDocument();
     expect(screen.queryByText('选齐日期后自动更新')).not.toBeInTheDocument();
     expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();
     await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: 'today', from: undefined, to: undefined }), expect.any(AbortSignal)));
-    fireEvent.change(from, { target: { value: '2026-09-01' } });
+    pickIsoDate('开始日期', '2026-09-01');
     await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: 'today', from: undefined, to: undefined }), expect.any(AbortSignal)));
-    fireEvent.change(to, { target: { value: '2026-09-06' } });
+    pickIsoDate('结束日期', '2026-09-06');
     await waitFor(() => expect(query).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ range: 'custom', from: '2026-09-01', to: '2026-09-06' }), expect.any(AbortSignal)));
     await waitFor(() => expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument());
-    fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '' } });
     expect(screen.queryByText('选齐日期后自动更新')).not.toBeInTheDocument();
     expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '7 天' }));
@@ -128,10 +136,10 @@ describe('Team analysis updating state', () => {
     expect(from.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole('heading', { name: '成员用量趋势' })).toBeInTheDocument();
     expect(screen.getAllByText('120.0K')[0]).toBeInTheDocument();
-    fireEvent.change(from, { target: { value: '2026-09-01' } });
+    pickIsoDate('开始日期', '2026-09-01');
     expect(query).toHaveBeenCalledTimes(1);
     expect(screen.getAllByText('120.0K')[0]).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('结束日期'), { target: { value: '2026-09-06' } });
+    pickIsoDate('结束日期', '2026-09-06');
     await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: 'custom', from: '2026-09-01', to: '2026-09-06' }), expect.any(AbortSignal)));
   });
 

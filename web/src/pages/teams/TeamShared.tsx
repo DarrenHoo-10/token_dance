@@ -4,9 +4,9 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { ApiError } from '@/api/client';
 import type { SharingFlags, Team, TeamRole } from '@/api/teams';
 import { Badge } from '@/components/common/Badge';
-import { Input } from '@/components/common/Input';
 import { Switch } from '@/components/common/Switch';
 import { useLocale } from '@/context/LocaleContext';
+import { TeamDateField } from './TeamDateField';
 import { getApiErrorMessage } from '@/i18n';
 import { avatarUrl } from '@/utils/avatar';
 import { TEAM_RANGE_MAX_DAYS, firstGrapheme, inclusiveDaySpan } from './teamUtils';
@@ -103,7 +103,7 @@ function shiftIsoDate(iso: string, days: number): string {
 }
 
 export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) => {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const [params, setParams] = useSearchParams();
   const range = params.get('range') || 'today';
   const from = params.get('from') || '';
@@ -152,9 +152,26 @@ export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) =
       </div>
       <div className="team-date-custom">
         <div className="team-date-fields">
-          <Input type="date" aria-label={t('teams.range.from')} max={today} value={displayedFrom} aria-invalid={Boolean(spanError)} onChange={(e) => setDate('from', e.target.value)} />
+          <TeamDateField
+            value={displayedFrom}
+            onChange={(next) => setDate('from', next)}
+            label={t('teams.range.from')}
+            max={today}
+            locale={locale}
+            invalid={Boolean(spanError)}
+            align="start"
+          />
           <ArrowRight className="team-date-arrow" size={16} aria-hidden="true" />
-          <Input type="date" aria-label={t('teams.range.to')} min={range === 'custom' ? from || undefined : undefined} max={today} value={displayedTo} aria-invalid={Boolean(spanError)} onChange={(e) => setDate('to', e.target.value)} />
+          <TeamDateField
+            value={displayedTo}
+            onChange={(next) => setDate('to', next)}
+            label={t('teams.range.to')}
+            min={range === 'custom' && from ? from : undefined}
+            max={today}
+            locale={locale}
+            invalid={Boolean(spanError)}
+            align="end"
+          />
         </div>
         {spanError && (
           <p className="team-date-hint is-error" role="alert">{t('teams.range.tooLong')}</p>
