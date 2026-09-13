@@ -250,6 +250,11 @@ export function clearCreateDraft(): void {
   sessionStorage.removeItem(CREATE_DRAFT_KEY);
 }
 
+export function calendarDateInTimeZone(now: Date, timeZone: string): string {
+  const dateParts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
+  return ['year', 'month', 'day'].map((key) => dateParts.find((part) => part.type === key)?.value).join('-');
+}
+
 export function inclusiveDaySpan(from: string, to: string): number {
   const start = Date.parse(`${from}T00:00:00Z`);
   const end = Date.parse(`${to}T00:00:00Z`);

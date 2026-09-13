@@ -12,7 +12,10 @@ import { TeamLayout } from '@/pages/teams/TeamLayout';
 import { memberPercent } from '@/pages/teams/TeamMemberInsights';
 import { TeamMembersPage } from '@/pages/teams/TeamMembersPage';
 import { useTeamAnalysis } from '@/pages/teams/useTeamAnalysis';
+import { calendarDateInTimeZone } from '@/pages/teams/teamUtils';
 import { renderTeams, renderTeamWorkspace, sampleScope, signedInUser } from './teams-test-helpers';
+
+const shanghaiToday = () => calendarDateInTimeZone(new Date(), 'Asia/Shanghai');
 
 function pickIsoDate(label: string, iso: string) {
   fireEvent.click(screen.getByLabelText(label));
@@ -88,7 +91,7 @@ describe('Team analysis updating state', () => {
     expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();
     await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: 'today', from: undefined, to: undefined }), expect.any(AbortSignal)));
     pickIsoDate('开始日期', '2026-09-01');
-    await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: 'today', from: undefined, to: undefined }), expect.any(AbortSignal)));
+    await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: 'custom', from: '2026-09-01', to: shanghaiToday() }), expect.any(AbortSignal)));
     pickIsoDate('结束日期', '2026-09-06');
     await waitFor(() => expect(query).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ range: 'custom', from: '2026-09-01', to: '2026-09-06' }), expect.any(AbortSignal)));
     await waitFor(() => expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument());
@@ -137,8 +140,7 @@ describe('Team analysis updating state', () => {
     expect(screen.getByRole('heading', { name: '团队用量趋势' })).toBeInTheDocument();
     expect(screen.getAllByText('120.0K')[0]).toBeInTheDocument();
     pickIsoDate('开始日期', '2026-09-01');
-    expect(query).toHaveBeenCalledTimes(1);
-    expect(screen.getAllByText('120.0K')[0]).toBeInTheDocument();
+    await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: 'custom', from: '2026-09-01', to: shanghaiToday() }), expect.any(AbortSignal)));
     pickIsoDate('结束日期', '2026-09-06');
     await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: 'custom', from: '2026-09-01', to: '2026-09-06' }), expect.any(AbortSignal)));
   });

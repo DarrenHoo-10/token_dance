@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ApiError } from '@/api/client';
@@ -9,7 +9,7 @@ import { useLocale } from '@/context/LocaleContext';
 import { TeamDateField } from './TeamDateField';
 import { getApiErrorMessage } from '@/i18n';
 import { avatarUrl } from '@/utils/avatar';
-import { TEAM_RANGE_MAX_DAYS, firstGrapheme, inclusiveDaySpan } from './teamUtils';
+import { TEAM_RANGE_MAX_DAYS, calendarDateInTimeZone, firstGrapheme, inclusiveDaySpan } from './teamUtils';
 import './teams.css';
 
 export function teamErrorMessage(t: (key: string, params?: Record<string, string | number>) => string, error: ApiError): string {
@@ -109,10 +109,9 @@ export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) =
   const from = params.get('from') || '';
   const to = params.get('to') || '';
   const spanError = range === 'custom' && from && to && inclusiveDaySpan(from, to) > TEAM_RANGE_MAX_DAYS;
-  const dateParts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
-  const today = ['year', 'month', 'day'].map((key) => dateParts.find((part) => part.type === key)?.value).join('-');
+  const today = calendarDateInTimeZone(new Date(), timezone);
   const displayedFrom = range === 'custom' ? from : range === '7d' ? shiftIsoDate(today, -6) : range === '30d' ? shiftIsoDate(today, -29) : today;
-  const displayedTo = range === 'custom' ? to : today;
+  const displayedTo = range === 'custom' ? (to || today) : today;
 
   const setRange = (next: string) => {
     const nextParams = new URLSearchParams(params);
@@ -127,8 +126,24 @@ export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) =
     nextParams.set('range', 'custom');
     if (value) nextParams.set(key, value);
     else nextParams.delete(key);
+    const nextFrom = key === 'from' ? value : (nextParams.get('from') || from);
+    let nextTo = key === 'to' ? value : (nextParams.get('to') || to);
+    if (nextFrom && !nextTo) {
+      nextTo = today;
+      nextParams.set('to', today);
+    }
+    if (nextFrom && nextTo && nextTo < nextFrom) {
+      nextParams.set('to', nextFrom);
+    }
     setParams(nextParams, { replace: true });
   };
+
+  useEffect(() => {
+    if (range !== 'custom' || !from || to) return;
+    const nextParams = new URLSearchParams(params);
+    nextParams.set('to', today);
+    setParams(nextParams, { replace: true });
+  }, [from, params, range, setParams, to, today]);
 
   return (
     <div className="team-date-toolbar">
