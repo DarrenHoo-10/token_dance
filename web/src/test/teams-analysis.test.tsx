@@ -413,29 +413,99 @@ describe('Team member insights', () => {
     expect(memberPercent('900719925474099300', '1801439850948198600')).toBe(50);
     expect(memberPercent('1', '0')).toBe(0);
   });
-  it('defaults the usage trend to the team series and switches with the member dropdown', async () => {
+  it('defaults usage and efficiency trends to the team series plus the top 3 members', async () => {
     vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     const result = readyAnalysis('1', '1000');
+    result.efficiencyTrend = [{ date: '2026-09-05', tokens: { value: '250', state: 'available' as const } }];
     result.contributions = { nextCursor: 'more', items: Array.from({ length: 6 }, (_, i) => ({
       membershipId: `member-${i}`, displayName: `Person ${i}`, handle: null, rank: String(i + 1),
       tokens: { state: 'available' as const, value: '100' },
+      tokensPerCodeLine: String(600 - i * 50),
       trend: [{ date: '2026-09-05', tokens: { value: '100', state: 'available' as const } }],
+      efficiencyTrend: [{ date: '2026-09-05', tokens: { value: String(600 - i * 50), state: 'available' as const } }],
     })) };
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    const picker = await screen.findByLabelText('选择成员');
-    expect(picker).toHaveValue('');
+    const usagePicker = await screen.findByRole('button', { name: '选择用量趋势' });
+    const efficiencyPicker = screen.getByRole('button', { name: '选择效率趋势' });
     expect(screen.getByRole('heading', { name: '团队用量趋势' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '团队效率趋势' })).toBeInTheDocument();
-    expect(screen.getByLabelText('选择成员')).toHaveDisplayValue('全部');
+    expect(screen.getByRole('heading', { name: 'Token 效率排行' })).toBeInTheDocument();
+    expect(usagePicker).toHaveTextContent('全部、Person 0、Person 1、Person 2');
+    expect(efficiencyPicker).toHaveTextContent('全部、Person 0、Person 1、Person 2');
+    expect(usagePicker).not.toHaveTextContent('Person 3');
+    expect(document.querySelectorAll('.team-member-trend .team-multiline-chart polyline')).toHaveLength(4);
+    expect(document.querySelectorAll('.team-efficiency-trend .team-multiline-chart polyline')).toHaveLength(4);
     expect(screen.queryByText('Token / 天')).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '成员用量趋势' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '团队 Token 趋势' })).not.toBeInTheDocument();
     expect(screen.getAllByText(/10\.0%/)).toHaveLength(11);
     expect(screen.getByText('50.0%')).toBeInTheDocument();
-    fireEvent.change(picker, { target: { value: 'member-0' } });
-    expect(picker).toHaveValue('member-0');
+    fireEvent.click(usagePicker);
+    expect(screen.getByRole('option', { name: '全部' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('option', { name: 'Person 2' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('option', { name: 'Person 3' })).toHaveAttribute('aria-selected', 'false');
+    fireEvent.click(screen.getByRole('option', { name: 'Person 3' }));
+    expect(usagePicker).toHaveTextContent('Person 3');
+    expect(document.querySelectorAll('.team-member-trend .team-multiline-chart polyline')).toHaveLength(5);
+  });
+
+  it('paginates member details, efficiency ranking, and mix lists by 10', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    const result = readyAnalysis('1', '1200');
+    result.contributions = {
+      nextCursor: null,
+      items: Array.from({ length: 12 }, (_, i) => ({
+        membershipId: `member-${i}`, displayName: `Person ${i}`, handle: null, rank: String(i + 1),
+        tokens: { state: 'available' as const, value: '100' },
+        tokensPerCodeLine: String(1200 - i * 10),
+      })),
+    };
+    result.agents = {
+      nextCursor: null,
+      items: Array.from({ length: 12 }, (_, i) => ({
+        id: `agent-${i}`,
+        label: `Agent ${i}`,
+        tokens: { value: String(1200 - i), state: 'available' as const },
+        share: '8.3',
+        members: Array.from({ length: 12 }, (_, j) => ({
+          membershipId: `member-${j}`,
+          displayName: `Dist ${j}`,
+          useCount: String(12 - j),
+          share: '8.3',
+        })),
+      })),
+    };
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
+    renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
+    expect(await screen.findByRole('heading', { name: '成员明细' })).toBeInTheDocument();
+    const details = screen.getByRole('navigation', { name: '成员明细分页' });
+    expect(within(details).getByText('第 1 / 2 页')).toBeInTheDocument();
+    expect(screen.getAllByText('Person 0').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('cell', { name: /Person 10/ })).not.toBeInTheDocument();
+    fireEvent.click(within(details).getByRole('button', { name: '下一页' }));
+    expect(await screen.findByRole('cell', { name: /Person 10/ })).toBeInTheDocument();
+    expect(screen.queryByRole('cell', { name: /Person 0/ })).not.toBeInTheDocument();
+
+    const efficiency = screen.getByRole('navigation', { name: 'Token 效率排行分页' });
+    expect(within(efficiency).getByText('第 1 / 2 页')).toBeInTheDocument();
+    fireEvent.click(within(efficiency).getByRole('button', { name: '下一页' }));
+    expect(within(efficiency).getByText('第 2 / 2 页')).toBeInTheDocument();
+
+    const mix = screen.getByRole('navigation', { name: '用量构成分页' });
+    expect(screen.getByRole('button', { name: /Agent 0/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Agent 10/ })).not.toBeInTheDocument();
+    fireEvent.click(within(mix).getByRole('button', { name: '下一页' }));
+    expect(screen.getByRole('button', { name: /Agent 10/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Agent 0/ })).not.toBeInTheDocument();
+
+    const dist = screen.getByRole('navigation', { name: '成员分布分页' });
+    expect(screen.getByText('Dist 0')).toBeInTheDocument();
+    expect(screen.queryByText('Dist 10')).not.toBeInTheDocument();
+    fireEvent.click(within(dist).getByRole('button', { name: '下一页' }));
+    expect(screen.getByText('Dist 10')).toBeInTheDocument();
   });
 
   it('shows token efficiency for the team and each member', async () => {

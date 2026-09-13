@@ -2,7 +2,8 @@ import React, { useMemo, useState } from 'react';
 import type { AnalysisBucketItem, SkillItem, SkillMemberUse, TeamAnalysisReady } from '@/api/teams';
 import { Card } from '@/components/common/Card';
 import { useLocale } from '@/context/LocaleContext';
-import { formatTokenCompact } from './teamUtils';
+import { TeamRankPager } from './TeamShared';
+import { formatTokenCompact, rankPageSlice } from './teamUtils';
 
 const COLORS = ['#577d21', '#277d96', '#8668a6', '#bc7939', '#bb5275'];
 
@@ -72,15 +73,21 @@ export const TeamUsageMix: React.FC<{ analysis: TeamAnalysisReady }> = ({ analys
   ];
   const firstKind = (groups.find((group) => group.items.length > 0)?.kind || 'harness') as MixKind;
   const [kind, setKind] = useState<MixKind>(firstKind);
+  const [listPage, setListPage] = useState(1);
+  const [distPage, setDistPage] = useState(1);
   const active = groups.find((group) => group.kind === kind) || groups[0];
   const [selectedKey, setSelectedKey] = useState(active.items[0] ? itemKey(active.items[0]) : '');
   const selected = active.items.find((item) => itemKey(item) === selectedKey) || active.items[0];
   const empty = active.items.length === 0;
+  const visibleItems = rankPageSlice(active.items, listPage);
+  const visibleMembers = selected ? rankPageSlice(selected.members, distPage) : [];
 
   const switchKind = (next: MixKind) => {
     const group = groups.find((item) => item.kind === next);
     setKind(next);
     setSelectedKey(group?.items[0] ? itemKey(group.items[0]) : '');
+    setListPage(1);
+    setDistPage(1);
   };
 
   return (
@@ -111,31 +118,42 @@ export const TeamUsageMix: React.FC<{ analysis: TeamAnalysisReady }> = ({ analys
           {empty ? (
             <p className="team-chart-empty">{t('teams.overview.mixEmpty')}</p>
           ) : (
-            <div className="team-mix-list" key={kind}>
-              {active.items.map((item) => {
-                const pct = Number(item.share || '0');
-                const key = itemKey(item);
-                const isActive = selectedKey === key;
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    className={`team-mix-row ${isActive ? 'is-active' : ''}`}
-                    aria-pressed={isActive}
-                    onClick={() => setSelectedKey(key)}
-                  >
-                    <div className="team-mix-row-copy">
-                      <div className="team-bar-label">
-                        <span>{item.label}</span>
-                        <span className="mono-num">{item.share ? `${item.share}%` : '—'}</span>
+            <>
+              <div className="team-mix-list" key={kind}>
+                {visibleItems.map((item) => {
+                  const pct = Number(item.share || '0');
+                  const key = itemKey(item);
+                  const isActive = selectedKey === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`team-mix-row ${isActive ? 'is-active' : ''}`}
+                      aria-pressed={isActive}
+                      onClick={() => {
+                        setSelectedKey(key);
+                        setDistPage(1);
+                      }}
+                    >
+                      <div className="team-mix-row-copy">
+                        <div className="team-bar-label">
+                          <span>{item.label}</span>
+                          <span className="mono-num">{item.share ? `${item.share}%` : '—'}</span>
+                        </div>
+                        <div className="team-bar-track"><span style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
                       </div>
-                      <div className="team-bar-track"><span style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
-                    </div>
-                    <span className="mono-num team-mix-value">{formatTokenCompact(item.value)}</span>
-                  </button>
-                );
-              })}
-            </div>
+                      <span className="mono-num team-mix-value">{formatTokenCompact(item.value)}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <TeamRankPager
+                page={listPage}
+                total={active.items.length}
+                onPage={setListPage}
+                label={t('teams.insights.mixPages')}
+              />
+            </>
           )}
         </Card>
         <Card>
@@ -148,15 +166,25 @@ export const TeamUsageMix: React.FC<{ analysis: TeamAnalysisReady }> = ({ analys
           </div>
           {empty || !selected || selected.members.length === 0 ? (
             <p className="team-chart-empty">{t('teams.overview.mixEmptyDetail')}</p>
-          ) : selected.members.map((member, index) => (
-            <div className="team-bar-item" key={member.membershipId}>
-              <div className="team-bar-label">
-                <span><i className="team-dot" style={{ background: COLORS[index % COLORS.length] }} aria-hidden="true" />{member.displayName}</span>
-                <span className="mono-num">{formatTokenCompact(member.useCount)}{member.share ? ` · ${member.share}%` : ''}</span>
-              </div>
-              <div className="team-bar-track"><span style={{ width: `${Math.max(0, Number(member.share || '0'))}%`, background: COLORS[index % COLORS.length] }} /></div>
-            </div>
-          ))}
+          ) : (
+            <>
+              {visibleMembers.map((member, index) => (
+                <div className="team-bar-item" key={member.membershipId}>
+                  <div className="team-bar-label">
+                    <span><i className="team-dot" style={{ background: COLORS[index % COLORS.length] }} aria-hidden="true" />{member.displayName}</span>
+                    <span className="mono-num">{formatTokenCompact(member.useCount)}{member.share ? ` · ${member.share}%` : ''}</span>
+                  </div>
+                  <div className="team-bar-track"><span style={{ width: `${Math.max(0, Number(member.share || '0'))}%`, background: COLORS[index % COLORS.length] }} /></div>
+                </div>
+              ))}
+              <TeamRankPager
+                page={distPage}
+                total={selected.members.length}
+                onPage={setDistPage}
+                label={t('teams.insights.memberDistPages')}
+              />
+            </>
+          )}
         </Card>
       </div>
     </section>

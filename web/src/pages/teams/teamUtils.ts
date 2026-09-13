@@ -5,6 +5,18 @@ export const TEAM_NAME_MIN = 2;
 export const TEAM_NAME_MAX = 40;
 export const TEAM_DESCRIPTION_MAX = 120;
 export const TEAM_RANGE_MAX_DAYS = 90;
+export const TEAM_RANK_PAGE_SIZE = 10;
+
+export function rankPageCount(total: number, size = TEAM_RANK_PAGE_SIZE): number {
+  return Math.max(1, Math.ceil(total / size));
+}
+
+export function rankPageSlice<T>(items: T[], page: number, size = TEAM_RANK_PAGE_SIZE): T[] {
+  const pages = rankPageCount(items.length, size);
+  const safe = Math.min(Math.max(1, page), pages);
+  const start = (safe - 1) * size;
+  return items.slice(start, start + size);
+}
 export const JOIN_TOKEN_TTL_MS = 15 * 60 * 1000;
 export const CREATE_DRAFT_KEY = 'td.team-create-draft';
 const JOIN_TOKEN_PREFIX = 'td.team-join.';

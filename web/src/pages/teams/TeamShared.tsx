@@ -9,7 +9,7 @@ import { useLocale } from '@/context/LocaleContext';
 import { TeamDateField } from './TeamDateField';
 import { getApiErrorMessage } from '@/i18n';
 import { avatarUrl } from '@/utils/avatar';
-import { TEAM_RANGE_MAX_DAYS, calendarDateInTimeZone, firstGrapheme, inclusiveDaySpan } from './teamUtils';
+import { TEAM_RANGE_MAX_DAYS, calendarDateInTimeZone, firstGrapheme, inclusiveDaySpan, rankPageCount, TEAM_RANK_PAGE_SIZE } from './teamUtils';
 import './teams.css';
 
 export function teamErrorMessage(t: (key: string, params?: Record<string, string | number>) => string, error: ApiError): string {
@@ -223,3 +223,28 @@ export const TeamGateLink: React.FC<{ to: string; children: React.ReactNode }> =
     {children}
   </Link>
 );
+
+export const TeamRankPager: React.FC<{
+  page: number;
+  total: number;
+  onPage: (next: number) => void;
+  label: string;
+}> = ({ page, total, onPage, label }) => {
+  const { t } = useLocale();
+  const pages = rankPageCount(total);
+  if (total <= TEAM_RANK_PAGE_SIZE) return null;
+  const safe = Math.min(Math.max(1, page), pages);
+  return (
+    <nav className="team-rank-pager" aria-label={label}>
+      <span>{t('teams.insights.pageStatus', { page: safe, pages })}</span>
+      <div>
+        <button type="button" className="btn btn-sm" disabled={safe <= 1} onClick={() => onPage(safe - 1)}>
+          {t('teams.insights.prevPage')}
+        </button>
+        <button type="button" className="btn btn-sm" disabled={safe >= pages} onClick={() => onPage(safe + 1)}>
+          {t('teams.insights.nextPage')}
+        </button>
+      </div>
+    </nav>
+  );
+};

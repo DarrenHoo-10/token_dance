@@ -2034,6 +2034,21 @@ func localMidnight(t time.Time) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, t.Location())
 }
 
+func dailyEfficiencyPoints(from, end time.Time, tokens, code map[string]string) []domain.TeamTrendPoint {
+	out := make([]domain.TeamTrendPoint, 0)
+	for d := localMidnight(from); d.Before(end) && len(out) < domain.TeamAnalysisMaxDays; d = d.AddDate(0, 0, 1) {
+		day := d.Format(dateLayout)
+		point := domain.TeamTrendPoint{Date: day, Tokens: domain.DecimalMetric{State: domain.MetricEmpty}}
+		if den, ok := new(big.Int).SetString(emptyZero(code[day]), 10); ok && den.Sign() > 0 {
+			if num, ok := new(big.Int).SetString(emptyZero(tokens[day]), 10); ok {
+				point.Tokens = domain.DecimalMetric{Value: new(big.Int).Quo(num, den).String(), State: domain.MetricAvailable}
+			}
+		}
+		out = append(out, point)
+	}
+	return out
+}
+
 func parseLocalDate(value string, loc *time.Location) (time.Time, error) {
 	return time.ParseInLocation(dateLayout, strings.TrimSpace(value), loc)
 }
@@ -2053,6 +2068,7 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 	contribTok := map[string]string{}
 	memberCode := map[string]string{}
 	memberDays := map[string]map[string]string{}
+	memberCodeDays := map[string]map[string]string{}
 	reported := map[string]*bigRatAcc{}
 	estimatedCost := map[string]*bigRatAcc{}
 	unattributed := "0"
@@ -2096,7 +2112,8 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 		}
 		if row.MembershipID != nil {
 			contribTok[*row.MembershipID] = AddIntDecimal(contribTok[*row.MembershipID], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
-			if lines := generatedCodeLineSum(row.ActivityJSON); lines != "0" {
+			lines := generatedCodeLineSum(row.ActivityJSON)
+			if lines != "0" {
 				memberCode[*row.MembershipID] = AddIntDecimal(memberCode[*row.MembershipID], lines)
 			}
 			if row.MetricDate != nil && *row.MetricDate != "" {
@@ -2105,6 +2122,12 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 				}
 				day := *row.MetricDate
 				memberDays[*row.MembershipID][day] = AddIntDecimal(memberDays[*row.MembershipID][day], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
+				if lines != "0" {
+					if memberCodeDays[*row.MembershipID] == nil {
+						memberCodeDays[*row.MembershipID] = map[string]string{}
+					}
+					memberCodeDays[*row.MembershipID][day] = AddIntDecimal(memberCodeDays[*row.MembershipID][day], lines)
+				}
 			}
 		}
 		if row.Currency != nil && row.ReportedCostAmount != "" && row.ReportedCostAmount != "0" {
@@ -2154,17 +2177,7 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 	if !snap.AsOf.IsZero() && snap.AsOf.Before(toEx) {
 		end = localMidnight(snap.AsOf.In(loc)).AddDate(0, 0, 1)
 	}
-	efficiencyTrend := make([]domain.TeamTrendPoint, 0)
-	for d := localMidnight(from.In(loc)); d.Before(end) && len(efficiencyTrend) < domain.TeamAnalysisMaxDays; d = d.AddDate(0, 0, 1) {
-		day := d.Format(dateLayout)
-		point := domain.TeamTrendPoint{Date: day, Tokens: domain.DecimalMetric{State: domain.MetricEmpty}}
-		if den, ok := new(big.Int).SetString(emptyZero(byDateCode[day]), 10); ok && den.Sign() > 0 {
-			if num, ok := new(big.Int).SetString(emptyZero(byDate[day]), 10); ok {
-				point.Tokens = domain.DecimalMetric{Value: new(big.Int).Quo(num, den).String(), State: domain.MetricAvailable}
-			}
-		}
-		efficiencyTrend = append(efficiencyTrend, point)
-	}
+	efficiencyTrend := dailyEfficiencyPoints(from.In(loc), end, byDate, byDateCode)
 	for _, item := range contribs.Items {
 		id, _ := item["membershipId"].(string)
 		points := make([]domain.TeamTrendPoint, 0)
@@ -2178,6 +2191,7 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 			points = append(points, domain.TeamTrendPoint{Date: day, Tokens: domain.DecimalMetric{Value: value, State: state}})
 		}
 		item["trend"] = points
+		item["efficiencyTrend"] = dailyEfficiencyPoints(from.In(loc), end, memberDays[id], memberCodeDays[id])
 		item["share"] = tokenShare(contribTok[id], tokenTotal)
 		lines := emptyZero(memberCode[id])
 		item["generatedCodeLines"] = lines

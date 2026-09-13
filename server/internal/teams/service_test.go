@@ -384,6 +384,10 @@ func TestAssembleAnalysisCollectionsMatchWeb(t *testing.T) {
 	if len(dto.EfficiencyTrend) == 0 || dto.EfficiencyTrend[0].Date != "2026-09-06" || dto.EfficiencyTrend[0].Tokens.Value != "12" {
 		t.Fatalf("efficiency trend %+v", dto.EfficiencyTrend)
 	}
+	memberEff, _ := dto.Contributions.Items[0]["efficiencyTrend"].([]domain.TeamTrendPoint)
+	if len(memberEff) == 0 || memberEff[0].Date != "2026-09-06" || memberEff[0].Tokens.Value != "12" || memberEff[0].Tokens.State != domain.MetricAvailable {
+		t.Fatalf("member efficiency trend %+v", dto.Contributions.Items[0]["efficiencyTrend"])
+	}
 	opts := setToOptions(map[string]struct{}{"codex": {}})
 	if len(opts) != 1 || opts[0]["id"] != "codex" || opts[0]["label"] != "codex" {
 		t.Fatalf("filter options %+v", opts)

@@ -251,6 +251,7 @@ export interface ContributionItem {
   generatedCodeLines?: string;
   tokensPerCodeLine?: string;
   trend?: AnalysisTrendPoint[];
+  efficiencyTrend?: AnalysisTrendPoint[];
 }
 
 export interface SkillMemberUse {
