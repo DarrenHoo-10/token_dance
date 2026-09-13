@@ -1,6 +1,7 @@
 import React from 'react';
 import { useLocale } from '@/context/LocaleContext';
 import type { PersonalSummaryMetrics } from '@/types/api';
+import { formatPersonalCost } from '@/utils/cost';
 import { MetricCard } from './MetricCard';
 
 export interface MetricGridProps {
@@ -35,10 +36,17 @@ function formatPercentage(val: string | null | undefined): string | null {
 
 export const MetricGrid: React.FC<MetricGridProps> = ({ metrics }) => {
   const { t } = useLocale();
+  const cost = formatPersonalCost(metrics.estimatedCost, metrics.estimatedCosts);
 
   return (
     <div className="metric-grid-10" aria-label={t('dashboard.coreMetricsLabel')}>
-      <MetricCard label={t('metrics.estimatedCost')} value={metrics.estimatedCost?.amount == null ? null : `${metrics.estimatedCost.currency} ${Number(metrics.estimatedCost.amount).toFixed(2)}`} supported={metrics.estimatedCost?.supported} />
+      {/* Estimated Cost */}
+      <MetricCard
+        label={t('metrics.estimatedCost')}
+        value={cost.value}
+        supported={cost.supported}
+      />
+
       {/* Total Tokens */}
       <MetricCard
         label={t('metrics.totalTokens')}

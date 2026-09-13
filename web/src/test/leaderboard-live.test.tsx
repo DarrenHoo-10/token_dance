@@ -77,7 +77,7 @@ describe('Live leaderboard', () => {
       costs: [{ amount: 1, currency: 'USD' }, { amount: 7, currency: 'CNY' }],
     });
     showPage();
-    expect(await screen.findByText('USD 1.00 · CNY 7.00')).toBeInTheDocument();
+    expect(await screen.findByText('$1.00 · ¥7.00')).toBeInTheDocument();
     expect(screen.queryByText('$8.00')).not.toBeInTheDocument();
   });
   it('shows personal today tokens from the live board entry, not an empty event sum', async () => {
