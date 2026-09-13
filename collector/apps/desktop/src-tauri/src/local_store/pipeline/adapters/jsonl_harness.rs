@@ -11,7 +11,7 @@ use super::common::{
     resolve_record_time, str_field, u64_field, SkillBook, UsageFactArgs,
 };
 use super::identity::{source_key, TypedNativeKey};
-use super::jsonl_io::{discover_jsonl_files, read_jsonl_source};
+use super::jsonl_io::{discover_jsonl_files, discover_jsonl_files_in_roots, read_jsonl_source};
 use crate::local_store::pipeline::runner::{
     CheckpointView, DecodeOutcome, DecoderState, DiscoveryBudget, FactDraft, HarnessStrategy,
     IgnoreCode, NativeFactKey, RawBatch, RawRecord, ReadBudget, RunnerError, SourceSpec,
@@ -71,7 +71,7 @@ pub const DEEPSEEK: JsonlProfile = JsonlProfile {
     usage_types: &["token.usage", "model_usage"],
     skill_types: &["skill"],
     context_types: &["session.start", "turn.start"],
-    time_keys: &["timestamp"],
+    time_keys: &["time", "createdAt", "timestamp"],
     session_keys: &["sessionId", "thread_id"],
     turn_keys: &["turn_id"],
     input_keys: &["input_tokens"],
@@ -129,6 +129,7 @@ pub struct JsonlHarnessStrategy {
     pub profile: JsonlProfile,
     pub identity_secret: Vec<u8>,
     pub root: PathBuf,
+    model_allocator: Option<crate::local_store::pipeline::runner::ModelAllocator>,
     pub skill_book: SkillBook,
     pub skill_allocator: Arc<dyn Fn([u8; 32], &str) -> i64 + Send + Sync>,
 }
@@ -145,15 +146,13 @@ impl JsonlHarnessStrategy {
             profile,
             identity_secret: identity_secret.into(),
             root: root.into(),
+            model_allocator: None,
             skill_book,
             skill_allocator,
         }
     }
 
-    fn first_str(
-        o: &serde_json::Map<String, serde_json::Value>,
-        keys: &[&str],
-    ) -> Option<String> {
+    fn first_str(o: &serde_json::Map<String, serde_json::Value>, keys: &[&str]) -> Option<String> {
         for k in keys {
             if let Some(v) = str_field(o, k) {
                 return Some(v);
@@ -173,17 +172,65 @@ impl JsonlHarnessStrategy {
 }
 
 impl HarnessStrategy for JsonlHarnessStrategy {
+    fn set_model_allocator(
+        &mut self,
+        allocator: crate::local_store::pipeline::runner::ModelAllocator,
+    ) {
+        self.model_allocator = Some(allocator);
+    }
     fn harness_id(&self) -> &str {
         self.profile.harness_id
     }
 
     fn discover(&self, budget: DiscoveryBudget) -> Result<Vec<SourceSpec>, RunnerError> {
-        let (files, _cursor) = discover_jsonl_files(
-            &self.root,
-            ".jsonl",
-            budget.max_sources,
-            budget.resume_after.as_deref(),
-        );
+        let (files, _cursor) = if self.profile.harness_id == "deepseek-harness" {
+            let mut roots = vec![self.root.clone()];
+            if self.root.file_name().is_some_and(|n| n == "sessions") {
+                if let Some(parent) = self.root.parent() {
+                    if let Some(home) = parent.parent() {
+                        if parent
+                            .file_name()
+                            .is_some_and(|n| n == ".dsh" || n == ".deepseek-harness")
+                        {
+                            roots.push(home.join(".dsh/sessions"));
+                            roots.push(home.join(".deepseek-harness/sessions"));
+                        }
+                    }
+                }
+            }
+            discover_jsonl_files_in_roots(
+                roots.iter().map(|p| p.as_path()),
+                ".jsonl.zstd",
+                budget.max_sources,
+                budget.resume_after.as_deref(),
+            )
+        } else if self.profile.harness_id == "workbuddy"
+            && self.root.file_name().is_some_and(|n| n == "projects")
+        {
+            let mut roots = vec![self.root.clone()];
+            if let Some(home) = self.root.parent().and_then(|p| p.parent()) {
+                for dir in [
+                    ".workbuddy/projects",
+                    ".codebuddy/projects",
+                    ".workbuddy-ai/projects",
+                ] {
+                    roots.push(home.join(dir));
+                }
+            }
+            discover_jsonl_files_in_roots(
+                roots.iter().map(|p| p.as_path()),
+                ".jsonl",
+                budget.max_sources,
+                budget.resume_after.as_deref(),
+            )
+        } else {
+            discover_jsonl_files(
+                &self.root,
+                ".jsonl",
+                budget.max_sources,
+                budget.resume_after.as_deref(),
+            )
+        };
         Ok(files
             .into_iter()
             .map(|path| {
@@ -210,6 +257,9 @@ impl HarnessStrategy for JsonlHarnessStrategy {
         committed: &CheckpointView,
         budget: ReadBudget,
     ) -> Result<RawBatch, RunnerError> {
+        if self.profile.harness_id == "deepseek-harness" && locator_ref.ends_with(".jsonl.zstd") {
+            return super::zstd_jsonl::read_source(Path::new(locator_ref), committed, budget);
+        }
         read_jsonl_source(Path::new(locator_ref), committed, budget)
     }
 
@@ -234,6 +284,54 @@ impl HarnessStrategy for JsonlHarnessStrategy {
             };
         remember_source_time(state, occurred_at, is_native);
 
+        let native_context = super::native_jsonl::Context {
+            harness: self.profile.harness_id,
+            secret: &self.identity_secret,
+            scope: logical_scope,
+            now: occurred_at,
+            time_source,
+            record,
+            book: &self.skill_book,
+            allocator: &*self.skill_allocator,
+        };
+        if let Some(mut facts) = super::native_jsonl::decode(&native_context, &value, state) {
+            for fact in &mut facts {
+                if fact.event_type == "model_usage_recorded" {
+                    if fact.model_identity.is_none() {
+                        let model = value
+                            .pointer("/message/model")
+                            .or_else(|| value.get("model"))
+                            .or_else(|| value.pointer("/providerData/model"))
+                            .or_else(|| value.pointer("/providerData/requestModelId"))
+                            .or_else(|| state.json.pointer("/native_model/model"))
+                            .and_then(|v| v.as_str());
+                        let provider = value
+                            .pointer("/message/provider")
+                            .or_else(|| value.get("provider"))
+                            .or_else(|| state.json.pointer("/native_model/provider"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(self.profile.harness_id);
+                        if let Some(model) = model.filter(|s| !s.is_empty()) {
+                            fact.model_identity = Some((provider.into(), model.into()));
+                        }
+                    }
+                    if let (Some(allocate), Some((provider, model))) =
+                        (&self.model_allocator, &fact.model_identity)
+                    {
+                        fact.model_key = allocate(provider, model)?;
+                    }
+                    if self.profile.harness_id == "workbuddy" && fact.model_identity.is_some() {
+                        fact.fact_revision = 2;
+                        fact.event_id = super::identity::event_id(&self.identity_secret, &fact.fact_key, 2);
+                    }
+                }
+            }
+            return Ok(if facts.is_empty() {
+                DecodeOutcome::ContextOnly
+            } else {
+                DecodeOutcome::Emit(facts)
+            });
+        }
         let session = Self::first_str(o, self.profile.session_keys);
         let turn = Self::first_str(o, self.profile.turn_keys);
         let byte_native = TypedNativeKey::ByteOffset(record.byte_start.unwrap_or(record.ordinal));
@@ -244,7 +342,9 @@ impl HarnessStrategy for JsonlHarnessStrategy {
         if self.profile.skill_types.iter().any(|t| *t == kind) {
             let name = Self::first_str(o, self.profile.skill_name_keys)
                 .unwrap_or_else(|| "unnamed-skill".into());
-            let native = TypedNativeKey::Str(format!("skill:{name}:{}", turn.as_deref().unwrap_or("")));
+            let native = Self::first_str(o, &["invocation_id", "invocationId", "callId", "id"])
+                .map(TypedNativeKey::Str)
+                .unwrap_or_else(|| byte_native.clone());
             let alloc = self.skill_allocator.clone();
             return Ok(DecodeOutcome::Emit(vec![emit_skill_fact(
                 &self.identity_secret,

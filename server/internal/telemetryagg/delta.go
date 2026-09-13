@@ -43,6 +43,8 @@ type DurationFact struct {
 // CostFact is one applied (or candidate) cost-bearing fact in a scope.
 // EventRowID is the request identity used when summing calculated prices.
 type CostFact struct {
+	FactKey    string
+	Revision   uint64
 	EventRowID int64
 	OccurredAt int64
 	ModelKey   uint64
@@ -183,7 +185,21 @@ func SelectEffectiveCosts(facts []CostFact) []EffectiveCost {
 	if len(facts) == 0 {
 		return nil
 	}
-	ordered := append([]CostFact(nil), facts...)
+	latest := map[string]CostFact{}
+	ordered := make([]CostFact, 0, len(facts))
+	for _, f := range facts {
+		if f.FactKey == "" {
+			ordered = append(ordered, f)
+			continue
+		}
+		old, ok := latest[f.FactKey]
+		if !ok || f.Revision > old.Revision {
+			latest[f.FactKey] = f
+		}
+	}
+	for _, f := range latest {
+		ordered = append(ordered, f)
+	}
 	slices.SortFunc(ordered, func(a, b CostFact) int {
 		if c := cmp.Compare(a.OccurredAt, b.OccurredAt); c != 0 {
 			return c

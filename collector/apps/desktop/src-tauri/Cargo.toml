@@ -2,7 +2,7 @@
 
 [package]
 name = "tokendance-desktop"
-version = "0.1.33"
+version = "0.1.38"
 edition = "2021"
 authors = ["TokenDance Team"]
 description = "TokenDance Desktop"
@@ -17,6 +17,7 @@ acquisition = { path = "../../../crates/acquisition" }
 adapter-sdk = { path = "../../../crates/adapter-sdk" }
 collector-core = { path = "../../../crates/collector-core" }
 collector-service = { path = "../../service" }
+adapter-codex = { path = "../../../adapters/codex" }
 adapter-grok-build = { path = "../../../adapters/grok-build" }
 config-executor = { path = "../../../crates/config-executor" }
 platform-credentials = { path = "../../../crates/platform-credentials" }
@@ -33,6 +34,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 ulid = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "system-proxy", "blocking"] }
 cookie = "0.18"
+zstd = "0.13"
 sha2 = "0.10"
 base64 = "0.22"
 rusqlite = { version = "0.32", features = ["bundled"] }

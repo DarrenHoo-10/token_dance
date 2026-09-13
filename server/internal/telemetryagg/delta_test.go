@@ -138,3 +138,21 @@ func mustHour(t *testing.T, occurredAtMs int64) int64 {
 	}
 	return b
 }
+
+func TestCalculatedCostRevisionReplacesOlderQuote(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		old := CostFact{FactKey: "request", Revision: 1, EventRowID: 1, ModelKey: 1, Currency: "USD", Units: 20, Source: v2.CostSourceCalculatedPrice}
+		latest := old
+		latest.Revision = 2
+		latest.EventRowID = 2
+		latest.Units = 5
+		facts := []CostFact{old, latest}
+		if reverse {
+			facts = []CostFact{latest, old}
+		}
+		got := SelectEffectiveCosts(facts)
+		if len(got) != 1 || got[0].Units != 5 || got[0].RequestCount != 1 {
+			t.Fatalf("revision must replace: %+v", got)
+		}
+	}
+}

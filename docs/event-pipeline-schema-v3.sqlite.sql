@@ -297,3 +297,17 @@ CREATE TABLE bucket_entity_state (
 ) STRICT;
 CREATE INDEX idx_entity_related ON bucket_entity_state(harness_id,entity_kind,entity_key,grain,bucket_start);
 CREATE INDEX idx_entity_parent ON bucket_entity_state(grain,bucket_start,harness_id,parent_key);
+
+CREATE TABLE IF NOT EXISTS session_extents (
+ id INTEGER PRIMARY KEY, -- 本地代理主键
+ created_at INTEGER NOT NULL, -- 首次创建 UTC 毫秒
+ updated_at INTEGER NOT NULL, -- 最近更新 UTC 毫秒
+ delete_at INTEGER, -- 删除 UTC 毫秒；NULL 未删除
+ extra TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(extra)), -- 可选扩展；不存必需业务状态
+ harness_id TEXT NOT NULL, -- 工具标识
+ session_key BLOB NOT NULL CHECK(length(session_key)=32), -- 稳定匿名会话身份
+ grain TEXT NOT NULL CHECK(grain IN ('hour','day','month')), -- 独立消费者的处理进度
+ first_event_at INTEGER NOT NULL, -- 已处理的最早事件 UTC 毫秒
+ last_event_at INTEGER NOT NULL CHECK(last_event_at>=first_event_at), -- 已处理的最晚事件 UTC 毫秒
+ UNIQUE(harness_id,session_key,grain)
+ ) STRICT;

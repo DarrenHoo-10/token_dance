@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	"tokendance/internal/clock"
@@ -21,18 +22,20 @@ import (
 )
 
 type Worker struct {
-	pricing            *pricing.Client
-	priceCursor        uint64
-	priceRetry         time.Time
-	db                 *sql.DB
-	workerID           string
-	clk                clock.Clock
-	cipher             *crypto.AEADCipher
-	emailProvider      email.Provider
-	storage            provider.ObjectStorage
-	ranking            *ranking.Index
-	lastHotPublish     time.Time
-	lastStatsFinalized time.Time
+	sessionBackfillMu     sync.Mutex
+	sessionBackfillCursor uint64
+	pricing               *pricing.Client
+	priceCursor           uint64
+	priceRetry            time.Time
+	db                    *sql.DB
+	workerID              string
+	clk                   clock.Clock
+	cipher                *crypto.AEADCipher
+	emailProvider         email.Provider
+	storage               provider.ObjectStorage
+	ranking               *ranking.Index
+	lastHotPublish        time.Time
+	lastStatsFinalized    time.Time
 	// eventPipelineV2Workers gates telemetry aggregation (P8 rollback switch).
 	eventPipelineV2Workers bool
 }

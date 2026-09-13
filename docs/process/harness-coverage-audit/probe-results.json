@@ -1,0 +1,255 @@
+{
+  "source": "repository synthetic contract fixtures only",
+  "results": [
+    {
+      "context": 4,
+      "errors": 0,
+      "events": {
+        "model_usage_recorded": 1,
+        "skill_invoked": 1
+      },
+      "harness": "codex",
+      "ignored": 1,
+      "records": 7,
+      "sample": "legacy-session-fixture",
+      "skills_failure": 1,
+      "skills_success": 0,
+      "tokens": 150
+    },
+    {
+      "context": 0,
+      "errors": 0,
+      "events": {
+        "model_usage_recorded": 1,
+        "session_started": 1,
+        "turn_completed": 1,
+        "turn_started": 1
+      },
+      "harness": "codex",
+      "ignored": 0,
+      "records": 4,
+      "sample": "native-session",
+      "skills_failure": 0,
+      "skills_success": 0,
+      "tokens": 110
+    },
+    {
+      "context": 0,
+      "errors": 0,
+      "events": {
+        "model_usage_recorded": 3,
+        "session_started": 1,
+        "turn_started": 1
+      },
+      "harness": "claude-code",
+      "ignored": 1,
+      "records": 5,
+      "sample": "session.jsonl",
+      "skills_failure": 0,
+      "skills_success": 0,
+      "tokens": 77
+    },
+    {
+      "context": 1,
+      "errors": 0,
+      "events": {
+        "model_usage_recorded": 1,
+        "session_started": 1,
+        "skill_invoked": 1
+      },
+      "harness": "claude-code",
+      "ignored": 1,
+      "records": 5,
+      "sample": "history.jsonl",
+      "skills_failure": 0,
+      "skills_success": 1,
+      "tokens": 35
+    },
+    {
+      "context": 1,
+      "errors": 0,
+      "events": {
+        "model_usage_recorded": 3,
+        "turn_completed": 3
+      },
+      "harness": "grok-build",
+      "ignored": 0,
+      "records": 4,
+      "sample": "session-updates.jsonl",
+      "skills_failure": 0,
+      "skills_success": 0,
+      "tokens": 170
+    },
+    {
+      "context": 1,
+      "errors": 0,
+      "events": {
+        "model_usage_recorded": 1,
+        "session_started": 1,
+        "skill_invoked": 1
+      },
+      "harness": "grok-build",
+      "ignored": 1,
+      "records": 5,
+      "sample": "history.jsonl",
+      "skills_failure": 0,
+      "skills_success": 1,
+      "tokens": 35
+    },
+    {
+      "context": 1,
+      "errors": 0,
+      "events": {
+        "model_usage_recorded": 1,
+        "session_started": 1,
+        "skill_invoked": 1
+      },
+      "harness": "deepseek-harness",
+      "ignored": 2,
+      "records": 6,
+      "sample": "history.jsonl",
+      "skills_failure": 0,
+      "skills_success": 1,
+      "tokens": 35
+    },
+    {
+      "context": 2,
+      "errors": 0,
+      "events": {
+        "model_usage_recorded": 2,
+        "session_started": 1,
+        "turn_completed": 1,
+        "turn_started": 1
+      },
+      "harness": "pi",
+      "ignored": 0,
+      "records": 6,
+      "sample": "known.json",
+      "skills_failure": 0,
+      "skills_success": 0,
+      "tokens": 9018
+    },
+    {
+      "context": 1,
+      "errors": 0,
+      "events": {
+        "model_usage_recorded": 2,
+        "session_started": 1,
+        "turn_completed": 1
+      },
+      "harness": "pi",
+      "ignored": 2,
+      "records": 7,
+      "sample": "errors.json",
+      "skills_failure": 0,
+      "skills_success": 0,
+      "tokens": 310
+    },
+    {
+      "context": 0,
+      "errors": 0,
+      "events": {
+        "model_usage_recorded": 1,
+        "session_started": 1
+      },
+      "harness": "workbuddy",
+      "ignored": 0,
+      "records": 2,
+      "sample": "known.json",
+      "skills_failure": 0,
+      "skills_success": 0,
+      "tokens": 100
+    },
+    {
+      "context": 1,
+      "errors": 0,
+      "events": {
+        "model_usage_recorded": 1
+      },
+      "harness": "doubao-work",
+      "ignored": 0,
+      "records": 2,
+      "sample": "known.json",
+      "skills_failure": 0,
+      "skills_success": 0,
+      "tokens": 100
+    },
+    {
+      "context": 2,
+      "errors": 0,
+      "events": {},
+      "harness": "cursor",
+      "ignored": 0,
+      "records": 2,
+      "sample": "api-enabled-transcript",
+      "skills_failure": 0,
+      "skills_success": 0,
+      "tokens": 0
+    },
+    {
+      "context": 0,
+      "errors": 0,
+      "events": {
+        "model_usage_recorded": 1,
+        "session_started": 1,
+        "skill_invoked": 1
+      },
+      "harness": "zcode",
+      "ignored": 0,
+      "records": 3,
+      "sample": "legacy-record-projection",
+      "skills_failure": 0,
+      "skills_success": 0,
+      "tokens": 120
+    },
+    {
+      "context": 1,
+      "errors": 0,
+      "events": {
+        "code_changed": 1,
+        "model_usage_recorded": 1,
+        "session_started": 1,
+        "skill_invoked": 1
+      },
+      "harness": "zcode",
+      "ignored": 0,
+      "records": 5,
+      "sample": "actual-sql-projection",
+      "skills_failure": 0,
+      "skills_success": 1,
+      "tokens": 12
+    },
+    {
+      "context": 1,
+      "errors": 0,
+      "events": {
+        "model_usage_recorded": 1,
+        "session_started": 1
+      },
+      "harness": "opencode",
+      "ignored": 0,
+      "records": 3,
+      "sample": "legacy-record-projection",
+      "skills_failure": 0,
+      "skills_success": 0,
+      "tokens": 140
+    },
+    {
+      "context": 0,
+      "errors": 0,
+      "events": {
+        "code_changed": 1,
+        "model_usage_recorded": 1,
+        "session_started": 1,
+        "skill_invoked": 1
+      },
+      "harness": "opencode",
+      "ignored": 0,
+      "records": 4,
+      "sample": "actual-sql-projection",
+      "skills_failure": 0,
+      "skills_success": 1,
+      "tokens": 46
+    }
+  ]
+}

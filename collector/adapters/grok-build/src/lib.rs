@@ -177,8 +177,9 @@ impl AgentAdapter for GrokBuildAdapter {
             required_permissions: vec![],
             verify: vec![VerifyStep {
                 id: "grok-build-hook-loopback".into(),
-                summary: "SessionEnd hook stays on 127.0.0.1 and does not log prompts or tool content"
-                    .into(),
+                summary:
+                    "SessionEnd hook stays on 127.0.0.1 and does not log prompts or tool content"
+                        .into(),
             }],
             rollback: vec![RollbackStep {
                 id: "restore-grok-build-hook".into(),
@@ -493,6 +494,11 @@ fn version_major(version: &str) -> Option<u64> {
         .ok()
 }
 
+/// Decode native JSONL wrappers without reintroducing the legacy upload path.
+pub fn normalize_jsonl_record(value: Value) -> Result<Vec<Value>, AdapterError> {
+    normalize_records(value, SourceKind::JsonlTail)
+}
+
 fn normalize_records(value: Value, source_kind: SourceKind) -> Result<Vec<Value>, AdapterError> {
     if source_kind == SourceKind::RuntimeStream {
         if value.get("type").and_then(Value::as_str) == Some("code_changed") {
@@ -665,7 +671,11 @@ fn code_changed_from_tool_update(
         .and_then(|tool| tool.get("name"))
         .and_then(Value::as_str)
         .or_else(|| update.get("kind").and_then(Value::as_str))
-        .or_else(|| output.and_then(|value| value.get("type")).and_then(Value::as_str))
+        .or_else(|| {
+            output
+                .and_then(|value| value.get("type"))
+                .and_then(Value::as_str)
+        })
         .unwrap_or("");
     if applied.is_none()
         && !matches!(
@@ -681,7 +691,11 @@ fn code_changed_from_tool_update(
         .unwrap_or("");
     let new_text = applied
         .and_then(|value| json_string(value, &["new_string", "newString"]))
-        .or_else(|| input.and_then(|value| json_string(value, &["new_string", "newString", "contents", "content"])))
+        .or_else(|| {
+            input.and_then(|value| {
+                json_string(value, &["new_string", "newString", "contents", "content"])
+            })
+        })
         .unwrap_or("");
     if old_text.is_empty() && new_text.is_empty() {
         return None;

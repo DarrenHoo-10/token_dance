@@ -324,7 +324,7 @@ func TestDirtyDayVersionConfirmDoesNotSwallowMidFlight(t *testing.T) {
 	}
 }
 
-func TestReviewHourDurationWithdrawsTurnBucketsE2E(t *testing.T) {
+func TestSessionSpanSplitsAcrossHoursE2E(t *testing.T) {
 	st, w, cleanup := setupAggDB(t)
 	defer cleanup()
 	now := time.Date(2024, 6, 15, 12, 0, 0, 0, time.UTC)
@@ -393,14 +393,14 @@ func TestReviewHourDurationWithdrawsTurnBucketsE2E(t *testing.T) {
 		}
 		return v
 	}
-	if got := readHour(b9); got != 0 {
-		t.Fatalf("hour-09 must withdraw turn fallback, got %d", got)
+	if got := readHour(b9); got != 3600000 {
+		t.Fatalf("hour-09 must contain one hour of session time, got %d", got)
 	}
-	if got := readHour(b10); got != 0 {
-		t.Fatalf("hour-10 must withdraw turn fallback, got %d", got)
+	if got := readHour(b10); got != 3600000 {
+		t.Fatalf("hour-10 must contain one hour of session time, got %d", got)
 	}
-	if got := readHour(b11); got != 500 {
-		t.Fatalf("hour-11 must hold session_end 500, got %d", got)
+	if got := readHour(b11); got != 0 {
+		t.Fatalf("hour-11 must contain zero elapsed time at the boundary, got %d", got)
 	}
 }
 

@@ -89,7 +89,7 @@ fn commit_one(
 fn empty_db_creates_ten_tables_and_reinit_preserves_events() {
     let dir = tempfile::TempDir::new().unwrap();
     let mut store = PipelineStore::open(dir.path()).unwrap();
-    assert_eq!(store.business_table_count().unwrap(), 10);
+    assert_eq!(store.business_table_count().unwrap(), 11);
     assert!(store.is_ready().unwrap());
 
     let source_id = register_jsonl(&mut store);
@@ -108,18 +108,14 @@ fn empty_db_creates_ten_tables_and_reinit_preserves_events() {
     drop(store);
     let store2 = PipelineStore::open(dir.path()).unwrap();
     assert_eq!(store2.event_count().unwrap(), 1);
-    assert_eq!(store2.business_table_count().unwrap(), 10);
+    assert_eq!(store2.business_table_count().unwrap(), 11);
 }
 
 #[test]
 fn skill_registers_once_by_skill_key() {
     let mut store = open_store();
-    let id1 = store
-        .register_skill(&blob(9), Some("Search"))
-        .unwrap();
-    let id2 = store
-        .register_skill(&blob(9), Some("Renamed"))
-        .unwrap();
+    let id1 = store.register_skill(&blob(9), Some("Search")).unwrap();
+    let id2 = store.register_skill(&blob(9), Some("Renamed")).unwrap();
     assert_eq!(id1, id2);
     let name: String = store
         .with_connection(|conn| {
@@ -355,9 +351,7 @@ fn task_lease_claim_complete_and_expired_reclaim() {
     assert_eq!(store.task_count().unwrap(), 3);
 
     // Lease reclaim: claim hour, advance clock past lease_until.
-    let hour = store
-        .claim_tasks(Consumer::Hour, 10, 1_000)
-        .unwrap();
+    let hour = store.claim_tasks(Consumer::Hour, 10, 1_000).unwrap();
     assert_eq!(hour.len(), 1);
     store.set_clock_ms(store.now_ms() + 5_000);
     let reclaimed = store.reclaim_expired_leases().unwrap();
@@ -431,8 +425,14 @@ fn ttl_hard_deletes_without_extending_on_update_and_blocks_dependents() {
         })
         .unwrap();
 
-    let a_id = store.event_row_id_by_event_id(&a.event_id).unwrap().unwrap();
-    let b_id = store.event_row_id_by_event_id(&b.event_id).unwrap().unwrap();
+    let a_id = store
+        .event_row_id_by_event_id(&a.event_id)
+        .unwrap()
+        .unwrap();
+    let b_id = store
+        .event_row_id_by_event_id(&b.event_id)
+        .unwrap()
+        .unwrap();
 
     // Touch updated_at / soft-delete simulation on A — must not extend expire_at.
     store
@@ -449,8 +449,14 @@ fn ttl_hard_deletes_without_extending_on_update_and_blocks_dependents() {
     store.set_clock_ms(base + EVENT_TTL_MS + 1);
     let deleted = store.expire_due_events(10).unwrap();
     assert_eq!(deleted, 1);
-    assert!(store.event_row_id_by_event_id(&a.event_id).unwrap().is_none());
-    assert!(store.event_row_id_by_event_id(&b.event_id).unwrap().is_some());
+    assert!(store
+        .event_row_id_by_event_id(&a.event_id)
+        .unwrap()
+        .is_none());
+    assert!(store
+        .event_row_id_by_event_id(&b.event_id)
+        .unwrap()
+        .is_some());
     assert_eq!(store.expired_incomplete_count(source_id).unwrap(), 1);
 
     let b_status = store.event_status_json(b_id).unwrap();
@@ -496,8 +502,12 @@ fn retry_schedules_runnable_at_without_losing_other_lanes() {
         vec![candidate(41, None)],
         r#"{"offset":1}"#,
     );
-    let day = store.claim_tasks(Consumer::Day, 1, DEFAULT_LEASE_MS).unwrap();
-    let hour = store.claim_tasks(Consumer::Hour, 1, DEFAULT_LEASE_MS).unwrap();
+    let day = store
+        .claim_tasks(Consumer::Day, 1, DEFAULT_LEASE_MS)
+        .unwrap();
+    let hour = store
+        .claim_tasks(Consumer::Hour, 1, DEFAULT_LEASE_MS)
+        .unwrap();
     store
         .complete_task(TaskComplete {
             task_id: hour[0].task_id,
@@ -588,11 +598,100 @@ fn review_writer_compensation_runs_while_channel_stays_busy() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
 
-    let again = writer.claim_tasks(Consumer::Day, 1, DEFAULT_LEASE_MS).unwrap();
+    let again = writer
+        .claim_tasks(Consumer::Day, 1, DEFAULT_LEASE_MS)
+        .unwrap();
     assert_eq!(
         again.len(),
         1,
         "expired lease must be reclaimed despite continuous traffic"
     );
     writer.shutdown();
+}
+
+#[test]
+fn skill_name_backfill_requeues_only_upload_without_changing_identity() {
+    let mut store = open_store();
+    let id = store.register_skill(&blob(9), None).unwrap();
+    let source = register_jsonl(&mut store);
+    let (token, _, seq) = store.lease_source(source, DEFAULT_LEASE_MS).unwrap();
+    let mut event = candidate(1, None);
+    event.skill_id = Some(id);
+    event.event_type = "skill_invoked".into();
+    event.payload_json =
+        r#"{"meta":{"accuracy":"exact","time_source":"source_record"},"activity":{}}"#.into();
+    commit_one(&mut store, source, &token, seq, vec![event], "{}");
+    store
+        .with_connection(|c| {
+            c.execute(
+                "UPDATE events SET status_json='{\"hour\":3,\"day\":3,\"month\":3,\"upload\":3}'",
+                [],
+            )?;
+            c.execute("DELETE FROM processing_tasks", [])?;
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(
+        store
+            .register_skill(&blob(9), Some("actual-skill"))
+            .unwrap(),
+        id
+    );
+    store.with_connection(|c|{let(name,status,event_id,hash):(String,String,Vec<u8>,Vec<u8>)=c.query_row("SELECT s.public_name,e.status_json,e.event_id,e.content_hash FROM events e JOIN skill_dimensions s ON s.id=e.skill_id",[],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;assert_eq!(name,"actual-skill");assert_eq!(serde_json::from_str::<serde_json::Value>(&status).unwrap(),serde_json::json!({"hour":3,"day":3,"month":3,"upload":0}));assert_eq!(event_id,blob(1));assert_eq!(hash,blob(101));Ok(())}).unwrap();
+    assert_eq!(store.event_count().unwrap(), 1);
+    assert_eq!(store.task_count().unwrap(), 1);
+    store.register_skill(&blob(9), None).unwrap();
+    assert_eq!(store.task_count().unwrap(), 1);
+}
+
+#[test]
+fn request_cost_uses_prices_and_freezes_quote_on_replay(){
+ let dir=tempfile::tempdir().unwrap();std::fs::write(dir.path().join("openrouter-prices.json"),r#"{"data":[{"id":"test/model","pricing":{"prompt":"0.01","completion":"0.02"}}]}"#).unwrap();
+ let mut store=PipelineStore::open(dir.path()).unwrap();store.set_clock_ms(1_700_000_000_000);let model=store.upsert_model("test","model").unwrap();let source=register_jsonl(&mut store);let(token,_,seq)=store.lease_source(source,DEFAULT_LEASE_MS).unwrap();let mut event=candidate(11,None);event.model_key=model;
+ commit_one(&mut store,source,&token,seq,vec![event.clone()],"{}");assert_eq!(store.event_count().unwrap(),2);
+ store.with_connection(|c|{let units:i64=c.query_row("SELECT json_extract(payload_json,'$.cost.units') FROM events WHERE event_type='cost_recorded'",[],|r|r.get(0))?;assert_eq!(units,12_000_000);Ok(())}).unwrap();
+ std::fs::write(dir.path().join("openrouter-prices.json"),r#"{"data":[{"id":"test/model","pricing":{"prompt":"0.1","completion":"0.2"}}]}"#).unwrap();
+ let(token,_,seq)=store.lease_source(source,DEFAULT_LEASE_MS).unwrap();commit_one(&mut store,source,&token,seq,vec![event],"{}");assert_eq!(store.event_count().unwrap(),2);
+}
+
+#[test]
+fn late_price_catalog_backfills_existing_usage_without_replaying_tokens() {
+ let dir=tempfile::tempdir().unwrap();
+ let mut store=PipelineStore::open(dir.path()).unwrap();store.set_clock_ms(1_700_000_000_000);
+ let model=store.upsert_model("test","model").unwrap();let source=register_jsonl(&mut store);
+ let(token,_,seq)=store.lease_source(source,DEFAULT_LEASE_MS).unwrap();let mut event=candidate(11,None);event.model_key=model;
+ commit_one(&mut store,source,&token,seq,vec![event],"{}");
+ store.backfill_derived_metrics(128).unwrap();assert_eq!(store.event_count().unwrap(),1);
+ std::fs::write(dir.path().join("openrouter-prices.json"),r#"{"data":[{"id":"test/model","pricing":{"prompt":"0.01","completion":"0.02"}}]}"#).unwrap();
+ store.backfill_derived_metrics(128).unwrap();assert_eq!(store.event_count().unwrap(),2);
+ store.backfill_derived_metrics(128).unwrap();assert_eq!(store.event_count().unwrap(),2);
+ let ids=store.with_connection(|c|{let mut q=c.prepare("SELECT id FROM events WHERE event_type='cost_recorded'")?;let ids=q.query_map([],|r|r.get::<_,i64>(0))?.collect::<Result<Vec<_>,_>>()?;Ok(ids)}).unwrap();
+ let rows=store.load_upload_events(&ids).unwrap();
+ let wire=crate::upload_pipeline::encode_wire_event(&rows[0]).unwrap();
+ assert_eq!(serde_json::to_value(wire).unwrap()["payload"]["cost"]["source"],"calculated_price");
+ std::fs::write(dir.path().join("openrouter-prices.json"),r#"{"fetched_at":1,"data":[{"id":"test/model","pricing":{"prompt":"0.1","completion":"0.2"}}]}"#).unwrap();
+ store.backfill_derived_metrics(128).unwrap();assert_eq!(store.event_count().unwrap(),3);
+ for consumer in [Consumer::Hour,Consumer::Day,Consumer::Month]{
+  for task in store.claim_tasks(consumer,16,DEFAULT_LEASE_MS).unwrap(){store.apply_and_complete_metrics(&task).unwrap();}
+ }
+ store.with_connection(|c|{let units:i64=c.query_row("SELECT estimated_cost_units FROM cost_metrics WHERE grain='day'",[],|r|r.get(0))?;assert_eq!(units,120_000_000);Ok(())}).unwrap();
+
+}
+
+#[test]
+fn existing_database_gains_session_extents_without_resetting_events() {
+ let dir=tempfile::tempdir().unwrap();let mut store=PipelineStore::open(dir.path()).unwrap();store.set_clock_ms(1_700_000_000_000);
+ let source=register_jsonl(&mut store);let(token,_,seq)=store.lease_source(source,DEFAULT_LEASE_MS).unwrap();commit_one(&mut store,source,&token,seq,vec![candidate(1,None)],"{}");
+ store.with_connection(|c|{c.execute("DROP TABLE session_extents",[])?;Ok(())}).unwrap();drop(store);
+ let store=PipelineStore::open(dir.path()).unwrap();assert_eq!(store.business_table_count().unwrap(),11);assert_eq!(store.event_count().unwrap(),1);
+}
+
+#[test]
+fn workbuddy_model_repair_rewinds_once_without_deleting_events() {
+ let dir=tempfile::tempdir().unwrap();let mut store=PipelineStore::open(dir.path()).unwrap();store.set_clock_ms(1_700_000_000_000);
+ let source=register_jsonl(&mut store);
+ store.with_connection(|c|{c.execute("UPDATE collection_sources SET harness_id='workbuddy' WHERE id=?1",[source])?;c.execute("UPDATE schema_meta SET extra=json_remove(extra,'$.workbuddy_model_repair')",[])?;Ok(())}).unwrap();
+ let(token,_,seq)=store.lease_source(source,DEFAULT_LEASE_MS).unwrap();commit_one(&mut store,source,&token,seq,vec![candidate(1,None)],"{}");
+ store.with_connection(|c|{super::schema::repair_workbuddy_models(c)?;let cursor:String=c.query_row("SELECT cursor_json FROM collection_sources WHERE id=?1",[source],|r|r.get(0))?;assert_eq!(cursor,"{}");c.execute("UPDATE collection_sources SET cursor_json='{\"offset\":100}' WHERE id=?1",[source])?;super::schema::repair_workbuddy_models(c)?;let cursor:String=c.query_row("SELECT cursor_json FROM collection_sources WHERE id=?1",[source],|r|r.get(0))?;assert!(cursor.contains("100"));Ok(())}).unwrap();
+ assert_eq!(store.event_count().unwrap(),1);
 }

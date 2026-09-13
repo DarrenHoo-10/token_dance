@@ -6,8 +6,8 @@ use std::sync::Arc;
 use serde_json::{json, Value};
 
 use super::common::{
-    emit_code_fact, emit_skill_fact, emit_usage_fact, i64_field, json_obj, remember_source_time, resolve_record_time,
-    str_field, u64_field, SkillBook, UsageFactArgs,
+    emit_code_fact, emit_skill_fact, emit_usage_fact, i64_field, json_obj, remember_source_time,
+    resolve_record_time, str_field, u64_field, SkillBook, UsageFactArgs,
 };
 use super::identity::{source_key, TypedNativeKey};
 use crate::local_store::pipeline::runner::{
@@ -23,30 +23,30 @@ pub const STREAM_USAGE: &str = "sqlite/model_usage";
 pub const STREAM_CODE: &str = "sqlite/code_part";
 
 /// Fixture / v3-compatible projection: columns rowid, updated_at, status, payload_json text.
-pub const SQL_SESSION: &str =
-    "SELECT rowid, time_created AS updated_at, 'completed' AS status, \
+pub const SQL_SESSION: &str = "SELECT rowid, time_created AS updated_at, 'completed' AS status, \
      json_object('type','session','id',rowid,'sessionId',id,'timestamp',time_created) \
      FROM session WHERE rowid > ?1 ORDER BY rowid";
 
-pub const SQL_USAGE: &str =
-    "SELECT rowid, COALESCE(completed_at, 0) AS updated_at, status, \
+pub const SQL_USAGE: &str = "SELECT rowid, COALESCE(completed_at, 0) AS updated_at, status, \
      json_object('type','step_finish','id',rowid,'sessionId',session_id, \
        'provider',provider_id,'model',model_id,'inputTokens',input_tokens, \
        'outputTokens',output_tokens,'totalTokens',computed_total_tokens, \
+       'cacheReadTokens',cache_read_input_tokens,'cacheWriteTokens',cache_creation_input_tokens, \
+       'reasoningTokens',reasoning_tokens, \
        'timestamp',COALESCE(completed_at, 0),'status',status) \
      FROM model_usage WHERE rowid > ?1 ORDER BY rowid";
 
-pub const SQL_CODE: &str =
-    "SELECT rowid, time_updated AS updated_at, 'completed' AS status, \
+pub const SQL_CODE: &str = "SELECT rowid, time_updated AS updated_at, 'completed' AS status, \
      json_object('type','code_changed','id',rowid,'sessionId',session_id, \
        'timestamp',time_updated,'callId',json_extract(data,'$.callID'), \
-       'addedLines',1,'removedLines',0,'fileCount',1) \
+       'part',json(data)) \
      FROM part WHERE (time_updated > ?1) OR (time_updated = ?1 AND rowid > ?2) \
      ORDER BY time_updated, rowid";
 
 pub struct ZcodeStrategy {
     pub identity_secret: Vec<u8>,
     pub db_path: PathBuf,
+    model_allocator: Option<crate::local_store::pipeline::runner::ModelAllocator>,
     pub skill_book: SkillBook,
     pub skill_allocator: Arc<dyn Fn([u8; 32], &str) -> i64 + Send + Sync>,
 }
@@ -61,6 +61,7 @@ impl ZcodeStrategy {
         Self {
             identity_secret: identity_secret.into(),
             db_path: db_path.into(),
+            model_allocator: None,
             skill_book,
             skill_allocator,
         }
@@ -77,6 +78,12 @@ impl ZcodeStrategy {
 }
 
 impl HarnessStrategy for ZcodeStrategy {
+    fn set_model_allocator(
+        &mut self,
+        allocator: crate::local_store::pipeline::runner::ModelAllocator,
+    ) {
+        self.model_allocator = Some(allocator);
+    }
     fn harness_id(&self) -> &str {
         HARNESS_ID
     }
@@ -119,8 +126,13 @@ impl HarnessStrategy for ZcodeStrategy {
                 "unknown zcode stream {stream_key}"
             )));
         };
-        let result =
-            read_sqlite_change_stream(Path::new(locator_ref), sql, &committed.cursor_json, mode, budget)?;
+        let result = read_sqlite_change_stream(
+            Path::new(locator_ref),
+            sql,
+            &committed.cursor_json,
+            mode,
+            budget,
+        )?;
 
         let records = result
             .rows
@@ -199,12 +211,25 @@ impl HarnessStrategy for ZcodeStrategy {
         let turn = rowid.to_string();
 
         match kind.as_str() {
-            "session" => Ok(DecodeOutcome::ContextOnly),
+            "session" => Ok(DecodeOutcome::Emit(vec![
+                super::common::emit_activity_fact(
+                    &self.identity_secret,
+                    HARNESS_ID,
+                    logical_scope,
+                    native,
+                    "session_started",
+                    occurred_at,
+                    time_source,
+                    session.as_deref().unwrap_or(logical_scope),
+                    None,
+                    json!({}),
+                ),
+            ])),
             "step_finish" | "model_usage" => {
                 let input = u64_field(o, "inputTokens").unwrap_or(0);
                 let output = u64_field(o, "outputTokens").unwrap_or(0);
                 let total = u64_field(o, "totalTokens").unwrap_or(input + output);
-                Ok(DecodeOutcome::Emit(vec![emit_usage_fact(UsageFactArgs {
+                let mut fact = emit_usage_fact(UsageFactArgs {
                     secret: &self.identity_secret,
                     harness: HARNESS_ID,
                     scope: logical_scope,
@@ -221,9 +246,22 @@ impl HarnessStrategy for ZcodeStrategy {
                     skill_id: None,
                     skill_key: None,
                     model_key: 0,
-                    cache_read_tokens: None,
-                    reasoning_tokens: None,
-                })]))
+                    cache_read_tokens: u64_field(o, "cacheReadTokens"),
+                    reasoning_tokens: u64_field(o, "reasoningTokens"),
+                });
+                if let Some(write) = u64_field(o, "cacheWriteTokens") {
+                    fact.payload_sections["usage"]["cache_write_tokens"] = json!(write);
+                }
+                if let Some(model) = str_field(o, "model").filter(|s| !s.is_empty()) {
+                    let provider = str_field(o, "provider").unwrap_or_else(|| HARNESS_ID.into());
+                    if let Some(allocate) = &self.model_allocator {
+                        fact.model_key = allocate(&provider, &model)?;
+                    }
+                    fact.model_identity = Some((provider, model));
+                }
+                fact.fact_revision = 2;
+                fact.event_id = super::identity::event_id(&self.identity_secret, &fact.fact_key, 2);
+                Ok(DecodeOutcome::Emit(vec![fact]))
             }
             "skill" => {
                 let name = str_field(o, "skillName").unwrap_or_else(|| "zcode-skill".into());
@@ -241,17 +279,67 @@ impl HarnessStrategy for ZcodeStrategy {
                     session.as_deref(),
                 )]))
             }
-            "code_changed" => Ok(DecodeOutcome::Emit(vec![emit_code_fact(
-                &self.identity_secret,
-                HARNESS_ID,
-                logical_scope,
-                native,
-                occurred_at,
-                time_source,
-                session.as_deref(),
-                u64_field(o, "addedLines").unwrap_or(0),
-                u64_field(o, "removedLines").unwrap_or(0),
-            )])),
+            "code_changed" => {
+                if let Some(part) = o.get("part") {
+                    if part
+                        .get("tool")
+                        .and_then(Value::as_str)
+                        .is_some_and(|s| s.eq_ignore_ascii_case("skill"))
+                    {
+                        let status = part.pointer("/state/status").and_then(Value::as_str);
+                        let success = match status {
+                            Some("completed") => true,
+                            Some("error" | "failed") => false,
+                            _ => return Ok(DecodeOutcome::ContextOnly),
+                        };
+                        let name = part
+                            .pointer("/state/input/skill")
+                            .or_else(|| part.pointer("/state/input/name"))
+                            .and_then(Value::as_str)
+                            .filter(|s| !s.is_empty());
+                        let Some(name) = name else {
+                            return Ok(DecodeOutcome::Ignore(IgnoreCode::MalformedRecord));
+                        };
+                        let alloc = |key, name: &str| (self.skill_allocator)(key, name);
+                        let mut fact = super::common::emit_skill_fact(
+                            &self.identity_secret,
+                            HARNESS_ID,
+                            logical_scope,
+                            native,
+                            occurred_at,
+                            time_source,
+                            name,
+                            &self.skill_book,
+                            &alloc,
+                            session.as_deref(),
+                        );
+                        fact.payload_sections = json!({"activity":{"success":success}});
+                        return Ok(DecodeOutcome::Emit(vec![fact]));
+                    }
+                }
+                let Some(code) = o
+                    .get("part")
+                    .and_then(super::common::completed_code_payload)
+                else {
+                    return Ok(DecodeOutcome::ContextOnly);
+                };
+                let mut fact = emit_code_fact(
+                    &self.identity_secret,
+                    HARNESS_ID,
+                    logical_scope,
+                    native,
+                    occurred_at,
+                    time_source,
+                    session.as_deref(),
+                    0,
+                    0,
+                );
+                // Correction revision: old collectors emitted placeholder counts at revision 1.
+                fact.fact_revision = 2;
+                fact.event_id = super::identity::event_id(&self.identity_secret, &fact.fact_key, 2);
+                fact.payload_sections = json!({"code": code});
+                Ok(DecodeOutcome::Emit(vec![fact]))
+            }
             _ => Ok(DecodeOutcome::Ignore(IgnoreCode::UnsupportedStructure)),
         }
     }

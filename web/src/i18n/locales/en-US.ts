@@ -176,7 +176,7 @@ export const enUS = {
     inputContextTokens: 'Input Context',
     outputTokens: 'Output Tokens',
     cacheHitRate: 'Cache Hit Rate',
-    activeDurationMs: 'Total Duration',
+    activeDurationMs: 'Total session duration',
     messageCount: 'Total Messages',
     userMessageCount: 'User Messages',
     currentPeriod: 'Current period',

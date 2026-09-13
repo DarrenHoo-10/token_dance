@@ -11,3 +11,5 @@
 现有需求资料仍在迁移前位置，见 [过渡入口](../README.md#现有文档过渡入口)。新增或迁入需求后在此登记目录、状态和简要说明。
 
 - [重建、统计与上传解耦](rebuild-sync-decoupling/README.md)：SQLite 游标推进、独立统计消费者和同步接口错误修复。
+
+- [全工具采集缺口修复](harness-coverage-audit/README.md)：原生格式、Skill、缓存口径及统计修订；豆包接入 IndexedDB 活动与 Skill，Token 保持未知。

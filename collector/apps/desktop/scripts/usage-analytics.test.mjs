@@ -143,3 +143,10 @@ test('collector status follows the actual feed without asking for unspecified co
   assert.equal(collectionStatusText({...agent,status:'ERROR'},'today',false,true),'用量读取失败，将自动重试');
   assert.equal(collectionStatusText({...agent,status:'AUTH_REQUIRED'},'today',true,true),'已暂停');
 });
+
+test('Doubao activity does not imply known Token usage', () => {
+  const item = { id: 'doubao-work', enabled: true, status: 'ACTIVE', accuracy: 'unknown' };
+  assert.equal(collectionStatusText(item, 'today', false, true), '活动采集中，Token 不可用');
+  assert.equal(collectionStatusText(item, 'today', true, true), '已暂停');
+  assert.equal(usageTokens(item, 'today', now), null);
+});

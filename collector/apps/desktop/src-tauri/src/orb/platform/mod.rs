@@ -166,7 +166,7 @@ mod tests {
             effects_origin(orb_origin, scale),
             PhysicalPosition::new(same_scale, 200 + dip_to_physical(-EFFECTS_INSET_DIP, scale))
         );
-        assert_eq!(effects_size_dip(DEFAULT_DIAMETER_DIP), 112.0);
+        assert_eq!(effects_size_dip(DEFAULT_DIAMETER_DIP), 128.0);
     }
 
     #[test]

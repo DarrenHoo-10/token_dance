@@ -176,7 +176,7 @@ export const zhCN = {
     inputContextTokens: '输入上下文',
     outputTokens: '输出 Token',
     cacheHitRate: '缓存命中率',
-    activeDurationMs: '总时长',
+    activeDurationMs: '会话总时长',
     messageCount: '总消息数',
     userMessageCount: '用户消息数',
     currentPeriod: '本周期',

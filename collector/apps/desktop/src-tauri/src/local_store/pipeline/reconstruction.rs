@@ -4,7 +4,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 /// Keep historical milestones so skipping a release still triggers its reconstruction.
-const REBUILD_RELEASES: &[&str] = &["0.1.27"];
+const REBUILD_RELEASES: &[&str] = &["0.1.27", "0.1.35"];
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,6 +70,7 @@ pub fn begin(conn: &mut Connection, target: &str) -> Result<RebuildStatus, Pipel
     }
     let tx = conn.transaction()?;
     for table in [
+        "session_extents",
         "processing_tasks",
         "bucket_entity_state",
         "harness_metrics",
@@ -134,10 +135,11 @@ mod tests {
         assert_eq!(required_release("0.1.30", "0.1.27"), None);
         assert_eq!(
             required_release("0.2.0", "0.1.26").as_deref(),
-            Some("0.1.27")
+            Some("0.1.35")
         );
         assert_eq!(required_release("0.1.26", ""), None);
-        assert_eq!(required_release("0.2.0", "0.1.27"), None);
+        assert_eq!(required_release("0.2.0", "0.1.27").as_deref(), Some("0.1.35"));
+        assert_eq!(required_release("0.1.35", "0.1.35"), None);
         let mut store = PipelineStore::open_in_memory().unwrap();
         store
             .with_connection(|c| {
