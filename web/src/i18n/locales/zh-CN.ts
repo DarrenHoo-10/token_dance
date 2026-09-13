@@ -271,8 +271,6 @@ export const zhCN = {
     insights: {
       eyebrow: '成员视角',
       title: '团队协作表现',
-      peopleSub: '各成员用量与 Token 效率',
-      viewRanking: '查看成员明细 ↓',
       teamTotal: '团队总量',
       historical: '历史成员',
       detailTitle: '成员明细',

@@ -16,7 +16,7 @@ export const TeamAnalyticsPage: React.FC = () => {
   const outlet = useOutletContext<{ openInvite?: () => void } | undefined>();
   const location = useLocation();
   const justCreated = Boolean((location.state as { justCreated?: boolean } | null)?.justCreated);
-  const { range, from, to, agent, provider, model, setFilter, search } = useTeamSearchFilters();
+  const { range, from, to, agent, provider, model, setFilter } = useTeamSearchFilters();
   const { analysis, updating, updatingMessageKey, error } = useTeamAnalysis({
     teamId: scope?.team.id,
     authRevision,
@@ -94,7 +94,6 @@ export const TeamAnalyticsPage: React.FC = () => {
         analysis={analysis}
         teamId={scope.team.id}
         authRevision={authRevision}
-        search={search}
       />
     </div>
   );

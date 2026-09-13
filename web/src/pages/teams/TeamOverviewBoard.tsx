@@ -24,8 +24,7 @@ export const TeamOverviewBoard: React.FC<{
   analysis: TeamAnalysisReady;
   teamId: string;
   authRevision: string | null;
-  search: string;
-}> = ({ analysis, teamId, authRevision, search }) => {
+}> = ({ analysis, teamId, authRevision }) => {
   const { t } = useLocale();
   const tokens = metricDisplay(analysis.summary.tokens);
   const reported = analysis.costs.reported || [];
@@ -128,7 +127,7 @@ export const TeamOverviewBoard: React.FC<{
         </Card>
       </section>
 
-      <TeamMemberInsights key={`${teamId}:${authRevision || ''}`} analysis={analysis} teamId={teamId} search={search} />
+      <TeamMemberInsights key={`${teamId}:${authRevision || ''}`} analysis={analysis} />
 
       <TeamUsageMix analysis={analysis} />
     </>

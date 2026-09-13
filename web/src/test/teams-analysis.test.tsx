@@ -190,6 +190,9 @@ describe('Team analysis updating state', () => {
     expect(screen.getByRole('heading', { name: '成员数据' })).toBeInTheDocument();
     expect(screen.queryByText('Harness、模型与 Skill 的成员分布')).not.toBeInTheDocument();
     expect(screen.queryByText('查看每日明细')).not.toBeInTheDocument();
+    expect(screen.queryByText('查看成员明细 ↓')).not.toBeInTheDocument();
+    expect(screen.queryByText('谁贡献了用量，以及每个人的使用变化')).not.toBeInTheDocument();
+    expect(screen.queryByText('各成员用量与 Token 效率')).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Harness' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Skill' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Skill 使用' })).not.toBeInTheDocument();

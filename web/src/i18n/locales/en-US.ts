@@ -271,8 +271,6 @@ export const enUS = {
     insights: {
       eyebrow: 'PEOPLE',
       title: 'Team collaboration',
-      peopleSub: 'Member usage and token efficiency',
-      viewRanking: 'View member details ↓',
       teamTotal: 'Team total',
       historical: 'Former members',
       detailTitle: 'Member details',

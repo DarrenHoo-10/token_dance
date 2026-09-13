@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
 import type { AnalysisTrendPoint, TeamAnalysisReady } from '@/api/teams';
 import { Card } from '@/components/common/Card';
 import { useLocale } from '@/context/LocaleContext';
@@ -20,7 +19,7 @@ function pointsFor(trend: AnalysisTrendPoint[] | undefined, dates: string[], max
   });
 }
 
-export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady; teamId: string; search: string }> = ({ analysis, teamId, search }) => {
+export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ analysis }) => {
   const { t } = useLocale();
   const members = analysis.contributions.items;
   const [selectedId, setSelectedId] = useState('');
@@ -54,17 +53,11 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady; teamId:
 
   return <section className="team-people-section" id="members" aria-label={t('teams.overview.contributions')}>
     <div className="team-section-heading">
-      <div>
-        <h2>{t('teams.overview.contributions')}</h2>
-        <p>{t('teams.insights.peopleSub')}</p>
-      </div>
-      <div className="team-section-heading-actions">
-        <div className="team-token-eff">
-          <span className="label">{t('teams.insights.tokenEfficiency')}</span>
-          <strong className="mono-num">{teamEfficiency.available ? teamEfficiency.text : '—'}</strong>
-          <small>{t('teams.insights.tokenEfficiencyUnit')}</small>
-        </div>
-        <Link to={`/teams/${teamId}/members${search ? `?${search}` : ''}`}>{t('teams.insights.viewRanking')}</Link>
+      <h2>{t('teams.overview.contributions')}</h2>
+      <div className="team-token-eff">
+        <span className="label">{t('teams.insights.tokenEfficiency')}</span>
+        <strong className="mono-num">{teamEfficiency.available ? teamEfficiency.text : '—'}</strong>
+        <small>{t('teams.insights.tokenEfficiencyUnit')}</small>
       </div>
     </div>
     <div className="team-people-grid">
