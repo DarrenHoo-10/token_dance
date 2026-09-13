@@ -85,7 +85,7 @@ export const PrivacySettingsPage: React.FC = () => {
               {t('settings.privacyCardSub')}
             </p>
           </div>
-          <Badge variant="lime">{t('settings.privateByDefault')}</Badge>
+          <Badge variant="lime">{t('settings.publicByDefault')}</Badge>
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>

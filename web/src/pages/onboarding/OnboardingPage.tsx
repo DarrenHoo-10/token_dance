@@ -25,7 +25,7 @@ export const OnboardingPage: React.FC = () => {
   const [bio, setBio] = useState('');
   const [timezone, setTimezone] = useState('Asia/Shanghai');
   const [selectedLocale, setSelectedLocale] = useState<Locale>(locale);
-  const [isPublic, setIsPublic] = useState(false);
+  const [isPublic, setIsPublic] = useState(true);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 

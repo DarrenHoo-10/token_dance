@@ -337,7 +337,7 @@ func formatCode(n int) string {
 // 注册即默认建档：新账号无需手动 onboarding 即可用默认资料直接进入应用。
 func TestCompleteRegistration_DefaultProfile(t *testing.T) {
 	ctx := context.Background()
-	svc, st, _ := setupAuthService(t)
+	svc, st, clk := setupAuthService(t)
 
 	registerUser := func(email, locale, timezone string) *domain.User {
 		if err := svc.RequestRegistrationCode(ctx, email, locale); err != nil {
@@ -355,7 +355,7 @@ func TestCompleteRegistration_DefaultProfile(t *testing.T) {
 	}
 
 	// 1. Registration completes onboarding with an email-derived handle and
-	//    the client-provided locale/timezone; visibility defaults to private.
+	//    the client-provided locale/timezone; visibility defaults to public.
 	u := registerUser("darthcoder@tokendance.dev", "zh-CN", "Asia/Shanghai")
 	if u.DisplayName == "Token Dancer" || u.DisplayName == "" || u.AvatarURL == nil {
 		t.Fatal("older clients should receive a random nickname and preset avatar")
@@ -369,15 +369,22 @@ func TestCompleteRegistration_DefaultProfile(t *testing.T) {
 	if u.Locale != "zh-CN" || u.TimezoneName != "Asia/Shanghai" {
 		t.Errorf("expected client locale/timezone defaults, got %s/%s", u.Locale, u.TimezoneName)
 	}
-	if u.LeaderboardVisibility != domain.LeaderboardVisibilityPrivate {
-		t.Errorf("expected private default visibility, got %s", u.LeaderboardVisibility)
+	if u.LeaderboardVisibility != domain.LeaderboardVisibilityPublic {
+		t.Errorf("expected public default visibility, got %s", u.LeaderboardVisibility)
 	}
 	priv, err := st.Privacy().GetPrivacy(ctx, u.UserID)
 	if err != nil {
 		t.Fatalf("failed to load privacy settings: %v", err)
 	}
-	if priv.PublicProfileEnabled || priv.LeaderboardVisibility != domain.LeaderboardVisibilityPrivate {
-		t.Errorf("expected all-private privacy defaults, got %+v", priv)
+	if !priv.PublicProfileEnabled || priv.LeaderboardVisibility != domain.LeaderboardVisibilityPublic {
+		t.Errorf("expected public privacy defaults, got %+v", priv)
+	}
+	pub, err := st.Privacy().GetPublicProfileByHandle(ctx, *u.Handle, clk.Now())
+	if err != nil {
+		t.Fatalf("expected published public profile after registration: %v", err)
+	}
+	if pub.ProfileStatus != domain.ProfileStatusPublished {
+		t.Errorf("expected published profile status, got %s", pub.ProfileStatus)
 	}
 
 	// 2. Unsupported locale/timezone fall back to safe defaults.
