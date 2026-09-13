@@ -150,8 +150,8 @@ func TestMigrationRunnerIntegration_CleanInstall(t *testing.T) {
 	// Verify all migrations recorded in schema_migrations
 	var count int
 	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count)
-	if err != nil || count != 13 {
-		t.Fatalf("expected 13 applied migrations, got %d (err: %v)", count, err)
+	if err != nil || count != 14 {
+		t.Fatalf("expected 14 applied migrations, got %d (err: %v)", count, err)
 	}
 
 	// Verify idempotency
