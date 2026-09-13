@@ -13,6 +13,8 @@ import { useLocale } from '@/context/LocaleContext';
 import { useTeam } from '@/context/TeamContext';
 import { api } from '@/api/client';
 import {
+  TEAM_AVATAR_MAX_BYTES,
+  TEAM_AVATAR_TYPES,
   TEAM_DESCRIPTION_MAX,
   TEAM_NAME_MAX,
   TEAM_NAME_MIN,
@@ -25,7 +27,7 @@ import {
   writeCreateDraft,
 } from './teamUtils';
 import { InviteDialog } from './InviteDialog';
-import { RoleBadge, TeamGateLink, teamErrorMessage } from './TeamShared';
+import { persistTeamAvatar, RoleBadge, TeamAvatar, TeamGateLink, teamErrorMessage } from './TeamShared';
 
 type CreateState = 'checkingMembership' | 'alreadyMember' | 'checkFailed' | 'editing' | 'submitting' | 'created';
 
@@ -36,6 +38,7 @@ export const CreateTeamPage: React.FC = () => {
   const navigate = useNavigate();
   const nameRef = useRef<HTMLInputElement>(null);
   const descRef = useRef<HTMLTextAreaElement>(null);
+  const avatarRef = useRef<HTMLInputElement>(null);
 
   const [pageState, setPageState] = useState<CreateState>('checkingMembership');
   const [name, setName] = useState('');
@@ -48,6 +51,12 @@ export const CreateTeamPage: React.FC = () => {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [idempotencyKey, setIdempotencyKey] = useState(() => createIdempotencyKey());
   const [lastFingerprint, setLastFingerprint] = useState<string | null>(null);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState('');
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  const pageStateRef = useRef<CreateState>(pageState);
+  pageStateRef.current = pageState;
   const userKey = user?.userId || user?.handle || 'anon';
 
   useEffect(() => {
@@ -59,6 +68,7 @@ export const CreateTeamPage: React.FC = () => {
 
   useEffect(() => {
     if (!authenticated) return;
+    if (pageStateRef.current === 'created' || pageStateRef.current === 'submitting') return;
     let cancelled = false;
 
     const boot = async () => {
@@ -110,6 +120,26 @@ export const CreateTeamPage: React.FC = () => {
     writeCreateDraft({ userId: userKey, name, description, timezone });
   }, [authenticated, description, name, pageState, timezone, userKey]);
 
+  useEffect(() => {
+    if (!avatarFile) {
+      setAvatarPreview('');
+      return;
+    }
+    const url = URL.createObjectURL(avatarFile);
+    setAvatarPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [avatarFile]);
+
+  const chooseAvatar = (file?: File) => {
+    setAvatarError(null);
+    if (!file) return;
+    if (!TEAM_AVATAR_TYPES.includes(file.type) || file.size <= 0 || file.size > TEAM_AVATAR_MAX_BYTES) {
+      setAvatarError(t('teams.create.avatarInvalid'));
+      return;
+    }
+    setAvatarFile(file);
+  };
+
   const timezoneOptions = useMemo(() => {
     if (TEAM_TIMEZONES.some((item) => item.value === timezone)) return TEAM_TIMEZONES;
     return [{ value: timezone, label: timezone }, ...TEAM_TIMEZONES];
@@ -155,8 +185,9 @@ export const CreateTeamPage: React.FC = () => {
 
     setPageState('submitting');
     setFormError(null);
+    setAvatarFailed(false);
     try {
-      const result = await teamsApi.createTeam(
+      let result = await teamsApi.createTeam(
         {
           name: name.trim(),
           description: description.trim() || undefined,
@@ -165,11 +196,18 @@ export const CreateTeamPage: React.FC = () => {
         },
         { idempotencyKey: key }
       );
-      applyScope(result);
+      if (avatarFile) {
+        try {
+          result = await persistTeamAvatar(result, avatarFile);
+        } catch {
+          setAvatarFailed(true);
+        }
+      }
       setCreated(result);
       setLastFingerprint(fingerprint);
       clearCreateDraft();
       setPageState('created');
+      applyScope(result);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'TEAM_MEMBERSHIP_EXISTS') {
         const current = await refresh();
@@ -246,7 +284,7 @@ export const CreateTeamPage: React.FC = () => {
         </div>
         <Card>
           <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-            <span className="team-letter-avatar lg" aria-hidden="true">{firstGrapheme(created.team.name)}</span>
+            <TeamAvatar team={created.team} size="lg" />
             <div>
               <h2 style={{ margin: 0 }}>{created.team.name}</h2>
               <p className="text-muted" style={{ fontSize: 13 }}>{t('teams.create.ownerMeta')}</p>
@@ -257,6 +295,7 @@ export const CreateTeamPage: React.FC = () => {
               </div>
             </div>
           </div>
+          {avatarFailed && <p className="form-error" role="status">{t('teams.create.avatarFailed')}</p>}
           <div style={{ display: 'flex', gap: 12, marginTop: 20, flexWrap: 'wrap' }}>
             <Button variant="primary" onClick={() => setInviteOpen(true)}>{t('teams.invite.action')}</Button>
             <Button variant="outline" onClick={() => navigate(`/teams/${created.team.id}`, { state: { justCreated: true } })}>
@@ -302,6 +341,40 @@ export const CreateTeamPage: React.FC = () => {
               onBlur={() => validate()}
             />
             <div className="form-group">
+              <span className="form-label">{t('teams.create.avatar')}</span>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                <span className="team-letter-avatar">
+                  {avatarPreview ? <img src={avatarPreview} alt={t('teams.create.avatar')} /> : firstGrapheme(name || t('teams.create.previewName'))}
+                </span>
+                <div>
+                  <input
+                    ref={avatarRef}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    hidden
+                    disabled={frozen}
+                    aria-label={t('teams.create.chooseAvatar')}
+                    onChange={(e) => {
+                      chooseAvatar(e.target.files?.[0]);
+                      e.target.value = '';
+                    }}
+                  />
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <Button type="button" variant="outline" disabled={frozen} onClick={() => avatarRef.current?.click()}>
+                      {t('teams.create.chooseAvatar')}
+                    </Button>
+                    {avatarFile && (
+                      <Button type="button" variant="ghost" disabled={frozen} onClick={() => { setAvatarFile(null); setAvatarError(null); }}>
+                        {t('teams.create.clearAvatar')}
+                      </Button>
+                    )}
+                  </div>
+                  <span className="form-hint">{t('teams.create.avatarHint')}</span>
+                </div>
+              </div>
+              {avatarError && <span className="form-error" role="alert">{avatarError}</span>}
+            </div>
+            <div className="form-group">
               <label className="form-label" htmlFor="team-description">{t('teams.create.description')}</label>
               <textarea
                 id="team-description"
@@ -341,7 +414,9 @@ export const CreateTeamPage: React.FC = () => {
         <Card className="team-preview-card">
           <p className="eyebrow">{t('teams.create.preview')}</p>
           <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 12 }}>
-            <span className="team-letter-avatar" aria-hidden="true">{firstGrapheme(name || t('teams.create.previewName'))}</span>
+            <span className="team-letter-avatar" aria-hidden="true">
+              {avatarPreview ? <img src={avatarPreview} alt="" /> : firstGrapheme(name || t('teams.create.previewName'))}
+            </span>
             <div>
               <strong>{name.trim() || t('teams.create.previewName')}</strong>
               <p className="text-muted" style={{ fontSize: 12, margin: '4px 0 0' }}>

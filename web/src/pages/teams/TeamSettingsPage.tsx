@@ -17,9 +17,8 @@ import {
   TEAM_NAME_MIN,
   createIdempotencyKey,
   graphemeLength,
-  sha256Hex,
 } from './teamUtils';
-import { TeamAvatar, teamErrorMessage } from './TeamShared';
+import { persistTeamAvatar, TeamAvatar, teamErrorMessage } from './TeamShared';
 
 export const TeamSettingsPage: React.FC = () => {
   const { t } = useLocale();
@@ -76,11 +75,7 @@ export const TeamSettingsPage: React.FC = () => {
   };
 
   const uploadAvatar = async (file: File) => {
-    const bytes = await file.arrayBuffer();
-    const hash = await sha256Hex(bytes);
-    const intent = await teamsApi.createAvatarUploadIntent(scope.team.id, { contentType: file.type, byteSize: file.size, sha256: hash });
-    await teamsApi.uploadAvatarContent(scope.team.id, intent.objectId, file);
-    const next = await teamsApi.completeAvatarUpload(scope.team.id, intent.objectId, { expectedProfileVersion: scope.team.profileVersion });
+    const next = await persistTeamAvatar(scope, file);
     applyScope(next);
   };
 
