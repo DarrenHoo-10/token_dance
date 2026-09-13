@@ -85,6 +85,14 @@ fn read_codex_quota() -> Vec<AgentQuota> {
 fn read_codex_quota_from(sessions: &Path) -> Vec<AgentQuota> {
     let mut files = Vec::new();
     recent_files(sessions, 0, &mut 100_000, &mut files);
+    type Fingerprint = Vec<(std::time::SystemTime, PathBuf, u64)>;
+    static TAIL_CACHE: Mutex<Option<(Fingerprint,Vec<AgentQuota>)>> = Mutex::new(None);
+    let fingerprint:Fingerprint=files.iter().map(|(mtime,path)|(*mtime,path.clone(),fs::metadata(path).map(|m|m.len()).unwrap_or(0))).collect();
+    if let Ok(cache)=TAIL_CACHE.lock() {
+        if let Some((_, result)) = cache.as_ref().filter(|(old, _)| old == &fingerprint) {
+            return result.clone();
+        }
+    }
     let mut latest: Option<AgentQuota> = None;
     for (_, path) in files {
         let Ok(mut file) = fs::File::open(path) else { continue; };
@@ -99,7 +107,28 @@ fn read_codex_quota_from(sessions: &Path) -> Vec<AgentQuota> {
             break;
         }
     }
-    latest.into_iter().collect()
+    let result:Vec<_>=latest.into_iter().collect();
+    if let Ok(mut cache)=TAIL_CACHE.lock() {*cache=Some((fingerprint,result.clone()));}
+    result
+}
+
+use std::sync::atomic::{AtomicBool, Ordering};
+static REMOTE_QUOTAS: Mutex<std::collections::BTreeMap<&'static str, AgentQuota>> = Mutex::new(std::collections::BTreeMap::new());
+static ZCODE_REFRESH: AtomicBool = AtomicBool::new(false);
+static GROK_REFRESH: AtomicBool = AtomicBool::new(false);
+static CURSOR_REFRESH: AtomicBool = AtomicBool::new(false);
+
+fn refresh_remote(id: &'static str, inflight: &'static AtomicBool, future: impl std::future::Future<Output=Option<AgentQuota>> + Send + 'static) {
+    if inflight.compare_exchange(false,true,Ordering::AcqRel,Ordering::Relaxed).is_err() { return; }
+    tokio::spawn(async move {
+        struct Reset(&'static AtomicBool);
+        impl Drop for Reset { fn drop(&mut self) { self.0.store(false,Ordering::Release); } }
+        let _reset=Reset(inflight);
+        let value=future.await;
+        if let Ok(mut cache)=REMOTE_QUOTAS.lock() {
+            if let Some(quota)=value {cache.insert(id,quota);} else {cache.remove(id);}
+        }
+    });
 }
 
 #[tauri::command]
@@ -109,7 +138,7 @@ pub async fn get_agent_quotas() -> Result<Vec<AgentQuota>, String> {
     let mut result = tauri::async_runtime::spawn_blocking(|| -> Result<Vec<AgentQuota>, String> {
         let mut cache = CACHE.lock().map_err(|_| "Quota cache unavailable")?;
         if let Some((time, result)) = cache.as_ref() {
-            if time.elapsed() < Duration::from_secs(60) { return Ok(result.clone()); }
+            if time.elapsed() < Duration::from_secs(3) { return Ok(result.clone()); }
         }
         let result = read_codex_quota();
         *cache = Some((Instant::now(), result.clone()));
@@ -117,8 +146,11 @@ pub async fn get_agent_quotas() -> Result<Vec<AgentQuota>, String> {
     }).await.map_err(|error| error.to_string())??;
     // Local tests can inspect log-based quotas without using connected accounts.
     if crate::local_test::enabled() { return Ok(result); }
-    let (zcode, grok, cursor) = tokio::join!(zcode::read_quota(), connected::grok(), connected::cursor());
-    result.extend([zcode, grok, cursor].into_iter().flatten());
+    // Publish local observations immediately; slow network providers refresh independently.
+    refresh_remote("zcode", &ZCODE_REFRESH, zcode::read_quota());
+    refresh_remote("grok-build", &GROK_REFRESH, connected::grok());
+    refresh_remote("cursor", &CURSOR_REFRESH, connected::cursor());
+    result.extend(REMOTE_QUOTAS.lock().map_err(|_| "Quota cache unavailable")?.values().cloned());
     Ok(result)
 }
 
@@ -193,5 +225,26 @@ mod tests {
         recent_files(dir.path(), 0, &mut 100_000, &mut files);
         assert_eq!(files.len(), 12);
         assert!(files[0].1.ends_with("rollout-old.jsonl"));
+    }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::*;
+    #[tokio::test]
+    async fn pending_provider_does_not_hold_other_results_and_is_single_flight() {
+        static SLOW:AtomicBool=AtomicBool::new(false);
+        static FAST:AtomicBool=AtomicBool::new(false);
+        let (release,wait)=tokio::sync::oneshot::channel::<()>();
+        refresh_remote("test-slow",&SLOW,async move {let _=wait.await;None});
+        assert!(SLOW.load(Ordering::Acquire));
+        refresh_remote("test-slow",&SLOW,async {panic!("duplicate refresh must not run")});
+        refresh_remote("test-fast",&FAST,async {Some(AgentQuota{agent_id:"test-fast".into(),observed_at:"2026-09-13T00:00:00Z".into(),plan:None,windows:vec![],status:None})});
+        while FAST.load(Ordering::Acquire) {tokio::task::yield_now().await;}
+        assert!(REMOTE_QUOTAS.lock().unwrap().contains_key("test-fast"));
+        assert!(SLOW.load(Ordering::Acquire));
+        release.send(()).unwrap();
+        while SLOW.load(Ordering::Acquire) {tokio::task::yield_now().await;}
+        REMOTE_QUOTAS.lock().unwrap().remove("test-fast");
     }
 }
