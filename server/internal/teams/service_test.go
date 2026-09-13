@@ -364,7 +364,7 @@ func TestAssembleAnalysisCollectionsMatchWeb(t *testing.T) {
 	if len(dto.Agents.Items) != 1 || dto.Agents.Items[0]["id"] != "codex" || dto.Agents.Items[0]["label"] != "codex" {
 		t.Fatalf("agents %+v", dto.Agents.Items)
 	}
-	if dto.Models.Items[0]["id"] != "gpt-test" || dto.Models.Items[0]["label"] != "openai/gpt-test" {
+	if dto.Models.Items[0]["id"] != "openai/gpt-test" || dto.Models.Items[0]["label"] != "openai/gpt-test" {
 		t.Fatalf("models %+v", dto.Models.Items)
 	}
 	agentMembers, _ := dto.Agents.Items[0]["members"].([]map[string]any)

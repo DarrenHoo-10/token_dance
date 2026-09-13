@@ -242,10 +242,16 @@ describe('Team analysis updating state', () => {
       nextCursor: null,
     };
     result.models = {
-      items: [{
-        id: 'gpt-test', label: 'openai/gpt-test', tokens: { value: '40000', state: 'available' }, share: '33.3',
-        members: [{ membershipId: 'tmb_2', displayName: 'Bo', useCount: '40000', share: '100' }],
-      }],
+      items: [
+        {
+          id: 'openai/gpt-test', label: 'openai/gpt-test', tokens: { value: '40000', state: 'available' }, share: '33.3',
+          members: [{ membershipId: 'tmb_2', displayName: 'Bo', useCount: '40000', share: '100' }],
+        },
+        {
+          id: 'gpt-test', label: 'gpt-test', tokens: { value: '10000', state: 'available' }, share: '8.3',
+          members: [{ membershipId: 'tmb_1', displayName: 'Ada', useCount: '10000', share: '100' }],
+        },
+      ],
       nextCursor: null,
     };
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
@@ -254,9 +260,11 @@ describe('Team analysis updating state', () => {
     expect(screen.getByRole('button', { name: /codex/ })).toBeInTheDocument();
     expect(screen.getByText('Ada')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '模型' }));
-    expect(screen.getByRole('button', { name: /gpt-test/ })).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /gpt-test/ }).length).toBe(2);
+    expect(screen.queryByRole('button', { name: /^codex$/i })).not.toBeInTheDocument();
     expect(screen.getByText('Bo')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'Skill' }));
+    expect(screen.queryByRole('button', { name: /gpt-test/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /frontend-design/ }));
     expect(screen.getAllByText('frontend-design · Codex').length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('button', { name: /code-review/ }));

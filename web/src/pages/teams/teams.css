@@ -177,7 +177,7 @@
 .team-mix-tabs { margin: 0 0 14px; }
 .team-usage-mix { display: grid; grid-template-columns: 1.5fr 1fr; gap: 14px; margin-bottom: 8px; }
 .team-usage-mix > .panel { min-width: 0; }
-.team-mix-list { display: grid; gap: 4px; }
+.team-mix-list { display: grid; gap: 4px; max-height: 420px; overflow: auto; }
 .team-mix-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

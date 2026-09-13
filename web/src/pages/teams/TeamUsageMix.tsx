@@ -34,6 +34,10 @@ function asSkill(item: SkillItem | Record<string, unknown>): SkillItem {
   };
 }
 
+function itemKey(item: MixItem) {
+  return `${item.id}\0${item.label}`;
+}
+
 function bucketItems(items: AnalysisBucketItem[] | undefined): MixItem[] {
   return (items || [])
     .filter((item) => item.bucketType !== 'unshared_classification')
@@ -69,14 +73,14 @@ export const TeamUsageMix: React.FC<{ analysis: TeamAnalysisReady }> = ({ analys
   const firstKind = (groups.find((group) => group.items.length > 0)?.kind || 'harness') as MixKind;
   const [kind, setKind] = useState<MixKind>(firstKind);
   const active = groups.find((group) => group.kind === kind) || groups[0];
-  const [selectedId, setSelectedId] = useState(active.items[0]?.id || '');
-  const selected = active.items.find((item) => item.id === selectedId) || active.items[0];
+  const [selectedKey, setSelectedKey] = useState(active.items[0] ? itemKey(active.items[0]) : '');
+  const selected = active.items.find((item) => itemKey(item) === selectedKey) || active.items[0];
   const empty = active.items.length === 0;
 
   const switchKind = (next: MixKind) => {
-    setKind(next);
     const group = groups.find((item) => item.kind === next);
-    setSelectedId(group?.items[0]?.id || '');
+    setKind(next);
+    setSelectedKey(group?.items[0] ? itemKey(group.items[0]) : '');
   };
 
   return (
@@ -107,16 +111,18 @@ export const TeamUsageMix: React.FC<{ analysis: TeamAnalysisReady }> = ({ analys
           {empty ? (
             <p className="team-chart-empty">{t('teams.overview.mixEmpty')}</p>
           ) : (
-            <div className="team-mix-list">
+            <div className="team-mix-list" key={kind}>
               {active.items.map((item) => {
                 const pct = Number(item.share || '0');
+                const key = itemKey(item);
+                const isActive = selectedKey === key;
                 return (
                   <button
-                    key={item.id}
+                    key={key}
                     type="button"
-                    className={`team-mix-row ${selected?.id === item.id ? 'is-active' : ''}`}
-                    aria-pressed={selected?.id === item.id}
-                    onClick={() => setSelectedId(item.id)}
+                    className={`team-mix-row ${isActive ? 'is-active' : ''}`}
+                    aria-pressed={isActive}
+                    onClick={() => setSelectedKey(key)}
                   >
                     <div className="team-mix-row-copy">
                       <div className="team-bar-label">

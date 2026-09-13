@@ -2248,16 +2248,16 @@ func sortKV(m map[string]string) []kv {
 }
 
 func pageWindow(items []kv, paging bool, cursor string, limit int) (page []kv, start, end int, next *string) {
+	if !paging {
+		return items, 0, len(items), nil
+	}
 	start = 0
-	if paging && cursor != "" {
+	if cursor != "" {
 		if n, err := strconv.Atoi(cursor); err == nil && n > 0 {
 			start = n
 		}
 	}
-	end = start + 20
-	if paging {
-		end = start + limit
-	}
+	end = start + limit
 	if end > len(items) {
 		end = len(items)
 	}
@@ -2296,6 +2296,9 @@ func attachBucketMembers(page *domain.TeamPagedItems, kind string, byBucket map[
 		if kind == "model" {
 			if label, ok := item["label"].(string); ok && label != "" {
 				lookup = label
+			}
+			if lookup == "" {
+				lookup, _ = item["id"].(string)
 			}
 		}
 		dist, named := namedMemberCounts(byBucket[lookup], current, userByMem)
@@ -2407,11 +2410,7 @@ func bucketIdentity(kind, key string) (id, label, bucketType string) {
 		return key, key, "unshared_classification"
 	}
 	if kind == "model" {
-		id, label = key, key
-		if idx := strings.LastIndex(key, "/"); idx >= 0 && idx+1 < len(key) {
-			id = key[idx+1:]
-		}
-		return id, label, "model"
+		return key, key, "model"
 	}
 	return key, key, "agent"
 }
@@ -2809,8 +2808,6 @@ func assembleStaticSkills(rows []domain.TeamAnalysisRow, members []domain.TeamMe
 			n := list[end-1].key
 			next = &n
 		}
-	} else if len(page) > 20 {
-		page = page[:20]
 	}
 	out := make([]map[string]any, 0, len(page))
 	for _, it := range page {
