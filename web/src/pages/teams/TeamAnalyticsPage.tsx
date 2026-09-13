@@ -12,7 +12,7 @@ import {
   downloadBlob,
   formatInTimezone,
 } from './teamUtils';
-import { AnalysisSkeleton, TeamDateRangeBar, teamErrorMessage, useTeamSearchFilters } from './TeamShared';
+import { AnalysisSkeleton, teamErrorMessage, useTeamSearchFilters } from './TeamShared';
 import { useTeamAnalysis } from './useTeamAnalysis';
 import { TeamOverviewBoard } from './TeamOverviewBoard';
 
@@ -75,13 +75,13 @@ export const TeamAnalyticsPage: React.FC = () => {
   ) : null;
 
   if (updating && !analysis) {
-    return <div><TeamDateRangeBar timezone={scope.team.timezone} />{createdBanner}<AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} /></div>;
+    return <div>{createdBanner}<AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} /></div>;
   }
   if (error && !analysis) {
-    return <div><TeamDateRangeBar timezone={scope.team.timezone} />{createdBanner}<ErrorState error={error} description={teamErrorMessage(t, error)} /></div>;
+    return <div>{createdBanner}<ErrorState error={error} description={teamErrorMessage(t, error)} /></div>;
   }
   if (!analysis) {
-    return <div><TeamDateRangeBar timezone={scope.team.timezone} />{createdBanner}<AnalysisSkeleton /></div>;
+    return <div>{createdBanner}<AnalysisSkeleton /></div>;
   }
 
   const startExport = async (kind: ExportKind) => {
@@ -108,9 +108,8 @@ export const TeamAnalyticsPage: React.FC = () => {
 
   return (
     <div>
-      <TeamDateRangeBar timezone={scope.team.timezone} />
       {createdBanner}
-      <p className="text-muted" style={{ fontSize: 12, margin: '12px 0' }}>
+      <p className="text-muted" style={{ fontSize: 12, margin: '0 0 12px' }}>
         {t('teams.overview.updatedAt', { time: formatInTimezone(analysis.snapshot.asOf, analysis.range.timezone, locale) })}
         {analysis.snapshot.refreshing ? ` · ${t('teams.analytics.refreshing')}` : ''}
       </p>

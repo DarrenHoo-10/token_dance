@@ -12,7 +12,7 @@ import { TeamLayout } from '@/pages/teams/TeamLayout';
 import { memberPercent } from '@/pages/teams/TeamMemberInsights';
 import { TeamMembersPage } from '@/pages/teams/TeamMembersPage';
 import { useTeamAnalysis } from '@/pages/teams/useTeamAnalysis';
-import { renderTeams, sampleScope, signedInUser } from './teams-test-helpers';
+import { renderTeams, renderTeamWorkspace, sampleScope, signedInUser } from './teams-test-helpers';
 
 const readyAnalysis = (authRevision: string, tokenValue: string): TeamAnalysisReady => ({
   state: 'ready',
@@ -62,15 +62,15 @@ describe('Team analysis updating state', () => {
   });
 
   it.each([
-    ['panel', <TeamAnalyticsPage />, ''],
-    ['analytics-alias', <TeamAnalyticsPage />, '/analytics'],
-  ] as const)('shows today while custom dates are incomplete on a %s deep link', async (_name, page, suffix) => {
+    ['panel', ''],
+    ['analytics-alias', '/analytics'],
+  ] as const)('shows today while custom dates are incomplete on a %s deep link', async (_name, suffix) => {
     vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     vi.spyOn(teamsApi, 'getExports').mockResolvedValue({ exports: [] });
     vi.spyOn(teamsApi, 'getFilterOptions').mockResolvedValue({ agents: [], providers: [], models: [] });
     const query = vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
-    renderTeams(page, `/teams/tem_0123456789abcdefghijklmnop${suffix}?range=custom`);
+    renderTeamWorkspace(`/teams/tem_0123456789abcdefghijklmnop${suffix}?range=custom`);
     await screen.findByLabelText('开始日期');
     await waitFor(() => expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument());
     const from = screen.getByLabelText('开始日期');
@@ -91,9 +91,9 @@ describe('Team analysis updating state', () => {
   });
 
   it.each([
-    ['panel', <TeamAnalyticsPage />, ''],
-    ['analytics-alias', <TeamAnalyticsPage />, '/analytics'],
-  ] as const)('does not show the legacy summary banner on %s', async (_name, page, suffix) => {
+    ['panel', ''],
+    ['analytics-alias', '/analytics'],
+  ] as const)('does not show the legacy summary banner on %s', async (_name, suffix) => {
     vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     vi.spyOn(teamsApi, 'getExports').mockResolvedValue({ exports: [] });
@@ -101,7 +101,7 @@ describe('Team analysis updating state', () => {
     const result = readyAnalysis('1', '120000');
     result.quality.hasLegacyAggregates = true;
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
-    renderTeams(page, `/teams/tem_0123456789abcdefghijklmnop${suffix}?range=7d`);
+    renderTeamWorkspace(`/teams/tem_0123456789abcdefghijklmnop${suffix}?range=7d`);
     expect(await screen.findByRole('tab', { name: '7 天' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByText(/包含历史日汇总/)).not.toBeInTheDocument();
     expect(screen.queryByText(/团队时区/)).not.toBeInTheDocument();
@@ -122,7 +122,7 @@ describe('Team analysis updating state', () => {
     vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     const query = vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
-    renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
+    renderTeamWorkspace('/teams/tem_0123456789abcdefghijklmnop?range=7d');
     const chart = await screen.findByRole('heading', { name: '团队 Token 趋势' });
     const custom = screen.getByRole('tab', { name: '自定义' });
     expect(custom.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -243,7 +243,7 @@ describe('Team analysis updating state', () => {
     } satisfies TeamAnalysisUpdating);
     vi.spyOn(teamsApi, 'getExports').mockResolvedValue({ exports: [] });
 
-    renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop');
+    renderTeamWorkspace('/teams/tem_0123456789abcdefghijklmnop');
 
     expect(await screen.findByTestId('analysis-skeleton')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '今天' })).toHaveAttribute('aria-selected', 'true');
@@ -369,7 +369,7 @@ describe('Team analysis updating state', () => {
     empty.summary.tokens = { value: '0', state: 'empty' };
     Reflect.deleteProperty(empty, 'trend');
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(empty);
-    renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop');
+    renderTeamWorkspace('/teams/tem_0123456789abcdefghijklmnop');
     expect(await screen.findByText('团队总 Token')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Skill 使用' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Token 使用效率' })).toBeInTheDocument();
@@ -456,6 +456,10 @@ describe('Team page tabs', () => {
     expect(screen.queryByRole('link', { name: '总览' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '用量分析' })).not.toBeInTheDocument();
     expect(await screen.findByRole('tab', { name: '7 天' })).toHaveAttribute('aria-selected', 'true');
+    const heading = document.querySelector('.product-page-heading');
+    expect(heading?.contains(screen.getByRole('tab', { name: '7 天' }))).toBe(true);
+    expect(heading?.contains(screen.getByRole('button', { name: '邀请成员' }))).toBe(true);
+    expect(nav.contains(screen.getByRole('tab', { name: '7 天' }))).toBe(false);
 
     fireEvent.click(screen.getByRole('link', { name: '成员' }));
     expect(await screen.findByText(/已加入/)).toBeInTheDocument();

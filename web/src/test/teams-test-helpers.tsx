@@ -1,11 +1,14 @@
 import React from 'react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { render } from '@testing-library/react';
 import { LocaleProvider } from '@/context/LocaleContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { AuthProvider } from '@/context/AuthContext';
 import { TeamProvider } from '@/context/TeamContext';
 import { EMPTY_SHARING, type TeamScope } from '@/api/teams';
+import { TeamAnalyticsPage } from '@/pages/teams/TeamAnalyticsPage';
+import { TeamLayout } from '@/pages/teams/TeamLayout';
+import { TeamMembersPage } from '@/pages/teams/TeamMembersPage';
 
 export const signedInUser = {
   authenticated: true,
@@ -68,6 +71,34 @@ export function renderTeams(ui: React.ReactElement, route = '/teams') {
                 <Route path="/teams/:teamId/settings" element={ui} />
                 <Route path="/teams" element={ui} />
                 <Route path="*" element={ui} />
+              </Routes>
+            </TeamProvider>
+          </MemoryRouter>
+        </AuthProvider>
+      </NotificationProvider>
+    </LocaleProvider>
+  );
+}
+
+const AnalyticsRedirect: React.FC = () => {
+  const { search } = useLocation();
+  return <Navigate to={{ pathname: '..', search }} relative="path" replace />;
+};
+
+export function renderTeamWorkspace(route: string) {
+  return render(
+    <LocaleProvider>
+      <NotificationProvider>
+        <AuthProvider>
+          <MemoryRouter initialEntries={[route]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+            <TeamProvider>
+              <Routes>
+                <Route path="/teams/:teamId" element={<TeamLayout />}>
+                  <Route index element={<TeamAnalyticsPage />} />
+                  <Route path="analytics" element={<AnalyticsRedirect />} />
+                  <Route path="members" element={<TeamMembersPage />} />
+                  <Route path="settings" element={<div>settings-tab</div>} />
+                </Route>
               </Routes>
             </TeamProvider>
           </MemoryRouter>

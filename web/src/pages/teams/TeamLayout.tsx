@@ -9,7 +9,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { useTeam } from '@/context/TeamContext';
 import { InviteDialog } from './InviteDialog';
-import { RoleBadge, TeamAvatar, teamErrorMessage } from './TeamShared';
+import { RoleBadge, TeamAvatar, TeamDateRangeBar, teamErrorMessage } from './TeamShared';
 
 export const TeamLayout: React.FC = () => {
   const { teamId } = useParams<{ teamId: string }>();
@@ -59,6 +59,8 @@ export const TeamLayout: React.FC = () => {
 
   const { team, membership, permissions } = scope;
   const query = location.search;
+  const lastSegment = location.pathname.split('/').filter(Boolean).pop();
+  const isPanel = lastSegment === team.id;
 
   return (
     <section className="product-page-shell team-dashboard team-page">
@@ -74,7 +76,8 @@ export const TeamLayout: React.FC = () => {
             </div>
           </div>
         </div>
-        <div>
+        <div className="team-heading-actions">
+          {isPanel && <TeamDateRangeBar timezone={team.timezone} />}
           {permissions.inviteMembers ? (
             <Button variant="primary" onClick={() => setInviteOpen(true)}>{t('teams.invite.action')}</Button>
           ) : (
