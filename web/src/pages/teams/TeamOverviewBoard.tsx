@@ -97,17 +97,14 @@ export const TeamOverviewBoard: React.FC<{
         <div className="team-kpi">
           <div className="label">{t('teams.metrics.estimatedCost')}</div>
           <div className="value mono-num">{costValue}</div>
-          <div className="sub">{t('teams.metrics.costHint')}</div>
         </div>
         <div className="team-kpi">
           <div className="label">{t('teams.metrics.activeMembers')}</div>
           <div className="value mono-num">{analysis.summary.activeMembers} <small>/ {analysis.summary.currentMembers}</small></div>
-          <div className="sub">{t('teams.metrics.sharingMembers')} <b>{analysis.summary.currentSharingMembers || analysis.summary.currentMembers}</b></div>
         </div>
         <div className="team-kpi">
           <div className="label">{t('teams.metrics.codeLines')}</div>
           <div className="value mono-num">{code.available ? code.text : '—'}</div>
-          <div className="sub">{t('teams.overview.selectedPeriod')}</div>
         </div>
       </section>
 
@@ -115,7 +112,6 @@ export const TeamOverviewBoard: React.FC<{
         <Card>
           <div className="panel-header">
             <h2 id="team-activity-heading">{t('teams.overview.activity')}</h2>
-            <span className="team-chart-unit">{t('teams.overview.acrossMembers')}</span>
           </div>
           <div className="team-mini-row four">
             <div><span className="label">{t('teams.metrics.duration')}</span><strong className="mono-num">{duration.available ? duration.text : '—'}</strong></div>
@@ -123,7 +119,6 @@ export const TeamOverviewBoard: React.FC<{
             <div><span className="label">{t('teams.metrics.userMessages')}</span><strong className="mono-num">{userMessages.available ? userMessages.text : '—'}</strong></div>
             <div><span className="label">{t('teams.metrics.avgDuration')}</span><strong className="mono-num">{avgDuration || '—'}</strong></div>
           </div>
-          <div className="team-metric-foot">{t('teams.metrics.activityFoot')}</div>
         </Card>
       </section>
 
