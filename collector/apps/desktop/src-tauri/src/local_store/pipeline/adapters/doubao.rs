@@ -46,29 +46,7 @@ impl DoubaoStrategy {
         }
     }
     fn profiles(&self) -> Vec<PathBuf> {
-        let root = &self.legacy.root;
-        let root = if root.join("User Data").is_dir() {
-            root.join("User Data")
-        } else {
-            root.clone()
-        };
-        let mut paths = Vec::new();
-        if let Ok(entries) = std::fs::read_dir(root) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if [
-                    "chrome_doubao-chat_0.indexeddb.leveldb",
-                    "chrome_doubao-launcher_0.indexeddb.leveldb",
-                ]
-                .iter()
-                .any(|db| path.join("IndexedDB").join(db).is_dir())
-                {
-                    paths.push(path);
-                }
-            }
-        }
-        paths.sort();
-        paths
+        collector_service::detect::doubao_activity_profiles(&self.legacy.root)
     }
 }
 fn string(v: &Value) -> Option<String> {
@@ -229,10 +207,7 @@ impl HarnessStrategy for DoubaoStrategy {
             .lock()
             .map_err(|_| RunnerError::Io("cache lock".into()))?;
         let mut files = Vec::new();
-        for db in [
-            "chrome_doubao-chat_0.indexeddb.leveldb",
-            "chrome_doubao-launcher_0.indexeddb.leveldb",
-        ] {
+        for db in collector_service::detect::DOUBAO_ACTIVITY_DATABASES {
             let dir = Path::new(locator).join("IndexedDB").join(db);
             if let Ok(entries) = std::fs::read_dir(dir) {
                 for e in entries.flatten() {
@@ -445,6 +420,91 @@ impl HarnessStrategy for DoubaoStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn reads_macos_and_windows_cache_layouts_without_duplicate_activity() {
+        for (layout, database) in [
+            ("DoubaoWork", "chrome_doubaowork-chat_0.indexeddb.leveldb"),
+            (
+                "DoubaoWork",
+                "chrome_doubaowork-launcher_0.indexeddb.leveldb",
+            ),
+            ("Doubao/User Data", "chrome_doubao-chat_0.indexeddb.leveldb"),
+            (
+                "Doubao/User Data",
+                "chrome_doubao-launcher_0.indexeddb.leveldb",
+            ),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().join(layout);
+            let cache = root.join("Default/IndexedDB").join(database);
+            std::fs::create_dir_all(&cache).unwrap();
+            // Synthetic LevelDB WAL: one V8-wrapped work message with a Skill.
+            let fixture = include_bytes!("fixtures/doubao-activity.bin");
+            for name in ["000001.log", "000002.log"] {
+                std::fs::write(cache.join(name), fixture).unwrap();
+            }
+            let configured = if layout.ends_with("User Data") {
+                root.parent().unwrap()
+            } else {
+                &root
+            };
+            let strategy = DoubaoStrategy::new(
+                vec![1; 32],
+                configured.into(),
+                SkillBook::new(),
+                Arc::new(|_, _| 1),
+            );
+            let sources = strategy.discover(DiscoveryBudget::default()).unwrap();
+            assert_eq!(sources.len(), 1, "{layout} {database}");
+            assert_eq!(strategy.collection_status(), Some("ACTIVE"));
+            let source = &sources[0];
+            let mut cp = CheckpointView {
+                cursor_json: json!({}),
+                decoder_state_version: 1,
+                decoder_state_json: json!({}),
+                observed_boundary_json: json!({}),
+                commit_seq: 0,
+            };
+            let batch = strategy
+                .read(
+                    &source.locator_ref,
+                    &source.stream_key,
+                    &cp,
+                    ReadBudget::new(100, 1048576, 1000),
+                )
+                .unwrap();
+            assert_eq!(
+                batch.records.len(),
+                1,
+                "duplicate file must not duplicate the message"
+            );
+            let DecodeOutcome::Emit(facts) = strategy
+                .decode(
+                    &batch.records[0],
+                    &mut DecoderState::default(),
+                    &source.locator_ref,
+                )
+                .unwrap()
+            else {
+                panic!("missing activity")
+            };
+            assert!(facts.iter().any(|f| f.event_type == "skill_invoked"));
+            assert!(facts.iter().any(|f| f.event_type == "turn_started"));
+            assert!(!facts.iter().any(|f| f.event_type == "model_usage_recorded"));
+            cp.cursor_json = batch.next_cursor_json;
+            assert!(strategy
+                .read(
+                    &source.locator_ref,
+                    &source.stream_key,
+                    &cp,
+                    ReadBudget::new(100, 1048576, 1000)
+                )
+                .unwrap()
+                .records
+                .is_empty());
+        }
+    }
+
     #[test]
     fn emits_only_evidenced_activity_and_skill() {
         let s = DoubaoStrategy::new(
