@@ -1,0 +1,51 @@
+# Render TLS placeholders from the existing site's certificate configuration.
+# The apex host isolates test cookies from production on www.nexorai.com.cn.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name nexorai.com.cn;
+    location /token-dance-test { return 308 https://nexorai.com.cn$request_uri; }
+    location / { return 308 https://www.nexorai.com.cn$request_uri; }
+}
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    server_name nexorai.com.cn;
+    ssl_certificate @TLS_CERT@;
+    ssl_certificate_key @TLS_KEY@;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    location = /token-dance-test { return 308 /token-dance-test/; }
+    location ~ ^/token-dance-test/(api/|v1/|v2/) {
+        rewrite ^/token-dance-test/(.*)$ /$1 break;
+        proxy_pass http://127.0.0.1:8131;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cookie_flags ~ secure httponly samesite=lax;
+        client_max_body_size 8m;
+        add_header Cache-Control "no-store" always;
+    }
+    location = /token-dance-test/readyz { proxy_pass http://127.0.0.1:8131/readyz; }
+    location = /token-dance-test/healthz { proxy_pass http://127.0.0.1:8131/healthz; }
+    location = /token-dance-test/build-info.json {
+        alias /opt/token-dance-test/current/build-info.json;
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+    }
+    location = /token-dance-test/releases/stable.json {
+        return 302 https://www.nexorai.com.cn/token-dance/releases/stable.json;
+    }
+    location ^~ /token-dance-test/assets/ {
+        root /var/www;
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+    location /token-dance-test/ {
+        root /var/www;
+        try_files $uri $uri/ /token-dance-test/index.html;
+        add_header Cache-Control "no-cache";
+    }
+    location / { return 308 https://www.nexorai.com.cn$request_uri; }
+}

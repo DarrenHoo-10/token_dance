@@ -17,6 +17,7 @@ import (
 	"tokendance/internal/domain"
 	v2 "tokendance/internal/protocol/v2"
 	mysqlstore "tokendance/internal/store/mysql"
+	"tokendance/internal/teammetrics"
 	"tokendance/internal/telemetryagg"
 )
 
@@ -317,9 +318,14 @@ func (w *Worker) executeTelemetryTask(ctx context.Context, claim mysqlstore.Tele
 			return err
 		}
 	}
-	if changed && claim.Consumer == domain.TelemetryGrainDay {
+	if claim.Consumer == domain.TelemetryGrainDay {
 		metricDate := domain.DayDate(time.UnixMilli(ev.OccurredAtMs))
-		if err := mysqlstore.MarkAggregateDirtyDayTx(ctx, tx, ev.UserID, metricDate, now); err != nil {
+		if changed {
+			if err := mysqlstore.MarkAggregateDirtyDayTx(ctx, tx, ev.UserID, metricDate, now); err != nil {
+				return err
+			}
+		}
+		if err := teammetrics.RefreshCurrentTeamDaysTx(ctx, tx, ev.UserID, []string{metricDate}, nowMs); err != nil {
 			return err
 		}
 	}

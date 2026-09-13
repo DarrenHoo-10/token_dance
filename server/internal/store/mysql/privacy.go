@@ -11,6 +11,7 @@ import (
 
 	"tokendance/internal/domain"
 	"tokendance/internal/store/sqlcgen"
+	"tokendance/internal/teammetrics"
 )
 
 type privacyStore struct {
@@ -286,6 +287,11 @@ func (s *privacyStore) SetAccountStatusTx(ctx context.Context, userID string, st
 		WHERE p.user_id = ?`, status, status, now, now, userID); err != nil {
 		return fmt.Errorf("project account status: %w", err)
 	}
+	if status == domain.AccountStatusSuspended {
+		if err := revokeUserTeamAccessOnSuspend(ctx, tx, userID, now); err != nil {
+			return err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit account status transaction: %w", err)
 	}
@@ -347,6 +353,9 @@ func (s *privacyStore) RequestDeletionTx(ctx context.Context, req domain.DataDel
 		}
 		if accountStatus == string(domain.AccountStatusDeleted) || accountStatus == string(domain.AccountStatusDeletionPending) {
 			return nil, domain.ErrConflict
+		}
+		if err := closeUserTeamOnAccountDeletion(ctx, tx, *req.UserID, now); err != nil {
+			return nil, err
 		}
 	}
 
@@ -489,4 +498,100 @@ func (s *privacyStore) GetDeletionRequest(ctx context.Context, requestID string,
 		_ = json.Unmarshal(row.ScopeFilterJson, &req.ScopeFilterJSON)
 	}
 	return req, nil
+}
+
+func closeUserTeamOnAccountDeletion(ctx context.Context, tx *sql.Tx, userID string, now time.Time) error {
+	var ownedTeamID string
+	err := tx.QueryRowContext(ctx, `
+		SELECT team_id FROM teams
+		WHERE owner_user_id = ? AND status = 'active'
+		ORDER BY team_id ASC
+		LIMIT 1`, userID).Scan(&ownedTeamID)
+	if err == nil {
+		return domain.NewAppError(409, "TEAM_OWNER_TRANSFER_REQUIRED", "teams.ownerTransferRequired",
+			"active team owner must transfer ownership or dissolve the team before account deletion", nil, domain.ErrConflict)
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("check owned team for deletion: %w", err)
+	}
+
+	var teamID, membershipID string
+	err = tx.QueryRowContext(ctx, `
+		SELECT team_id, membership_id FROM user_current_teams WHERE user_id = ?`, userID).Scan(&teamID, &membershipID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("lookup current team for deletion: %w", err)
+	}
+	if err == nil {
+		if err := tx.QueryRowContext(ctx, `
+			SELECT team_id FROM teams WHERE team_id = ? FOR UPDATE`, teamID).Scan(&teamID); err != nil {
+			return fmt.Errorf("lock current team for deletion: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM team_sharing_grants WHERE membership_id = ?`, membershipID); err != nil {
+			return fmt.Errorf("delete grants on account deletion: %w", err)
+		}
+		nowMs := now.UTC().UnixMilli()
+		if err := teammetrics.UnbindContributorTx(ctx, tx, teamID, userID, nowMs); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM user_current_teams WHERE user_id = ?`, userID); err != nil {
+			return fmt.Errorf("clear current team on account deletion: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM team_memberships WHERE membership_id = ?`, membershipID); err != nil {
+			return fmt.Errorf("delete membership on account deletion: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE team_invitations
+			SET status = 'revoked', active_recipient_hash = NULL, version = version + 1
+			WHERE team_id = ? AND inviter_user_id = ? AND status = 'pending'`, teamID, userID); err != nil {
+			return fmt.Errorf("revoke invitations on account deletion: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE team_invite_links
+			SET status = 'revoked', revoked_at = ?, version = version + 1
+			WHERE team_id = ? AND creator_user_id = ? AND status = 'active'`, now, teamID, userID); err != nil {
+			return fmt.Errorf("revoke invite links on account deletion: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE teams SET auth_revision = auth_revision + 1 WHERE team_id = ?`, teamID); err != nil {
+			return fmt.Errorf("bump auth revision on account deletion: %w", err)
+		}
+	}
+	return teammetrics.DeleteUserStaticTx(ctx, tx, userID)
+}
+
+func revokeUserTeamAccessOnSuspend(ctx context.Context, tx *sql.Tx, userID string, now time.Time) error {
+	var teamID string
+	err := tx.QueryRowContext(ctx, `
+		SELECT team_id FROM user_current_teams WHERE user_id = ?`, userID).Scan(&teamID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("lookup current team for suspend: %w", err)
+	}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT team_id FROM teams WHERE team_id = ? FOR UPDATE`, teamID).Scan(&teamID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("lock team for suspend: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE team_invite_links
+		SET status = 'revoked', revoked_at = ?, version = version + 1
+		WHERE team_id = ? AND creator_user_id = ? AND status = 'active'`, now, teamID, userID); err != nil {
+		return fmt.Errorf("revoke invite links on suspend: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE team_analysis_snapshots
+		SET status = CASE WHEN status IN ('queued', 'building', 'ready') THEN 'obsolete' ELSE status END,
+		    active_request_key = NULL
+		WHERE team_id = ? AND status IN ('queued', 'building', 'ready')`, teamID); err != nil {
+		return fmt.Errorf("obsolete team snapshots on suspend: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE teams SET auth_revision = auth_revision + 1 WHERE team_id = ?`, teamID); err != nil {
+		return fmt.Errorf("bump auth revision on suspend: %w", err)
+	}
+	return nil
 }

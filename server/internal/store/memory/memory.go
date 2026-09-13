@@ -92,6 +92,24 @@ type MemoryStore struct {
 	rankingOutbox            []RankingOutboxTask
 	communityDailyStats      map[string]store.CommunityDailyTotals
 	communityAgentDailyStats map[communityAgentKey]store.CommunityAgentTokens
+	teams                    map[string]*domain.Team
+	teamMemberships          map[string]*domain.TeamMembership
+	userCurrentTeams         map[string]*domain.UserCurrentTeam
+	teamGrants               map[string]*domain.TeamSharingGrant
+	teamInvitations          map[string]*domain.TeamInvitation
+	teamInviteLinks          map[string]*domain.TeamInviteLink
+	teamInviteLinkJoins      map[string]*domain.TeamInviteLinkJoin
+	teamReceipts             map[string]*domain.TeamCommandReceipt
+	teamRevisions            map[string]*domain.TeamSourceRevision
+	teamSnapshots            map[string]*domain.TeamAnalysisSnapshot
+	teamAnalysisRows         map[string][]domain.TeamAnalysisRow
+	teamExports              map[string]*domain.TeamExportJob
+	teamAudits               map[string]*domain.TeamAuditEvent
+	teamUploadObjects        map[string]*domain.TeamUploadObject
+	teamBarriers             map[string]*domain.TeamDeletionBarrier
+	teamContributors         map[string]*domain.TeamUsageContributor // key team|user
+	teamDayMetrics           map[string][]domain.TeamAnalysisRow     // key teamID
+	teamPersonalDays         map[string][]domain.TeamAnalysisRow     // key userID; source for occupy/refresh overwrite
 }
 
 type communityAgentKey struct {
@@ -149,6 +167,24 @@ func NewMemoryStore() *MemoryStore {
 		rankingOutbox:            make([]RankingOutboxTask, 0),
 		communityDailyStats:      make(map[string]store.CommunityDailyTotals),
 		communityAgentDailyStats: make(map[communityAgentKey]store.CommunityAgentTokens),
+		teams:                    make(map[string]*domain.Team),
+		teamMemberships:          make(map[string]*domain.TeamMembership),
+		userCurrentTeams:         make(map[string]*domain.UserCurrentTeam),
+		teamGrants:               make(map[string]*domain.TeamSharingGrant),
+		teamInvitations:          make(map[string]*domain.TeamInvitation),
+		teamInviteLinks:          make(map[string]*domain.TeamInviteLink),
+		teamInviteLinkJoins:      make(map[string]*domain.TeamInviteLinkJoin),
+		teamReceipts:             make(map[string]*domain.TeamCommandReceipt),
+		teamRevisions:            make(map[string]*domain.TeamSourceRevision),
+		teamSnapshots:            make(map[string]*domain.TeamAnalysisSnapshot),
+		teamAnalysisRows:         make(map[string][]domain.TeamAnalysisRow),
+		teamExports:              make(map[string]*domain.TeamExportJob),
+		teamAudits:               make(map[string]*domain.TeamAuditEvent),
+		teamUploadObjects:        make(map[string]*domain.TeamUploadObject),
+		teamBarriers:             make(map[string]*domain.TeamDeletionBarrier),
+		teamContributors:         make(map[string]*domain.TeamUsageContributor),
+		teamDayMetrics:           make(map[string][]domain.TeamAnalysisRow),
+		teamPersonalDays:         make(map[string][]domain.TeamAnalysisRow),
 	}
 }
 
@@ -175,6 +211,7 @@ func (m *MemoryStore) Export() store.ExportStore           { return m }
 func (m *MemoryStore) Search() store.SearchStore           { return &memorySearchStore{m: m} }
 func (m *MemoryStore) Leaderboard() store.LeaderboardStore { return m }
 func (m *MemoryStore) Media() store.MediaStore             { return m }
+func (m *MemoryStore) Teams() store.TeamsStore             { return m }
 
 // --- AuthStore Implementation ---
 

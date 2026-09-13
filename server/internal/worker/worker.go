@@ -617,6 +617,9 @@ func (w *Worker) RunPass(ctx context.Context) {
 	if _, err := w.ProcessAggregates(ctx); err != nil {
 		log.Printf("[Worker %s] Aggregate processing error: %v", w.workerID, err)
 	}
+	if _, err := w.ProcessStaleTeamStatic(ctx); err != nil {
+		log.Printf("[Worker %s] Team static backfill error: %v", w.workerID, err)
+	}
 	if _, err := w.ProcessRankingOutbox(ctx); err != nil {
 		log.Printf("[Worker %s] Ranking outbox processing error: %v", w.workerID, err)
 	}
@@ -637,6 +640,12 @@ func (w *Worker) RunPass(ctx context.Context) {
 	}
 	if _, err := w.ProcessDeletionRequests(ctx); err != nil {
 		log.Printf("[Worker %s] Deletion requests processing error: %v", w.workerID, err)
+	}
+	if _, err := w.ProcessTeamExports(ctx); err != nil {
+		log.Printf("[Worker %s] Team export processing error: %v", w.workerID, err)
+	}
+	if err := w.ProcessTeamCleanup(ctx); err != nil {
+		log.Printf("[Worker %s] Team cleanup processing error: %v", w.workerID, err)
 	}
 	if err := w.ProcessExpirations(ctx); err != nil {
 		log.Printf("[Worker %s] Expirations processing error: %v", w.workerID, err)

@@ -73,6 +73,9 @@ export const Navbar: React.FC = () => {
         >
           TokenBoard
         </NavLink>
+        <NavLink to="/teams" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+          {t('teams.label')}
+        </NavLink>
         <NavLink to="/download" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           {locale === 'zh-CN' ? '客户端下载' : 'Download'}
         </NavLink>

@@ -39,7 +39,7 @@ describe('Navigation & Locale Switching Tests', () => {
       expect(screen.getByRole('link', { name: '客户端下载' })).toHaveAttribute('href', '/download');
       expect(screen.getByRole('link', { name: '使用文档' })).toHaveAttribute('href', '/docs');
       expect(screen.queryByRole('link', { name: '社区' })).not.toBeInTheDocument();
-      expect(screen.queryByRole('link', { name: '团队' })).not.toBeInTheDocument();
+      expect(screen.getByRole('link', { name: '团队' })).toHaveAttribute('href', '/teams');
     });
     expect(screen.queryByText('发现')).not.toBeInTheDocument();
     expect(screen.queryByRole('search')).not.toBeInTheDocument();
@@ -48,7 +48,7 @@ describe('Navigation & Locale Switching Tests', () => {
     fireEvent.click(enBtn);
 
     expect(screen.queryByRole('link', { name: 'Community' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Teams' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Teams' })).toHaveAttribute('href', '/teams');
     expect(screen.getByRole('button', { name: 'Sign In' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Download' })).toHaveAttribute('href', '/download');
     expect(screen.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/docs');

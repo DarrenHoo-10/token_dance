@@ -133,3 +133,24 @@ func TestUpsertSQLSkipsPrimaryKeyAssignments(t *testing.T) {
 		t.Fatalf("primary key should not be assigned: %s", sql)
 	}
 }
+
+func TestUserRefreshPreservesTestLoginIdentity(t *testing.T) {
+	identity := []string{"auth_subject_hash", "email_lookup_hash", "email_ciphertext", "email_verified_at"}
+	columns := append([]string{"user_id", "display_name"}, identity...)
+	query := upsertSQL("tokendance_dev", "users", columns, map[string]struct{}{"user_id": {}})
+	parts := strings.SplitN(query, " ON DUPLICATE KEY UPDATE ", 2)
+	if len(parts) != 2 {
+		t.Fatalf("missing upsert clause: %s", query)
+	}
+	for _, column := range identity {
+		if !strings.Contains(parts[0], quote(column)) {
+			t.Fatalf("new mirrors still need sanitized %s", column)
+		}
+		if strings.Contains(parts[1], quote(column)) {
+			t.Fatalf("refresh overwrites test login field %s", column)
+		}
+	}
+	if parts[1] != "`display_name` = VALUES(`display_name`)" {
+		t.Fatalf("public profile must still refresh: %s", parts[1])
+	}
+}

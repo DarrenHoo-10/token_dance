@@ -31,6 +31,7 @@ import (
 	"tokendance/internal/profile"
 	"tokendance/internal/search"
 	"tokendance/internal/store"
+	"tokendance/internal/teams"
 	"tokendance/internal/telemetry"
 )
 
@@ -44,6 +45,7 @@ type Handlers struct {
 	media            *media.Service
 	search           *search.Service
 	leaderboard      *leaderboard.Service
+	teams            *teams.Service
 	readinessChecker func(ctx context.Context) error
 }
 
@@ -58,7 +60,7 @@ func NewHandlers(
 	searchService *search.Service,
 	leaderboardService *leaderboard.Service,
 ) *Handlers {
-	return NewHandlersWithReadiness(
+	return NewHandlersWithTeams(
 		authService,
 		profileService,
 		privacyService,
@@ -68,6 +70,7 @@ func NewHandlers(
 		mediaService,
 		searchService,
 		leaderboardService,
+		nil,
 		nil,
 	)
 }
@@ -84,6 +87,34 @@ func NewHandlersWithReadiness(
 	leaderboardService *leaderboard.Service,
 	readinessChecker func(ctx context.Context) error,
 ) *Handlers {
+	return NewHandlersWithTeams(
+		authService,
+		profileService,
+		privacyService,
+		analyticsService,
+		deviceService,
+		exportService,
+		mediaService,
+		searchService,
+		leaderboardService,
+		nil,
+		readinessChecker,
+	)
+}
+
+func NewHandlersWithTeams(
+	authService *auth.Service,
+	profileService *profile.Service,
+	privacyService *privacy.Service,
+	analyticsService *analytics.Service,
+	deviceService *device.Service,
+	exportService *export.Service,
+	mediaService *media.Service,
+	searchService *search.Service,
+	leaderboardService *leaderboard.Service,
+	teamsService *teams.Service,
+	readinessChecker func(ctx context.Context) error,
+) *Handlers {
 	return &Handlers{
 		auth:             authService,
 		profile:          profileService,
@@ -94,6 +125,7 @@ func NewHandlersWithReadiness(
 		media:            mediaService,
 		search:           searchService,
 		leaderboard:      leaderboardService,
+		teams:            teamsService,
 		readinessChecker: readinessChecker,
 	}
 }

@@ -5,6 +5,7 @@ export interface MetricCardProps {
   value: string | null;
   supported?: boolean;
   unit?: string;
+  hint?: string;
 }
 
 export const MetricCard: React.FC<MetricCardProps> = ({
@@ -12,6 +13,7 @@ export const MetricCard: React.FC<MetricCardProps> = ({
   value,
   supported = true,
   unit,
+  hint,
 }) => {
   return (
     <div className="metric-card">
@@ -38,6 +40,7 @@ export const MetricCard: React.FC<MetricCardProps> = ({
           <span style={{ color: 'var(--text-subtle)', fontSize: 16 }}>—</span>
         )}
       </div>
+      {hint && <div className="metric-card-hint">{hint}</div>}
     </div>
   );
 };

@@ -121,8 +121,14 @@ type Config struct {
 
 	// Event pipeline v2 rollout switches (P8). Closing these pauses the new
 	// path; legacy upload endpoints stay closed (CLIENT_UPGRADE_REQUIRED).
-	EventPipelineV2Ingest  bool `json:"eventPipelineV2Ingest"`
-	EventPipelineV2Workers bool `json:"eventPipelineV2Workers"`
+	EventPipelineV2Ingest  bool   `json:"eventPipelineV2Ingest"`
+	EventPipelineV2Workers bool   `json:"eventPipelineV2Workers"`
+	TeamsEnabled           bool   `json:"teamsEnabled"`
+	TeamsCreateEnabled     bool   `json:"teamsCreateEnabled"`
+	TeamsJoinEnabled       bool   `json:"teamsJoinEnabled"`
+	TeamsAnalysisEnabled   bool   `json:"teamsAnalysisEnabled"`
+	TeamsExportEnabled     bool   `json:"teamsExportEnabled"`
+	TeamsPublicBaseURL     string `json:"teamsPublicBaseUrl,omitempty"`
 }
 
 func deriveDevKey(purpose string) []byte {
@@ -175,6 +181,12 @@ func DefaultConfig() *Config {
 		// Closed-beta default: new ingest/workers on; flip false to pause without reopening legacy.
 		EventPipelineV2Ingest:  true,
 		EventPipelineV2Workers: true,
+		TeamsEnabled:           false,
+		TeamsCreateEnabled:     false,
+		TeamsJoinEnabled:       false,
+		TeamsAnalysisEnabled:   false,
+		TeamsExportEnabled:     false,
+		TeamsPublicBaseURL:     "",
 	}
 }
 
@@ -467,6 +479,7 @@ func LoadFromEnv() (*Config, error) {
 		}
 		cfg.ObjectUsePathStyle = b
 	}
+	setString("TOKENDANCE_TEAMS_PUBLIC_BASE_URL", &cfg.TeamsPublicBaseURL)
 	parseBool := func(name string, dst *bool) error {
 		if v := os.Getenv(name); v != "" {
 			b, e := strconv.ParseBool(v)
@@ -481,6 +494,21 @@ func LoadFromEnv() (*Config, error) {
 		return nil, err
 	}
 	if err := parseBool("TOKENDANCE_EVENT_PIPELINE_V2_WORKERS", &cfg.EventPipelineV2Workers); err != nil {
+		return nil, err
+	}
+	if err := parseBool("TOKENDANCE_TEAMS_ENABLED", &cfg.TeamsEnabled); err != nil {
+		return nil, err
+	}
+	if err := parseBool("TOKENDANCE_TEAMS_CREATE_ENABLED", &cfg.TeamsCreateEnabled); err != nil {
+		return nil, err
+	}
+	if err := parseBool("TOKENDANCE_TEAMS_JOIN_ENABLED", &cfg.TeamsJoinEnabled); err != nil {
+		return nil, err
+	}
+	if err := parseBool("TOKENDANCE_TEAMS_ANALYSIS_ENABLED", &cfg.TeamsAnalysisEnabled); err != nil {
+		return nil, err
+	}
+	if err := parseBool("TOKENDANCE_TEAMS_EXPORT_ENABLED", &cfg.TeamsExportEnabled); err != nil {
 		return nil, err
 	}
 

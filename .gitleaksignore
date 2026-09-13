@@ -30,3 +30,24 @@ bd0add2f5c630601dddae29b8ad143a08fdc68d1:server/internal/httpapi/router_test.go:
 
 # Dynamic f-string placeholder only; test password is generated with secrets.token_urlsafe.
 47ab1f0d64be977f006d77c9e07d4b72086412e8:tools/releases/test_release_registry.py:mysql-dsn-password:167
+
+# Historical team-init commits: deleted local ops scripts and already-audited
+# test fixtures re-scanned under new commit IDs. Current tree does not keep
+# those scripts; teams tests now use the allowlisted test-password fixture.
+483ff1f8e4f5088bc7542dff3b74c4aedbecb419:server/internal/httpapi/registration_profile_test.go:login-json-password:18
+414709d753799085eb0832bf99202eea9d5014d0:server/internal/httpapi/teams_test.go:login-json-password:99
+392f7f75541d7f98a6cd539cc90f42108eb07c3e:server/internal/httpapi/registration_profile_test.go:login-json-password:18
+13914ccadb85b7d2d2a24a5d652b22ab7db3f0c4:server/internal/httpapi/registration_profile_test.go:login-json-password:18
+4b6afaa66f653c4430e64298b684132d3b1212be:deploy/provision.py:mysql-dsn-password:49
+48c712d7a36df906769571f2331329e97c597ee7:dbreinit.sh:mysql-dsn-password:3
+48c712d7a36df906769571f2331329e97c597ee7:ucimport.sh:infrastructure-password-literal:3
+48c712d7a36df906769571f2331329e97c597ee7:logincheck.sh:login-json-password:3
+48c712d7a36df906769571f2331329e97c597ee7:ucimport2.sh:infrastructure-password-literal:3
+48c712d7a36df906769571f2331329e97c597ee7:ucimport2.sh:login-json-password:19
+48c712d7a36df906769571f2331329e97c597ee7:ucfinal.sh:login-json-password:6
+48c712d7a36df906769571f2331329e97c597ee7:dbfinish.sh:infrastructure-password-literal:4
+48c712d7a36df906769571f2331329e97c597ee7:dbfinish.sh:infrastructure-password-literal:5
+48c712d7a36df906769571f2331329e97c597ee7:unifycreds.sh:login-json-password:7
+48c712d7a36df906769571f2331329e97c597ee7:unifycreds.sh:infrastructure-password-unquoted:22
+48c712d7a36df906769571f2331329e97c597ee7:unifycreds.sh:infrastructure-password-unquoted:25
+48c712d7a36df906769571f2331329e97c597ee7:unifycreds.sh:infrastructure-password-unquoted:26

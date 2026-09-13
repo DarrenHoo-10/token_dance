@@ -170,8 +170,10 @@ type EmailChallenge struct {
 type EmailOutbox struct {
 	EmailID              string     `json:"emailId"`
 	UserID               *string    `json:"userId,omitempty"`
-	ChallengeID          *string    `json:"challengeId,omitempty"`
-	IdempotencyKey       [32]byte   `json:"-"`
+	ChallengeID            *string    `json:"challengeId,omitempty"`
+	TeamInvitationID       *string    `json:"teamInvitationId,omitempty"`
+	TeamInvitationVersion  *uint64    `json:"teamInvitationVersion,omitempty"`
+	IdempotencyKey         [32]byte   `json:"-"`
 	TemplateKey          string     `json:"templateKey"`
 	Locale               string     `json:"locale"`
 	RecipientCiphertext  []byte     `json:"-"`

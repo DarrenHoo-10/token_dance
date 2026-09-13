@@ -48,7 +48,9 @@ func loadTableMeta(ctx context.Context, db columnQuerier, schema, table string) 
 			return tableMeta{}, fmt.Errorf("unsafe column %q", name)
 		}
 		upper := strings.ToUpper(extra)
-		if strings.Contains(upper, "GENERATED") || strings.Contains(upper, "AUTO_INCREMENT") {
+		// DEFAULT_GENERATED (e.g. CURRENT_TIMESTAMP) is writable. Omitting it
+		// changes source timestamps on every replacement and invalidates caches.
+		if strings.Contains(upper, "VIRTUAL GENERATED") || strings.Contains(upper, "STORED GENERATED") || strings.Contains(upper, "AUTO_INCREMENT") {
 			continue
 		}
 		meta.columns = append(meta.columns, name)
@@ -104,6 +106,14 @@ func upsertSQL(schema, table string, columns []string, pk map[string]struct{}) s
 	for _, column := range columns {
 		if _, isPK := pk[column]; isPK {
 			continue
+		}
+		// Login identity belongs to the test database. New mirrors receive
+		// sanitized placeholders, but later refreshes must retain local bindings.
+		if table == "users" {
+			switch column {
+			case "auth_subject_hash", "email_lookup_hash", "email_ciphertext", "email_verified_at":
+				continue
+			}
 		}
 		quoted := quote(column)
 		assignments = append(assignments, quoted+" = VALUES("+quoted+")")

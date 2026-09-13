@@ -32,6 +32,7 @@ import (
 	"tokendance/internal/store/memory"
 	"tokendance/internal/store/mysql"
 	"tokendance/internal/store/redisx"
+	"tokendance/internal/teams"
 )
 
 func main() {
@@ -114,8 +115,9 @@ func main() {
 	mediaService := media.NewService(st, cfg, clk, storage)
 	searchService := search.NewService(st, clk)
 	leaderboardService := leaderboard.NewService(st)
+	teamsService := teams.NewService(st, cfg, clk, authService, storage)
 
-	router := httpapi.NewRouterWithReadiness(
+	router := httpapi.NewRouterWithTeams(
 		authService,
 		profileService,
 		privacyService,
@@ -125,6 +127,7 @@ func main() {
 		mediaService,
 		searchService,
 		leaderboardService,
+		teamsService,
 		readinessChecker,
 	)
 

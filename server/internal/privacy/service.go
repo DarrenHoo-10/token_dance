@@ -2,6 +2,7 @@ package privacy
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"tokendance/internal/clock"
@@ -225,6 +226,10 @@ func (s *Service) RequestDeletionWithFilter(ctx context.Context, userID string, 
 
 	createdReq, err := s.store.RequestDeletionTx(ctx, req, event, now)
 	if err != nil {
+		var appErr *domain.AppError
+		if errors.As(err, &appErr) && appErr.Code == "TEAM_OWNER_TRANSFER_REQUIRED" {
+			return nil, appErr
+		}
 		if err == domain.ErrNotFound {
 			return nil, domain.NewAppError(404, "RESOURCE_NOT_FOUND", "api.deviceNotFound", "installation not found", nil, err)
 		}

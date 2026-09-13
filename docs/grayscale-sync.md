@@ -34,6 +34,8 @@ TOKENDANCE_GRAYSCALE_INTERVAL=5m
 go run ./cmd/grayscale-sync --loop
 ```
 
-目标库名是 `tokendance_prod` 时进程会拒绝启动。首次全量复制这 10 人的日聚合；之后只刷新最近 `TOKENDANCE_GRAYSCALE_REFRESH_DAYS`（默认 2）天。前 10 名集合变化时自动重新全量。
+目标库名是 `tokendance_prod` 时进程会拒绝启动。每轮在目标事务内完整替换选中成员的日汇总和设备日汇总，补齐历史缺口并同步源端删除。`TOKENDANCE_GRAYSCALE_REFRESH_DAYS`（默认 2）只影响社区统计刷新日期，不再截断个人日汇总历史。日志以 `summary_history=full` 标识。
+
+同步前后比较团队统计输入，仅在数据变化时推进相关团队的 source revision；无变化的定时同步不使缓存失效。保留已有测试邮箱/登录绑定。团队通过规则版本 4 读取历史 exact + derived Token；来源与去重边界见[团队技术方案](tokendance-teams-technical-design-v1.md)。原始 v2 事件不由本镜像复制。
 
 测试 API / worker 照常连 `tokendance_dev` 和 `redis_dev`。镜像只负责把 MySQL 写进去；榜单 Redis 由测试 worker 消化 outbox。

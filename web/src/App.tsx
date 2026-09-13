@@ -1,6 +1,6 @@
 import { LeaderboardListPage } from '@/pages/public/LeaderboardListPage';
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { LocaleProvider } from '@/context/LocaleContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
@@ -31,10 +31,23 @@ import { ExportsSettingsPage } from '@/pages/settings/ExportsSettingsPage';
 import { PublicProfilePage } from '@/pages/public/PublicProfilePage';
 import { LeaderboardPage } from '@/pages/public/LeaderboardPage';
 import { CommunityPage } from '@/pages/public/CommunityPage';
+import { TeamProvider } from '@/context/TeamContext';
 import { TeamDashboardPage } from '@/pages/teams/TeamDashboardPage';
+import { CreateTeamPage } from '@/pages/teams/CreateTeamPage';
+import { InvitationPage } from '@/pages/teams/InvitationPage';
+import { JoinTeamPage } from '@/pages/teams/JoinTeamPage';
+import { TeamLayout } from '@/pages/teams/TeamLayout';
+import { TeamMembersPage } from '@/pages/teams/TeamMembersPage';
+import { TeamAnalyticsPage } from '@/pages/teams/TeamAnalyticsPage';
+import { TeamSettingsPage } from '@/pages/teams/TeamSettingsPage';
 import { NotFoundPage } from '@/pages/system/NotFoundPage';
 import { DownloadPage } from '@/pages/resources/DownloadPage';
 import { DocsPage } from '@/pages/resources/DocsPage';
+
+const PreserveSearchRedirect: React.FC<{ to: string }> = ({ to }) => {
+  const { search } = useLocation();
+  return <Navigate to={{ pathname: to, search }} relative="path" replace />;
+};
 
 export const RootRedirect: React.FC = () => {
   const { authenticated, loading } = useAuth();
@@ -48,6 +61,7 @@ export const App: React.FC = () => {
       <NotificationProvider>
         <AuthProvider>
           <BrowserRouter basename={import.meta.env.BASE_URL} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+            <TeamProvider>
             <Routes>
               {/* Standalone Auth & Onboarding */}
               <Route path="/login" element={<LoginPage />} />
@@ -85,11 +99,21 @@ export const App: React.FC = () => {
                 <Route path="/docs" element={<Navigate to="/docs/quickstart" replace />} />
                 <Route path="/docs/:slug" element={<DocsPage />} />
                 <Route path="/teams" element={<TeamDashboardPage />} />
+                <Route path="/teams/new" element={<CreateTeamPage />} />
+                <Route path="/teams/invitations/:invitationId" element={<InvitationPage />} />
+                <Route path="/teams/join/:linkId" element={<JoinTeamPage />} />
+                <Route path="/teams/:teamId" element={<TeamLayout />}>
+                  <Route index element={<TeamAnalyticsPage />} />
+                  <Route path="analytics" element={<PreserveSearchRedirect to=".." />} />
+                  <Route path="members" element={<TeamMembersPage />} />
+                  <Route path="settings" element={<TeamSettingsPage />} />
+                </Route>
 
                 {/* 404 catch-all */}
                 <Route path="*" element={<NotFoundPage />} />
               </Route>
             </Routes>
+            </TeamProvider>
           </BrowserRouter>
         </AuthProvider>
       </NotificationProvider>

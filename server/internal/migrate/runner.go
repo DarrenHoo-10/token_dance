@@ -672,6 +672,23 @@ func (r *Runner) ResetCleanSchema(ctx context.Context) error {
 	}()
 
 	tables := []string{
+		"team_member_day_metrics",
+		"team_usage_contributors",
+		"team_deletion_barriers",
+		"team_audit_events",
+		"team_export_jobs",
+		"team_analysis_rows",
+		"team_analysis_snapshots",
+		"team_source_revisions",
+		"team_command_receipts",
+		"team_invite_link_joins",
+		"team_invite_links",
+		"team_invitations",
+		"team_sharing_grants",
+		"user_current_teams",
+		"team_memberships",
+		"team_upload_objects",
+		"teams",
 		"desktop_release_channels",
 		"desktop_release_publication",
 		"desktop_releases",

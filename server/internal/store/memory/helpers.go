@@ -142,6 +142,23 @@ func (m *MemoryStore) SeedUserSkillFixture(userID string, skills []UserSkillFixt
 	m.userSkillFixtures[userID] = skills
 }
 
+// SeedTeamPersonalDays is the in-memory stand-in for a user's eligible personal day
+// projection. Occupy/rejoin/refresh overwrite that user's contributor rows from this set.
+func (m *MemoryStore) SeedTeamPersonalDays(userID string, rows []domain.TeamAnalysisRow) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copied := make([]domain.TeamAnalysisRow, len(rows))
+	copy(copied, rows)
+	m.teamPersonalDays[userID] = copied
+}
+
+// RefreshCurrentTeamDays overwrites the current team's contributor rows from SeedTeamPersonalDays.
+func (m *MemoryStore) RefreshCurrentTeamDays(userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.refreshCurrentTeamDaysLocked(userID)
+}
+
 func (m *MemoryStore) SeedLeaderboardSnapshot(snapshot domain.LeaderboardResponse) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

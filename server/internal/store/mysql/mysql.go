@@ -39,6 +39,7 @@ func (s *Store) Leaderboard() store.LeaderboardStore {
 	return &leaderboardStore{db: s.db, index: s.ranking}
 }
 func (s *Store) Media() store.MediaStore { return &mediaStore{db: s.db} }
+func (s *Store) Teams() store.TeamsStore { return &teamsStore{db: s.db} }
 
 // Helper conversions for database/sql scanning
 
