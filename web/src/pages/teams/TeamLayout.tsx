@@ -9,7 +9,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { useTeam } from '@/context/TeamContext';
 import { InviteDialog } from './InviteDialog';
-import { RoleBadge, TeamAvatar, TeamDateRangeBar, teamErrorMessage } from './TeamShared';
+import { TeamAvatar, TeamDateRangeBar, teamErrorMessage } from './TeamShared';
 
 export const TeamLayout: React.FC = () => {
   const { teamId } = useParams<{ teamId: string }>();
@@ -57,7 +57,7 @@ export const TeamLayout: React.FC = () => {
   if (pageError) return <ErrorState error={pageError} description={teamErrorMessage(t, pageError)} onRetry={() => void refresh()} />;
   if (!scope || !teamId || scope.team.id !== teamId) return <LoadingState />;
 
-  const { team, membership, permissions } = scope;
+  const { team, permissions } = scope;
   const query = location.search;
   const lastSegment = location.pathname.split('/').filter(Boolean).pop();
   const isPanel = lastSegment === team.id;
@@ -71,9 +71,6 @@ export const TeamLayout: React.FC = () => {
             <span>{t('teams.label')}</span>
             <h1>{team.name}</h1>
             <p>{team.description || t('teams.overview.noDescription')}</p>
-            <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
-              <RoleBadge role={membership.role} />
-            </div>
           </div>
         </div>
         <div className="team-heading-actions">

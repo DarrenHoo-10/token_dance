@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ApiError } from '@/api/client';
-import { teamsApi, type AuditEvent, type TeamMember } from '@/api/teams';
+import { teamsApi, type TeamMember } from '@/api/teams';
 import { Button } from '@/components/common/Button';
 import { Card } from '@/components/common/Card';
 import { Input } from '@/components/common/Input';
@@ -30,7 +30,6 @@ export const TeamSettingsPage: React.FC = () => {
 
   const [name, setName] = useState(scope?.team.name || '');
   const [description, setDescription] = useState(scope?.team.description || '');
-  const [audits, setAudits] = useState<AuditEvent[]>([]);
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
@@ -45,15 +44,11 @@ export const TeamSettingsPage: React.FC = () => {
     setName(scope.team.name);
     setDescription(scope.team.description);
     const controller = new AbortController();
-    Promise.all([
-      scope.permissions.inviteMembers ? teamsApi.getAuditEvents(scope.team.id, {}, controller.signal) : Promise.resolve({ events: [] as AuditEvent[], nextCursor: null }),
-      scope.permissions.transferOwnership ? teamsApi.getMembers(scope.team.id, {}, controller.signal) : Promise.resolve({ members: [] as TeamMember[], nextCursor: null }),
-    ])
-      .then(([auditRes, memberRes]) => {
-        setAudits(auditRes.events || []);
-        setMembers(memberRes.members || []);
-      })
-      .catch((err) => setError(err instanceof ApiError ? err : new ApiError(500, { code: 'UNKNOWN', messageKey: 'errors.unknown' })));
+    if (scope.permissions.transferOwnership) {
+      teamsApi.getMembers(scope.team.id, {}, controller.signal)
+        .then((memberRes) => setMembers(memberRes.members || []))
+        .catch((err) => setError(err instanceof ApiError ? err : new ApiError(500, { code: 'UNKNOWN', messageKey: 'errors.unknown' })));
+    }
     return () => controller.abort();
   }, [scope]);
 
@@ -107,31 +102,19 @@ export const TeamSettingsPage: React.FC = () => {
           <label className="form-label">{t('teams.create.description')}</label>
           <textarea className="form-input" value={description} disabled={!scope.permissions.editProfile || busy} onChange={(e) => setDescription(e.target.value)} style={{ minHeight: 80, padding: '10px 14px' }} />
         </div>
-        <p className="text-muted" style={{ fontSize: 12 }}>{t('teams.settings.timezoneFixed', { timezone: scope.team.timezone })}</p>
         {scope.permissions.editProfile && (
           <Button variant="dark" loading={busy} onClick={() => void saveProfile()}>{t('common.save')}</Button>
         )}
       </Card>
 
-      <Card>
-        <div className="panel-header"><h2>{t('teams.settings.management')}</h2></div>
-        {scope.permissions.leave && <Button variant="outline" onClick={() => setLeaveOpen(true)}>{t('teams.settings.leave')}</Button>}
-        {scope.permissions.transferOwnership && <Button variant="outline" onClick={() => setTransferOpen(true)}>{t('teams.settings.transfer')}</Button>}
-        {scope.permissions.dissolve && <Button variant="danger" onClick={() => setDissolveOpen(true)}>{t('teams.settings.dissolve')}</Button>}
-        {!scope.permissions.leave && scope.membership.role === 'owner' && (
-          <p className="text-muted" style={{ fontSize: 13 }}>{t('teams.settings.ownerLeaveHint')}</p>
-        )}
-      </Card>
-
-      {scope.permissions.inviteMembers && (
+      {(scope.permissions.leave || scope.permissions.transferOwnership || scope.permissions.dissolve) && (
         <Card>
-          <div className="panel-header"><h2>{t('teams.settings.audit')}</h2></div>
-          {audits.map((event) => (
-            <div key={event.id} className="team-member-row">
-              <div>{t(`teams.audit.${event.action}`) === `teams.audit.${event.action}` ? event.action : t(`teams.audit.${event.action}`)}</div>
-              <div className="text-muted">{event.createdAt}</div>
-            </div>
-          ))}
+          <div className="panel-header"><h2>{t('teams.settings.management')}</h2></div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {scope.permissions.leave && <Button variant="outline" onClick={() => setLeaveOpen(true)}>{t('teams.settings.leave')}</Button>}
+            {scope.permissions.transferOwnership && <Button variant="outline" onClick={() => setTransferOpen(true)}>{t('teams.settings.transfer')}</Button>}
+            {scope.permissions.dissolve && <Button variant="danger" onClick={() => setDissolveOpen(true)}>{t('teams.settings.dissolve')}</Button>}
+          </div>
         </Card>
       )}
 
