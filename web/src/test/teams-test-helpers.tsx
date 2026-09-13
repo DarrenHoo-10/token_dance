@@ -64,6 +64,8 @@ export function renderTeams(ui: React.ReactElement, route = '/teams') {
                 <Route path="/teams/join/:linkId" element={ui} />
                 <Route path="/teams/:teamId" element={ui} />
                 <Route path="/teams/:teamId/analytics" element={ui} />
+                <Route path="/teams/:teamId/members" element={ui} />
+                <Route path="/teams/:teamId/settings" element={ui} />
                 <Route path="/teams" element={ui} />
                 <Route path="*" element={ui} />
               </Routes>

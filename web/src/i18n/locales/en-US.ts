@@ -316,9 +316,9 @@ export const enUS = {
     },
     nav: {
       tabs: 'Team pages',
-      overview: 'Overview',
+      panel: 'Data panel',
       members: 'Members',
-      analytics: 'Usage',
+      analytics: 'Data panel',
       settings: 'Settings',
     },
     role: {
@@ -435,7 +435,7 @@ export const enUS = {
     },
     overview: {
       noDescription: 'No description yet',
-      firstUse: 'The team is ready. Invite teammates when you want. The first overview will not show demo usage.',
+      firstUse: 'The team is ready. Invite teammates when you want. The first view will not show demo usage.',
       updatedAt: 'Updated {time}',
       notShared: 'You have not counted your usage toward the team yet.',
       waitingSync: 'Waiting for the first sync. Missing data is not shown as a real zero.',

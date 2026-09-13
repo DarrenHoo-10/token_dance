@@ -316,9 +316,9 @@ export const zhCN = {
     },
     nav: {
       tabs: '团队页面',
-      overview: '总览',
+      panel: '数据面板',
       members: '成员',
-      analytics: '用量分析',
+      analytics: '数据面板',
       settings: '设置',
     },
     role: {
@@ -435,7 +435,7 @@ export const zhCN = {
     },
     overview: {
       noDescription: '还没有简介',
-      firstUse: '团队已创建，邀请同伴一起记录。首次总览不会填入演示用量。',
+      firstUse: '团队已创建，邀请同伴一起记录。首次打开不会填入演示用量。',
       updatedAt: '数据更新于 {time}',
       notShared: '你尚未将用量计入团队。',
       waitingSync: '等待首次同步。尚未收到已授权数据时不会显示真实 0。',

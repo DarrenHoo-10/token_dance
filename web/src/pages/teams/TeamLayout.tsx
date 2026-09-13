@@ -84,9 +84,8 @@ export const TeamLayout: React.FC = () => {
       </div>
 
       <nav className="team-tabs" aria-label={t('teams.nav.tabs')}>
-        <NavLink to={`/teams/${team.id}${query}`} end className={({ isActive }) => (isActive ? 'active' : '')}>{t('teams.nav.overview')}</NavLink>
-        <NavLink to={`/teams/${team.id}/members${query}`} className={({ isActive }) => (isActive ? 'active' : '')}>{t('teams.nav.members')}</NavLink>
-        <NavLink to={`/teams/${team.id}/analytics${query}`} className={({ isActive }) => (isActive ? 'active' : '')}>{t('teams.nav.analytics')}</NavLink>
+        <NavLink to={`/teams/${team.id}${query}`} end className={({ isActive }) => (isActive ? 'active' : '')}>{t('teams.nav.panel')}</NavLink>
+        <NavLink to={`/teams/${team.id}/members`} className={({ isActive }) => (isActive ? 'active' : '')}>{t('teams.nav.members')}</NavLink>
         <NavLink to={`/teams/${team.id}/settings`} className={({ isActive }) => (isActive ? 'active' : '')}>{t('teams.nav.settings')}</NavLink>
       </nav>
 

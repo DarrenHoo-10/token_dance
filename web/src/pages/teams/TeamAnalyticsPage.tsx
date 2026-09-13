@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useLocation, useOutletContext } from 'react-router-dom';
 import { Button } from '@/components/common/Button';
 import { Card } from '@/components/common/Card';
 import { ErrorState } from '@/components/states/ErrorState';
@@ -19,6 +20,9 @@ export const TeamAnalyticsPage: React.FC = () => {
   const { t, locale } = useLocale();
   const { showToast } = useNotification();
   const { scope, authRevision } = useTeam();
+  const outlet = useOutletContext<{ openInvite?: () => void } | undefined>();
+  const location = useLocation();
+  const justCreated = Boolean((location.state as { justCreated?: boolean } | null)?.justCreated);
   const { range, from, to, agent, provider, model, setFilter, search } = useTeamSearchFilters();
   const { analysis, updating, updatingMessageKey, error } = useTeamAnalysis({
     teamId: scope?.team.id,
@@ -58,14 +62,26 @@ export const TeamAnalyticsPage: React.FC = () => {
   }, [scope]);
 
   if (!scope) return null;
+
+  const createdBanner = justCreated ? (
+    <div className="team-status-banner">
+      {t('teams.overview.firstUse')}
+      {scope.permissions.inviteMembers && (
+        <Button variant="primary" size="sm" style={{ marginLeft: 12 }} onClick={() => outlet?.openInvite?.()}>
+          {t('teams.invite.action')}
+        </Button>
+      )}
+    </div>
+  ) : null;
+
   if (updating && !analysis) {
-    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} /></div>;
+    return <div><TeamDateRangeBar timezone={scope.team.timezone} />{createdBanner}<AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} /></div>;
   }
   if (error && !analysis) {
-    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><ErrorState error={error} description={teamErrorMessage(t, error)} /></div>;
+    return <div><TeamDateRangeBar timezone={scope.team.timezone} />{createdBanner}<ErrorState error={error} description={teamErrorMessage(t, error)} /></div>;
   }
   if (!analysis) {
-    return <div><TeamDateRangeBar timezone={scope.team.timezone} /><AnalysisSkeleton /></div>;
+    return <div><TeamDateRangeBar timezone={scope.team.timezone} />{createdBanner}<AnalysisSkeleton /></div>;
   }
 
   const startExport = async (kind: ExportKind) => {
@@ -93,6 +109,7 @@ export const TeamAnalyticsPage: React.FC = () => {
   return (
     <div>
       <TeamDateRangeBar timezone={scope.team.timezone} />
+      {createdBanner}
       <p className="text-muted" style={{ fontSize: 12, margin: '12px 0' }}>
         {t('teams.overview.updatedAt', { time: formatInTimezone(analysis.snapshot.asOf, analysis.range.timezone, locale) })}
         {analysis.snapshot.refreshing ? ` · ${t('teams.analytics.refreshing')}` : ''}

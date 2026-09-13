@@ -37,7 +37,6 @@ import { CreateTeamPage } from '@/pages/teams/CreateTeamPage';
 import { InvitationPage } from '@/pages/teams/InvitationPage';
 import { JoinTeamPage } from '@/pages/teams/JoinTeamPage';
 import { TeamLayout } from '@/pages/teams/TeamLayout';
-import { TeamOverviewPage } from '@/pages/teams/TeamOverviewPage';
 import { TeamMembersPage } from '@/pages/teams/TeamMembersPage';
 import { TeamAnalyticsPage } from '@/pages/teams/TeamAnalyticsPage';
 import { TeamSettingsPage } from '@/pages/teams/TeamSettingsPage';
@@ -99,9 +98,9 @@ export const App: React.FC = () => {
                 <Route path="/teams/invitations/:invitationId" element={<InvitationPage />} />
                 <Route path="/teams/join/:linkId" element={<JoinTeamPage />} />
                 <Route path="/teams/:teamId" element={<TeamLayout />}>
-                  <Route index element={<TeamOverviewPage />} />
+                  <Route index element={<TeamAnalyticsPage />} />
+                  <Route path="analytics" element={<Navigate to=".." relative="path" replace />} />
                   <Route path="members" element={<TeamMembersPage />} />
-                  <Route path="analytics" element={<TeamAnalyticsPage />} />
                   <Route path="settings" element={<TeamSettingsPage />} />
                 </Route>
 
