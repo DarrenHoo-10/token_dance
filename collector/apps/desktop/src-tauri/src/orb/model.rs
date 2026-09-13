@@ -4,7 +4,6 @@ use std::collections::HashSet;
 pub const SCHEMA_VERSION: u32 = 1;
 pub const ALLOWED_DIAMETERS: [u32; 7] = [64, 80, 96, 112, 128, 144, 160];
 pub const DEFAULT_DIAMETER_DIP: u32 = 96;
-pub const QUOTA_FRESH_MS: i64 = 30 * 60 * 1000;
 pub const INITIAL_SOURCE_ORDER: &[&str] = &[
     "codex",
     "claude-code",
@@ -476,16 +475,8 @@ pub fn resets_at_ms(resets_at_secs: Option<i64>) -> Option<i64> {
     resets_at_secs.and_then(|secs| secs.checked_mul(1000))
 }
 
-pub fn stale_at_ms(observed_ms: i64, resets_at_secs: Option<i64>) -> i64 {
-    let from_age = observed_ms.saturating_add(QUOTA_FRESH_MS);
-    match resets_at_ms(resets_at_secs) {
-        Some(reset) => from_age.min(reset),
-        None => from_age,
-    }
-}
-
 /// Matches `quotaStale` in usage-analytics.ts: status present and not ready,
-/// invalid/future observation, older than 30 minutes, or past resetsAt.
+/// invalid/future observation, or past resetsAt. Observation age alone is not expiry.
 pub fn quota_observation_stale(
     status: Option<&str>,
     observed_at_ms: Option<i64>,
@@ -499,9 +490,6 @@ pub fn quota_observation_stale(
         return true;
     };
     if observed > now_ms {
-        return true;
-    }
-    if now_ms.saturating_sub(observed) > QUOTA_FRESH_MS {
         return true;
     }
     if let Some(reset_ms) = resets_at_ms(resets_at_secs) {
@@ -679,7 +667,7 @@ pub fn evaluate_window(
 ) -> (QuotaState, Option<f64>, Option<f64>, Option<i64>, Option<i64>, Option<i64>) {
     let observed = observed_at_ms(&record.observed_at);
     let reset_ms = resets_at_ms(window.resets_at);
-    let stale_at = observed.map(|ms| stale_at_ms(ms, window.resets_at));
+    let stale_at = reset_ms;
     if let Some(state) = terminal_quota_state(record.status.as_deref()) {
         return (
             state,
@@ -965,15 +953,14 @@ mod tests {
         let ready = Some("ready");
         assert!(!quota_observation_stale(ready, Some(now), Some(now / 1000 + 600), now));
         assert!(quota_observation_stale(ready, Some(now), Some(now / 1000 - 1), now));
-        assert!(quota_observation_stale(ready, Some(now), None, now + 31 * 60_000));
+        assert!(!quota_observation_stale(ready, Some(now), None, now + 31 * 60_000));
+        assert!(!quota_observation_stale(ready, Some(now), None, now + 7 * 86_400_000));
         assert!(!quota_observation_stale(ready, Some(now), None, now + 30 * 60_000));
         assert!(quota_observation_stale(ready, Some(now + 1), None, now));
         assert!(quota_observation_stale(ready, None, None, now));
         assert!(quota_observation_stale(Some("unavailable"), Some(now), None, now));
         assert!(quota_observation_stale(Some("network_error"), Some(now), None, now));
         assert!(!quota_observation_stale(None, Some(now), None, now));
-        assert_eq!(stale_at_ms(now, Some(now / 1000 + 60)), now + 60_000);
-        assert_eq!(stale_at_ms(now, None), now + QUOTA_FRESH_MS);
     }
 
     #[test]
@@ -1047,7 +1034,7 @@ mod tests {
                 last_known_remaining_percent: Some(63.0),
                 observed_at_ms: Some(1),
                 resets_at_ms: None,
-                stale_at_ms: Some(1 + QUOTA_FRESH_MS),
+                stale_at_ms: None,
                 identity_confidence: IdentityConfidence::Unavailable,
                 identity_note: None,
             },
