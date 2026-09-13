@@ -45,7 +45,7 @@ function mockSnapshot(revision = '1'): OrbSnapshot {
       lastKnownRemainingPercent: remaining,
       observedAtMs: now - 60_000,
       resetsAtMs: now + 2 * 3_600_000 + 18 * 60_000,
-      staleAtMs: now + 29 * 60_000,
+      staleAtMs: now + 2 * 3_600_000 + 18 * 60_000,
       identityConfidence: 'unavailable',
     },
     effect: { mode: 'orbit', reducedMotion: false, pulse: null },

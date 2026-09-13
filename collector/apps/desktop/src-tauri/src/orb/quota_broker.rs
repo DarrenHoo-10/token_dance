@@ -245,7 +245,7 @@ mod tests {
     }
 
     #[test]
-    fn persisted_selection_is_kept_when_source_goes_stale() {
+    fn persisted_selection_remains_usable_without_new_observations() {
         let now = 1_000_000_000_000i64;
         let mut broker = QuotaBroker::new();
         broker.restore_selection(Some(QuotaSelection {
@@ -259,10 +259,16 @@ mod tests {
         broker.maybe_auto_select(now);
         let view = broker.view(now);
         assert_eq!(view.selection.as_ref().unwrap().agent_id, "codex");
-        assert_eq!(view.state, QuotaState::Stale);
-        assert_eq!(view.remaining_percent, None);
+        assert_eq!(view.state, QuotaState::Fresh);
+        assert_eq!(view.remaining_percent, Some(80.0));
         assert_eq!(view.last_known_remaining_percent, Some(80.0));
-        assert_eq!(quota_visual_remaining(view.state, view.remaining_percent), None);
+        assert_eq!(quota_visual_remaining(view.state, view.remaining_percent), Some(80.0));
+        assert_eq!(view.stale_at_ms, None);
+        broker.ingest_async(0, ready("codex", now, vec![window("primary", 300, 29.0, None)]));
+        let updated = broker.view(now);
+        assert_eq!(updated.state, QuotaState::Fresh);
+        assert_eq!(updated.remaining_percent, Some(71.0));
+        assert_eq!(updated.observed_at_ms, Some(now));
     }
 
     #[test]

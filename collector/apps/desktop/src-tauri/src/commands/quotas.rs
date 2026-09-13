@@ -178,6 +178,22 @@ mod tests {
     }
 
     #[test]
+    fn appended_quota_replaces_cached_reading_even_with_unchanged_percentage() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout.jsonl");
+        fs::write(&path, format!("{}\n", event(Some("codex"), 29.0, "2026-09-12T12:00:00Z"))).unwrap();
+        let old = read_codex_quota_from(dir.path());
+        assert_eq!(old[0].windows[0].used_percent, 29.0);
+        assert_eq!(read_codex_quota_from(dir.path())[0].observed_at, old[0].observed_at);
+        let mut file = fs::OpenOptions::new().append(true).open(path).unwrap();
+        writeln!(file, "{}", event(Some("codex"), 29.0, "2026-09-12T13:00:00Z")).unwrap();
+        assert_eq!(read_codex_quota_from(dir.path())[0].observed_at, "2026-09-12T13:00:00Z");
+        writeln!(file, "{}", event(Some("codex"), 30.0, "2026-09-12T13:00:03Z")).unwrap();
+        assert_eq!(read_codex_quota_from(dir.path())[0].windows[0].used_percent, 30.0);
+    }
+
+    #[test]
     fn current_bucket_id_rejects_spark_and_conflicting_legacy_id() {
         let codex = event(Some("codex"), 14.0, "2026-09-12T12:00:00Z");
         assert_eq!(parse_quota(&codex).unwrap().windows[0].used_percent, 14.0);

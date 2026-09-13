@@ -82,12 +82,13 @@ test('annual calendar includes leap day and local date boundaries', () => {
   assert.equal(year.days.length, 366);
   assert.ok(year.days.some(day => day.date === '2024-02-29'));
 });
-test('quota cannot remain current after reset or stale observation', () => {
+test('quota age does not expire a valid reading, but reset and invalid timestamps do', () => {
   const time = now.getTime();
   const quota = { observedAt: now.toISOString() };
   assert.equal(quotaStale(quota, time / 1000 + 600, time), false);
   assert.equal(quotaStale(quota, time / 1000 - 1, time), true);
-  assert.equal(quotaStale(quota, null, time + 31 * 60000), true);
+  assert.equal(quotaStale(quota, null, time + 31 * 60000), false);
+  assert.equal(quotaStale(quota, time / 1000 + 7 * 86400, time + 86400000), false);
   assert.equal(quotaStale({ observedAt: 'invalid' }, null, time), true);
 });
 

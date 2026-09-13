@@ -145,7 +145,7 @@ export function annualUsage(agents: AgentConfig[], now = new Date()) {
 export function quotaStale(quota: AgentQuota, resetsAt: number | null, now = Date.now()) {
   if (quota.status && quota.status !== 'ready') return true;
   const observed = Date.parse(quota.observedAt);
-  return !Number.isFinite(observed) || observed > now || now - observed > 30 * 60 * 1000 || (resetsAt != null && resetsAt * 1000 <= now);
+  return !Number.isFinite(observed) || observed > now || (resetsAt != null && resetsAt * 1000 <= now);
 }
 
 /** Collection status is separate from billing quota availability. */
