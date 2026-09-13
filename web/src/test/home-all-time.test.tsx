@@ -33,7 +33,7 @@ function renderHome() {
 }
 
 function allTimeBlock() {
-  return within(screen.getByText('累计 Token · All time').closest('.stat-block') as HTMLElement);
+  return within(screen.getByText('累计 Token').closest('.stat-block') as HTMLElement);
 }
 
 describe('Home all-time usage', () => {

@@ -215,7 +215,6 @@ export const LeaderboardPage: React.FC = () => {
             <h1>Let Token Dance</h1>
             <span className="hero-live"><i aria-hidden="true" />LIVE · {zh ? '实时更新' : 'Live'}</span>
           </div>
-          <p>{zh ? '今天，整个社区正在持续燃烧 Token' : 'The whole community is burning tokens today.'}</p>
           <div className="hero-today">
             <div className="hero-today-main">
               <span className="hero-today-label">{zh ? '今日 Token' : 'Today’s tokens'}</span>
@@ -250,9 +249,9 @@ export const LeaderboardPage: React.FC = () => {
     <aside className="side-column">
       <section className="side-card stats-card"><div className="card-heading"><h2>{zh ? '你的数据' : 'Your Stats'}</h2><button type="button" onClick={() => navigate('/me')} aria-label={zh ? '打开个人数据' : 'Open analytics'}><BarChart3 /></button></div>
         {authenticated ? <>
-          <div className="stat-block"><span>{zh ? '今日排名 · 北京时间' : 'Today’s rank · Beijing'}</span><div className="stat-line"><strong>{rankValue ?? '—'}</strong><TrendBadge value={summary?.ranking?.delta ?? null} />{summary?.ranking?.percentile != null && <em>{zh ? `前 ${formatPercentile(summary.ranking.percentile)}%` : `Top ${formatPercentile(summary.ranking.percentile)}%`}</em>}</div></div>
-          <div className="stat-block"><span>{zh ? '今日 Token · 北京时间' : 'Today’s Tokens · Beijing'}</span><div className="stat-line"><strong>{formatTokens(todayTokens)}</strong></div></div>
-          <div className="stat-block"><span>{zh ? '累计 Token · All time' : 'All time Tokens'}</span><div className="stat-line"><strong>{allTimeTokens === '0' ? '0' : formatTokens(allTimeTokens)}</strong></div></div>
+          <div className="stat-block"><span>{zh ? '今日排名' : 'Today’s rank'}</span><div className="stat-line"><strong>{rankValue ?? '—'}</strong><TrendBadge value={summary?.ranking?.delta ?? null} />{summary?.ranking?.percentile != null && <em>{zh ? `前 ${formatPercentile(summary.ranking.percentile)}%` : `Top ${formatPercentile(summary.ranking.percentile)}%`}</em>}</div></div>
+          <div className="stat-block"><span>{zh ? '今日 Token' : 'Today’s Tokens'}</span><div className="stat-line"><strong>{formatTokens(todayTokens)}</strong></div></div>
+          <div className="stat-block"><span>{zh ? '累计 Token' : 'All time Tokens'}</span><div className="stat-line"><strong>{allTimeTokens === '0' ? '0' : formatTokens(allTimeTokens)}</strong></div></div>
           <div className="streak-line"><span>{zh ? '连续活跃' : 'Streak'}</span><div><Flame /><strong>{streak || 0}</strong>{zh ? '天' : 'days'}</div></div>
         </> : <p className="side-card-empty">{zh ? '登录后查看你的排名与统计。' : 'Sign in to see your rank and stats.'}</p>}
       </section>
@@ -267,7 +266,7 @@ export const LeaderboardPage: React.FC = () => {
       <section className="side-card tools-card"><div className="card-heading"><h2>{zh ? '常用 harness' : 'Top harnesses'}</h2><button type="button" className="view-all">{zh ? '全部' : 'View all'}</button></div>
         {(community?.harnesses?.length ?? 0) > 0 ? <div className="tool-list">{community?.harnesses?.map((harness, index) => <div className="tool-row" key={harness.agentId}><span className="tool-mark" data-accent={index === 0 || undefined}>{harness.label.slice(0, 1).toUpperCase()}</span><strong>{harness.label}</strong><div className="tool-track"><i style={{ width: `${Math.round(harness.sharePct ?? 0)}%` }} data-accent={index === 0 || undefined} /></div><span>{Math.round(harness.sharePct ?? 0)}%</span></div>)}</div>
           : <p className="side-card-empty">{zh ? '暂无社区 harness 用量数据。' : 'No harness usage recorded yet.'}</p>}
-        <p>{zh ? '社区今日 Token 占比 · 按 harness' : 'Community share of today’s tokens · by harness'}</p></section>
+      </section>
     </aside>
   </div></div>;
 };
