@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { act, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { api } from '@/api/client';
 import { teamsApi, type TeamAnalysisReady, type TeamAnalysisUpdating } from '@/api/teams';
 import { LocaleProvider } from '@/context/LocaleContext';
@@ -407,6 +407,11 @@ describe('Team member insights', () => {
   });
 });
 
+const AnalyticsRedirect: React.FC = () => {
+  const { search } = useLocation();
+  return <Navigate to={{ pathname: '..', search }} relative="path" replace />;
+};
+
 describe('Team page tabs', () => {
   it('puts the data panel first, then members and settings, with dates only on the panel', async () => {
     vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
@@ -430,7 +435,7 @@ describe('Team page tabs', () => {
                 <Routes>
                   <Route path="/teams/:teamId" element={<TeamLayout />}>
                     <Route index element={<TeamAnalyticsPage />} />
-                    <Route path="analytics" element={<Navigate to=".." relative="path" replace />} />
+                    <Route path="analytics" element={<AnalyticsRedirect />} />
                     <Route path="members" element={<TeamMembersPage />} />
                     <Route path="settings" element={<div>settings-tab</div>} />
                   </Route>
@@ -461,6 +466,40 @@ describe('Team page tabs', () => {
     expect(await screen.findByText('settings-tab')).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: '7 天' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('开始日期')).not.toBeInTheDocument();
+  });
+
+  it('redirects /analytics onto the data panel and keeps the date range', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
+    vi.spyOn(teamsApi, 'getExports').mockResolvedValue({ exports: [] });
+    vi.spyOn(teamsApi, 'getFilterOptions').mockResolvedValue({ agents: [], providers: [], models: [] });
+
+    render(
+      <LocaleProvider>
+        <NotificationProvider>
+          <AuthProvider>
+            <MemoryRouter
+              initialEntries={['/teams/tem_0123456789abcdefghijklmnop/analytics?range=7d']}
+              future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+            >
+              <TeamProvider>
+                <Routes>
+                  <Route path="/teams/:teamId" element={<TeamLayout />}>
+                    <Route index element={<TeamAnalyticsPage />} />
+                    <Route path="analytics" element={<AnalyticsRedirect />} />
+                  </Route>
+                </Routes>
+              </TeamProvider>
+            </MemoryRouter>
+          </AuthProvider>
+        </NotificationProvider>
+      </LocaleProvider>
+    );
+
+    expect(await screen.findByRole('tab', { name: '7 天' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('navigation', { name: '团队页面' }).querySelector('a.active')).toHaveTextContent('数据面板');
+    expect(screen.queryByRole('link', { name: '用量分析' })).not.toBeInTheDocument();
   });
 });
 

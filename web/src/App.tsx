@@ -1,6 +1,6 @@
 import { LeaderboardListPage } from '@/pages/public/LeaderboardListPage';
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { LocaleProvider } from '@/context/LocaleContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { AuthProvider, useAuth } from '@/context/AuthContext';
@@ -43,6 +43,11 @@ import { TeamSettingsPage } from '@/pages/teams/TeamSettingsPage';
 import { NotFoundPage } from '@/pages/system/NotFoundPage';
 import { DownloadPage } from '@/pages/resources/DownloadPage';
 import { DocsPage } from '@/pages/resources/DocsPage';
+
+const PreserveSearchRedirect: React.FC<{ to: string }> = ({ to }) => {
+  const { search } = useLocation();
+  return <Navigate to={{ pathname: to, search }} relative="path" replace />;
+};
 
 export const RootRedirect: React.FC = () => {
   const { authenticated, loading } = useAuth();
@@ -99,7 +104,7 @@ export const App: React.FC = () => {
                 <Route path="/teams/join/:linkId" element={<JoinTeamPage />} />
                 <Route path="/teams/:teamId" element={<TeamLayout />}>
                   <Route index element={<TeamAnalyticsPage />} />
-                  <Route path="analytics" element={<Navigate to=".." relative="path" replace />} />
+                  <Route path="analytics" element={<PreserveSearchRedirect to=".." />} />
                   <Route path="members" element={<TeamMembersPage />} />
                   <Route path="settings" element={<TeamSettingsPage />} />
                 </Route>
