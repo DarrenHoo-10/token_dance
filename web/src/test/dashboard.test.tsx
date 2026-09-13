@@ -44,6 +44,8 @@ describe('Dashboard Components Tests', () => {
     );
 
     expect(screen.getByText('预估费用')).toBeInTheDocument();
+    expect(screen.getByText('$1,428.60')).toBeInTheDocument();
+    expect(screen.queryByText(/USD/)).not.toBeInTheDocument();
     expect(screen.getByText('总 Token')).toBeInTheDocument();
     expect(screen.getByText('325.7M')).toBeInTheDocument();
     expect(screen.getByText('生成代码行')).toBeInTheDocument();
@@ -166,7 +168,7 @@ describe('Dashboard Components Tests', () => {
     expect(screen.getAllByText('N/A').length).toBe(9);
   });
 
-  it('displays estimated costs when supplied', () => {
+  it('lists multi-currency estimatedCosts with symbols instead of a fake USD sum', () => {
     render(
       <LocaleProvider>
         <MetricGrid metrics={{
@@ -179,9 +181,9 @@ describe('Dashboard Components Tests', () => {
         }} />
       </LocaleProvider>
     );
+    expect(screen.getByText('$1.00 · ¥7.00')).toBeInTheDocument();
     expect(screen.queryByText('USD 1.00 · CNY 7.00')).not.toBeInTheDocument();
     expect(screen.queryByText('$8.00')).not.toBeInTheDocument();
-    expect(screen.queryByText('$1.00')).not.toBeInTheDocument();
   });
 });
 
