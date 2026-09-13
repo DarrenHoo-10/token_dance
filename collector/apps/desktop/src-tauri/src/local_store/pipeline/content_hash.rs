@@ -96,6 +96,7 @@ fn local_payload_to_hash_payload(local: &Value) -> Result<Value, String> {
                 let mut cost = value.clone();
                 if let Some(map) = cost.as_object_mut() {
                     stringify_uint_leaves(map);
+                    normalize_cost_source(map);
                 }
                 out.insert("cost".into(), cost);
             }
@@ -270,5 +271,12 @@ mod tests {
         );
         let c = compute_p0_content_hash("codex", &draft2, &payload2).unwrap();
         assert_ne!(a, c);
+    }
+}
+
+/// Shared by hashing and upload serialization: wire business values must agree.
+pub(crate) fn normalize_cost_source(cost: &mut Map<String, Value>) {
+    if cost.get("source").and_then(Value::as_str) == Some("estimated_price_table") {
+        cost.insert("source".into(), Value::String("calculated_price".into()));
     }
 }

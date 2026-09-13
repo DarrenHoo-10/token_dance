@@ -695,3 +695,25 @@ fn workbuddy_model_repair_rewinds_once_without_deleting_events() {
  store.with_connection(|c|{super::schema::repair_workbuddy_models(c)?;let cursor:String=c.query_row("SELECT cursor_json FROM collection_sources WHERE id=?1",[source],|r|r.get(0))?;assert_eq!(cursor,"{}");c.execute("UPDATE collection_sources SET cursor_json='{\"offset\":100}' WHERE id=?1",[source])?;super::schema::repair_workbuddy_models(c)?;let cursor:String=c.query_row("SELECT cursor_json FROM collection_sources WHERE id=?1",[source],|r|r.get(0))?;assert!(cursor.contains("100"));Ok(())}).unwrap();
  assert_eq!(store.event_count().unwrap(),1);
 }
+
+#[test]
+fn cost_upload_hash_matches_wire_and_repairs_quarantine_without_recounting() {
+ use base64::Engine;
+ let dir=tempfile::tempdir().unwrap();std::fs::write(dir.path().join("openrouter-prices.json"),r#"{"data":[{"id":"test/model","pricing":{"prompt":"0.01","completion":"0.02"}}]}"#).unwrap();
+ let mut store=PipelineStore::open(dir.path()).unwrap();store.set_clock_ms(1_700_000_000_000);
+ let model=store.upsert_model("test","model").unwrap();let source=register_jsonl(&mut store);let(token,_,seq)=store.lease_source(source,DEFAULT_LEASE_MS).unwrap();let mut event=candidate(11,None);event.model_key=model;
+ commit_one(&mut store,source,&token,seq,vec![event],"{}");
+ for consumer in [Consumer::Hour,Consumer::Day,Consumer::Month] {for task in store.claim_tasks(consumer,16,DEFAULT_LEASE_MS).unwrap(){store.apply_and_complete_metrics(&task).unwrap();}}
+ let id=store.with_connection(|c|Ok(c.query_row("SELECT id FROM events WHERE event_type='cost_recorded'",[],|r|r.get::<_,i64>(0))?)).unwrap();
+ let row=store.load_upload_events(&[id]).unwrap().remove(0);
+ let wire=serde_json::to_value(crate::upload_pipeline::encode_wire_event(&row).unwrap()).unwrap();
+ let hash=protocol::v2::compute_content_hash(&wire).unwrap();
+ assert_eq!(hash,base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(row.content_hash));
+ let mut legacy=wire.clone();legacy["payload"]["cost"]["source"]=serde_json::json!("estimated_price_table");
+ let old=base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(protocol::v2::compute_content_hash(&legacy).unwrap()).unwrap();assert_ne!(old,row.content_hash);
+ store.with_connection(|c|{c.execute("UPDATE events SET content_hash=?1,status_json=json_set(status_json,'$.upload',6) WHERE id=?2",rusqlite::params![old,id])?;c.execute("DELETE FROM processing_tasks WHERE event_row_id=?1 AND consumer='upload'",[id])?;Ok(())}).unwrap();
+ assert_eq!(store.repair_cost_upload_hashes(16).unwrap(),1);
+ let repaired=store.load_upload_events(&[id]).unwrap().remove(0);assert_eq!(repaired.content_hash,row.content_hash);assert_eq!(repaired.event_id,row.event_id);assert_eq!(repaired.fact_revision,row.fact_revision);
+ store.with_connection(|c|{let status:String=c.query_row("SELECT status_json FROM events WHERE id=?1",[id],|r|r.get(0))?;let v:serde_json::Value=serde_json::from_str(&status).unwrap();assert_eq!(v["hour"],3);assert_eq!(v["day"],3);assert_eq!(v["month"],3);assert_eq!(v["upload"],0);let units:i64=c.query_row("SELECT SUM(estimated_cost_units) FROM cost_metrics WHERE grain='day'",[],|r|r.get(0))?;assert_eq!(units,12_000_000);Ok(())}).unwrap();
+ assert_eq!(store.repair_cost_upload_hashes(16).unwrap(),0);assert_eq!(store.event_count().unwrap(),2);
+}

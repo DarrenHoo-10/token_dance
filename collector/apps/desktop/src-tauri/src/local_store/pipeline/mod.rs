@@ -6,6 +6,7 @@ pub mod adapters;
 mod apply;
 mod buckets;
 mod content_hash;
+pub(crate) use content_hash::normalize_cost_source;
 mod flags;
 mod query;
 pub mod reconstruction;
