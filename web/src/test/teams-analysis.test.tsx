@@ -446,8 +446,8 @@ describe('Team page tabs', () => {
     const links = within(nav).getAllByRole('link');
     expect(links.map((link) => link.textContent)).toEqual(['数据面板', '成员', '设置']);
     expect(links[0]).toHaveAttribute('href', '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    expect(links[1]).toHaveAttribute('href', '/teams/tem_0123456789abcdefghijklmnop/members');
-    expect(links[2]).toHaveAttribute('href', '/teams/tem_0123456789abcdefghijklmnop/settings');
+    expect(links[1]).toHaveAttribute('href', '/teams/tem_0123456789abcdefghijklmnop/members?range=7d');
+    expect(links[2]).toHaveAttribute('href', '/teams/tem_0123456789abcdefghijklmnop/settings?range=7d');
     expect(screen.queryByRole('link', { name: '总览' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '用量分析' })).not.toBeInTheDocument();
     expect(await screen.findByRole('tab', { name: '7 天' })).toHaveAttribute('aria-selected', 'true');
