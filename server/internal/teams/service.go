@@ -13,6 +13,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"log"
 	"math/big"
 	"sort"
 	"strconv"
@@ -507,6 +508,7 @@ func (s *Service) CreateTeam(ctx context.Context, user *domain.User, in CreateTe
 		ActorUserID: user.UserID, Team: team, Membership: mem, Sharing: sharing, Idempotency: idem, Now: now,
 	})
 	if err != nil {
+		log.Printf("create team store error user=%s: %v", user.UserID, err)
 		return nil, mapStoreError(err, "TEAM_NOT_FOUND")
 	}
 	if res != nil && res.Context != nil {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strconv"
 	"strings"
@@ -541,7 +542,10 @@ func (s *teamsStore) occupyMembership(ctx context.Context, tx *sql.Tx, in occupy
 		return err
 	}
 	if err := teammetrics.RefreshCurrentTeamDaysTx(ctx, tx, in.UserID, nil, nowMs); err != nil {
-		return err
+		if isRetryableTeamsTx(err) || ctx.Err() != nil {
+			return err
+		}
+		log.Printf("team occupy: refresh current days team=%s user=%s: %v", in.TeamID, in.UserID, err)
 	}
 	return s.registerOpenDeletionBarriers(ctx, tx, in.UserID, in.TeamID, in.JoinedAt)
 }
@@ -1346,6 +1350,12 @@ func (s *teamsStore) createTeamTx(ctx context.Context, tx *sql.Tx, in store.Crea
 		}
 		return nil, fmt.Errorf("insert team: %w", err)
 	}
+	// Refresh during occupy bumps this row; insert first to avoid duplicate-key 503.
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO team_source_revisions (team_id, source_revision, changed_at)
+		VALUES (?, 0, ?)`, team.TeamID, now); err != nil {
+		return nil, fmt.Errorf("insert source revision: %w", err)
+	}
 	if err := s.occupyMembership(ctx, tx, occupyMembershipInput{
 		MembershipID: mem.MembershipID,
 		TeamID:       team.TeamID,
@@ -1355,11 +1365,6 @@ func (s *teamsStore) createTeamTx(ctx context.Context, tx *sql.Tx, in store.Crea
 		JoinedAt:     now,
 	}); err != nil {
 		return nil, err
-	}
-	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO team_source_revisions (team_id, source_revision, changed_at)
-		VALUES (?, 0, ?)`, team.TeamID, now); err != nil {
-		return nil, fmt.Errorf("insert source revision: %w", err)
 	}
 	if err := s.insertAudit(ctx, tx, team.TeamID, in.ActorUserID, "create", "team", team.TeamID, map[string]any{
 		"result": "created",

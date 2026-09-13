@@ -273,3 +273,38 @@ func TestMySQLTeams_SharingOpenClose(t *testing.T) {
 		t.Fatalf("in-team auto share all dimensions, got %+v", state.Sharing)
 	}
 }
+
+func TestMySQLTeams_CreateWithExistingPersonalDays(t *testing.T) {
+	mysqlTeamsEnabled(t)
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Date(2026, 9, 6, 8, 0, 0, 0, time.UTC)
+	owner := teamUserID("histproj")
+	seedMySQLTeamUser(t, db, owner, "hist_proj", now)
+	if _, err := db.Exec(`
+		INSERT INTO daily_user_agent_metrics (
+			metric_date, user_id, agent_id, exact_token_total, derived_token_total,
+			aggregation_version, computed_at, updated_at
+		) VALUES ('2026-09-01', ?, 'codex', 1000, 0, 1, ?, ?)`, owner, now, now); err != nil {
+		t.Fatalf("seed personal days: %v", err)
+	}
+	created, err := st.Teams().CreateTeamTx(ctx, mysqlCreateTeam(t, owner, "History Team", domain.SharingFlags{}, now, teamIdem("create_team", "hist-proj", "body")))
+	if err != nil {
+		t.Fatalf("create with personal days: %v", err)
+	}
+	var revision uint64
+	if err := db.QueryRow(`SELECT source_revision FROM team_source_revisions WHERE team_id = ?`, created.Context.Team.TeamID).Scan(&revision); err != nil {
+		t.Fatalf("source revision: %v", err)
+	}
+	if revision < 1 {
+		t.Fatalf("expected occupancy to bump source revision, got %d", revision)
+	}
+	var dayRows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM team_member_day_metrics WHERE team_id = ? AND delete_at IS NULL`, created.Context.Team.TeamID).Scan(&dayRows); err != nil {
+		t.Fatalf("day metrics: %v", err)
+	}
+	if dayRows == 0 {
+		t.Fatal("expected projected team day metrics after create")
+	}
+}

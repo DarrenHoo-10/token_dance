@@ -2,20 +2,41 @@ import React, { useEffect } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ApiError } from '@/api/client';
-import type { SharingFlags, Team, TeamRole } from '@/api/teams';
+import { teamsApi, type SharingFlags, type Team, type TeamRole, type TeamScope } from '@/api/teams';
 import { Badge } from '@/components/common/Badge';
 import { Switch } from '@/components/common/Switch';
 import { useLocale } from '@/context/LocaleContext';
 import { TeamDateField } from './TeamDateField';
 import { getApiErrorMessage } from '@/i18n';
 import { avatarUrl } from '@/utils/avatar';
-import { TEAM_RANGE_MAX_DAYS, calendarDateInTimeZone, firstGrapheme, inclusiveDaySpan, rankPageCount, TEAM_RANK_PAGE_SIZE } from './teamUtils';
+import {
+  TEAM_RANGE_MAX_DAYS,
+  calendarDateInTimeZone,
+  firstGrapheme,
+  inclusiveDaySpan,
+  rankPageCount,
+  sha256Hex,
+  TEAM_RANK_PAGE_SIZE,
+} from './teamUtils';
 import './teams.css';
 
 export function teamErrorMessage(t: (key: string, params?: Record<string, string | number>) => string, error: ApiError): string {
   const byTeams = t(`teams.errors.${error.code}`);
   if (byTeams !== `teams.errors.${error.code}`) return byTeams;
   return getApiErrorMessage(t, error);
+}
+
+export async function persistTeamAvatar(scope: TeamScope, file: File): Promise<TeamScope> {
+  const hash = await sha256Hex(await file.arrayBuffer());
+  const intent = await teamsApi.createAvatarUploadIntent(scope.team.id, {
+    contentType: file.type,
+    byteSize: file.size,
+    sha256: hash,
+  });
+  await teamsApi.uploadAvatarContent(scope.team.id, intent.objectId, file);
+  return teamsApi.completeAvatarUpload(scope.team.id, intent.objectId, {
+    expectedProfileVersion: scope.team.profileVersion,
+  });
 }
 
 export const TeamAvatar: React.FC<{ team: Pick<Team, 'id' | 'name' | 'avatarUrl'>; size?: 'sm' | 'md' | 'lg' }> = ({

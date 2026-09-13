@@ -4,6 +4,8 @@ import { EMPTY_SHARING } from '@/api/teams';
 export const TEAM_NAME_MIN = 2;
 export const TEAM_NAME_MAX = 40;
 export const TEAM_DESCRIPTION_MAX = 120;
+export const TEAM_AVATAR_MAX_BYTES = 2 * 1024 * 1024;
+export const TEAM_AVATAR_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
 export const TEAM_RANGE_MAX_DAYS = 90;
 export const TEAM_RANK_PAGE_SIZE = 10;
 
