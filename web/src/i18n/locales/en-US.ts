@@ -217,7 +217,6 @@ export const enUS = {
     daysUsed: 'days used',
     syncStatus: 'Sync Status',
     collectorDevices: 'Collector devices',
-    pendingEvents: 'Pending events',
     justNow: 'Just now',
     minsAgo: '{count} min ago',
     hoursAgo: '{count} hours ago',

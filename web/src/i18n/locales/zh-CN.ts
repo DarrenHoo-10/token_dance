@@ -217,7 +217,6 @@ export const zhCN = {
     daysUsed: '天使用',
     syncStatus: '同步状态',
     collectorDevices: '采集设备',
-    pendingEvents: '待同步事件',
     justNow: '刚刚',
     minsAgo: '{count} 分钟前',
     hoursAgo: '{count} 小时前',

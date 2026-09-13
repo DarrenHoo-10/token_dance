@@ -308,7 +308,6 @@ export const PersonalDashboardPage: React.FC = () => {
 
           <SyncStatusCard
             lastCommittedAt={displaySummary.sync.lastCommittedAt}
-            pendingLocalCount={displaySummary.sync.pendingLocalCount}
             status={syncStatus}
           />
         </div>

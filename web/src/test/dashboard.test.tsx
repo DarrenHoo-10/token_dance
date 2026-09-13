@@ -94,35 +94,36 @@ describe('Dashboard Components Tests', () => {
     expect(screen.getByText('commit-context')).toBeInTheDocument();
   });
 
-  it('renders SyncStatusCard with health badge', () => {
+  it('renders SyncStatusCard with health badge and last seen, without pending events', () => {
     render(
       <LocaleProvider>
         <SyncStatusCard
           lastCommittedAt={new Date().toISOString()}
-          pendingLocalCount={0}
           status="healthy"
         />
       </LocaleProvider>
     );
 
+    expect(screen.getByText('同步状态')).toBeInTheDocument();
     expect(screen.getByText('正常')).toBeInTheDocument();
+    expect(screen.getByText('最近活跃')).toBeInTheDocument();
     expect(screen.getByText('刚刚')).toBeInTheDocument();
-    expect(screen.getByText('0')).toBeInTheDocument();
+    expect(screen.queryByText('待同步事件')).not.toBeInTheDocument();
   });
 
-  it('ensures pendingLocalCount null stays unknown rather than 0', () => {
+  it('does not show unknown for missing pendingLocalCount after row removal', () => {
     render(
       <LocaleProvider>
         <SyncStatusCard
           lastCommittedAt={null}
-          pendingLocalCount={null}
           status="healthy"
         />
       </LocaleProvider>
     );
 
-    expect(screen.getByText('未知')).toBeInTheDocument();
-    expect(screen.queryByText('0')).not.toBeInTheDocument();
+    expect(screen.getByText('最近活跃')).toBeInTheDocument();
+    expect(screen.queryByText('待同步事件')).not.toBeInTheDocument();
+    expect(screen.queryByText('未知')).not.toBeInTheDocument();
   });
 
   it('localizes empty dashboard states and accessibility labels', () => {
