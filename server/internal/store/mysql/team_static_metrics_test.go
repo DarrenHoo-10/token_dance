@@ -542,3 +542,141 @@ func TestMySQLTeamStaticMetrics_GetFilterOptionsListsRealAgents(t *testing.T) {
 		t.Fatalf("auto-share must not list unshared_classification, got %+v", opts.Agents)
 	}
 }
+
+func TestMySQLTeamStaticMetrics_LegacyModelAndSkillProjection(t *testing.T) {
+	mysqlTeamsEnabled(t)
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Date(2026, 9, 12, 8, 0, 0, 0, time.UTC)
+	owner := teamUserID("ownlg")
+	member := teamUserID("memlg")
+	seedMySQLTeamUser(t, db, owner, "own_lg", now)
+	memberHash := seedMySQLTeamUser(t, db, member, "mem_lg", now)
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO daily_user_agent_metrics (
+			metric_date, user_id, agent_id, exact_token_total, derived_token_total,
+			aggregation_version, computed_at, updated_at
+		) VALUES ('2026-09-10', ?, 'codex', 100, 0, 2, ?, ?)`, member, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	created, err := st.Teams().CreateTeamTx(ctx, mysqlCreateTeam(t, owner, "LG Team", domain.SharingFlags{}, now, teamIdem("create_team", "lgteam", "lg")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	teamID := created.Context.Team.TeamID
+	inviteID := ("tiv_" + "invitelgxxxxxxxxxxxxxxxxxx")[:30]
+	if _, err := st.Teams().CreateInvitationTx(ctx, store.CreateInvitationTxInput{
+		ActorUserID: owner, TeamID: teamID, InvitedRole: domain.TeamBaseRoleMember,
+		Invitation: domain.TeamInvitation{
+			InvitationID: inviteID, RecipientLookupHash: memberHash, RecipientCiphertext: []byte("c"),
+			LookupKeyVersion: 1, EncryptionKeyVersion: 1, ExpiresAt: now.Add(24 * time.Hour),
+		},
+		Idempotency: teamIdem("create_invitation:"+teamID, "invlg", "m"), Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Teams().AcceptInvitationTx(ctx, store.AcceptInvitationTxInput{
+		ActorUserID: member, InvitationID: inviteID, ExpectedVersion: 1,
+		VerifiedEmailLookupHash: memberHash, Idempotency: teamIdem("accept_invitation:"+inviteID, "acclg", "a"), Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := teams.NewService(st, teamTestCfg(), clock.NewMockClock(now), nil, nil)
+	analyze := func() *teams.AnalysisDTO {
+		t.Helper()
+		dto, _, err := svc.GetAnalysis(ctx, owner, teamID, teams.AnalysisQuery{RangeKey: "custom", From: "2026-09-10", To: "2026-09-12"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return dto
+	}
+	dto := analyze()
+	if dto.Summary.Tokens.Value != "100" || len(dto.Models.Items) != 0 {
+		t.Fatalf("agent-only first pass tokens=%s models=%d", dto.Summary.Tokens.Value, len(dto.Models.Items))
+	}
+	stale, err := teammetrics.ListStaleTeamProjectionUsers(ctx, db, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 0 {
+		t.Fatalf("no personal models yet, stale=%v", stale)
+	}
+
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO daily_user_agent_model_metrics (
+			metric_date, user_id, agent_id, provider_id, model_id,
+			exact_token_total, derived_token_total, aggregation_version, computed_at, updated_at
+		) VALUES
+		('2026-09-10', ?, 'codex', 'openai', 'gpt-5', 60, 0, 2, ?, ?),
+		('2026-09-10', ?, 'codex', 'openai', 'gpt-4.1', 40, 0, 2, ?, ?)`,
+		member, now, now, member, now, now); err != nil {
+		t.Fatal(err)
+	}
+	skillKey := crypto.SHA256([]byte("skill.frontend-design"))
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO daily_skill_metrics (
+			metric_date, user_id, agent_id, skill_key, skill_public_name,
+			use_count, exact_use_count, success_count, failure_count,
+			source_max_event_pk, aggregation_version, computed_at, updated_at
+		) VALUES ('2026-09-10', ?, 'codex', ?, 'frontend-design', 12, 12, 12, 0, 1, 2, ?, ?)`,
+		member, skillKey[:], now, now); err != nil {
+		t.Fatal(err)
+	}
+	stale, err = teammetrics.ListStaleTeamProjectionUsers(ctx, db, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, id := range stale {
+		if id == member {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected stale member after personal model/skill insert, got %v", stale)
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := teammetrics.RefreshCurrentTeamDaysTx(ctx, tx, member, nil, now.UnixMilli()); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	dto = analyze()
+	if dto.Summary.Tokens.Value != "100" {
+		t.Fatalf("model rows must replace agent row, not double-count, got %s", dto.Summary.Tokens.Value)
+	}
+	if len(dto.Agents.Items) != 1 || dto.Agents.Items[0]["id"] != "codex" {
+		t.Fatalf("agents %+v", dto.Agents.Items)
+	}
+	if len(dto.Models.Items) != 2 {
+		t.Fatalf("models want 2, got %+v", dto.Models.Items)
+	}
+	modelMembers, _ := dto.Models.Items[0]["members"].([]map[string]any)
+	if len(modelMembers) != 1 {
+		t.Fatalf("model members %+v", dto.Models.Items[0])
+	}
+	if dto.Skills == nil || len(dto.Skills.Items) != 1 || dto.Skills.Items[0]["label"] != "frontend-design" || dto.Skills.Items[0]["useCount"] != "12" {
+		t.Fatalf("skills %+v", dto.Skills)
+	}
+	skillMembers, _ := dto.Skills.Items[0]["members"].([]map[string]any)
+	if len(skillMembers) != 1 {
+		t.Fatalf("skill members %+v", dto.Skills.Items[0])
+	}
+	stale, err = teammetrics.ListStaleTeamProjectionUsers(ctx, db, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range stale {
+		if id == member {
+			t.Fatal("member must not stay stale after refresh")
+		}
+	}
+}

@@ -2074,7 +2074,7 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 				agentMem[*row.AgentID][*row.MembershipID] = AddIntDecimal(agentMem[*row.AgentID][*row.MembershipID], tokens)
 			}
 		}
-		if row.ModelID != nil {
+		if row.ModelID != nil && strings.TrimSpace(*row.ModelID) != "" {
 			key := ""
 			if row.ProviderID != nil {
 				key = *row.ProviderID + "/"
@@ -2521,7 +2521,7 @@ func classificationTotals(rows []domain.TeamAnalysisRow) (map[string]string, map
 		if row.AgentID != nil {
 			agentTok[*row.AgentID] = AddIntDecimal(agentTok[*row.AgentID], tokens)
 		}
-		if row.ModelID != nil {
+		if row.ModelID != nil && strings.TrimSpace(*row.ModelID) != "" {
 			key := ""
 			if row.ProviderID != nil {
 				key = *row.ProviderID + "/"

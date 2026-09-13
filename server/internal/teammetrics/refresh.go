@@ -109,6 +109,16 @@ func discoverPersonalDays(ctx context.Context, tx *sql.Tx, userID string) ([]str
 		FROM daily_user_agent_metrics WHERE user_id = ?`, userID); err != nil {
 		return nil, err
 	}
+	if err := q(`
+		SELECT DISTINCT DATE_FORMAT(metric_date, '%Y-%m-%d')
+		FROM daily_user_agent_model_metrics WHERE user_id = ?`, userID); err != nil {
+		return nil, err
+	}
+	if err := q(`
+		SELECT DISTINCT DATE_FORMAT(metric_date, '%Y-%m-%d')
+		FROM daily_skill_metrics WHERE user_id = ?`, userID); err != nil {
+		return nil, err
+	}
 	out := make([]string, 0, len(seen))
 	for d := range seen {
 		out = append(out, d)
@@ -122,8 +132,7 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 	in = in[:len(in)-1]
 	dateArgs := datesToAny(dates)
 
-	type usageKey struct{ date, agent, provider, model string }
-	v2Days := map[usageKey]struct{}{}
+	v2Agents := map[dayAgent]struct{}{}
 
 	urows, err := tx.QueryContext(ctx, `
 		SELECT DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(m.bucket_start/1000), INTERVAL 8 HOUR), '%Y-%m-%d'),
@@ -156,7 +165,7 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 			return nil, err
 		}
 		usages = append(usages, u)
-		v2Days[usageKey{u.date, u.agent, u.provider, u.model}] = struct{}{}
+		v2Agents[dayAgent{u.date, u.agent}] = struct{}{}
 	}
 	err = urows.Err()
 	urows.Close()
@@ -175,6 +184,12 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 		out = append(out, row)
 	}
 
+	legacyModels, modelAgents, err := projectLegacyModelRows(ctx, tx, contrib, dates, v2Agents)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, legacyModels...)
+
 	lrows, err := tx.QueryContext(ctx, `
 		SELECT DATE_FORMAT(metric_date, '%Y-%m-%d'), agent_id,
 		       CAST(exact_token_total AS CHAR), CAST(derived_token_total AS CHAR)
@@ -191,17 +206,11 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 		if err := lrows.Scan(&date, &agent, &exact, &derived); err != nil {
 			return nil, err
 		}
-		if _, ok := v2Days[usageKey{date, agent, "", ""}]; ok {
+		key := dayAgent{date, agent}
+		if _, ok := v2Agents[key]; ok {
 			continue
 		}
-		skip := false
-		for k := range v2Days {
-			if k.date == date && k.agent == agent {
-				skip = true
-				break
-			}
-		}
-		if skip {
+		if _, ok := modelAgents[key]; ok {
 			continue
 		}
 		row, err := usageRow(contrib, date, agent, "", "", exact, derived, "0", "0", "0", "0", "0", "0", "0", "0", "0", defaultHourly(), true)
@@ -297,6 +306,7 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 		return nil, fmt.Errorf("project skill metrics: %w", err)
 	}
 	defer srows.Close()
+	v2SkillAgents := map[dayAgent]struct{}{}
 	for srows.Next() {
 		var date, agent, uses, exact, derived, corr, success, failure, dur, durKnown string
 		var skillID int64
@@ -309,8 +319,17 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 			return nil, err
 		}
 		out = append(out, row)
+		v2SkillAgents[dayAgent{date, agent}] = struct{}{}
 	}
-	return out, srows.Err()
+	if err := srows.Err(); err != nil {
+		return nil, err
+	}
+	legacySkills, err := projectLegacySkillRows(ctx, tx, contrib, dates, v2SkillAgents)
+	if err != nil {
+		return nil, err
+	}
+	out = append(out, legacySkills...)
+	return out, nil
 }
 
 func loadHourly(ctx context.Context, tx *sql.Tx, userID, date, agent, provider, model string) (jsonRaw, error) {
@@ -433,4 +452,156 @@ func skillRow(c Contributor, date, agent string, skillID int64, uses, exact, der
 		SkillStats: mustJSON(stats), Resources: emptyJSONObject(), Activity: emptyJSONObject(),
 		Hourly: emptyJSONObject(), Quality: defaultQuality(false), RuleVersion: RuleVersion,
 	}, nil
+}
+
+type dayAgent struct {
+	date  string
+	agent string
+}
+
+func projectLegacyModelRows(ctx context.Context, tx *sql.Tx, contrib Contributor, dates []string, skip map[dayAgent]struct{}) ([]DayRow, map[dayAgent]struct{}, error) {
+	covered := map[dayAgent]struct{}{}
+	if len(dates) == 0 {
+		return nil, covered, nil
+	}
+	in := strings.Repeat("?,", len(dates))
+	in = in[:len(in)-1]
+	rows, err := tx.QueryContext(ctx, `
+		SELECT DATE_FORMAT(metric_date, '%Y-%m-%d'), agent_id, provider_id, model_id,
+		       CAST(exact_token_total AS CHAR), CAST(derived_token_total AS CHAR),
+		       CAST(model_request_count AS CHAR)
+		FROM daily_user_agent_model_metrics
+		WHERE user_id = ? AND metric_date IN (`+in+`)`,
+		append([]any{contrib.UserID}, datesToAny(dates)...)...,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("project legacy model metrics: %w", err)
+	}
+	defer rows.Close()
+	var out []DayRow
+	for rows.Next() {
+		var date, agent, provider, model, exact, derived, events string
+		if err := rows.Scan(&date, &agent, &provider, &model, &exact, &derived, &events); err != nil {
+			return nil, nil, err
+		}
+		if strings.TrimSpace(model) == "" {
+			continue
+		}
+		key := dayAgent{date, agent}
+		if _, ok := skip[key]; ok {
+			continue
+		}
+		row, err := usageRow(contrib, date, agent, provider, model, exact, derived, events, "0", "0", "0", "0", "0", "0", "0", "0", defaultHourly(), true)
+		if err != nil {
+			return nil, nil, err
+		}
+		out = append(out, row)
+		covered[key] = struct{}{}
+	}
+	return out, covered, rows.Err()
+}
+
+func projectLegacySkillRows(ctx context.Context, tx *sql.Tx, contrib Contributor, dates []string, skip map[dayAgent]struct{}) ([]DayRow, error) {
+	if len(dates) == 0 {
+		return nil, nil
+	}
+	in := strings.Repeat("?,", len(dates))
+	in = in[:len(in)-1]
+	rows, err := tx.QueryContext(ctx, `
+		SELECT DATE_FORMAT(metric_date, '%Y-%m-%d'), agent_id, skill_key, skill_public_name,
+		       CAST(use_count AS CHAR), CAST(exact_use_count AS CHAR), CAST(derived_use_count AS CHAR),
+		       CAST(correlated_use_count AS CHAR), CAST(success_count AS CHAR), CAST(failure_count AS CHAR),
+		       CAST(duration_ms AS CHAR)
+		FROM daily_skill_metrics
+		WHERE user_id = ? AND metric_date IN (`+in+`)`,
+		append([]any{contrib.UserID}, datesToAny(dates)...)...,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("project legacy skill metrics: %w", err)
+	}
+	defer rows.Close()
+	var out []DayRow
+	for rows.Next() {
+		var date, agent, uses, exact, derived, corr, success, failure, dur string
+		var skillKey []byte
+		var publicName sql.NullString
+		if err := rows.Scan(&date, &agent, &skillKey, &publicName, &uses, &exact, &derived, &corr, &success, &failure, &dur); err != nil {
+			return nil, err
+		}
+		if len(skillKey) == 0 || decOrZero(uses) == "0" {
+			continue
+		}
+		if _, ok := skip[dayAgent{date, agent}]; ok {
+			continue
+		}
+		durKnown := "0"
+		if decOrZero(dur) != "0" {
+			durKnown = uses
+		}
+		row, err := skillRow(contrib, date, agent, SkillIDFromLegacyKey(skillKey), uses, exact, derived, corr, success, failure, dur, durKnown, publicName.String)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// ListStaleTeamProjectionUsers returns current occupants whose personal model/skill
+// summaries are not yet present on team_member_day_metrics.
+func ListStaleTeamProjectionUsers(ctx context.Context, q interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = 2
+	}
+	rows, err := q.QueryContext(ctx, `
+		SELECT DISTINCT c.user_id
+		FROM user_current_teams c
+		INNER JOIN users u ON u.user_id = c.user_id AND u.account_status = 'active'
+		INNER JOIN teams t ON t.team_id = c.team_id AND t.status = 'active'
+		INNER JOIN team_usage_contributors k
+		  ON k.team_id = c.team_id AND k.user_id = c.user_id AND k.delete_at IS NULL
+		WHERE (
+		  (
+		    EXISTS (SELECT 1 FROM daily_user_agent_model_metrics m WHERE m.user_id = c.user_id)
+		    AND NOT EXISTS (
+		      SELECT 1 FROM team_member_day_metrics d
+		      WHERE d.contributor_key = k.contributor_key AND d.delete_at IS NULL
+		        AND d.metric_kind = 'usage' AND d.model_id IS NOT NULL
+		    )
+		  ) OR (
+		    EXISTS (SELECT 1 FROM daily_skill_metrics s WHERE s.user_id = c.user_id)
+		    AND NOT EXISTS (
+		      SELECT 1 FROM team_member_day_metrics d
+		      WHERE d.contributor_key = k.contributor_key AND d.delete_at IS NULL
+		        AND d.metric_kind = 'skill'
+		    )
+		  ) OR (
+		    EXISTS (
+		      SELECT 1 FROM telemetry_skill_metrics s
+		      WHERE s.user_id = c.user_id AND s.grain = 'day' AND s.delete_at IS NULL
+		    )
+		    AND NOT EXISTS (
+		      SELECT 1 FROM team_member_day_metrics d
+		      WHERE d.contributor_key = k.contributor_key AND d.delete_at IS NULL
+		        AND d.metric_kind = 'skill'
+		    )
+		  )
+		)
+		ORDER BY c.user_id
+		LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list stale team projection users: %w", err)
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }

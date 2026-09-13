@@ -614,6 +614,9 @@ func (w *Worker) RunPass(ctx context.Context) {
 	if _, err := w.ProcessAggregates(ctx); err != nil {
 		log.Printf("[Worker %s] Aggregate processing error: %v", w.workerID, err)
 	}
+	if _, err := w.ProcessStaleTeamStatic(ctx); err != nil {
+		log.Printf("[Worker %s] Team static backfill error: %v", w.workerID, err)
+	}
 	if _, err := w.ProcessRankingOutbox(ctx); err != nil {
 		log.Printf("[Worker %s] Ranking outbox processing error: %v", w.workerID, err)
 	}

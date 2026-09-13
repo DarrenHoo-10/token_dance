@@ -2,6 +2,24 @@ package teammetrics
 
 import "testing"
 
+func TestSkillIDFromLegacyKeyFitsUnsigned(t *testing.T) {
+	if SkillIDFromLegacyKey(nil) != 1 {
+		t.Fatal("empty key must not be 0")
+	}
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = 0xff
+	}
+	got := SkillIDFromLegacyKey(key)
+	if got <= 0 {
+		t.Fatalf("must stay in BIGINT UNSIGNED positive range, got %d", got)
+	}
+	again := SkillIDFromLegacyKey(key)
+	if again != got {
+		t.Fatal("legacy skill id must be stable")
+	}
+}
+
 func TestRowKeyStableGolden(t *testing.T) {
 	agent, provider, model := "codex", "openai", "gpt-5"
 	got, err := RowKey("tco_aaaaaaaaaaaaaaaaaaaaaaaaaa", "2026-09-11", KindUsage, &agent, &provider, &model, nil, nil)
