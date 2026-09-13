@@ -361,7 +361,9 @@ describe('Team analysis updating state', () => {
     Reflect.deleteProperty(empty, 'trend');
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(empty);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop/analytics');
-    expect(await screen.findByText('团队 Token')).toBeInTheDocument();
+    expect(await screen.findByText('团队总 Token')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Skill 使用' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Token 使用效率' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '自定义' })).toBeInTheDocument();
     expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();
   });
