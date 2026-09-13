@@ -76,6 +76,18 @@ type skillStatsV1 struct {
 	FailureCount         string  `json:"failureCount"`
 	DurationMs           *string `json:"durationMs"`
 	DurationKnownCount   string  `json:"durationKnownCount"`
+	PublicName           string  `json:"publicName,omitempty"`
+}
+
+func DecodeSkillPublicName(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "{}" {
+		return ""
+	}
+	var s skillStatsV1
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(s.PublicName)
 }
 
 func mustJSON(v any) json.RawMessage {

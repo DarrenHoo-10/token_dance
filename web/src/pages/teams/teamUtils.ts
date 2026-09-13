@@ -74,6 +74,21 @@ function formatScaled(value: bigint, scale: bigint, suffix: string): string {
   return `${negative ? '-' : ''}${whole.toString()}.${frac.toString()}${suffix}`;
 }
 
+export function formatDurationHours(msStr: string | null | undefined): string | null {
+  if (!msStr) return null;
+  const ms = Number(msStr);
+  if (!Number.isFinite(ms)) return null;
+  return `${(ms / 3_600_000).toFixed(1)} h`;
+}
+
+export function formatRatePercent(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const num = Number(value);
+  if (!Number.isFinite(num)) return null;
+  const pct = num <= 1 ? num * 100 : num;
+  return `${pct.toFixed(1)}%`;
+}
+
 export function formatTokenCompact(value: string): string {
   const n = BigInt(value);
   const abs = n < 0n ? -n : n;

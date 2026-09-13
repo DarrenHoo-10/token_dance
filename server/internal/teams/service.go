@@ -1388,7 +1388,7 @@ func (s *Service) GetAnalysis(ctx context.Context, userID, teamID string, q Anal
 	if dto.Quality != nil {
 		dto.Quality.IncludesHistoricalUsers = hist != "0"
 	}
-	dto.Skills = assembleStaticSkills(rows, q)
+	dto.Skills = assembleStaticSkills(rows, members, users, q)
 	return dto, 0, nil
 }
 
@@ -2582,23 +2582,155 @@ func staticTenMetrics(rows []domain.TeamAnalysisRow, tokens domain.DecimalMetric
 	return out
 }
 
-func assembleStaticSkills(rows []domain.TeamAnalysisRow, q AnalysisQuery) *domain.TeamPagedItems {
-	byGroup := map[string]string{}
+func assembleStaticSkills(rows []domain.TeamAnalysisRow, members []domain.TeamMembership, users []domain.User, q AnalysisQuery) *domain.TeamPagedItems {
+	type group struct {
+		agent   string
+		label   string
+		uses    string
+		members map[string]string
+	}
+	byKey := map[string]*group{}
+	current := map[string]struct{}{}
+	userByMem := map[string]domain.User{}
+	for _, mem := range members {
+		if mem.EndedAt != nil {
+			continue
+		}
+		current[mem.MembershipID] = struct{}{}
+	}
+	for _, u := range users {
+		for _, mem := range members {
+			if mem.UserID == u.UserID {
+				userByMem[mem.MembershipID] = u
+			}
+		}
+	}
 	for _, row := range rows {
 		if emptyZero(row.SkillUseCount) == "0" {
 			continue
 		}
-		key := "unnamed"
-		if row.AgentID != nil && *row.AgentID != "" {
-			key = *row.AgentID
+		agent := ""
+		if row.AgentID != nil {
+			agent = *row.AgentID
 		}
-		byGroup[key] = AddIntDecimal(byGroup[key], emptyZero(row.SkillUseCount))
+		label := strings.TrimSpace(row.SkillPublicName)
+		if label == "" && row.SkillID != nil {
+			label = fmt.Sprintf("skill-%d", *row.SkillID)
+		}
+		if label == "" {
+			label = "unnamed"
+		}
+		key := agent + "\x1f" + label
+		g := byKey[key]
+		if g == nil {
+			g = &group{agent: agent, label: label, uses: "0", members: map[string]string{}}
+			byKey[key] = g
+		}
+		g.uses = AddIntDecimal(g.uses, emptyZero(row.SkillUseCount))
+		if row.MembershipID != nil {
+			g.members[*row.MembershipID] = AddIntDecimal(g.members[*row.MembershipID], emptyZero(row.SkillUseCount))
+		}
 	}
+	type scored struct {
+		key  string
+		g    *group
+		uses *big.Int
+	}
+	list := make([]scored, 0, len(byKey))
 	total := "0"
-	for _, v := range byGroup {
-		total = AddIntDecimal(total, v)
+	for key, g := range byKey {
+		n, ok := new(big.Int).SetString(emptyZero(g.uses), 10)
+		if !ok {
+			n = big.NewInt(0)
+		}
+		list = append(list, scored{key: key, g: g, uses: n})
+		total = AddIntDecimal(total, g.uses)
 	}
-	return pageBuckets(sortKV(byGroup), "agent", q.Collection == "skills", q.Cursor, clampLimit(q.Limit), total)
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].uses.Cmp(list[j].uses) != 0 {
+			return list[i].uses.Cmp(list[j].uses) > 0
+		}
+		if list[i].g.label != list[j].g.label {
+			return list[i].g.label < list[j].g.label
+		}
+		return list[i].g.agent < list[j].g.agent
+	})
+	limit := clampLimit(q.Limit)
+	page := list
+	var next *string
+	if q.Collection == "skills" {
+		start := 0
+		if q.Cursor != "" {
+			for i, it := range list {
+				if it.key == q.Cursor {
+					start = i + 1
+					break
+				}
+			}
+		}
+		end := start + limit
+		if end > len(list) {
+			end = len(list)
+		}
+		page = list[start:end]
+		if end < len(list) {
+			n := list[end-1].key
+			next = &n
+		}
+	} else if len(page) > 20 {
+		page = page[:20]
+	}
+	out := make([]map[string]any, 0, len(page))
+	for _, it := range page {
+		item := map[string]any{
+			"id": it.key, "label": it.g.label, "agentId": it.g.agent,
+			"useCount": it.g.uses, "bucketType": "skill",
+			"tokens": domain.DecimalMetric{Value: it.g.uses, State: domain.MetricAvailable},
+		}
+		if share := tokenShare(it.g.uses, total); share != nil {
+			item["share"] = *share
+		}
+		named := 0
+		dist := make([]map[string]any, 0)
+		for memID, uses := range it.g.members {
+			if emptyZero(uses) == "0" {
+				continue
+			}
+			if _, ok := current[memID]; !ok && len(current) > 0 {
+				continue
+			}
+			named++
+			display := memID
+			var handle *string
+			if u, ok := userByMem[memID]; ok {
+				display = u.DisplayName
+				handle = u.Handle
+			}
+			m := map[string]any{"membershipId": memID, "displayName": display, "useCount": uses}
+			if handle != nil {
+				m["handle"] = *handle
+			}
+			if share := tokenShare(uses, it.g.uses); share != nil {
+				m["share"] = *share
+			}
+			dist = append(dist, m)
+		}
+		sort.Slice(dist, func(i, j int) bool {
+			a, _ := new(big.Int).SetString(emptyZero(dist[i]["useCount"].(string)), 10)
+			b, _ := new(big.Int).SetString(emptyZero(dist[j]["useCount"].(string)), 10)
+			if a.Cmp(b) != 0 {
+				return a.Cmp(b) > 0
+			}
+			return dist[i]["displayName"].(string) < dist[j]["displayName"].(string)
+		})
+		item["memberCount"] = strconv.Itoa(named)
+		item["members"] = dist
+		out = append(out, item)
+	}
+	return &domain.TeamPagedItems{
+		Items: out, NextCursor: next,
+		Historical: &domain.TeamHistoricalSubtotal{Tokens: total},
+	}
 }
 
 func memberLastReceived(rows []domain.TeamAnalysisRow) map[string]time.Time {

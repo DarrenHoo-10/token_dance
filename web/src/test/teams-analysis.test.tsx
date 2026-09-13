@@ -114,11 +114,11 @@ describe('Team analysis updating state', () => {
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     const query = vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
     renderTeams(<TeamOverviewPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    const chart = await screen.findByRole('heading', { name: 'Token 趋势' });
+    const chart = await screen.findByRole('heading', { name: '团队 Token 趋势' });
     const custom = screen.getByRole('tab', { name: '自定义' });
     expect(custom.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     fireEvent.click(custom);
-    expect(screen.getByRole('heading', { name: 'Token 趋势' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '团队 Token 趋势' })).toBeInTheDocument();
     expect(screen.getAllByText('120.0K')[0]).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '2026-09-01' } });
     expect(query).toHaveBeenCalledTimes(1);
@@ -163,11 +163,52 @@ describe('Team analysis updating state', () => {
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
     renderTeams(<TeamOverviewPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    await screen.findByRole('heading', { name: 'Token 趋势' });
+    await screen.findByRole('heading', { name: '团队 Token 趋势' });
     expect(screen.queryByText('私密团队')).not.toBeInTheDocument();
     expect(screen.queryByText('成员表现')).not.toBeInTheDocument();
-    expect(screen.queryByText('用量构成')).not.toBeInTheDocument();
     expect(screen.queryByText('我的共享')).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '用量构成' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Skill 使用' })).toBeInTheDocument();
+  });
+
+  it('shows skill ranking and member distribution from static analysis', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    const result = readyAnalysis('1', '120000');
+    result.skills = {
+      items: [
+        {
+          id: 'codex\u001ffrontend-design',
+          label: 'frontend-design',
+          agentId: 'codex',
+          useCount: '224',
+          share: '28.6',
+          memberCount: '2',
+          members: [
+            { membershipId: 'tmb_1', displayName: 'Ada', useCount: '140', share: '62.5' },
+            { membershipId: 'tmb_2', displayName: 'Bo', useCount: '84', share: '37.5' },
+          ],
+        },
+        {
+          id: 'codex\u001fcode-review',
+          label: 'code-review',
+          agentId: 'codex',
+          useCount: '100',
+          share: '12.8',
+          memberCount: '1',
+          members: [{ membershipId: 'tmb_1', displayName: 'Ada', useCount: '100', share: '100' }],
+        },
+      ],
+      nextCursor: null,
+    };
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
+    renderTeams(<TeamOverviewPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
+    expect(await screen.findByRole('heading', { name: 'Skill 使用' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'frontend-design' })).toBeInTheDocument();
+    expect(screen.getByText('frontend-design · Codex')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'code-review' }));
+    expect(screen.getByText('code-review · Codex')).toBeInTheDocument();
+    expect(screen.getByText(/仅展示当前成员/)).toBeInTheDocument();
   });
 
   it('shows a historical footnote and does not render a fake zero for empty ranges', async () => {
@@ -345,7 +386,7 @@ describe('Team member insights', () => {
     renderTeams(<TeamOverviewPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
     const first = await screen.findByRole('button', { name: 'Person 0' });
     expect(first).toHaveAttribute('aria-pressed', 'true');
-    expect(screen.getAllByText('10.0%')).toHaveLength(11);
+    expect(screen.getAllByText(/10\.0%/)).toHaveLength(11);
     expect(screen.getByText('50.0%')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Person 3' }));
     fireEvent.click(screen.getByRole('button', { name: 'Person 4' }));

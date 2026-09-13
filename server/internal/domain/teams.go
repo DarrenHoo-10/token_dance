@@ -362,6 +362,8 @@ type TeamAnalysisRow struct {
 	ResourcesJSON              []byte     `json:"-"`
 	ActivityJSON               []byte     `json:"-"`
 	SkillUseCount              string     `json:"-"`
+	SkillID                    *int64     `json:"-"`
+	SkillPublicName            string     `json:"-"`
 	ContributorKey             string     `json:"-"`
 }
 

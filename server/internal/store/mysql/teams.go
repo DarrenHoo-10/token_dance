@@ -2480,6 +2480,11 @@ func (s *teamsStore) ListStaticDayMetrics(ctx context.Context, teamID string, fr
 		row.ResourcesJSON = d.Resources
 		row.ActivityJSON = d.Activity
 		row.SkillUseCount = d.SkillUseCount
+		row.SkillID = d.SkillID
+		row.SkillPublicName = d.PublicName
+		if row.SkillPublicName == "" {
+			row.SkillPublicName = teammetrics.DecodeSkillPublicName(d.SkillStats)
+		}
 		rows = append(rows, row)
 	}
 	return rows, outC, nil

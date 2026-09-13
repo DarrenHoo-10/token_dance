@@ -208,8 +208,11 @@ export interface AnalysisSummary {
   activeMembers: string;
   currentMembers: string;
   currentSharingMembers: string;
+  currentMemberTokens?: string;
+  historicalTokens?: string;
   comparison: { tokensDelta?: string; tokensDeltaPct?: string } | null;
   comparisonReason?: ComparisonReason | null;
+  metrics?: Record<string, MetricValue>;
 }
 
 export interface AnalysisCosts {
@@ -246,6 +249,24 @@ export interface ContributionItem {
   trend?: AnalysisTrendPoint[];
 }
 
+export interface SkillMemberUse {
+  membershipId: string;
+  displayName: string;
+  handle?: string | null;
+  useCount: string;
+  share?: string | null;
+}
+
+export interface SkillItem {
+  id: string;
+  label: string;
+  agentId?: string;
+  useCount: string;
+  share?: string | null;
+  memberCount?: string;
+  members?: SkillMemberUse[];
+}
+
 export interface CursorPage<T> {
   items: T[];
   nextCursor: string | null;
@@ -269,6 +290,7 @@ export interface TeamAnalysisReady {
   agents: CursorPage<AnalysisBucketItem>;
   models: CursorPage<AnalysisBucketItem>;
   contributions: CursorPage<ContributionItem> & { historical?: { tokens: string; share?: string | null } };
+  skills?: CursorPage<SkillItem> & { historical?: { tokens: string; share?: string | null } };
   quality: AnalysisQuality;
   filtersHash?: string;
 }

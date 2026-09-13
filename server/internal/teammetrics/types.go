@@ -39,6 +39,7 @@ type DayRow struct {
 	ModelID         *string
 	Currency        *string
 	SkillID         *int64
+	PublicName      string
 	TokenExact      string
 	TokenDerived    string
 	UsageEventCount string

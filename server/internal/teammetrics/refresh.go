@@ -279,16 +279,18 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 	}
 
 	srows, err := tx.QueryContext(ctx, `
-		SELECT DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(bucket_start/1000), INTERVAL 8 HOUR), '%Y-%m-%d'),
-		       harness_id, skill_id,
-		       CAST(SUM(use_count) AS CHAR), CAST(SUM(exact_use_count) AS CHAR),
-		       CAST(SUM(derived_use_count) AS CHAR), CAST(SUM(correlated_use_count) AS CHAR),
-		       CAST(SUM(success_count) AS CHAR), CAST(SUM(failure_count) AS CHAR),
-		       CAST(SUM(duration_ms) AS CHAR), CAST(SUM(duration_known_count) AS CHAR)
-		FROM telemetry_skill_metrics
-		WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL
-		  AND DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(bucket_start/1000), INTERVAL 8 HOUR), '%Y-%m-%d') IN (`+in+`)
-		GROUP BY 1, harness_id, skill_id`,
+		SELECT DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(m.bucket_start/1000), INTERVAL 8 HOUR), '%Y-%m-%d'),
+		       m.harness_id, m.skill_id,
+		       CAST(SUM(m.use_count) AS CHAR), CAST(SUM(m.exact_use_count) AS CHAR),
+		       CAST(SUM(m.derived_use_count) AS CHAR), CAST(SUM(m.correlated_use_count) AS CHAR),
+		       CAST(SUM(m.success_count) AS CHAR), CAST(SUM(m.failure_count) AS CHAR),
+		       CAST(SUM(m.duration_ms) AS CHAR), CAST(SUM(m.duration_known_count) AS CHAR),
+		       MIN(ts.public_name)
+		FROM telemetry_skill_metrics m
+		LEFT JOIN telemetry_skills ts ON ts.id = m.skill_id
+		WHERE m.user_id = ? AND m.grain = 'day' AND m.delete_at IS NULL
+		  AND DATE_FORMAT(DATE_ADD(FROM_UNIXTIME(m.bucket_start/1000), INTERVAL 8 HOUR), '%Y-%m-%d') IN (`+in+`)
+		GROUP BY 1, m.harness_id, m.skill_id`,
 		append([]any{contrib.UserID}, dateArgs...)...,
 	)
 	if err != nil {
@@ -298,10 +300,11 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 	for srows.Next() {
 		var date, agent, uses, exact, derived, corr, success, failure, dur, durKnown string
 		var skillID int64
-		if err := srows.Scan(&date, &agent, &skillID, &uses, &exact, &derived, &corr, &success, &failure, &dur, &durKnown); err != nil {
+		var publicName sql.NullString
+		if err := srows.Scan(&date, &agent, &skillID, &uses, &exact, &derived, &corr, &success, &failure, &dur, &durKnown, &publicName); err != nil {
 			return nil, err
 		}
-		row, err := skillRow(contrib, date, agent, skillID, uses, exact, derived, corr, success, failure, dur, durKnown)
+		row, err := skillRow(contrib, date, agent, skillID, uses, exact, derived, corr, success, failure, dur, durKnown, publicName.String)
 		if err != nil {
 			return nil, err
 		}
@@ -409,7 +412,7 @@ func costRow(c Contributor, date, agent, provider, model, currency, reported, es
 	}, nil
 }
 
-func skillRow(c Contributor, date, agent string, skillID int64, uses, exact, derived, corr, success, failure, dur, durKnown string) (DayRow, error) {
+func skillRow(c Contributor, date, agent string, skillID int64, uses, exact, derived, corr, success, failure, dur, durKnown, publicName string) (DayRow, error) {
 	sid := skillID
 	key, err := RowKey(c.ContributorKey, date, KindSkill, strPtr(agent), nil, nil, nil, &sid)
 	if err != nil {
@@ -420,10 +423,12 @@ func skillRow(c Contributor, date, agent string, skillID int64, uses, exact, der
 		CorrelatedCount: decOrZero(corr), EstimatedCount: "0", UnknownAccuracyCount: "0",
 		SuccessCount: decOrZero(success), FailureCount: decOrZero(failure),
 		DurationMs: strPtr(decOrZero(dur)), DurationKnownCount: decOrZero(durKnown),
+		PublicName: strings.TrimSpace(publicName),
 	}
 	return DayRow{
 		TeamID: c.TeamID, ContributorKey: c.ContributorKey, MetricDate: date, RowKey: key, MetricKind: KindSkill,
-		AgentID: strPtr(agent), SkillID: &sid, TokenExact: "0", TokenDerived: "0", UsageEventCount: "0",
+		AgentID: strPtr(agent), SkillID: &sid, PublicName: strings.TrimSpace(publicName),
+		TokenExact: "0", TokenDerived: "0", UsageEventCount: "0",
 		ReportedCost: "0", EstimatedCost: "0", SkillUseCount: decOrZero(uses),
 		SkillStats: mustJSON(stats), Resources: emptyJSONObject(), Activity: emptyJSONObject(),
 		Hourly: emptyJSONObject(), Quality: defaultQuality(false), RuleVersion: RuleVersion,

@@ -72,8 +72,38 @@ func TestStaticTenMetricsCostsCacheSkills(t *testing.T) {
 	if got["tokensPerCodeLine"].Value != "10" {
 		t.Fatalf("tokensPerCodeLine %+v", got["tokensPerCodeLine"])
 	}
-	skills := assembleStaticSkills(rows, AnalysisQuery{})
+	skills := assembleStaticSkills(rows, nil, nil, AnalysisQuery{})
 	if skills == nil || len(skills.Items) != 1 {
 		t.Fatalf("skills grouping %+v", skills)
+	}
+}
+
+func TestAssembleStaticSkillsRanksPublicNameAndMembers(t *testing.T) {
+	a, b := "tmb_a", "tmb_b"
+	agent := "codex"
+	id1, id2 := int64(11), int64(12)
+	rows := []domain.TeamAnalysisRow{
+		{MembershipID: &a, AgentID: &agent, SkillID: &id1, SkillPublicName: "code-review", SkillUseCount: "8"},
+		{MembershipID: &b, AgentID: &agent, SkillID: &id1, SkillPublicName: "code-review", SkillUseCount: "2"},
+		{MembershipID: &a, AgentID: &agent, SkillID: &id2, SkillPublicName: "frontend-design", SkillUseCount: "3"},
+	}
+	members := []domain.TeamMembership{
+		{MembershipID: a, UserID: "usr_a"},
+		{MembershipID: b, UserID: "usr_b"},
+	}
+	users := []domain.User{{UserID: "usr_a", DisplayName: "Ada"}, {UserID: "usr_b", DisplayName: "Bo"}}
+	got := assembleStaticSkills(rows, members, users, AnalysisQuery{})
+	if got == nil || len(got.Items) != 2 {
+		t.Fatalf("want 2 skill groups, got %+v", got)
+	}
+	if got.Items[0]["label"] != "code-review" || got.Items[0]["useCount"] != "10" {
+		t.Fatalf("top skill %+v", got.Items[0])
+	}
+	if got.Items[0]["memberCount"] != "2" {
+		t.Fatalf("memberCount %+v", got.Items[0])
+	}
+	dist, _ := got.Items[0]["members"].([]map[string]any)
+	if len(dist) != 2 || dist[0]["displayName"] != "Ada" {
+		t.Fatalf("distribution %+v", dist)
 	}
 }
