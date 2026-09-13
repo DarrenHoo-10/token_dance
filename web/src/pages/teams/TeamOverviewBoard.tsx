@@ -50,8 +50,6 @@ export const TeamOverviewBoard: React.FC<{
   const avgDuration = duration.available && BigInt(activeMembers) > 0n && metricOf(analysis, 'activeDurationMs')?.value
     ? formatDurationHours(String(BigInt(metricOf(analysis, 'activeDurationMs')!.value || '0') / BigInt(activeMembers)))
     : null;
-  const cacheWidth = cache.available ? Number(metricOf(analysis, 'cacheHitRate')?.value || '0') : 0;
-  const cacheBar = `${Math.max(0, Math.min(100, (cacheWidth <= 1 ? cacheWidth * 100 : cacheWidth)))}%`;
 
   return (
     <>
@@ -88,8 +86,6 @@ export const TeamOverviewBoard: React.FC<{
               <strong className="mono-num">{cache.available ? cache.text : '—'}</strong>
             </div>
           </div>
-          <div className="team-cache-track" aria-hidden="true"><span style={{ width: cache.available ? cacheBar : '0%' }} /></div>
-          <div className="team-metric-foot">{t('teams.metrics.cacheFoot')}</div>
         </Card>
       </section>
 

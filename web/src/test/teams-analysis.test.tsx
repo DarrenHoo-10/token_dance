@@ -195,6 +195,8 @@ describe('Team analysis updating state', () => {
     expect(screen.queryByText(/当前共享/)).not.toBeInTheDocument();
     expect(screen.queryByText('跨成员汇总')).not.toBeInTheDocument();
     expect(screen.queryByText('按成员累计使用时长，成员之间的同时使用分别计入')).not.toBeInTheDocument();
+    expect(screen.queryByText('缓存命中率按有效输入样本计算')).not.toBeInTheDocument();
+    expect(document.querySelector('.team-cache-track')).toBeNull();
     expect(screen.queryByText('谁贡献了用量，以及每个人的使用变化')).not.toBeInTheDocument();
     expect(screen.queryByText('各成员用量与 Token 效率')).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Harness' })).toBeInTheDocument();

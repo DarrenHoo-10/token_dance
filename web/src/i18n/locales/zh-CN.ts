@@ -488,7 +488,6 @@ export const zhCN = {
       input: '输入上下文',
       output: '输出 Token',
       cache: '缓存命中率',
-      cacheFoot: '缓存命中率按有效输入样本计算',
       duration: '总时长',
       messages: '总消息数',
       userMessages: '用户消息数',

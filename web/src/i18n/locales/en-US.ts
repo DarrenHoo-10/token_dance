@@ -488,7 +488,6 @@ export const enUS = {
       input: 'Input context',
       output: 'Output tokens',
       cache: 'Cache hit rate',
-      cacheFoot: 'Cache hit rate uses complete input samples',
       duration: 'Total duration',
       messages: 'Messages',
       userMessages: 'User messages',
