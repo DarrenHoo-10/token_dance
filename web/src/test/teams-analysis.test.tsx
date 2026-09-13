@@ -169,7 +169,8 @@ describe('Team analysis updating state', () => {
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
     expect(await screen.findAllByText('Ada').then(items => items[0])).toBeInTheDocument();
-    expect(screen.getByText('成员贡献')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '成员数据' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Token 效率' })).toBeInTheDocument();
     expect(screen.queryByText(/仅显示主动授权/)).not.toBeInTheDocument();
     expect(screen.queryByText(/团队时区/)).not.toBeInTheDocument();
   });
@@ -185,6 +186,8 @@ describe('Team analysis updating state', () => {
     expect(screen.queryByText('成员表现')).not.toBeInTheDocument();
     expect(screen.queryByText('我的共享')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '用量构成' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '团队 Token 数据' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '成员数据' })).toBeInTheDocument();
     expect(screen.queryByText('Harness、模型与 Skill 的成员分布')).not.toBeInTheDocument();
     expect(screen.queryByText('查看每日明细')).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Harness' })).toBeInTheDocument();
@@ -375,9 +378,11 @@ describe('Team analysis updating state', () => {
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(empty);
     renderTeamWorkspace('/teams/tem_0123456789abcdefghijklmnop');
     expect(await screen.findByText('团队总 Token')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '团队 Token 数据' })).toBeInTheDocument();
+    expect(screen.getByText('人均 Token')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '用量构成' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Skill' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Token 使用效率' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Token 使用效率' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('开始日期')).toBeInTheDocument();
     expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();
   });
@@ -408,6 +413,27 @@ describe('Team member insights', () => {
     expect(screen.getByText('50.0%')).toBeInTheDocument();
     fireEvent.change(picker, { target: { value: 'member-0' } });
     expect(picker).toHaveValue('member-0');
+  });
+
+  it('shows token efficiency for the team and each member', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    const result = readyAnalysis('1', '1000');
+    result.summary.metrics = { tokensPerCodeLine: { value: '250', state: 'available' } };
+    result.contributions = {
+      items: [{
+        membershipId: 'tmb_1', displayName: 'Ada', handle: 'ada', rank: '1',
+        tokens: { state: 'available', value: '1000' },
+        generatedCodeLines: '4',
+        tokensPerCodeLine: '250',
+      }],
+      nextCursor: null,
+    };
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
+    renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
+    expect(await screen.findByRole('heading', { name: '成员数据' })).toBeInTheDocument();
+    expect(screen.getAllByText('250').length).toBeGreaterThan(0);
+    expect(screen.getByRole('columnheader', { name: 'Token 效率' })).toBeInTheDocument();
   });
 });
 

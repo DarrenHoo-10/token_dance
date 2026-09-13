@@ -248,6 +248,8 @@ export interface ContributionItem {
   tokens: MetricValue;
   namedShare?: boolean;
   share?: string | null;
+  generatedCodeLines?: string;
+  tokensPerCodeLine?: string;
   trend?: AnalysisTrendPoint[];
 }
 

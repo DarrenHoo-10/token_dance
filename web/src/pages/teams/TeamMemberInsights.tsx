@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import type { AnalysisTrendPoint, TeamAnalysisReady } from '@/api/teams';
 import { Card } from '@/components/common/Card';
 import { useLocale } from '@/context/LocaleContext';
-import { firstGrapheme, formatTokenCompact, formatTokenExact } from './teamUtils';
+import { firstGrapheme, formatTokenCompact, formatTokenExact, metricDisplay } from './teamUtils';
 
 const COLORS = ['#577d21', '#277d96', '#8668a6', '#bc7939', '#bb5275'];
 const integer = (value?: string | null) => /^\d+$/.test(value || '') ? BigInt(value!) : 0n;
@@ -38,6 +38,7 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady; teamId:
   const max = activeTrend.reduce((value, point) => integer(point.tokens.value) > value ? integer(point.tokens.value) : value, 1n);
   const chartPoints = pointsFor(activeTrend, dates, max);
   const total = analysis.summary.tokens.value || '0';
+  const teamEfficiency = metricDisplay(analysis.summary.metrics?.tokensPerCodeLine, (value) => formatTokenCompact(value));
   const leaders = members.slice(0, 5);
   const shown = leaders.reduce((sum, member) => sum + integer(member.tokens.value), 0n);
   const remainder = integer(total) > shown ? integer(total) - shown : 0n;
@@ -52,7 +53,20 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady; teamId:
   ].filter(Boolean).join(', ');
 
   return <section className="team-people-section" id="members" aria-label={t('teams.overview.contributions')}>
-    <div className="team-section-heading"><div><h2>{t('teams.overview.contributions')}</h2><p>{t('teams.insights.peopleSub')}</p></div><Link to={`/teams/${teamId}/members${search ? `?${search}` : ''}`}>{t('teams.insights.viewRanking')}</Link></div>
+    <div className="team-section-heading">
+      <div>
+        <h2>{t('teams.overview.contributions')}</h2>
+        <p>{t('teams.insights.peopleSub')}</p>
+      </div>
+      <div className="team-section-heading-actions">
+        <div className="team-token-eff">
+          <span className="label">{t('teams.insights.tokenEfficiency')}</span>
+          <strong className="mono-num">{teamEfficiency.available ? teamEfficiency.text : '—'}</strong>
+          <small>{t('teams.insights.tokenEfficiencyUnit')}</small>
+        </div>
+        <Link to={`/teams/${teamId}/members${search ? `?${search}` : ''}`}>{t('teams.insights.viewRanking')}</Link>
+      </div>
+    </div>
     <div className="team-people-grid">
       <Card className="team-member-trend">
         <div className="panel-header">
@@ -98,10 +112,11 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady; teamId:
     </div>
     <Card>
       <div className="panel-header" id="ranking"><div><h2>{t('teams.insights.detailTitle')}</h2></div><span className="team-chart-unit">{t('teams.insights.rankingHint')}</span></div>
-      {members.length ? <div className="team-table-scroll"><table className="team-contribution-table"><thead><tr><th>{t('teams.insights.member')}</th><th>Token / {t('teams.insights.share')}</th><th>{t('teams.insights.activeDays')}</th><th>{t('teams.insights.periodTrend')}</th></tr></thead><tbody>{members.map(member => {
+      {members.length ? <div className="team-table-scroll"><table className="team-contribution-table"><thead><tr><th>{t('teams.insights.member')}</th><th>Token / {t('teams.insights.share')}</th><th>{t('teams.insights.tokenEfficiency')}</th><th>{t('teams.insights.activeDays')}</th><th>{t('teams.insights.periodTrend')}</th></tr></thead><tbody>{members.map(member => {
         const memberMax = (member.trend || []).reduce((value, point) => integer(point.tokens.value) > value ? integer(point.tokens.value) : value, 1n);
         const points = pointsFor(member.trend, rankingDates, memberMax, 100, 30);
-        return <tr key={member.membershipId}><td><div className="team-person-cell"><span className="team-person-rank">{member.rank}</span><span className="team-person-avatar" aria-hidden="true">{firstGrapheme(member.displayName)}</span><span><strong>{member.displayName}</strong><small>{member.handle ? `@${member.handle}` : ''}</small></span></div></td><td><span className="share-cell"><span className="mono-num">{member.tokens.state === 'available' ? formatTokenCompact(member.tokens.value || '0') : '—'}</span> <span className="text-muted"> · {integer(total) > 0n ? `${memberPercent(member.tokens.value || '0', total).toFixed(1)}%` : '—'}</span><span className="team-person-share"><div><i style={{ width: `${memberPercent(member.tokens.value || '0', total)}%`, background: colorFor(member.membershipId) }} /></div></span></span></td><td>{member.trend ? member.trend.filter(point => integer(point.tokens.value) > 0n).length : '—'}</td><td>{member.trend && points.length ? <svg width="100" height="30" viewBox="0 0 100 30" aria-label={`${member.displayName} ${t('teams.insights.periodTrend')}`} role="img"><polyline points={points.map(point => `${point.x},${point.y}`).join(' ')} stroke={colorFor(member.membershipId)} strokeWidth="2" fill="none" />{points.length === 1 && <circle cx={points[0].x} cy={points[0].y} r="3" fill={colorFor(member.membershipId)} />}</svg> : '—'}</td></tr>;
+        const efficiency = member.tokensPerCodeLine ? formatTokenCompact(member.tokensPerCodeLine) : '—';
+        return <tr key={member.membershipId}><td><div className="team-person-cell"><span className="team-person-rank">{member.rank}</span><span className="team-person-avatar" aria-hidden="true">{firstGrapheme(member.displayName)}</span><span><strong>{member.displayName}</strong><small>{member.handle ? `@${member.handle}` : ''}</small></span></div></td><td><span className="share-cell"><span className="mono-num">{member.tokens.state === 'available' ? formatTokenCompact(member.tokens.value || '0') : '—'}</span> <span className="text-muted"> · {integer(total) > 0n ? `${memberPercent(member.tokens.value || '0', total).toFixed(1)}%` : '—'}</span><span className="team-person-share"><div><i style={{ width: `${memberPercent(member.tokens.value || '0', total)}%`, background: colorFor(member.membershipId) }} /></div></span></span></td><td className="mono-num">{efficiency}</td><td>{member.trend ? member.trend.filter(point => integer(point.tokens.value) > 0n).length : '—'}</td><td>{member.trend && points.length ? <svg width="100" height="30" viewBox="0 0 100 30" aria-label={`${member.displayName} ${t('teams.insights.periodTrend')}`} role="img"><polyline points={points.map(point => `${point.x},${point.y}`).join(' ')} stroke={colorFor(member.membershipId)} strokeWidth="2" fill="none" />{points.length === 1 && <circle cx={points[0].x} cy={points[0].y} r="3" fill={colorFor(member.membershipId)} />}</svg> : '—'}</td></tr>;
       })}</tbody></table></div> : <p className="team-chart-empty">{t('teams.overview.noContributions')}</p>}
     </Card>
   </section>;

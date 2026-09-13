@@ -2049,6 +2049,7 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 	agentMem := map[string]map[string]string{}
 	modelMem := map[string]map[string]string{}
 	contribTok := map[string]string{}
+	memberCode := map[string]string{}
 	memberDays := map[string]map[string]string{}
 	reported := map[string]*bigRatAcc{}
 	estimatedCost := map[string]*bigRatAcc{}
@@ -2090,6 +2091,9 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 		}
 		if row.MembershipID != nil {
 			contribTok[*row.MembershipID] = AddIntDecimal(contribTok[*row.MembershipID], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
+			if lines := generatedCodeLineSum(row.ActivityJSON); lines != "0" {
+				memberCode[*row.MembershipID] = AddIntDecimal(memberCode[*row.MembershipID], lines)
+			}
 			if row.MetricDate != nil && *row.MetricDate != "" {
 				if memberDays[*row.MembershipID] == nil {
 					memberDays[*row.MembershipID] = map[string]string{}
@@ -2159,6 +2163,13 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 		}
 		item["trend"] = points
 		item["share"] = tokenShare(contribTok[id], tokenTotal)
+		lines := emptyZero(memberCode[id])
+		item["generatedCodeLines"] = lines
+		if den, ok := new(big.Int).SetString(lines, 10); ok && den.Sign() > 0 {
+			if num, ok := new(big.Int).SetString(emptyZero(contribTok[id]), 10); ok {
+				item["tokensPerCodeLine"] = new(big.Int).Quo(num, den).String()
+			}
+		}
 	}
 	costList := make([]domain.TeamCostAmount, 0, len(reported))
 	for cur, acc := range reported {
@@ -2571,6 +2582,21 @@ func filterRows(rows []domain.TeamAnalysisRow, filters domain.TeamAnalysisFilter
 		out = append(out, row)
 	}
 	return out
+}
+
+func generatedCodeLineSum(raw []byte) string {
+	if len(raw) == 0 {
+		return "0"
+	}
+	var act struct {
+		GeneratedCodeLines struct {
+			Sum *string `json:"sum"`
+		} `json:"generatedCodeLines"`
+	}
+	if json.Unmarshal(raw, &act) != nil || act.GeneratedCodeLines.Sum == nil {
+		return "0"
+	}
+	return emptyZero(*act.GeneratedCodeLines.Sum)
 }
 
 func metricFromSum(sum string) domain.DecimalMetric {

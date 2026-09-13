@@ -42,7 +42,6 @@ export const TeamOverviewBoard: React.FC<{
     ? formatTokenCompact((BigInt(namedTokens || '0') / BigInt(activeMembers)).toString())
     : null;
   const code = metricDisplay(metricOf(analysis, 'generatedCodeLines'));
-  const perLine = metricDisplay(metricOf(analysis, 'tokensPerCodeLine'));
   const input = metricDisplay(metricOf(analysis, 'inputContextTokens'));
   const output = metricDisplay(metricOf(analysis, 'outputTokens'));
   const cache = metricDisplay(metricOf(analysis, 'cacheHitRate'), (value) => formatRatePercent(value) || '—');
@@ -62,12 +61,40 @@ export const TeamOverviewBoard: React.FC<{
         <p className="text-muted" style={{ fontSize: 12 }}>{t('teams.overview.historicalNote')}</p>
       )}
 
-      <section className="team-kpis" aria-label={t('teams.metrics.totalTokens')}>
-        <div className="team-kpi lead">
-          <div className="label">{t('teams.metrics.totalTokens')}</div>
-          <div className="value mono-num">{tokens.available ? tokens.text : '—'}</div>
-          <div className="sub">{t('teams.metrics.avgTokens')} <b>{dash(avgTokens)}</b></div>
-        </div>
+      <section className="team-token-panel" aria-labelledby="team-token-data-heading">
+        <Card>
+          <div className="panel-header">
+            <h2 id="team-token-data-heading">{t('teams.overview.tokenData')}</h2>
+            <span className="team-chart-unit">{t('teams.overview.selectedPeriod')}</span>
+          </div>
+          <div className="team-mini-row five">
+            <div>
+              <span className="label">{t('teams.metrics.totalTokens')}</span>
+              <strong className="mono-num">{tokens.available ? tokens.text : '—'}</strong>
+            </div>
+            <div>
+              <span className="label">{t('teams.metrics.avgTokens')}</span>
+              <strong className="mono-num">{dash(avgTokens)}</strong>
+            </div>
+            <div>
+              <span className="label">{t('teams.metrics.input')}</span>
+              <strong className="mono-num">{input.available ? input.text : '—'}</strong>
+            </div>
+            <div>
+              <span className="label">{t('teams.metrics.output')}</span>
+              <strong className="mono-num">{output.available ? output.text : '—'}</strong>
+            </div>
+            <div>
+              <span className="label">{t('teams.metrics.cache')}</span>
+              <strong className="mono-num">{cache.available ? cache.text : '—'}</strong>
+            </div>
+          </div>
+          <div className="team-cache-track" aria-hidden="true"><span style={{ width: cache.available ? cacheBar : '0%' }} /></div>
+          <div className="team-metric-foot">{t('teams.metrics.cacheFoot')}</div>
+        </Card>
+      </section>
+
+      <section className="team-kpis three" aria-label={t('teams.insights.usageTitle')}>
         <div className="team-kpi">
           <div className="label">{t('teams.metrics.estimatedCost')}</div>
           <div className="value mono-num">{costValue}</div>
@@ -81,27 +108,14 @@ export const TeamOverviewBoard: React.FC<{
         <div className="team-kpi">
           <div className="label">{t('teams.metrics.codeLines')}</div>
           <div className="value mono-num">{code.available ? code.text : '—'}</div>
-          <div className="sub">{t('teams.metrics.tokensPerLine')} <b>{perLine.available ? perLine.text : '—'}</b></div>
+          <div className="sub">{t('teams.overview.selectedPeriod')}</div>
         </div>
       </section>
 
-      <section className="team-metric-panels" aria-label={t('teams.insights.usageTitle')}>
+      <section className="team-activity-panel" aria-labelledby="team-activity-heading">
         <Card>
           <div className="panel-header">
-            <h2>{t('teams.overview.efficiency')}</h2>
-            <span className="team-chart-unit">{t('teams.overview.selectedPeriod')}</span>
-          </div>
-          <div className="team-mini-row">
-            <div><span className="label">{t('teams.metrics.input')}</span><strong className="mono-num">{input.available ? input.text : '—'}</strong></div>
-            <div><span className="label">{t('teams.metrics.output')}</span><strong className="mono-num">{output.available ? output.text : '—'}</strong></div>
-            <div><span className="label">{t('teams.metrics.cache')}</span><strong className="mono-num">{cache.available ? cache.text : '—'}</strong></div>
-          </div>
-          <div className="team-cache-track" aria-hidden="true"><span style={{ width: cache.available ? cacheBar : '0%' }} /></div>
-          <div className="team-metric-foot">{t('teams.metrics.cacheFoot')}</div>
-        </Card>
-        <Card>
-          <div className="panel-header">
-            <h2>{t('teams.overview.activity')}</h2>
+            <h2 id="team-activity-heading">{t('teams.overview.activity')}</h2>
             <span className="team-chart-unit">{t('teams.overview.acrossMembers')}</span>
           </div>
           <div className="team-mini-row four">

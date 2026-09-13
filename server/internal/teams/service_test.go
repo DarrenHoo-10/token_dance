@@ -351,6 +351,7 @@ func TestAssembleAnalysisCollectionsMatchWeb(t *testing.T) {
 	row := domain.TeamAnalysisRow{
 		MembershipID: &mem, MetricDate: &date, AgentID: &agent, ProviderID: &provider, ModelID: &model,
 		TokenExactTotal: "123", TokenDerivedTotal: "0", UsageEventCount: "1",
+		ActivityJSON:   []byte(`{"schemaVersion":1,"generatedCodeLines":{"sum":"10"}}`),
 		VisibilityMask: VisibilityNamed | VisibilityClassification,
 	}
 	team := &domain.Team{TimezoneName: "Asia/Shanghai"}
@@ -376,6 +377,9 @@ func TestAssembleAnalysisCollectionsMatchWeb(t *testing.T) {
 	}
 	if dto.Contributions.Items[0]["displayName"] != "Ada" || dto.Contributions.Items[0]["rank"] != "1" || dto.Contributions.Items[0]["membershipId"] != mem {
 		t.Fatalf("contributions %+v", dto.Contributions.Items)
+	}
+	if dto.Contributions.Items[0]["generatedCodeLines"] != "10" || dto.Contributions.Items[0]["tokensPerCodeLine"] != "12" {
+		t.Fatalf("token efficiency %+v", dto.Contributions.Items[0])
 	}
 	opts := setToOptions(map[string]struct{}{"codex": {}})
 	if len(opts) != 1 || opts[0]["id"] != "codex" || opts[0]["label"] != "codex" {
