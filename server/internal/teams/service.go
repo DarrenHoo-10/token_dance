@@ -230,14 +230,15 @@ type PageQuery struct {
 }
 
 type TeamDTO struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Description    string `json:"description"`
-	Timezone       string `json:"timezone"`
-	Visibility     string `json:"visibility"`
-	Status         string `json:"status"`
-	ProfileVersion string `json:"profileVersion"`
-	AuthRevision   string `json:"authRevision"`
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	Description    string  `json:"description"`
+	Timezone       string  `json:"timezone"`
+	Visibility     string  `json:"visibility"`
+	Status         string  `json:"status"`
+	ProfileVersion string  `json:"profileVersion"`
+	AuthRevision   string  `json:"authRevision"`
+	AvatarURL      *string `json:"avatarUrl,omitempty"`
 }
 
 type MembershipDTO struct {
@@ -1752,8 +1753,8 @@ func (s *Service) UploadAvatarContent(ctx context.Context, userID, teamID, objec
 	return nil
 }
 
-func (s *Service) CompleteAvatar(ctx context.Context, userID, teamID, objectID, expectedProfileVersion string) (*TeamDTO, error) {
-	_, _, role, err := s.requireMember(ctx, userID, teamID)
+func (s *Service) CompleteAvatar(ctx context.Context, userID, teamID, objectID, expectedProfileVersion string) (*ContextDTO, error) {
+	_, mem, role, err := s.requireMember(ctx, userID, teamID)
 	if err != nil {
 		return nil, err
 	}
@@ -1796,8 +1797,7 @@ func (s *Service) CompleteAvatar(ctx context.Context, userID, teamID, objectID, 
 	if err != nil {
 		return nil, mapStoreError(err, "RESOURCE_NOT_FOUND")
 	}
-	dto := teamDTO(team)
-	return &dto, nil
+	return contextDTO(team, mem, false), nil
 }
 
 func (s *Service) ClearAvatar(ctx context.Context, userID, teamID, expectedProfileVersion string) error {
@@ -2984,11 +2984,16 @@ func teamDTO(team *domain.Team) TeamDTO {
 	if vis == "" {
 		vis = "private"
 	}
-	return TeamDTO{
+	dto := TeamDTO{
 		ID: team.TeamID, Name: team.Name, Description: team.Description, Timezone: team.TimezoneName,
 		Visibility: vis, Status: string(team.Status),
 		ProfileVersion: formatUint(team.ProfileVersion), AuthRevision: formatUint(team.AuthRevision),
 	}
+	if team.AvatarObjectID != nil && *team.AvatarObjectID != "" {
+		url := "/api/v1/teams/" + team.TeamID + "/avatar/content"
+		dto.AvatarURL = &url
+	}
+	return dto
 }
 
 func invitationDTO(inv domain.TeamInvitation, delivery string) InvitationDTO {

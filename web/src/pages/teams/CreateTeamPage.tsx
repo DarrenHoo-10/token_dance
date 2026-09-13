@@ -196,10 +196,12 @@ export const CreateTeamPage: React.FC = () => {
         },
         { idempotencyKey: key }
       );
+      let uploadFailed = false;
       if (avatarFile) {
         try {
           result = await persistTeamAvatar(result, avatarFile);
         } catch {
+          uploadFailed = true;
           setAvatarFailed(true);
         }
       }
@@ -208,6 +210,7 @@ export const CreateTeamPage: React.FC = () => {
       clearCreateDraft();
       setPageState('created');
       applyScope(result);
+      navigate(`/teams/${result.team.id}`, { replace: true, state: { justCreated: true, avatarFailed: uploadFailed } });
     } catch (err) {
       if (err instanceof ApiError && err.code === 'TEAM_MEMBERSHIP_EXISTS') {
         const current = await refresh();

@@ -49,19 +49,20 @@ func filterOptionIDs(opts []map[string]string) map[string]struct{} {
 
 func TestMemoryJoinLeaveRejoinGetAnalysis(t *testing.T) {
 	ctx := context.Background()
+	joinAt := time.Date(2026, 9, 6, 8, 0, 0, 0, time.UTC)
 	now := time.Date(2026, 9, 12, 8, 0, 0, 0, time.UTC)
 	m := memory.NewMemoryStore()
 	owner := memUserID("own")
 	member := memUserID("mem")
-	if _, _, err := m.SeedUserForTest(owner, "owner", "owner@example.com", now); err != nil {
+	if _, _, err := m.SeedUserForTest(owner, "owner", "owner@example.com", joinAt); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := m.SeedUserForTest(member, "member", "member@example.com", now); err != nil {
+	if _, _, err := m.SeedUserForTest(member, "member", "member@example.com", joinAt); err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []string{owner, member} {
 		if !m.MutateUser(id, func(u *domain.User) {
-			v := now
+			v := joinAt
 			u.EmailVerifiedAt = &v
 		}) {
 			t.Fatal("mutate")
@@ -82,7 +83,7 @@ func TestMemoryJoinLeaveRejoinGetAnalysis(t *testing.T) {
 		Membership:  domain.TeamMembership{MembershipID: memUserID("tmbown")},
 		Sharing:     domain.SharingFlags{},
 		Idempotency: store.TeamsIdempotency{Scope: "create_team", KeyHash: [32]byte{1}, RequestHash: [32]byte{1}},
-		Now:         now,
+		Now:         joinAt,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -101,14 +102,14 @@ func TestMemoryJoinLeaveRejoinGetAnalysis(t *testing.T) {
 			LookupKeyVersion: 1, EncryptionKeyVersion: 1, ExpiresAt: now.Add(24 * time.Hour),
 		},
 		Idempotency: store.TeamsIdempotency{Scope: "create_invitation:" + teamID, KeyHash: [32]byte{2}, RequestHash: [32]byte{2}},
-		Now:         now,
+		Now:         joinAt,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	accepted, err := m.AcceptInvitationTx(ctx, store.AcceptInvitationTxInput{
 		ActorUserID: member, InvitationID: inviteID, ExpectedVersion: 1, VerifiedEmailLookupHash: hash,
 		Idempotency: store.TeamsIdempotency{Scope: "accept_invitation:" + inviteID, KeyHash: [32]byte{3}, RequestHash: [32]byte{3}},
-		Now:         now,
+		Now:         joinAt,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -127,14 +128,23 @@ func TestMemoryJoinLeaveRejoinGetAnalysis(t *testing.T) {
 	}
 
 	dto := analyze()
-	if dto.Summary.Tokens.Value != "100" {
-		t.Fatalf("L01 join-before history want 100 got %s", dto.Summary.Tokens.Value)
+	if dto.Summary.Tokens.Value != "0" {
+		t.Fatalf("join must not copy pre-join personal days, got %s", dto.Summary.Tokens.Value)
 	}
-	if len(dto.Contributions.Items) != 1 {
-		t.Fatalf("L01 ranking want 1 got %d", len(dto.Contributions.Items))
+	if len(dto.Contributions.Items) != 0 {
+		t.Fatalf("pre-join days must not rank, got %d", len(dto.Contributions.Items))
 	}
 	if dto.Snapshot == nil || dto.Snapshot.ID == "" {
 		t.Fatal("ready analysis must carry a snapshot id")
+	}
+
+	m.SeedTeamPersonalDays(member, []domain.TeamAnalysisRow{usageDay("2026-09-01", "100"), usageDay("2026-09-10", "100"), usageDay("2026-09-11", "40")})
+	if err := m.RefreshCurrentTeamDays(member); err != nil {
+		t.Fatal(err)
+	}
+	dto = analyze()
+	if dto.Summary.Tokens.Value != "140" {
+		t.Fatalf("post-join days want 140 got %s", dto.Summary.Tokens.Value)
 	}
 	opts, err := svc.GetFilterOptions(ctx, owner, teamID, dto.Snapshot.ID)
 	if err != nil {
@@ -153,25 +163,10 @@ func TestMemoryJoinLeaveRejoinGetAnalysis(t *testing.T) {
 	if _, ok := agents[BucketUnsharedClassification]; ok {
 		t.Fatalf("auto-share must not list unshared_classification, got %+v", opts.Agents)
 	}
-	if dto.Summary.Metrics["cacheHitRate"].Value != "0.0900" {
-		t.Fatalf("cacheHitRate %+v", dto.Summary.Metrics["cacheHitRate"])
-	}
-	if dto.Summary.Metrics["estimatedCosts"].Value != "0.50000000" {
-		t.Fatalf("estimatedCosts %+v", dto.Summary.Metrics["estimatedCosts"])
-	}
-
-	m.SeedTeamPersonalDays(member, []domain.TeamAnalysisRow{usageDay("2026-09-01", "100"), usageDay("2026-09-10", "40")})
-	if err := m.RefreshCurrentTeamDays(member); err != nil {
-		t.Fatal(err)
-	}
-	dto = analyze()
-	if dto.Summary.Tokens.Value != "140" {
-		t.Fatalf("L01 after extra 40 want 140 got %s", dto.Summary.Tokens.Value)
-	}
 
 	teammetrics.AfterPersonalBeforeTeam = func() error { return errors.New("injected team write failure") }
 	t.Cleanup(func() { teammetrics.AfterPersonalBeforeTeam = nil })
-	m.SeedTeamPersonalDays(member, []domain.TeamAnalysisRow{usageDay("2026-09-01", "100"), usageDay("2026-09-10", "40"), usageDay("2026-09-11", "7")})
+	m.SeedTeamPersonalDays(member, []domain.TeamAnalysisRow{usageDay("2026-09-01", "100"), usageDay("2026-09-10", "100"), usageDay("2026-09-11", "40"), usageDay("2026-09-12", "7")})
 	if err := m.RefreshCurrentTeamDays(member); err == nil {
 		t.Fatal("expected failpoint")
 	}
@@ -215,7 +210,7 @@ func TestMemoryJoinLeaveRejoinGetAnalysis(t *testing.T) {
 	}
 
 	m.SeedTeamPersonalDays(member, []domain.TeamAnalysisRow{
-		usageDay("2026-09-01", "100"), usageDay("2026-09-10", "40"), usageDay("2026-09-11", "7"), usageDay("2026-09-12", "60"),
+		usageDay("2026-09-01", "100"), usageDay("2026-09-10", "100"), usageDay("2026-09-11", "40"), usageDay("2026-09-12", "60"),
 	})
 	if err := m.RefreshCurrentTeamDays(member); err != nil {
 		t.Fatal(err)
@@ -245,8 +240,8 @@ func TestMemoryJoinLeaveRejoinGetAnalysis(t *testing.T) {
 		t.Fatal(err)
 	}
 	dto = analyze()
-	if dto.Summary.Tokens.Value != "207" {
-		t.Fatalf("L03 rejoin overwrite want 207 got %s", dto.Summary.Tokens.Value)
+	if dto.Summary.Tokens.Value != "60" {
+		t.Fatalf("rejoin only counts days on/after new joined_at, got %s", dto.Summary.Tokens.Value)
 	}
 	if len(dto.Contributions.Items) != 1 {
 		t.Fatalf("rejoin named ranking want 1 got %d", len(dto.Contributions.Items))

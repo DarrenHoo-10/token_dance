@@ -5,23 +5,26 @@ import (
 	"database/sql"
 	"fmt"
 	"strings"
+	"time"
 
 	"tokendance/internal/domain"
 )
 
-// RefreshCurrentTeamDaysTx projects the user's personal day metrics into team static rows.
-// dates nil/empty means all personal day buckets (join / full history). No joined_at cut.
+// RefreshCurrentTeamDaysTx projects personal day metrics into team static rows.
+// Only events/days at or after occupancy joined_at are eligible. Empty dates
+// means all personal buckets, then the same joined_at cut is applied.
 func RefreshCurrentTeamDaysTx(ctx context.Context, tx *sql.Tx, userID string, dates []string, nowMs int64) error {
 	var teamID, membershipID, contribKey string
+	var joinedAt time.Time
 	var retired sql.NullInt64
 	err := tx.QueryRowContext(ctx, `
-		SELECT c.team_id, c.membership_id
+		SELECT c.team_id, c.membership_id, c.joined_at
 		FROM user_current_teams c
 		INNER JOIN users u ON u.user_id = c.user_id
 		INNER JOIN teams t ON t.team_id = c.team_id AND t.status = 'active'
 		WHERE c.user_id = ? AND u.account_status = 'active'
 		FOR UPDATE`, userID,
-	).Scan(&teamID, &membershipID)
+	).Scan(&teamID, &membershipID, &joinedAt)
 	if err == sql.ErrNoRows {
 		return nil
 	}
@@ -43,6 +46,7 @@ func RefreshCurrentTeamDaysTx(ctx context.Context, tx *sql.Tx, userID string, da
 		return fmt.Errorf("lock contributor: %w", err)
 	}
 	contrib := Contributor{TeamID: teamID, UserID: userID, ContributorKey: contribKey, MembershipID: &membershipID}
+	joinDay := domain.DayDate(joinedAt)
 
 	if len(dates) == 0 {
 		discovered, err := discoverPersonalDays(ctx, tx, userID)
@@ -51,14 +55,49 @@ func RefreshCurrentTeamDaysTx(ctx context.Context, tx *sql.Tx, userID string, da
 		}
 		dates = discovered
 	}
-	if len(dates) == 0 {
-		return ReplaceTeamMemberDaysTx(ctx, tx, contrib, nil, nil, nowMs)
+	after, includeJoinDay := splitDatesFromJoin(dates, joinDay)
+	if len(after) == 0 && !includeJoinDay {
+		return nil
 	}
-	rows, err := projectPersonalDays(ctx, tx, contrib, dates)
+	var rows []DayRow
+	if len(after) > 0 {
+		projected, err := projectPersonalDays(ctx, tx, contrib, after, joinedAt)
+		if err != nil {
+			return err
+		}
+		rows = append(rows, projected...)
+	}
+	if includeJoinDay {
+		projected, err := projectJoinDayHours(ctx, tx, contrib, joinDay, joinedAt)
+		if err != nil {
+			return err
+		}
+		rows = append(rows, projected...)
+		after = append(after, joinDay)
+	}
+	return ReplaceTeamMemberDaysTx(ctx, tx, contrib, after, rows, nowMs)
+}
+
+func splitDatesFromJoin(dates []string, joinDay string) (after []string, includeJoinDay bool) {
+	for _, d := range dates {
+		if d < joinDay {
+			continue
+		}
+		if d == joinDay {
+			includeJoinDay = true
+			continue
+		}
+		after = append(after, d)
+	}
+	return after, includeJoinDay
+}
+
+func legacyUTCDayEligible(date string, joinedAt time.Time) bool {
+	midnight, err := time.ParseInLocation("2006-01-02", date, time.UTC)
 	if err != nil {
-		return err
+		return false
 	}
-	return ReplaceTeamMemberDaysTx(ctx, tx, contrib, dates, rows, nowMs)
+	return !midnight.Before(joinedAt)
 }
 
 func discoverPersonalDays(ctx context.Context, tx *sql.Tx, userID string) ([]string, error) {
@@ -126,7 +165,7 @@ func discoverPersonalDays(ctx context.Context, tx *sql.Tx, userID string) ([]str
 	return out, nil
 }
 
-func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, dates []string) ([]DayRow, error) {
+func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, dates []string, joinedAt time.Time) ([]DayRow, error) {
 	var out []DayRow
 	in := strings.Repeat("?,", len(dates))
 	in = in[:len(in)-1]
@@ -184,7 +223,7 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 		out = append(out, row)
 	}
 
-	legacyModels, modelAgents, err := projectLegacyModelRows(ctx, tx, contrib, dates, v2Agents)
+	legacyModels, modelAgents, err := projectLegacyModelRows(ctx, tx, contrib, dates, v2Agents, joinedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -211,6 +250,9 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 			continue
 		}
 		if _, ok := modelAgents[key]; ok {
+			continue
+		}
+		if !legacyUTCDayEligible(date, joinedAt) {
 			continue
 		}
 		row, err := usageRow(contrib, date, agent, "", "", exact, derived, "0", "0", "0", "0", "0", "0", "0", "0", "0", defaultHourly(), true)
@@ -257,7 +299,7 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 	if err := arows.Err(); err != nil {
 		return nil, err
 	}
-	legacyActivity, err := projectLegacyActivityRows(ctx, tx, contrib, dates, v2Activity)
+	legacyActivity, err := projectLegacyActivityRows(ctx, tx, contrib, dates, v2Activity, joinedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -331,7 +373,7 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 	if err := srows.Err(); err != nil {
 		return nil, err
 	}
-	legacySkills, err := projectLegacySkillRows(ctx, tx, contrib, dates, v2SkillAgents)
+	legacySkills, err := projectLegacySkillRows(ctx, tx, contrib, dates, v2SkillAgents, joinedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -339,12 +381,178 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 	return out, nil
 }
 
-func loadHourly(ctx context.Context, tx *sql.Tx, userID, date, agent, provider, model string) (jsonRaw, error) {
+func projectJoinDayHours(ctx context.Context, tx *sql.Tx, contrib Contributor, date string, joinedAt time.Time) ([]DayRow, error) {
+	joinedAtMs := joinedAt.UnixMilli()
+	startMs, err := domain.DayBucketStartMs(date)
+	if err != nil {
+		return nil, nil
+	}
+	if joinedAtMs > startMs {
+		startMs = joinedAtMs
+	}
+	endMs := startMs
+	if dayStart, err := domain.DayBucketStartMs(date); err == nil {
+		endMs = dayStart + 24*60*60*1000
+	}
+	if startMs >= endMs {
+		return nil, nil
+	}
+
+	urows, err := tx.QueryContext(ctx, `
+		SELECT m.harness_id, tm.provider_id, tm.model_id,
+		       CAST(SUM(m.exact_token_total) AS CHAR), CAST(SUM(m.derived_token_total) AS CHAR),
+		       CAST(SUM(m.usage_observed_count) AS CHAR),
+		       CAST(SUM(m.input_context_tokens) AS CHAR), CAST(SUM(m.output_tokens) AS CHAR),
+		       CAST(SUM(m.cache_eligible_input_tokens) AS CHAR), CAST(SUM(m.cache_eligible_read_tokens) AS CHAR),
+		       CAST(SUM(m.cache_pair_known_count) AS CHAR),
+		       CAST(SUM(m.input_context_known_count) AS CHAR), CAST(SUM(m.output_known_count) AS CHAR),
+		       CAST(SUM(m.usage_observed_count) AS CHAR)
+		FROM bound_telemetry_model_metrics m
+		JOIN telemetry_models tm ON tm.id = m.model_key
+		WHERE m.user_id = ? AND m.grain = 'hour' AND m.delete_at IS NULL
+		  AND m.bucket_start >= ? AND m.bucket_start < ?
+		GROUP BY m.harness_id, tm.provider_id, tm.model_id`,
+		contrib.UserID, startMs, endMs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("project join-day model hours: %w", err)
+	}
+	var out []DayRow
+	for urows.Next() {
+		var agent, provider, model, exact, derived, events, input, output, cacheIn, cacheRead, cacheKnown, inKnown, outKnown, observed string
+		if err := urows.Scan(&agent, &provider, &model, &exact, &derived, &events, &input, &output, &cacheIn, &cacheRead, &cacheKnown, &inKnown, &outKnown, &observed); err != nil {
+			urows.Close()
+			return nil, err
+		}
+		hourly, err := loadHourly(ctx, tx, contrib.UserID, date, agent, provider, model, startMs)
+		if err != nil {
+			urows.Close()
+			return nil, err
+		}
+		row, err := usageRow(contrib, date, agent, provider, model, exact, derived, events, input, output, cacheIn, cacheRead, cacheKnown, inKnown, outKnown, observed, hourly, false)
+		if err != nil {
+			urows.Close()
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	err = urows.Err()
+	urows.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	arows, err := tx.QueryContext(ctx, `
+		SELECT harness_id,
+		       CAST(SUM(code_generated_lines) AS CHAR), CAST(SUM(active_duration_ms) AS CHAR),
+		       CAST(SUM(turn_started_count + turn_completed_count) AS CHAR),
+		       CAST(SUM(user_turn_started_count) AS CHAR),
+		       CAST(SUM(code_known_count) AS CHAR), CAST(SUM(duration_known_count) AS CHAR),
+		       CAST(SUM(message_known_count) AS CHAR)
+		FROM bound_telemetry_harness_metrics
+		WHERE user_id = ? AND grain = 'hour' AND delete_at IS NULL
+		  AND bucket_start >= ? AND bucket_start < ?
+		GROUP BY harness_id`,
+		contrib.UserID, startMs, endMs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("project join-day harness hours: %w", err)
+	}
+	defer arows.Close()
+	for arows.Next() {
+		var agent, code, dur, msgs, userMsgs, codeKnown, durKnown, msgKnown string
+		if err := arows.Scan(&agent, &code, &dur, &msgs, &userMsgs, &codeKnown, &durKnown, &msgKnown); err != nil {
+			return nil, err
+		}
+		row, err := activityRow(contrib, date, agent, code, dur, msgs, userMsgs, codeKnown, durKnown, msgKnown)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	if err := arows.Err(); err != nil {
+		return nil, err
+	}
+
+	crows, err := tx.QueryContext(ctx, `
+		SELECT m.harness_id, tm.provider_id, tm.model_id, m.currency,
+		       CAST(SUM(m.reported_cost_units)/100000000 AS CHAR),
+		       CAST(SUM(m.estimated_cost_units)/100000000 AS CHAR)
+		FROM bound_telemetry_cost_metrics m
+		JOIN telemetry_models tm ON tm.id = m.model_key
+		WHERE m.user_id = ? AND m.grain = 'hour' AND m.delete_at IS NULL
+		  AND m.bucket_start >= ? AND m.bucket_start < ?
+		GROUP BY m.harness_id, tm.provider_id, tm.model_id, m.currency`,
+		contrib.UserID, startMs, endMs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("project join-day cost hours: %w", err)
+	}
+	defer crows.Close()
+	for crows.Next() {
+		var agent, provider, model, currency, reported, estimated string
+		if err := crows.Scan(&agent, &provider, &model, &currency, &reported, &estimated); err != nil {
+			return nil, err
+		}
+		row, err := costRow(contrib, date, agent, provider, model, currency, reported, estimated)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	if err := crows.Err(); err != nil {
+		return nil, err
+	}
+
+	srows, err := tx.QueryContext(ctx, `
+		SELECT m.harness_id, m.skill_id,
+		       CAST(SUM(m.use_count) AS CHAR), CAST(SUM(m.exact_use_count) AS CHAR),
+		       CAST(SUM(m.derived_use_count) AS CHAR), CAST(SUM(m.correlated_use_count) AS CHAR),
+		       CAST(SUM(m.success_count) AS CHAR), CAST(SUM(m.failure_count) AS CHAR),
+		       CAST(SUM(m.duration_ms) AS CHAR), CAST(SUM(m.duration_known_count) AS CHAR),
+		       MIN(ts.public_name)
+		FROM bound_telemetry_skill_metrics m
+		LEFT JOIN telemetry_skills ts ON ts.id = m.skill_id
+		WHERE m.user_id = ? AND m.grain = 'hour' AND m.delete_at IS NULL
+		  AND m.bucket_start >= ? AND m.bucket_start < ?
+		GROUP BY m.harness_id, m.skill_id`,
+		contrib.UserID, startMs, endMs,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("project join-day skill hours: %w", err)
+	}
+	defer srows.Close()
+	for srows.Next() {
+		var agent, uses, exact, derived, corr, success, failure, dur, durKnown string
+		var skillID int64
+		var publicName sql.NullString
+		if err := srows.Scan(&agent, &skillID, &uses, &exact, &derived, &corr, &success, &failure, &dur, &durKnown, &publicName); err != nil {
+			return nil, err
+		}
+		row, err := skillRow(contrib, date, agent, skillID, uses, exact, derived, corr, success, failure, dur, durKnown, publicName.String)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, srows.Err()
+}
+
+func loadHourly(ctx context.Context, tx *sql.Tx, userID, date, agent, provider, model string, minStartMs ...int64) (jsonRaw, error) {
 	startMs, err := domain.DayBucketStartMs(date)
 	if err != nil {
 		return defaultHourly(), nil
 	}
-	endMs := startMs + 24*60*60*1000
+	if len(minStartMs) > 0 && minStartMs[0] > startMs {
+		startMs = minStartMs[0]
+	}
+	endMs := startMs
+	if dayStart, err := domain.DayBucketStartMs(date); err == nil {
+		endMs = dayStart + 24*60*60*1000
+	}
+	if startMs >= endMs {
+		return defaultHourly(), nil
+	}
 	rows, err := tx.QueryContext(ctx, `
 		SELECT m.bucket_start, CAST(SUM(m.exact_token_total) AS CHAR), CAST(SUM(m.derived_token_total) AS CHAR)
 		FROM bound_telemetry_model_metrics m
@@ -466,7 +674,7 @@ type dayAgent struct {
 	agent string
 }
 
-func projectLegacyModelRows(ctx context.Context, tx *sql.Tx, contrib Contributor, dates []string, skip map[dayAgent]struct{}) ([]DayRow, map[dayAgent]struct{}, error) {
+func projectLegacyModelRows(ctx context.Context, tx *sql.Tx, contrib Contributor, dates []string, skip map[dayAgent]struct{}, joinedAt time.Time) ([]DayRow, map[dayAgent]struct{}, error) {
 	covered := map[dayAgent]struct{}{}
 	if len(dates) == 0 {
 		return nil, covered, nil
@@ -494,6 +702,9 @@ func projectLegacyModelRows(ctx context.Context, tx *sql.Tx, contrib Contributor
 		if strings.TrimSpace(model) == "" {
 			continue
 		}
+		if !legacyUTCDayEligible(date, joinedAt) {
+			continue
+		}
 		key := dayAgent{date, agent}
 		if _, ok := skip[key]; ok {
 			continue
@@ -508,7 +719,7 @@ func projectLegacyModelRows(ctx context.Context, tx *sql.Tx, contrib Contributor
 	return out, covered, rows.Err()
 }
 
-func projectLegacyActivityRows(ctx context.Context, tx *sql.Tx, contrib Contributor, dates []string, skip map[dayAgent]struct{}) ([]DayRow, error) {
+func projectLegacyActivityRows(ctx context.Context, tx *sql.Tx, contrib Contributor, dates []string, skip map[dayAgent]struct{}, joinedAt time.Time) ([]DayRow, error) {
 	if len(dates) == 0 {
 		return nil, nil
 	}
@@ -537,6 +748,9 @@ func projectLegacyActivityRows(ctx context.Context, tx *sql.Tx, contrib Contribu
 		if decOrZero(code) == "0" && decOrZero(dur) == "0" && decOrZero(msgs) == "0" && decOrZero(userMsgs) == "0" {
 			continue
 		}
+		if !legacyUTCDayEligible(date, joinedAt) {
+			continue
+		}
 		if _, ok := skip[dayAgent{date, agent}]; ok {
 			continue
 		}
@@ -555,7 +769,7 @@ func projectLegacyActivityRows(ctx context.Context, tx *sql.Tx, contrib Contribu
 	return out, rows.Err()
 }
 
-func projectLegacySkillRows(ctx context.Context, tx *sql.Tx, contrib Contributor, dates []string, skip map[dayAgent]struct{}) ([]DayRow, error) {
+func projectLegacySkillRows(ctx context.Context, tx *sql.Tx, contrib Contributor, dates []string, skip map[dayAgent]struct{}, joinedAt time.Time) ([]DayRow, error) {
 	if len(dates) == 0 {
 		return nil, nil
 	}
@@ -583,6 +797,9 @@ func projectLegacySkillRows(ctx context.Context, tx *sql.Tx, contrib Contributor
 			return nil, err
 		}
 		if len(skillKey) == 0 || decOrZero(uses) == "0" {
+			continue
+		}
+		if !legacyUTCDayEligible(date, joinedAt) {
 			continue
 		}
 		if _, ok := skip[dayAgent{date, agent}]; ok {

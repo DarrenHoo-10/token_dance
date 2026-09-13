@@ -499,7 +499,11 @@ func (m *MemoryStore) refreshCurrentTeamDaysLocked(userID string) error {
 		}
 	}
 	mid := *c.MembershipID
+	joinDay := domain.DayDate(cur.JoinedAt)
 	for _, src := range m.teamPersonalDays[userID] {
+		if src.MetricDate == nil || *src.MetricDate < joinDay {
+			continue
+		}
 		row := src
 		row.ContributorKey = c.ContributorKey
 		mem := mid

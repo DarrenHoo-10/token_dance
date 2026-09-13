@@ -289,22 +289,14 @@ func TestMySQLTeams_CreateWithExistingPersonalDays(t *testing.T) {
 		) VALUES ('2026-09-01', ?, 'codex', 1000, 0, 1, ?, ?)`, owner, now, now); err != nil {
 		t.Fatalf("seed personal days: %v", err)
 	}
-	created, err := st.Teams().CreateTeamTx(ctx, mysqlCreateTeam(t, owner, "History Team", domain.SharingFlags{}, now, teamIdem("create_team", "hist-proj", "body")))
-	if err != nil {
+	if _, err := st.Teams().CreateTeamTx(ctx, mysqlCreateTeam(t, owner, "History Team", domain.SharingFlags{}, now, teamIdem("create_team", "hist-proj", "body"))); err != nil {
 		t.Fatalf("create with personal days: %v", err)
 	}
-	var revision uint64
-	if err := db.QueryRow(`SELECT source_revision FROM team_source_revisions WHERE team_id = ?`, created.Context.Team.TeamID).Scan(&revision); err != nil {
-		t.Fatalf("source revision: %v", err)
-	}
-	if revision < 1 {
-		t.Fatalf("expected occupancy to bump source revision, got %d", revision)
-	}
 	var dayRows int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM team_member_day_metrics WHERE team_id = ? AND delete_at IS NULL`, created.Context.Team.TeamID).Scan(&dayRows); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM team_member_day_metrics WHERE delete_at IS NULL`).Scan(&dayRows); err != nil {
 		t.Fatalf("day metrics: %v", err)
 	}
-	if dayRows == 0 {
-		t.Fatal("expected projected team day metrics after create")
+	if dayRows != 0 {
+		t.Fatalf("create must not copy personal days before joined_at, got %d rows", dayRows)
 	}
 }

@@ -472,7 +472,7 @@ func buildMemberAnalysisRows(member teamMemberSource, grants []teamGrantWindow, 
 	grouped := groupAuthorizedTeamCosts(member, grants, events, loc)
 	acc := make(map[string]*analysisAggRow)
 	for _, ev := range events {
-		if !grantCoversTime(grants, string(domain.SharingBase), ev.occurredAt) {
+		if !teamFactAuthorized(member, grants, ev) {
 			continue
 		}
 		mask := analysisVisibilityMask(grants, ev.occurredAt)
