@@ -96,7 +96,7 @@ func (a *teamTestApp) registerAndOnboard(t *testing.T, emailAddr, handle, displa
 			break
 		}
 	}
-	regBody, _ := json.Marshal(map[string]string{"email": emailAddr, "code": validCode, "password": "PilotPassword123!"})
+	regBody, _ := json.Marshal(map[string]string{"email": emailAddr, "code": validCode, "password": "test-password"})
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/register", bytes.NewReader(regBody))
 	req.Header.Set("Content-Type", "application/json")
 	rec = httptest.NewRecorder()
