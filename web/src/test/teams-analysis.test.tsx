@@ -123,10 +123,10 @@ describe('Team analysis updating state', () => {
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     const query = vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
     renderTeamWorkspace('/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    const chart = await screen.findByRole('heading', { name: '团队 Token 趋势' });
+    const chart = await screen.findByRole('heading', { name: '成员用量趋势' });
     const from = screen.getByLabelText('开始日期');
     expect(from.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByRole('heading', { name: '团队 Token 趋势' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '成员用量趋势' })).toBeInTheDocument();
     expect(screen.getAllByText('120.0K')[0]).toBeInTheDocument();
     fireEvent.change(from, { target: { value: '2026-09-01' } });
     expect(query).toHaveBeenCalledTimes(1);
@@ -171,7 +171,8 @@ describe('Team analysis updating state', () => {
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    await screen.findByRole('heading', { name: '团队 Token 趋势' });
+    await screen.findByRole('heading', { name: '成员用量趋势' });
+    expect(screen.queryByRole('heading', { name: '团队 Token 趋势' })).not.toBeInTheDocument();
     expect(screen.queryByText('私密团队')).not.toBeInTheDocument();
     expect(screen.queryByText('成员表现')).not.toBeInTheDocument();
     expect(screen.queryByText('我的共享')).not.toBeInTheDocument();
@@ -383,7 +384,7 @@ describe('Team member insights', () => {
     expect(memberPercent('900719925474099300', '1801439850948198600')).toBe(50);
     expect(memberPercent('1', '0')).toBe(0);
   });
-  it('compares up to five members and uses the full team share denominator', async () => {
+  it('defaults the usage trend to the team series and switches with the member dropdown', async () => {
     vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     const result = readyAnalysis('1', '1000');
@@ -394,15 +395,14 @@ describe('Team member insights', () => {
     })) };
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    const first = await screen.findByRole('button', { name: 'Person 0' });
-    expect(first).toHaveAttribute('aria-pressed', 'true');
+    const picker = await screen.findByLabelText('选择成员');
+    expect(picker).toHaveValue('');
+    expect(screen.getByRole('heading', { name: '成员用量趋势' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '团队 Token 趋势' })).not.toBeInTheDocument();
     expect(screen.getAllByText(/10\.0%/)).toHaveLength(11);
     expect(screen.getByText('50.0%')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Person 3' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Person 4' }));
-    expect(screen.getByRole('button', { name: 'Person 5' })).toBeDisabled();
-    fireEvent.click(first);
-    expect(screen.getByRole('button', { name: 'Person 5' })).toBeEnabled();
+    fireEvent.change(picker, { target: { value: 'member-0' } });
+    expect(picker).toHaveValue('member-0');
   });
 });
 

@@ -1,10 +1,8 @@
 import React from 'react';
 import { AgentBreakdown } from '@/components/analytics/AgentBreakdown';
-import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
 import { Card } from '@/components/common/Card';
 import { useLocale } from '@/context/LocaleContext';
 import type { MetricValue, TeamAnalysisReady } from '@/api/teams';
-import type { TokenTrendItem } from '@/types/api';
 import {
   formatDecimalAmount,
   formatDurationHours,
@@ -57,9 +55,6 @@ export const TeamOverviewBoard: React.FC<{
     : null;
   const cacheWidth = cache.available ? Number(metricOf(analysis, 'cacheHitRate')?.value || '0') : 0;
   const cacheBar = `${Math.max(0, Math.min(100, (cacheWidth <= 1 ? cacheWidth * 100 : cacheWidth)))}%`;
-  const trends: TokenTrendItem[] = (analysis.trend || [])
-    .filter((point) => point.tokens.state === 'available' && point.tokens.value)
-    .map((point) => ({ date: point.date, tokenTotal: point.tokens.value as string }));
   const agents = (analysis.agents.items || []).map((item) => ({
     key: item.id,
     label: item.bucketType === 'unshared_classification' ? t('teams.analytics.unsharedBucket') : item.label,
@@ -141,10 +136,6 @@ export const TeamOverviewBoard: React.FC<{
         </div>
       </div>
       <section className="team-usage-mix">
-        <Card>
-          <div className="panel-header"><h2>{t('teams.overview.teamTrend')}</h2></div>
-          <TokenTrendChart trends={trends} />
-        </Card>
         <Card>
           <div className="panel-header"><h2>{t('teams.overview.tools')}</h2></div>
           <AgentBreakdown items={agents} />
