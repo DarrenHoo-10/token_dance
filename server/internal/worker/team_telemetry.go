@@ -81,6 +81,9 @@ func decodeTeamTelemetryPayload(ev *teamFactEvent, data []byte) error {
 }
 
 func teamFactAuthorized(member teamMemberSource, grants []teamGrantWindow, ev teamFactEvent) bool {
+	if ev.occurredAt.Before(member.joinedAt) {
+		return false
+	}
 	return grantCoversTime(grants, string(domain.SharingBase), ev.occurredAt)
 }
 

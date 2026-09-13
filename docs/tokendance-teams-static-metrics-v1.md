@@ -22,7 +22,7 @@
 
 - 一人一队；每次加入创建新的 membership，`user_current_teams` 保持一人一队占位。
 - 在队即自动共享全部用量维度；不增加个人 base/named/classification/cost 开关。
-- 不以 joined_at 或开启共享时间截断；当前成员所选日期内的合格个人历史允许计入。
+- 以 occupancy `joined_at` 为下界：只计入加入时刻及之后的个人用量，不回填加入前个人历史。加入当天 v2 按小时/事件 `occurred_at >= joined_at` 投影，旧日汇总仅当该 UTC 日 00:00 ≥ `joined_at`。
 - 退出或移除后立即撤销团队访问权和具名展示；团队保留退出时已经提交的统计。
 - **用户本轮确认：离队保留历史量，并保留必要的内部去重记录。** 同 team/user 对应稳定 contributor_key，重入后覆盖同一份统计，不再复制并累加。
 - 历史贡献者不进入当前成员榜、活跃成员数、成员选择器；总量及占比包含其保留量，统一显示“历史成员”，不暴露离队成员姓名或旧 membership。
@@ -125,7 +125,7 @@ GET 只看到上一个已提交结果或新的完整结果，不看到该事务�
 
 个人日汇总不一定能表达团队时区、小时分布、模型维度和费用来源。因此可复用已解析事实/聚合内核，但不能无条件复制全部指标并宣称粒度完整。
 
-- v2 按团队本地日与查询历史范围计算，不以 joined_at 截断。
+- v2 按团队本地日与查询历史范围计算，且必须 `occurred_at >= joined_at`。
 - 旧日汇总允许纳入加入前的日期；只使用实际提供的指标，不能由日总量推测小时数据或未知字段。
 - 旧汇总保留原始 UTC 日期，不凭空重分配为团队本地小时。
 - exact + derived Token 计入，estimated 不计入；不伪造事件、费用来源、模型或覆盖率。
@@ -167,7 +167,7 @@ scope 身份沿用 installation、harness、cost_scope_key；无 scope 的费用
 
 ### 5.6 加入、退出、重入和暂停
 
-**创建 / 加入**：持有统一栅栏，创建新 membership 与 occupancy；按 `(team_id,user_id)` 查询或创建 `team_usage_contributors`，将其 membership_id 绑定到本次关系并清空 retired_at。同事务按现存合格历史初始化/刷新此 contributor 的静态行，不以 joined_at 截断。失败整次加入回滚；90 天是单次查询范围，不是历史保存上限。
+**创建 / 加入**：持有统一栅栏，创建新 membership 与 occupancy；按 `(team_id,user_id)` 查询或创建 `team_usage_contributors`，将其 membership_id 绑定到本次关系并清空 retired_at。同事务只投影 `joined_at` 及之后的合格个人日/小时，不回填加入前历史。失败整次加入回滚；90 天是单次查询范围，不是历史保存上限。
 
 **退出 / 移除**：持有用户、团队、occupancy、contributor 栅栏；将 contributor.membership_id=NULL、retired_at=now_ms；删除旧 grants、occupancy 与当前 membership；更新 auth revision 后一起提交。统计行不复制、不累加、不删除。读路径从本事务起只将其归入“历史成员”。重复请求用原幂等结果返回，不重复修改统计。
 
@@ -352,7 +352,7 @@ user/membership 不建额外 FK，避免既有账号删除顺序被隐式阻断�
 | `team_analysis_snapshots` | §6.1 的范围/授权句柄 | from/to、team、auth_revision、rule_version、status、snapshot_id 参与定位、唯一约束或有效性校验，不能合成范围 JSON；source_revision/as_of 等继续兼容旧接口，不为少量元信息新增 JSON；旧领取字段按退役兼容处理 |
 | `team_analysis_rows` | 被静态表替代的旧结果 | 不再做字段聚合改造；质量属性的收敛在新表完成，按本文停止旧表读写并退役 |
 | `teams` | 团队身份、时区、所有者和授权版本 | 时区用于日期计算、owner/status/auth_revision 用于权限；头像对象有 FK。名称/简介列少且语义清晰，未发现需合并的属性组 |
-| `team_memberships` | 当前成员关系与授权任期 | membership/team/user、角色、joined_at 参与关系与任期判断，不以 joined_at 限制数据时间，保留独立；已取消的 sharing/ended 语义不打包成 JSON 延续 |
+| `team_memberships` | 当前成员关系与授权任期 | membership/team/user、角色、joined_at 参与关系与任期判断；joined_at 同时是用量下界；已取消的 sharing/ended 语义不打包成 JSON 延续 |
 | `user_current_teams` | 一人一队占位 | user/team/membership 的唯一键及复合引用、joined_at 均有明确关系用途，无可合并的附属属性组 |
 | `team_sharing_grants` | 旧资格路径兼容及关系清理 | 本方案停止使用其授权维度，不重新设计 grants JSON；删除成员前处理引用即可 |
 | `team_invite_link_joins` | 同链接消费防重与结果引用 | link/user 是消费唯一身份，membership 是幂等结果引用，joined_at 是消费时间，保持独立；仅执行本文原定解除 membership FK |
@@ -387,7 +387,7 @@ user/membership 不建额外 FK，避免既有账号删除顺序被隐式阻断�
 
 文档本次不执行发布。未来功能实现完成 CR 与测试后，按 AGENTS 立即发布测试服务，不等待用户再次要求；测试发布使用包含完整读写链路的干净 release commit，不能把只含切读的中间提交独立上线。
 
-拟议初始化入口 `RebuildCurrentTeamMetrics` 是同步 CLI，不是常驻 Worker，也不创建任务表：按 current occupancy 遍历，每个成员按现存合格历史重建，不以 joined_at 为下界；每次读取最多约 90 日分片，但同一成员更新在其事务内完成，失败回滚该成员。可重跑覆盖，不依赖最大 id 作水位。首次大数据初始化须提前演练，超预算就停止切换，不以空表重启新 API。
+拟议初始化入口 `RebuildCurrentTeamMetrics` 是同步 CLI，不是常驻 Worker，也不创建任务表：按 current occupancy 遍历，每个成员按 `joined_at` 及之后的合格个人历史重建；每次读取最多约 90 日分片，但同一成员更新在其事务内完成，失败回滚该成员。可重跑覆盖，不依赖最大 id 作水位。首次大数据初始化须提前演练，超预算就停止切换，不以空表重启新 API。
 
 `activate.py` 需要明确扩展，现有脚本尚不包含下列初始化步骤：
 
@@ -495,7 +495,7 @@ user/membership 不建额外 FK，避免既有账号删除顺序被隐式阻断�
 | 成员维度更突出 | 趋势对比、贡献占比、成员明细紧随指标面板 |
 | 删除截图中的页内导航 | 取消总览/成员表现/用量构成这一排锚点，不解释为删除成员管理和团队设置功能 |
 | 没有“私密团队”产品概念 | 不展示该标签，不引入公开/私密切换；旧 visibility 字段暂兼容，不作全库清理 |
-| 不限制加入/共享后的用量 | 加入初始化允许历史，所有查询和写路径去掉 joined_at 下界 |
+| 只统计加入时刻起的用量 | 写路径与旧 Worker 分析均以 joined_at 为下界；测试断言加入前为 0 |
 | 离队保留历史，并保留必要内部去重记录 | 稳定 contributor 身份、历史具名信息不可见、重入覆盖、隐私删除可定位 |
 | 不额外建团队任务表 | 新内部身份表没有任务状态、lease、dirty、applied、重试字段 |
 

@@ -15,7 +15,9 @@ export const TeamAnalyticsPage: React.FC = () => {
   const { scope, authRevision } = useTeam();
   const outlet = useOutletContext<{ openInvite?: () => void } | undefined>();
   const location = useLocation();
-  const justCreated = Boolean((location.state as { justCreated?: boolean } | null)?.justCreated);
+  const createState = (location.state as { justCreated?: boolean; avatarFailed?: boolean } | null) || {};
+  const justCreated = Boolean(createState.justCreated);
+  const avatarFailed = Boolean(createState.avatarFailed);
   const { range, from, to, agent, provider, model, setFilter } = useTeamSearchFilters();
   const { analysis, updating, updatingMessageKey, error } = useTeamAnalysis({
     teamId: scope?.team.id,
@@ -47,6 +49,7 @@ export const TeamAnalyticsPage: React.FC = () => {
   const createdBanner = justCreated ? (
     <div className="team-status-banner">
       {t('teams.overview.firstUse')}
+      {avatarFailed && <p className="form-error" role="status">{t('teams.create.avatarFailed')}</p>}
       {scope.permissions.inviteMembers && (
         <Button variant="primary" size="sm" style={{ marginLeft: 12 }} onClick={() => outlet?.openInvite?.()}>
           {t('teams.invite.action')}

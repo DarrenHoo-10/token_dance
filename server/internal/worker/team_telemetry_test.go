@@ -112,7 +112,7 @@ func TestTeamTelemetryCostAuthorizationBoundaries(t *testing.T) {
 					total.Add(total, row.reportedCost)
 				}
 				want := "0"
-				if boundary == "at start" || boundary == "before start" || boundary == "before join" {
+				if boundary == "at start" || boundary == "before start" {
 					want = "2"
 				}
 				if total.RatString() != want {

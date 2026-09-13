@@ -91,8 +91,8 @@ func TestCurrentGrantCoversHistoricalUsage(t *testing.T) {
 	member := teamMemberSource{membershipID: "m", userID: "u", joinedAt: now, accountOK: true}
 	at := now.Add(-7 * 24 * time.Hour)
 	rows := buildMemberAnalysisRows(member, grants, []teamFactEvent{{eventType: "model_usage_recorded", accuracy: "exact", occurredAt: at, tokenTotal: sql.NullInt64{Int64: 123, Valid: true}}}, time.UTC)
-	if len(rows) != 1 || rows[0].tokenExact.Int64() != 123 {
-		t.Fatal("history before joining and sharing must be counted")
+	if len(rows) != 0 {
+		t.Fatal("history before joining must not be counted")
 	}
 	grants[0].endsAt = sql.NullTime{Time: now, Valid: true}
 	if grantCoversTime(grants, "base", at) {

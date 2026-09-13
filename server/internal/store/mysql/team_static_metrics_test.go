@@ -71,11 +71,12 @@ func TestMySQLTeamStaticMetrics_JoinLeaveRejoinFailpointGet(t *testing.T) {
 	st, db, cleanup := getTestStore(t)
 	defer cleanup()
 	ctx := context.Background()
+	joinAt := time.Date(2026, 9, 6, 8, 0, 0, 0, time.UTC)
 	now := time.Date(2026, 9, 12, 8, 0, 0, 0, time.UTC)
 	owner := teamUserID("own01")
 	member := teamUserID("mem01")
-	seedMySQLTeamUser(t, db, owner, "owner_l", now)
-	memberHash := seedMySQLTeamUser(t, db, member, "member_l", now)
+	seedMySQLTeamUser(t, db, owner, "owner_l", joinAt)
+	memberHash := seedMySQLTeamUser(t, db, member, "member_l", joinAt)
 	installID := (teamUserID("ins01")[:4] + "ins01xxxxxxxxxxxxxxxxxxxxxx")[:30]
 	pk := crypto.SHA256([]byte("pk:" + installID))
 	if _, err := db.ExecContext(ctx, `
@@ -103,7 +104,7 @@ func TestMySQLTeamStaticMetrics_JoinLeaveRejoinFailpointGet(t *testing.T) {
 	}
 	insertModelDay("2026-09-01", 100)
 
-	created, err := st.Teams().CreateTeamTx(ctx, mysqlCreateTeam(t, owner, "L Team", domain.SharingFlags{}, now, teamIdem("create_team", "lteam", "l")))
+	created, err := st.Teams().CreateTeamTx(ctx, mysqlCreateTeam(t, owner, "L Team", domain.SharingFlags{}, joinAt, teamIdem("create_team", "lteam", "l")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,13 +116,13 @@ func TestMySQLTeamStaticMetrics_JoinLeaveRejoinFailpointGet(t *testing.T) {
 			InvitationID: inviteID, RecipientLookupHash: memberHash, RecipientCiphertext: []byte("c"),
 			LookupKeyVersion: 1, EncryptionKeyVersion: 1, ExpiresAt: now.Add(24 * time.Hour),
 		},
-		Idempotency: teamIdem("create_invitation:"+teamID, "invl", "m"), Now: now,
+		Idempotency: teamIdem("create_invitation:"+teamID, "invl", "m"), Now: joinAt,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	accepted, err := st.Teams().AcceptInvitationTx(ctx, store.AcceptInvitationTxInput{
 		ActorUserID: member, InvitationID: inviteID, ExpectedVersion: 1,
-		VerifiedEmailLookupHash: memberHash, Idempotency: teamIdem("accept_invitation:"+inviteID, "accl", "a"), Now: now,
+		VerifiedEmailLookupHash: memberHash, Idempotency: teamIdem("accept_invitation:"+inviteID, "accl", "a"), Now: joinAt,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -137,14 +138,11 @@ func TestMySQLTeamStaticMetrics_JoinLeaveRejoinFailpointGet(t *testing.T) {
 		return dto
 	}
 	dto := analyze()
-	if dto.State != "ready" || dto.Summary.Tokens.Value != "100" {
-		t.Fatalf("L01 join-before history: state=%s tokens=%s", dto.State, dto.Summary.Tokens.Value)
-	}
-	if len(dto.Contributions.Items) != 1 {
-		t.Fatalf("ranking want 1 current member with tokens, got %d", len(dto.Contributions.Items))
+	if dto.State != "ready" || dto.Summary.Tokens.Value != "0" {
+		t.Fatalf("join must not copy pre-join personal days: state=%s tokens=%s", dto.State, dto.Summary.Tokens.Value)
 	}
 
-	insertModelDay("2026-09-10", 40)
+	insertModelDay("2026-09-10", 100)
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -156,8 +154,8 @@ func TestMySQLTeamStaticMetrics_JoinLeaveRejoinFailpointGet(t *testing.T) {
 		t.Fatal(err)
 	}
 	dto = analyze()
-	if dto.Summary.Tokens.Value != "140" {
-		t.Fatalf("L01 join-after extra: want 140 got %s", dto.Summary.Tokens.Value)
+	if dto.Summary.Tokens.Value != "100" {
+		t.Fatalf("post-join day want 100 got %s", dto.Summary.Tokens.Value)
 	}
 
 	var rowsBefore int
@@ -177,7 +175,7 @@ func TestMySQLTeamStaticMetrics_JoinLeaveRejoinFailpointGet(t *testing.T) {
 
 	teammetrics.AfterPersonalBeforeTeam = func() error { return errors.New("injected team write failure") }
 	t.Cleanup(func() { teammetrics.AfterPersonalBeforeTeam = nil })
-	insertModelDay("2026-09-11", 7)
+	insertModelDay("2026-09-11", 40)
 	tx, err = db.BeginTx(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -190,7 +188,7 @@ func TestMySQLTeamStaticMetrics_JoinLeaveRejoinFailpointGet(t *testing.T) {
 		t.Fatal(err)
 	}
 	dto = analyze()
-	if dto.Summary.Tokens.Value != "140" {
+	if dto.Summary.Tokens.Value != "100" {
 		t.Fatalf("A04 failpoint must not commit: got %s", dto.Summary.Tokens.Value)
 	}
 	teammetrics.AfterPersonalBeforeTeam = nil
@@ -205,8 +203,8 @@ func TestMySQLTeamStaticMetrics_JoinLeaveRejoinFailpointGet(t *testing.T) {
 		t.Fatal(err)
 	}
 	dto = analyze()
-	if dto.Summary.Tokens.Value != "147" {
-		t.Fatalf("retry after failpoint want 147 got %s", dto.Summary.Tokens.Value)
+	if dto.Summary.Tokens.Value != "140" {
+		t.Fatalf("retry after failpoint want 140 got %s", dto.Summary.Tokens.Value)
 	}
 
 	team, err := st.Teams().GetTeam(ctx, teamID)
@@ -225,13 +223,13 @@ func TestMySQLTeamStaticMetrics_JoinLeaveRejoinFailpointGet(t *testing.T) {
 	if len(dto.Contributions.Items) != 0 {
 		t.Fatalf("L02 ranking must exclude leaver, got %d", len(dto.Contributions.Items))
 	}
-	if dto.Summary.Tokens.Value != "147" {
-		t.Fatalf("L02 totals stay 147, got %s", dto.Summary.Tokens.Value)
+	if dto.Summary.Tokens.Value != "140" {
+		t.Fatalf("L02 totals stay 140, got %s", dto.Summary.Tokens.Value)
 	}
 	if dto.Quality == nil || !dto.Quality.IncludesHistoricalUsers {
 		t.Fatal("L05 historical flag")
 	}
-	if dto.Contributions.Historical == nil || dto.Contributions.Historical.Tokens != "147" {
+	if dto.Contributions.Historical == nil || dto.Contributions.Historical.Tokens != "140" {
 		t.Fatalf("historical subtotal %+v", dto.Contributions.Historical)
 	}
 
@@ -247,7 +245,7 @@ func TestMySQLTeamStaticMetrics_JoinLeaveRejoinFailpointGet(t *testing.T) {
 		t.Fatal(err)
 	}
 	dto = analyze()
-	if dto.Summary.Tokens.Value != "147" {
+	if dto.Summary.Tokens.Value != "140" {
 		t.Fatalf("leave then +60 personal must not update old team, got %s", dto.Summary.Tokens.Value)
 	}
 
@@ -269,8 +267,8 @@ func TestMySQLTeamStaticMetrics_JoinLeaveRejoinFailpointGet(t *testing.T) {
 		t.Fatal(err)
 	}
 	dto = analyze()
-	if dto.Summary.Tokens.Value != "207" {
-		t.Fatalf("L03 rejoin overwrite want 207 (147+60) got %s", dto.Summary.Tokens.Value)
+	if dto.Summary.Tokens.Value != "140" {
+		t.Fatalf("rejoin must not pull days before the new joined_at, got %s", dto.Summary.Tokens.Value)
 	}
 	if len(dto.Contributions.Items) != 1 {
 		t.Fatalf("rejoin named ranking want 1 got %d", len(dto.Contributions.Items))
@@ -285,11 +283,12 @@ func TestMySQLTeamStaticMetrics_PrivacyDeleteAndDissolve(t *testing.T) {
 	st, db, cleanup := getTestStore(t)
 	defer cleanup()
 	ctx := context.Background()
+	joinAt := time.Date(2026, 9, 6, 8, 0, 0, 0, time.UTC)
 	now := time.Date(2026, 9, 12, 8, 0, 0, 0, time.UTC)
 	owner := teamUserID("ownpd")
 	member := teamUserID("mempd")
-	seedMySQLTeamUser(t, db, owner, "own_pd", now)
-	memberHash := seedMySQLTeamUser(t, db, member, "mem_pd", now)
+	seedMySQLTeamUser(t, db, owner, "own_pd", joinAt)
+	memberHash := seedMySQLTeamUser(t, db, member, "mem_pd", joinAt)
 	installID := (teamUserID("inspd")[:4] + "inspdxxxxxxxxxxxxxxxxxxxxxx")[:30]
 	pk := crypto.SHA256([]byte("pk:" + installID))
 	if _, err := db.ExecContext(ctx, `
@@ -298,7 +297,7 @@ func TestMySQLTeamStaticMetrics_PrivacyDeleteAndDissolve(t *testing.T) {
 		installID, member, pk[:], now, now); err != nil {
 		t.Fatal(err)
 	}
-	start, err := domain.DayBucketStartMs("2026-09-01")
+	start, err := domain.DayBucketStartMs("2026-09-10")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +310,7 @@ func TestMySQLTeamStaticMetrics_PrivacyDeleteAndDissolve(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	created, err := st.Teams().CreateTeamTx(ctx, mysqlCreateTeam(t, owner, "PD Team", domain.SharingFlags{}, now, teamIdem("create_team", "pdteam", "pd")))
+	created, err := st.Teams().CreateTeamTx(ctx, mysqlCreateTeam(t, owner, "PD Team", domain.SharingFlags{}, joinAt, teamIdem("create_team", "pdteam", "pd")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,13 +322,13 @@ func TestMySQLTeamStaticMetrics_PrivacyDeleteAndDissolve(t *testing.T) {
 			InvitationID: inviteID, RecipientLookupHash: memberHash, RecipientCiphertext: []byte("c"),
 			LookupKeyVersion: 1, EncryptionKeyVersion: 1, ExpiresAt: now.Add(24 * time.Hour),
 		},
-		Idempotency: teamIdem("create_invitation:"+teamID, "invpd", "m"), Now: now,
+		Idempotency: teamIdem("create_invitation:"+teamID, "invpd", "m"), Now: joinAt,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	accepted, err := st.Teams().AcceptInvitationTx(ctx, store.AcceptInvitationTxInput{
 		ActorUserID: member, InvitationID: inviteID, ExpectedVersion: 1,
-		VerifiedEmailLookupHash: memberHash, Idempotency: teamIdem("accept_invitation:"+inviteID, "accpd", "a"), Now: now,
+		VerifiedEmailLookupHash: memberHash, Idempotency: teamIdem("accept_invitation:"+inviteID, "accpd", "a"), Now: joinAt,
 	})
 	if err != nil {
 		t.Fatal(err)

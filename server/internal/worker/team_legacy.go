@@ -49,6 +49,10 @@ func readTeamLegacyRows(ctx context.Context, tx *sql.Tx, member teamMemberSource
 		if err := rows.Scan(&day, &agent, &exact, &derived, &computed); err != nil {
 			return nil, err
 		}
+		midnight, err := time.ParseInLocation("2006-01-02", day, time.UTC)
+		if err != nil || midnight.Before(member.joinedAt) {
+			continue
+		}
 		if mask&visClassification == 0 {
 			agent = unsharedClassificationBucket
 		}
