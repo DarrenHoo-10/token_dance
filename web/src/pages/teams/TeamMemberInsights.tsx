@@ -19,6 +19,52 @@ function pointsFor(trend: AnalysisTrendPoint[] | undefined, dates: string[], max
   });
 }
 
+function availableTrend(trend: AnalysisTrendPoint[] | undefined): AnalysisTrendPoint[] {
+  return (trend || []).filter((point) => point.tokens?.state === 'available' && point.tokens.value != null);
+}
+
+const TrendChart: React.FC<{
+  dates: string[];
+  trend: AnalysisTrendPoint[] | undefined;
+  color: string;
+  label: string;
+  empty: string;
+  ariaLabel: string;
+  skipEmpty?: boolean;
+}> = ({ dates, trend, color, label, empty, ariaLabel, skipEmpty = false }) => {
+  const series = dates.length ? dates : [...new Set((trend || []).map((point) => point.date))].sort();
+  const usable = skipEmpty ? availableTrend(trend) : (trend || []);
+  if (series.length === 0 || usable.length === 0) {
+    return <p className="team-chart-empty">{empty}</p>;
+  }
+  const max = usable.reduce((value, point) => {
+    const current = integer(point.tokens.value);
+    return current > value ? current : value;
+  }, 1n);
+  const chartPoints = pointsFor(skipEmpty ? usable : trend, series, max);
+  const drawn = skipEmpty
+    ? chartPoints.filter((point) => usable.some((item) => item.date === point.date))
+    : chartPoints;
+  return (
+    <>
+      <div className="team-line-scale"><span>{formatTokenCompact(max.toString())}</span></div>
+      <svg className="team-multiline-chart" viewBox="0 0 720 190" preserveAspectRatio="none" role="img" aria-label={ariaLabel}>
+        {[12, 95, 178].map((y) => <line key={y} x1="12" x2="708" y1={y} y2={y} stroke="#e6ebe4" strokeDasharray="4 5" />)}
+        <g>
+          <polyline points={drawn.map((point) => `${point.x},${point.y}`).join(' ')} fill="none" stroke={color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
+          {drawn.map((point) => (
+            <circle key={point.date} cx={point.x} cy={point.y} r="3.5" fill={color}>
+              <title>{`${label} · ${point.date} · ${formatTokenExact(point.value.toString())}`}</title>
+            </circle>
+          ))}
+        </g>
+      </svg>
+      <div className="team-line-scale"><span>0</span></div>
+      <div className="team-line-dates"><span>{series[0]}</span><span>{series.length > 1 ? series[series.length - 1] : ''}</span></div>
+    </>
+  );
+};
+
 export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ analysis }) => {
   const { t } = useLocale();
   const members = analysis.contributions.items;
@@ -34,8 +80,7 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
     ...teamTrend.map(point => point.date),
     ...available.flatMap(member => (member.trend || []).map(point => point.date)),
   ])].sort();
-  const max = activeTrend.reduce((value, point) => integer(point.tokens.value) > value ? integer(point.tokens.value) : value, 1n);
-  const chartPoints = pointsFor(activeTrend, dates, max);
+  const efficiencyDates = [...new Set((analysis.efficiencyTrend || []).map(point => point.date))].sort();
   const total = analysis.summary.tokens.value || '0';
   const teamEfficiency = metricDisplay(analysis.summary.metrics?.tokensPerCodeLine, (value) => formatTokenCompact(value));
   const leaders = members.slice(0, 5);
@@ -63,27 +108,20 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
     <div className="team-people-grid">
       <Card className="team-member-trend">
         <div className="panel-header">
-          <div><h2>{t('teams.insights.memberTrend')}</h2></div>
-          <div className="team-trend-controls">
-            <select className="form-input team-member-trend-select" aria-label={t('teams.insights.chooseMembers')} value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
-              <option value="">{t('teams.insights.teamSeries')}</option>
-              {available.map(member => <option key={member.membershipId} value={member.membershipId}>{member.displayName}</option>)}
-            </select>
-            <span className="team-chart-unit">Token / {t('teams.insights.day')}</span>
-          </div>
+          <h2>{t('teams.insights.memberTrend')}</h2>
+          <select className="form-input team-member-trend-select" aria-label={t('teams.insights.chooseMembers')} value={selectedId} onChange={(event) => setSelectedId(event.target.value)}>
+            <option value="">{t('teams.insights.teamSeries')}</option>
+            {available.map(member => <option key={member.membershipId} value={member.membershipId}>{member.displayName}</option>)}
+          </select>
         </div>
-        {dates.length > 0 ? <>
-          <div className="team-line-scale"><span>{formatTokenCompact(max.toString())}</span></div>
-          <svg className="team-multiline-chart" viewBox="0 0 720 190" preserveAspectRatio="none" role="img" aria-label={t('teams.insights.memberTrend')}>
-            {[12, 95, 178].map(y => <line key={y} x1="12" x2="708" y1={y} y2={y} stroke="#e6ebe4" strokeDasharray="4 5" />)}
-            <g>
-              <polyline points={chartPoints.map(point => `${point.x},${point.y}`).join(' ')} fill="none" stroke={seriesColor} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
-              {chartPoints.map(point => <circle key={point.date} cx={point.x} cy={point.y} r="3.5" fill={seriesColor}><title>{`${seriesLabel} · ${point.date} · ${formatTokenExact(point.value.toString())} Token`}</title></circle>)}
-            </g>
-          </svg>
-          <div className="team-line-scale"><span>0</span></div>
-          <div className="team-line-dates"><span>{dates[0]}</span><span>{dates.length > 1 ? dates[dates.length - 1] : ''}</span></div>
-        </> : <p className="team-chart-empty">{t(selectedMember ? 'teams.insights.trendUnavailable' : 'teams.overview.emptyRange')}</p>}
+        <TrendChart
+          dates={dates}
+          trend={activeTrend}
+          color={seriesColor}
+          label={seriesLabel}
+          empty={t(selectedMember ? 'teams.insights.trendUnavailable' : 'teams.overview.emptyRange')}
+          ariaLabel={t('teams.insights.memberTrend')}
+        />
       </Card>
       <Card>
         <div className="panel-header"><div><h2>{t('teams.insights.memberShare')}</h2></div><span className="team-chart-unit">Token</span></div>
@@ -103,6 +141,21 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
         </> : <p className="team-chart-empty">{t('teams.overview.noContributions')}</p>}
       </Card>
     </div>
+    <Card className="team-efficiency-trend">
+      <div className="panel-header">
+        <h2>{t('teams.insights.efficiencyTrend')}</h2>
+        <span className="team-chart-unit">{t('teams.insights.tokenEfficiencyUnit')}</span>
+      </div>
+      <TrendChart
+        dates={efficiencyDates}
+        trend={analysis.efficiencyTrend}
+        color={COLORS[0]}
+        label={t('teams.insights.efficiencyTrend')}
+        empty={t('teams.overview.emptyRange')}
+        ariaLabel={t('teams.insights.efficiencyTrend')}
+        skipEmpty
+      />
+    </Card>
     <Card>
       <div className="panel-header" id="ranking"><div><h2>{t('teams.insights.detailTitle')}</h2></div><span className="team-chart-unit">{t('teams.insights.rankingHint')}</span></div>
       {members.length ? <div className="team-table-scroll"><table className="team-contribution-table"><thead><tr><th>{t('teams.insights.member')}</th><th>Token / {t('teams.insights.share')}</th><th>{t('teams.insights.tokenEfficiency')}</th><th>{t('teams.insights.activeDays')}</th><th>{t('teams.insights.periodTrend')}</th></tr></thead><tbody>{members.map(member => {

@@ -291,6 +291,7 @@ export interface TeamAnalysisReady {
   summary: AnalysisSummary;
   costs: AnalysisCosts;
   trend: AnalysisTrendPoint[];
+  efficiencyTrend?: AnalysisTrendPoint[];
   agents: CursorPage<AnalysisBucketItem>;
   models: CursorPage<AnalysisBucketItem>;
   contributions: CursorPage<ContributionItem> & { historical?: { tokens: string; share?: string | null } };

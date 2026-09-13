@@ -131,10 +131,10 @@ describe('Team analysis updating state', () => {
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     const query = vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
     renderTeamWorkspace('/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    const chart = await screen.findByRole('heading', { name: '成员用量趋势' });
+    const chart = await screen.findByRole('heading', { name: '团队用量趋势' });
     const from = screen.getByLabelText('开始日期');
     expect(from.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByRole('heading', { name: '成员用量趋势' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '团队用量趋势' })).toBeInTheDocument();
     expect(screen.getAllByText('120.0K')[0]).toBeInTheDocument();
     pickIsoDate('开始日期', '2026-09-01');
     expect(query).toHaveBeenCalledTimes(1);
@@ -180,7 +180,7 @@ describe('Team analysis updating state', () => {
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    await screen.findByRole('heading', { name: '成员用量趋势' });
+    await screen.findByRole('heading', { name: '团队用量趋势' });
     expect(screen.queryByRole('heading', { name: '团队 Token 趋势' })).not.toBeInTheDocument();
     expect(screen.queryByText('私密团队')).not.toBeInTheDocument();
     expect(screen.queryByText('成员表现')).not.toBeInTheDocument();
@@ -271,7 +271,7 @@ describe('Team analysis updating state', () => {
     empty.quality.includesHistoricalUsers = true;
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(empty);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    expect(await screen.findByText('此范围没有数据。')).toBeInTheDocument();
+    expect((await screen.findAllByText('此范围没有数据。')).length).toBeGreaterThan(0);
     expect(screen.getByText(/合计含已退出成员的历史用量/)).toBeInTheDocument();
   });
 
@@ -371,7 +371,7 @@ describe('Team analysis updating state', () => {
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
     vi.spyOn(teamsApi, 'getFilterOptions').mockResolvedValue({ agents: [], providers: [], models: [] });
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    expect(await screen.findByRole('heading', { name: '成员用量趋势' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '团队用量趋势' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '导出当前快照' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '每日' })).not.toBeInTheDocument();
   });
@@ -416,7 +416,11 @@ describe('Team member insights', () => {
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
     const picker = await screen.findByLabelText('选择成员');
     expect(picker).toHaveValue('');
-    expect(screen.getByRole('heading', { name: '成员用量趋势' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '团队用量趋势' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '团队效率趋势' })).toBeInTheDocument();
+    expect(screen.getByLabelText('选择成员')).toHaveDisplayValue('全部');
+    expect(screen.queryByText('Token / 天')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '成员用量趋势' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '团队 Token 趋势' })).not.toBeInTheDocument();
     expect(screen.getAllByText(/10\.0%/)).toHaveLength(11);
     expect(screen.getByText('50.0%')).toBeInTheDocument();
@@ -443,6 +447,20 @@ describe('Team member insights', () => {
     expect(await screen.findByRole('heading', { name: '成员数据' })).toBeInTheDocument();
     expect(screen.getAllByText('250').length).toBeGreaterThan(0);
     expect(screen.getByRole('columnheader', { name: 'Token 效率' })).toBeInTheDocument();
+  });
+
+  it('plots team efficiency by day', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    const result = readyAnalysis('1', '1000');
+    result.efficiencyTrend = [
+      { date: '2026-09-05', tokens: { value: '250', state: 'available' } },
+      { date: '2026-09-06', tokens: { value: '80', state: 'available' } },
+    ];
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
+    renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
+    expect(await screen.findByRole('heading', { name: '团队效率趋势' })).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: '团队效率趋势' })).toBeInTheDocument();
   });
 });
 

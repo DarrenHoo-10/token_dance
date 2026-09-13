@@ -231,10 +231,11 @@
 .team-section-eyebrow { color:#728168; font-size:10px; font-weight:700; letter-spacing:.14em; }
 .team-people-section { margin-bottom:28px; }
 .team-people-grid { display:grid; grid-template-columns:minmax(0,1.6fr) minmax(0,1fr); gap:20px; margin-bottom:20px; }
+.team-efficiency-trend { margin-bottom:20px; }
 .team-people-grid > .panel { min-width:0; }
 .team-chart-unit { font-size:11px; color:#74806f; }
 .team-trend-controls { display:flex; align-items:center; gap:12px; }
-.team-member-trend-select { height:36px; width:auto; min-width:148px; }
+.team-member-trend-select { height:36px; width:auto; min-width:148px; margin-left:auto; }
 .team-share-legend i { display:inline-block; width:8px; height:8px; border-radius:50%; flex-shrink:0; }
 .team-member-trend { position:relative; }
 .team-multiline-chart { display:block; width:100%; height:210px; }

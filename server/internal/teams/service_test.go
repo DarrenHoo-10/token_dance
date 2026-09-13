@@ -381,6 +381,9 @@ func TestAssembleAnalysisCollectionsMatchWeb(t *testing.T) {
 	if dto.Contributions.Items[0]["generatedCodeLines"] != "10" || dto.Contributions.Items[0]["tokensPerCodeLine"] != "12" {
 		t.Fatalf("token efficiency %+v", dto.Contributions.Items[0])
 	}
+	if len(dto.EfficiencyTrend) == 0 || dto.EfficiencyTrend[0].Date != "2026-09-06" || dto.EfficiencyTrend[0].Tokens.Value != "12" {
+		t.Fatalf("efficiency trend %+v", dto.EfficiencyTrend)
+	}
 	opts := setToOptions(map[string]struct{}{"codex": {}})
 	if len(opts) != 1 || opts[0]["id"] != "codex" || opts[0]["label"] != "codex" {
 		t.Fatalf("filter options %+v", opts)

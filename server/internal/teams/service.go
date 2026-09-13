@@ -375,23 +375,24 @@ type FilterOptionsDTO struct {
 }
 
 type AnalysisDTO struct {
-	State         string                      `json:"state"`
-	SchemaVersion int                         `json:"schemaVersion,omitempty"`
-	Snapshot      *snapshotDTO                `json:"snapshot,omitempty"`
-	Range         *domain.TeamAnalysisRange   `json:"range,omitempty"`
-	Filters       domain.TeamAnalysisFilters  `json:"filters,omitempty"`
-	Summary       *domain.TeamAnalysisSummary `json:"summary,omitempty"`
-	Costs         *domain.TeamAnalysisCosts   `json:"costs,omitempty"`
-	Trend         []domain.TeamTrendPoint     `json:"trend"`
-	Agents        *domain.TeamPagedItems      `json:"agents,omitempty"`
-	Models        *domain.TeamPagedItems      `json:"models,omitempty"`
-	Contributions *domain.TeamPagedItems      `json:"contributions,omitempty"`
-	Skills        *domain.TeamPagedItems      `json:"skills,omitempty"`
-	Quality       *domain.TeamAnalysisQuality `json:"quality,omitempty"`
-	FiltersHash   string                      `json:"filtersHash,omitempty"`
-	AuthRevision  *string                     `json:"authRevision,omitempty"`
-	RetryAfterMs  *int                        `json:"retryAfterMs,omitempty"`
-	MessageKey    *string                     `json:"messageKey,omitempty"`
+	State           string                      `json:"state"`
+	SchemaVersion   int                         `json:"schemaVersion,omitempty"`
+	Snapshot        *snapshotDTO                `json:"snapshot,omitempty"`
+	Range           *domain.TeamAnalysisRange   `json:"range,omitempty"`
+	Filters         domain.TeamAnalysisFilters  `json:"filters,omitempty"`
+	Summary         *domain.TeamAnalysisSummary `json:"summary,omitempty"`
+	Costs           *domain.TeamAnalysisCosts   `json:"costs,omitempty"`
+	Trend           []domain.TeamTrendPoint     `json:"trend"`
+	EfficiencyTrend []domain.TeamTrendPoint     `json:"efficiencyTrend,omitempty"`
+	Agents          *domain.TeamPagedItems      `json:"agents,omitempty"`
+	Models          *domain.TeamPagedItems      `json:"models,omitempty"`
+	Contributions   *domain.TeamPagedItems      `json:"contributions,omitempty"`
+	Skills          *domain.TeamPagedItems      `json:"skills,omitempty"`
+	Quality         *domain.TeamAnalysisQuality `json:"quality,omitempty"`
+	FiltersHash     string                      `json:"filtersHash,omitempty"`
+	AuthRevision    *string                     `json:"authRevision,omitempty"`
+	RetryAfterMs    *int                        `json:"retryAfterMs,omitempty"`
+	MessageKey      *string                     `json:"messageKey,omitempty"`
 }
 
 type snapshotDTO struct {
@@ -2044,6 +2045,7 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 	hasLegacy := false
 	active := map[string]struct{}{}
 	byDate := map[string]string{}
+	byDateCode := map[string]string{}
 	agentTok := map[string]string{}
 	modelTok := map[string]string{}
 	agentMem := map[string]map[string]string{}
@@ -2064,6 +2066,9 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 		}
 		if row.MetricDate != nil && *row.MetricDate != "" {
 			byDate[*row.MetricDate] = AddIntDecimal(byDate[*row.MetricDate], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
+			if lines := generatedCodeLineSum(row.ActivityJSON); lines != "0" {
+				byDateCode[*row.MetricDate] = AddIntDecimal(byDateCode[*row.MetricDate], lines)
+			}
 		}
 		tokens := AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal))
 		if row.AgentID != nil {
@@ -2149,6 +2154,17 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 	if !snap.AsOf.IsZero() && snap.AsOf.Before(toEx) {
 		end = localMidnight(snap.AsOf.In(loc)).AddDate(0, 0, 1)
 	}
+	efficiencyTrend := make([]domain.TeamTrendPoint, 0)
+	for d := localMidnight(from.In(loc)); d.Before(end) && len(efficiencyTrend) < domain.TeamAnalysisMaxDays; d = d.AddDate(0, 0, 1) {
+		day := d.Format(dateLayout)
+		point := domain.TeamTrendPoint{Date: day, Tokens: domain.DecimalMetric{State: domain.MetricEmpty}}
+		if den, ok := new(big.Int).SetString(emptyZero(byDateCode[day]), 10); ok && den.Sign() > 0 {
+			if num, ok := new(big.Int).SetString(emptyZero(byDate[day]), 10); ok {
+				point.Tokens = domain.DecimalMetric{Value: new(big.Int).Quo(num, den).String(), State: domain.MetricAvailable}
+			}
+		}
+		efficiencyTrend = append(efficiencyTrend, point)
+	}
 	for _, item := range contribs.Items {
 		id, _ := item["membershipId"].(string)
 		points := make([]domain.TeamTrendPoint, 0)
@@ -2204,7 +2220,7 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 			Coverage:              domain.TeamCostCoverage{ReportedUsageEvents: formatUint(reportedUsage), EligibleUsageEvents: formatUint(eligibleUsage)},
 			UnattributedCostCount: unattributed,
 		},
-		Trend:  trend,
+		Trend: trend, EfficiencyTrend: efficiencyTrend,
 		Agents: agents, Models: models, Contributions: contribs,
 		Quality:     &domain.TeamAnalysisQuality{UnsupportedEvents: formatUint(unsupported), EstimatedEvents: formatUint(estimated), HasLegacyAggregates: hasLegacy},
 		FiltersHash: analysisFiltersHash(filters),
