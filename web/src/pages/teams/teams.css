@@ -87,14 +87,23 @@
   margin-left: auto;
 }
 .team-date-custom { min-width: 0; }
-.team-date-fields { display: grid; grid-template-columns: 18px minmax(138px, 160px) 16px minmax(138px, 160px); align-items: center; gap: 12px; }
-.team-date-icon, .team-date-arrow { color: #7b857c; }
-.team-date-fields .form-group { margin: 0; gap: 4px; min-width: 0; }
-.team-date-fields .form-label { margin: 0; font-size: 11px; font-weight: 500; color: #6d786f; }
+.team-date-fields {
+  display: grid;
+  grid-template-columns: minmax(148px, 168px) 24px minmax(148px, 168px);
+  align-items: center;
+  column-gap: 8px;
+}
+.team-date-arrow {
+  justify-self: center;
+  align-self: center;
+  color: #7b857c;
+  display: block;
+}
+.team-date-fields .form-group { margin: 0; gap: 0; min-width: 0; }
 .team-date-fields .form-input { height: 36px; min-width: 0; padding: 6px 10px; border-radius: 8px; background: #fff; font-size: 13px; color: #111512; }
 .team-date-fields .form-input:focus-visible { outline: 2px solid #749500; outline-offset: 2px; }
 .team-date-fields .form-input[aria-invalid="true"] { border-color: var(--danger); }
-.team-date-hint { margin: 8px 0 0 30px; font-size: 11px; line-height: 1.6; color: #788279; }
+.team-date-hint { margin: 8px 0 0; font-size: 11px; line-height: 1.6; text-align: right; }
 .team-date-hint.is-error { color: var(--danger); }
 @media (max-width: 640px) {
   .team-filter-toolbar .team-date-toolbar,
@@ -102,9 +111,7 @@
   .team-filter-toolbar .team-date-presets { display: flex; }
   .team-filter-toolbar .team-date-presets .segmented-item { flex: 1; }
   .team-date-custom { width: 100%; }
-  .team-date-fields { grid-template-columns: minmax(0, 1fr) 14px minmax(0, 1fr); gap: 8px; }
-  .team-date-icon { display: none; }
-  .team-date-hint { margin-left: 0; }
+  .team-date-fields { grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr); }
 }
 
 

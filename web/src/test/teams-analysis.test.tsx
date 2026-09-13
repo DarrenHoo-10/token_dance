@@ -75,7 +75,7 @@ describe('Team analysis updating state', () => {
     await waitFor(() => expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument());
     const from = screen.getByLabelText('开始日期');
     const to = screen.getByLabelText('结束日期');
-    expect(screen.getByText('选齐日期后自动更新')).toBeInTheDocument();
+    expect(screen.queryByText('选齐日期后自动更新')).not.toBeInTheDocument();
     expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();
     await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: 'today', from: undefined, to: undefined }), expect.any(AbortSignal)));
     fireEvent.change(from, { target: { value: '2026-09-01' } });
@@ -84,7 +84,7 @@ describe('Team analysis updating state', () => {
     await waitFor(() => expect(query).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ range: 'custom', from: '2026-09-01', to: '2026-09-06' }), expect.any(AbortSignal)));
     await waitFor(() => expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument());
     fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '' } });
-    expect(screen.getByText('选齐日期后自动更新')).toBeInTheDocument();
+    expect(screen.queryByText('选齐日期后自动更新')).not.toBeInTheDocument();
     expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: '7 天' }));
     await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: '7d' }), expect.any(AbortSignal)));
@@ -124,12 +124,11 @@ describe('Team analysis updating state', () => {
     const query = vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
     renderTeamWorkspace('/teams/tem_0123456789abcdefghijklmnop?range=7d');
     const chart = await screen.findByRole('heading', { name: '团队 Token 趋势' });
-    const custom = screen.getByRole('tab', { name: '自定义' });
-    expect(custom.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    fireEvent.click(custom);
+    const from = screen.getByLabelText('开始日期');
+    expect(from.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole('heading', { name: '团队 Token 趋势' })).toBeInTheDocument();
     expect(screen.getAllByText('120.0K')[0]).toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('开始日期'), { target: { value: '2026-09-01' } });
+    fireEvent.change(from, { target: { value: '2026-09-01' } });
     expect(query).toHaveBeenCalledTimes(1);
     expect(screen.getAllByText('120.0K')[0]).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('结束日期'), { target: { value: '2026-09-06' } });
@@ -248,8 +247,8 @@ describe('Team analysis updating state', () => {
     expect(await screen.findByTestId('analysis-skeleton')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '今天' })).toHaveAttribute('aria-selected', 'true');
     expect(teamsApi.getAnalysis).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ range: 'today' }), expect.any(AbortSignal));
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['今天', '7 天', '30 天', '自定义']);
-    expect(screen.getByRole('tab', { name: '自定义' })).toBeInTheDocument();
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['今天', '7 天', '30 天']);
+    expect(screen.getByLabelText('开始日期')).toBeInTheDocument();
     expect(screen.getByText('正在汇总团队数据，请稍候…')).toBeInTheDocument();
     expect(screen.queryByText('0')).not.toBeInTheDocument();
     expect(screen.queryByText('$0')).not.toBeInTheDocument();
@@ -373,7 +372,7 @@ describe('Team analysis updating state', () => {
     expect(await screen.findByText('团队总 Token')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Skill 使用' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Token 使用效率' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '自定义' })).toBeInTheDocument();
+    expect(screen.getByLabelText('开始日期')).toBeInTheDocument();
     expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();
   });
 });
