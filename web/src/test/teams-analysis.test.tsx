@@ -330,42 +330,15 @@ describe('Team analysis updating state', () => {
     expect(analysisSpy.mock.calls.length).toBe(callsAfterLeave);
   });
 
-  it('sends the current agent and model filters when starting an export', async () => {
+  it('does not show snapshot export controls on the data panel', async () => {
     vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
-    vi.spyOn(teamsApi, 'getFilterOptions').mockResolvedValue({
-      agents: [{ id: 'codex', label: 'codex' }],
-      providers: [],
-      models: [{ id: 'gpt-test', label: 'gpt-test' }],
-    });
-    vi.spyOn(teamsApi, 'getExports').mockResolvedValue({ exports: [] });
-    const exportSpy = vi.spyOn(teamsApi, 'createExport').mockResolvedValue({
-      id: 'txj_01',
-      kind: 'daily',
-      status: 'queued',
-      snapshotId: 'tas_01',
-      createdAt: '2026-09-06T08:00:00.000Z',
-    });
-
-    renderTeams(
-      <TeamAnalyticsPage />,
-      '/teams/tem_0123456789abcdefghijklmnop?agent=codex&model=gpt-test'
-    );
-    expect(await screen.findAllByText('120.0K').then(items => items[0])).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: '每日' }));
-    await waitFor(() => {
-      expect(exportSpy).toHaveBeenCalledWith(
-        'tem_0123456789abcdefghijklmnop',
-        expect.objectContaining({
-          snapshotId: 'tas_01',
-          kind: 'daily',
-          agent: 'codex',
-          model: 'gpt-test',
-        }),
-        expect.any(Object)
-      );
-    });
+    vi.spyOn(teamsApi, 'getFilterOptions').mockResolvedValue({ agents: [], providers: [], models: [] });
+    renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
+    expect(await screen.findByRole('heading', { name: '成员用量趋势' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '导出当前快照' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '每日' })).not.toBeInTheDocument();
   });
 
   it('renders empty analytics when an older server omits the empty trend array', async () => {
