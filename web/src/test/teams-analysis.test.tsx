@@ -213,9 +213,8 @@ describe('Team analysis updating state', () => {
     result.skills = {
       items: [
         {
-          id: 'codex\u001ffrontend-design',
+          id: 'frontend-design',
           label: 'frontend-design',
-          agentId: 'codex',
           useCount: '224',
           share: '28.6',
           memberCount: '2',
@@ -225,9 +224,8 @@ describe('Team analysis updating state', () => {
           ],
         },
         {
-          id: 'codex\u001fcode-review',
+          id: 'code-review',
           label: 'code-review',
-          agentId: 'codex',
           useCount: '100',
           share: '12.8',
           memberCount: '1',
@@ -268,9 +266,11 @@ describe('Team analysis updating state', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Skill' }));
     expect(screen.queryByRole('button', { name: /gpt-test/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /frontend-design/ }));
-    expect(screen.getAllByText('frontend-design · Codex').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('frontend-design').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/· Codex/)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /code-review/ }));
-    expect(screen.getAllByText('code-review · Codex').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('code-review').length).toBeGreaterThan(0);
+    expect(screen.queryByText(/· Codex/)).not.toBeInTheDocument();
   });
 
   it('shows a historical footnote and does not render a fake zero for empty ranges', async () => {

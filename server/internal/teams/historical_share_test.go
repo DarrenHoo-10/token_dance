@@ -99,11 +99,41 @@ func TestAssembleStaticSkillsRanksPublicNameAndMembers(t *testing.T) {
 	if got.Items[0]["label"] != "code-review" || got.Items[0]["useCount"] != "10" {
 		t.Fatalf("top skill %+v", got.Items[0])
 	}
+	if _, ok := got.Items[0]["agentId"]; ok {
+		t.Fatalf("skills must not keep a harness: %+v", got.Items[0])
+	}
 	if got.Items[0]["memberCount"] != "2" {
 		t.Fatalf("memberCount %+v", got.Items[0])
 	}
 	dist, _ := got.Items[0]["members"].([]map[string]any)
 	if len(dist) != 2 || dist[0]["displayName"] != "Ada" {
 		t.Fatalf("distribution %+v", dist)
+	}
+}
+
+func TestAssembleStaticSkillsMergesSameNameAcrossAgents(t *testing.T) {
+	mem := "tmb_a"
+	codex, claude := "codex", "claude-code"
+	id1, id2 := int64(11), int64(22)
+	rows := []domain.TeamAnalysisRow{
+		{MembershipID: &mem, AgentID: &codex, SkillID: &id1, SkillPublicName: "agent-reach", SkillUseCount: "4"},
+		{MembershipID: &mem, AgentID: &claude, SkillID: &id2, SkillPublicName: "agent-reach", SkillUseCount: "3"},
+		{MembershipID: &mem, AgentID: &codex, SkillID: &id1, SkillPublicName: "imagegen", SkillUseCount: "2"},
+	}
+	members := []domain.TeamMembership{{MembershipID: mem, UserID: "usr_a"}}
+	users := []domain.User{{UserID: "usr_a", DisplayName: "Ada"}}
+	got := assembleStaticSkills(rows, members, users, AnalysisQuery{})
+	if got == nil || len(got.Items) != 2 {
+		t.Fatalf("want 2 named skills, got %+v", got)
+	}
+	if got.Items[0]["id"] != "agent-reach" || got.Items[0]["label"] != "agent-reach" || got.Items[0]["useCount"] != "7" {
+		t.Fatalf("merged skill %+v", got.Items[0])
+	}
+	if _, ok := got.Items[0]["agentId"]; ok {
+		t.Fatalf("merged skill kept harness %+v", got.Items[0])
+	}
+	dist, _ := got.Items[0]["members"].([]map[string]any)
+	if len(dist) != 1 || dist[0]["useCount"] != "7" {
+		t.Fatalf("merged member uses %+v", dist)
 	}
 }

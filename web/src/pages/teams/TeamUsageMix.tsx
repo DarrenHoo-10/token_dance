@@ -17,17 +17,11 @@ interface MixItem {
   members: SkillMemberUse[];
 }
 
-function harnessLabel(id?: string) {
-  if (!id) return '';
-  return id.charAt(0).toUpperCase() + id.slice(1);
-}
-
 function asSkill(item: SkillItem | Record<string, unknown>): SkillItem {
   const raw = item as SkillItem & { tokens?: { value?: string }; useCount?: string };
   return {
     id: String(raw.id || raw.label || ''),
     label: String(raw.label || raw.id || ''),
-    agentId: raw.agentId ? String(raw.agentId) : undefined,
     useCount: String(raw.useCount || raw.tokens?.value || '0'),
     share: raw.share == null ? null : String(raw.share),
     memberCount: raw.memberCount == null ? undefined : String(raw.memberCount),
@@ -59,7 +53,7 @@ export const TeamUsageMix: React.FC<{ analysis: TeamAnalysisReady }> = ({ analys
   const skills = useMemo(
     () => (analysis.skills?.items || []).map((item) => asSkill(item as SkillItem)).filter((item) => item.useCount !== '0').map((item) => ({
       id: item.id,
-      label: item.agentId ? `${item.label} · ${harnessLabel(item.agentId)}` : item.label,
+      label: item.label,
       value: item.useCount,
       share: item.share ?? null,
       members: item.members || [],

@@ -2729,7 +2729,6 @@ func staticTenMetrics(rows []domain.TeamAnalysisRow, tokens domain.DecimalMetric
 
 func assembleStaticSkills(rows []domain.TeamAnalysisRow, members []domain.TeamMembership, users []domain.User, q AnalysisQuery) *domain.TeamPagedItems {
 	type group struct {
-		agent   string
 		label   string
 		uses    string
 		members map[string]string
@@ -2754,10 +2753,6 @@ func assembleStaticSkills(rows []domain.TeamAnalysisRow, members []domain.TeamMe
 		if emptyZero(row.SkillUseCount) == "0" {
 			continue
 		}
-		agent := ""
-		if row.AgentID != nil {
-			agent = *row.AgentID
-		}
 		label := strings.TrimSpace(row.SkillPublicName)
 		if label == "" && row.SkillID != nil {
 			label = fmt.Sprintf("skill-%d", *row.SkillID)
@@ -2765,10 +2760,10 @@ func assembleStaticSkills(rows []domain.TeamAnalysisRow, members []domain.TeamMe
 		if label == "" {
 			label = "unnamed"
 		}
-		key := agent + "\x1f" + label
+		key := label
 		g := byKey[key]
 		if g == nil {
-			g = &group{agent: agent, label: label, uses: "0", members: map[string]string{}}
+			g = &group{label: label, uses: "0", members: map[string]string{}}
 			byKey[key] = g
 		}
 		g.uses = AddIntDecimal(g.uses, emptyZero(row.SkillUseCount))
@@ -2795,10 +2790,7 @@ func assembleStaticSkills(rows []domain.TeamAnalysisRow, members []domain.TeamMe
 		if list[i].uses.Cmp(list[j].uses) != 0 {
 			return list[i].uses.Cmp(list[j].uses) > 0
 		}
-		if list[i].g.label != list[j].g.label {
-			return list[i].g.label < list[j].g.label
-		}
-		return list[i].g.agent < list[j].g.agent
+		return list[i].g.label < list[j].g.label
 	})
 	limit := clampLimit(q.Limit)
 	page := list
@@ -2826,7 +2818,7 @@ func assembleStaticSkills(rows []domain.TeamAnalysisRow, members []domain.TeamMe
 	out := make([]map[string]any, 0, len(page))
 	for _, it := range page {
 		item := map[string]any{
-			"id": it.key, "label": it.g.label, "agentId": it.g.agent,
+			"id": it.key, "label": it.g.label,
 			"useCount": it.g.uses, "bucketType": "skill",
 			"tokens": domain.DecimalMetric{Value: it.g.uses, State: domain.MetricAvailable},
 		}
