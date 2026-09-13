@@ -304,6 +304,40 @@ func (m *MemoryStore) CompleteRegistrationTx(ctx context.Context, in store.Regis
 
 	m.insertZeroWindowScoresLocked(u.UserID, u.CreatedAt, now)
 
+	if u.Handle != nil && *u.Handle != "" {
+		profileStatus := domain.ProfileStatusHidden
+		var publishedAt *time.Time
+		if priv.PublicProfileEnabled && u.AccountStatus == domain.AccountStatusActive && u.OnboardingCompletedAt != nil {
+			profileStatus = domain.ProfileStatusPublished
+			publishedAt = &now
+		}
+		var bio *string
+		if priv.ShowBio {
+			bio = u.Bio
+		}
+		m.publicProfiles[u.UserID] = &domain.PublicUserProfile{
+			UserID:               u.UserID,
+			Handle:               *u.Handle,
+			DisplayName:          u.DisplayName,
+			AvatarURL:            u.AvatarURL,
+			Bio:                  bio,
+			ProfileStatus:        profileStatus,
+			ShowBio:              priv.ShowBio,
+			ShowTokenTotal:       priv.ShowTokenTotal,
+			ShowTrends:           priv.ShowTrends,
+			ShowActivityCalendar: priv.ShowActivityCalendar,
+			ShowAgentBreakdown:   priv.ShowAgentBreakdown,
+			ShowSkillRanking:     priv.ShowSkillRanking,
+			ShowAchievements:     priv.ShowAchievements,
+			SourceProfileVersion: u.ProfileVersion,
+			SourcePrivacyVersion: priv.PrivacyVersion,
+			ProjectionVersion:    1,
+			PublishedAt:          publishedAt,
+			CreatedAt:            now,
+			UpdatedAt:            now,
+		}
+	}
+
 	return &sess, nil
 }
 
