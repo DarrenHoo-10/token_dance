@@ -9,6 +9,34 @@ const MAX_JSONL_FILES: usize = 8;
 const GROK_HISTORY_FILE_LIMIT: usize = 512;
 const GROK_UPDATES_FILE_NAME: &str = "updates.jsonl";
 
+/// Known activity caches differ between Doubao's Windows and macOS builds.
+/// Keep discovery and the desktop reader on the same allowlist.
+pub const DOUBAO_ACTIVITY_DATABASES: [&str; 4] = [
+    "chrome_doubao-chat_0.indexeddb.leveldb",
+    "chrome_doubao-launcher_0.indexeddb.leveldb",
+    "chrome_doubaowork-chat_0.indexeddb.leveldb",
+    "chrome_doubaowork-launcher_0.indexeddb.leveldb",
+];
+
+pub fn doubao_activity_profiles(root: &Path) -> Vec<PathBuf> {
+    let user_data = root.join("User Data");
+    let root = if user_data.is_dir() { &user_data } else { root };
+    let mut profiles = Vec::new();
+    if let Ok(entries) = fs::read_dir(root) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if DOUBAO_ACTIVITY_DATABASES
+                .iter()
+                .any(|db| path.join("IndexedDB").join(db).is_dir())
+            {
+                profiles.push(path);
+            }
+        }
+    }
+    profiles.sort();
+    profiles
+}
+
 pub fn detect_local() -> DetectionSnapshot {
     detect_from_resolver(&PathResolver::production())
 }
@@ -433,6 +461,10 @@ fn detect_doubao_work(resolver: &PathResolver, snapshot: &mut DetectionSnapshot)
             .env_dir("LOCALAPPDATA")
             .map(|path| path.join("Doubao")),
         resolver.env_dir("APPDATA").map(|path| path.join("Doubao")),
+        #[cfg(target_os = "macos")]
+        Some(home.join("Library/Application Support/DoubaoWork")),
+        #[cfg(target_os = "macos")]
+        Some(home.join("Library/Application Support/Doubao")),
         Some(home.join(".doubao-work")),
         Some(home.join(".doubao")),
     ];
@@ -448,10 +480,11 @@ fn detect_doubao_work(resolver: &PathResolver, snapshot: &mut DetectionSnapshot)
         OfficialAgent::DoubaoWork,
         AgentDetection::installed("1.0.0"),
     );
-    if let Some(root) = present
-        .into_iter()
-        .find(|path| path.join("User Data").is_dir() || dir_has_jsonl(path))
-    {
+    if let Some(root) = present.into_iter().find(|path| {
+        path.join("User Data").is_dir()
+            || !doubao_activity_profiles(path).is_empty()
+            || dir_has_jsonl(path)
+    }) {
         snapshot.configure_source(
             OfficialAgent::DoubaoWork,
             adapter_doubao_work::HISTORY_SOURCE_ID,
@@ -785,5 +818,55 @@ mod tests {
                 .as_ref(),
             Some(&projects)
         );
+    }
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn detects_doubao_work_macos_native_cache_without_user_data_directory() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join("Library/Application Support/DoubaoWork");
+        fs::create_dir_all(
+            root.join("Default/IndexedDB/chrome_doubaowork-chat_0.indexeddb.leveldb"),
+        )
+        .unwrap();
+        let snapshot = detect_from_home(home.path());
+        assert!(snapshot.is_installed(OfficialAgent::DoubaoWork));
+        assert_eq!(
+            snapshot
+                .source(
+                    OfficialAgent::DoubaoWork,
+                    adapter_doubao_work::HISTORY_SOURCE_ID
+                )
+                .unwrap()
+                .path
+                .as_ref(),
+            Some(&root)
+        );
+    }
+
+    #[test]
+    fn doubao_profiles_support_both_layouts_and_ignore_unrelated_databases() {
+        let home = tempfile::tempdir().unwrap();
+        for prefix in ["windows/User Data", "macos"] {
+            let root = home.path().join(prefix);
+            fs::create_dir_all(
+                root.join("Default/IndexedDB/chrome_doubao-chat_0.indexeddb.leveldb"),
+            )
+            .unwrap();
+            fs::create_dir_all(
+                root.join("Default/IndexedDB/chrome_doubaowork-launcher_0.indexeddb.leveldb"),
+            )
+            .unwrap();
+            fs::create_dir_all(root.join("Profile 1/IndexedDB/unrelated.indexeddb.leveldb"))
+                .unwrap();
+            let configured = if prefix.ends_with("User Data") {
+                root.parent().unwrap()
+            } else {
+                &root
+            };
+            assert_eq!(
+                doubao_activity_profiles(configured),
+                vec![root.join("Default")]
+            );
+        }
     }
 }
