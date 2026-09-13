@@ -12,7 +12,7 @@ import {
   downloadBlob,
   formatInTimezone,
 } from './teamUtils';
-import { AnalysisSkeleton, teamErrorMessage, useTeamSearchFilters } from './TeamShared';
+import { AnalysisSkeleton, TeamDateRangeBar, teamErrorMessage, useTeamSearchFilters } from './TeamShared';
 import { useTeamAnalysis } from './useTeamAnalysis';
 import { TeamOverviewBoard } from './TeamOverviewBoard';
 
@@ -74,14 +74,30 @@ export const TeamAnalyticsPage: React.FC = () => {
     </div>
   ) : null;
 
+  const filterBar = (
+    <div className="team-filter-toolbar">
+      <div className="team-filter-selects">
+        <select className="form-input" aria-label={t('dashboard.agentFilter')} value={agent || 'all'} onChange={(e) => setFilter('agent', e.target.value)}>
+          <option value="all">{t('dashboard.allAgents')}</option>
+          {filters.agents.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+        </select>
+        <select className="form-input" aria-label={t('dashboard.modelFilter')} value={model || 'all'} onChange={(e) => setFilter('model', e.target.value)}>
+          <option value="all">{t('dashboard.allModels')}</option>
+          {filters.models.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+        </select>
+      </div>
+      <TeamDateRangeBar timezone={scope.team.timezone} />
+    </div>
+  );
+
   if (updating && !analysis) {
-    return <div>{createdBanner}<AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} /></div>;
+    return <div>{createdBanner}{filterBar}<AnalysisSkeleton message={updatingMessageKey ? t(updatingMessageKey) : undefined} /></div>;
   }
   if (error && !analysis) {
-    return <div>{createdBanner}<ErrorState error={error} description={teamErrorMessage(t, error)} /></div>;
+    return <div>{createdBanner}{filterBar}<ErrorState error={error} description={teamErrorMessage(t, error)} /></div>;
   }
   if (!analysis) {
-    return <div>{createdBanner}<AnalysisSkeleton /></div>;
+    return <div>{createdBanner}{filterBar}<AnalysisSkeleton /></div>;
   }
 
   const startExport = async (kind: ExportKind) => {
@@ -113,17 +129,7 @@ export const TeamAnalyticsPage: React.FC = () => {
         {t('teams.overview.updatedAt', { time: formatInTimezone(analysis.snapshot.asOf, analysis.range.timezone, locale) })}
         {analysis.snapshot.refreshing ? ` · ${t('teams.analytics.refreshing')}` : ''}
       </p>
-
-      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
-        <select className="form-input" aria-label={t('dashboard.agentFilter')} value={agent || 'all'} onChange={(e) => setFilter('agent', e.target.value)} style={{ height: 36, width: 'auto' }}>
-          <option value="all">{t('dashboard.allAgents')}</option>
-          {filters.agents.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-        </select>
-        <select className="form-input" aria-label={t('dashboard.modelFilter')} value={model || 'all'} onChange={(e) => setFilter('model', e.target.value)} style={{ height: 36, width: 'auto' }}>
-          <option value="all">{t('dashboard.allModels')}</option>
-          {filters.models.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-        </select>
-      </div>
+      {filterBar}
 
       <TeamOverviewBoard
         analysis={analysis}

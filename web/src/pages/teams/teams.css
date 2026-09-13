@@ -68,15 +68,23 @@
   color: var(--good);
 }
 
-.team-heading-actions .team-date-toolbar { display: contents; }
-.team-heading-actions .team-date-presets { order: 1; flex-shrink: 0; }
-.team-heading-actions > .btn { order: 2; flex-shrink: 0; }
-.team-heading-actions .team-date-custom {
-  order: 3;
-  flex-basis: 100%;
+.team-filter-toolbar {
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+  margin-bottom: 16px;
+}
+.team-filter-selects { display: flex; flex-wrap: wrap; gap: 12px; min-width: 0; }
+.team-filter-selects .form-input { height: 36px; width: auto; }
+.team-filter-toolbar .team-date-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px 12px;
+  margin-left: auto;
 }
 .team-date-custom { min-width: 0; }
 .team-date-fields { display: grid; grid-template-columns: 18px minmax(138px, 160px) 16px minmax(138px, 160px); align-items: center; gap: 12px; }
@@ -89,11 +97,10 @@
 .team-date-hint { margin: 8px 0 0 30px; font-size: 11px; line-height: 1.6; color: #788279; }
 .team-date-hint.is-error { color: var(--danger); }
 @media (max-width: 640px) {
-  .team-heading-actions { width: 100%; }
-  .team-heading-actions .team-date-toolbar,
-  .team-heading-actions .team-date-presets { width: 100%; }
-  .team-heading-actions .team-date-presets { display: flex; }
-  .team-heading-actions .team-date-presets .segmented-item { flex: 1; }
+  .team-filter-toolbar .team-date-toolbar,
+  .team-filter-toolbar .team-date-presets { width: 100%; }
+  .team-filter-toolbar .team-date-presets { display: flex; }
+  .team-filter-toolbar .team-date-presets .segmented-item { flex: 1; }
   .team-date-custom { width: 100%; }
   .team-date-fields { grid-template-columns: minmax(0, 1fr) 14px minmax(0, 1fr); gap: 8px; }
   .team-date-icon { display: none; }
