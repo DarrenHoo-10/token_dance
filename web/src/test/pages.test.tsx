@@ -672,12 +672,14 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
 
       await waitFor(() => {
         expect(screen.getByRole('heading', { name: '个人数据页' })).toBeInTheDocument();
-        expect(screen.getByText('$120.50')).toBeInTheDocument();
+        expect(screen.getByText('USD 120.50')).toBeInTheDocument();
         expect(screen.getByText('50.0M')).toBeInTheDocument();
         expect(screen.getByText('Claude Code')).toBeInTheDocument();
         expect(screen.getByText('code-review')).toBeInTheDocument();
         expect(screen.getByText('未知')).toBeInTheDocument();
       });
+      expect(screen.queryByText('公开我的数据')).not.toBeInTheDocument();
+      expect(screen.queryByRole('checkbox', { name: '公开我的数据' })).not.toBeInTheDocument();
     });
 
     it('renders ErrorState when personal summary fails', async () => {

@@ -3,7 +3,6 @@ import { useLocale } from '@/context/LocaleContext';
 
 export interface SyncStatusCardProps {
   lastCommittedAt: string | null;
-  pendingLocalCount: number | null;
   status?: 'healthy' | 'warning' | 'delayed' | 'unknown' | string;
 }
 
@@ -21,7 +20,6 @@ function timeAgo(dateStr: string | null, t: (key: string, params?: Record<string
 
 export const SyncStatusCard: React.FC<SyncStatusCardProps> = ({
   lastCommittedAt,
-  pendingLocalCount,
   status,
 }) => {
   const { t } = useLocale();
@@ -71,18 +69,9 @@ export const SyncStatusCard: React.FC<SyncStatusCardProps> = ({
         </span>
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingBottom: 8, borderBottom: '1px solid var(--border-light)', fontSize: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
         <span className="text-muted">{t('settings.lastSeen')}</span>
         <strong className="mono-num">{timeAgo(lastCommittedAt, t)}</strong>
-      </div>
-
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 12 }}>
-        <span className="text-muted">{t('dashboard.pendingEvents')}</span>
-        <strong className="mono-num">
-          {pendingLocalCount !== null && pendingLocalCount !== undefined
-            ? pendingLocalCount.toLocaleString()
-            : t('common.unknown')}
-        </strong>
       </div>
     </div>
   );

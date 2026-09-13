@@ -80,6 +80,10 @@ jobs:
         run: cargo test --locked --manifest-path collector/apps/desktop/src-tauri/Cargo.toml updates::tests -- --test-threads=1
       - name: Codex quota regression tests
         run: cargo test --locked --manifest-path collector/apps/desktop/src-tauri/Cargo.toml commands::quotas::tests --lib
+      - name: Cross-platform collection discovery regressions
+        run: |
+          cargo test --locked --manifest-path collector/Cargo.toml -p collector-service detect::tests
+          cargo test --locked --manifest-path collector/apps/desktop/src-tauri/Cargo.toml doubao --lib
       - name: PowerShell syntax and fail-closed Authenticode tests
         shell: pwsh
         run: |
@@ -336,6 +340,7 @@ jobs:
         if: matrix.architecture == 'arm64'
         run: |
           cargo test --locked --manifest-path collector/Cargo.toml -p platform-credentials --features login-keychain
+          cargo test --locked --manifest-path collector/Cargo.toml -p collector-service detect::tests
           cargo test --locked --manifest-path collector/apps/desktop/src-tauri/Cargo.toml --features unnotarized-distribution --lib
       - name: Selected macOS architecture compiles
         run: |
