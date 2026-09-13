@@ -2046,6 +2046,8 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 	byDate := map[string]string{}
 	agentTok := map[string]string{}
 	modelTok := map[string]string{}
+	agentMem := map[string]map[string]string{}
+	modelMem := map[string]map[string]string{}
 	contribTok := map[string]string{}
 	memberDays := map[string]map[string]string{}
 	reported := map[string]*bigRatAcc{}
@@ -2062,8 +2064,15 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 		if row.MetricDate != nil && *row.MetricDate != "" {
 			byDate[*row.MetricDate] = AddIntDecimal(byDate[*row.MetricDate], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
 		}
+		tokens := AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal))
 		if row.AgentID != nil {
-			agentTok[*row.AgentID] = AddIntDecimal(agentTok[*row.AgentID], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
+			agentTok[*row.AgentID] = AddIntDecimal(agentTok[*row.AgentID], tokens)
+			if row.MembershipID != nil && tokens != "0" {
+				if agentMem[*row.AgentID] == nil {
+					agentMem[*row.AgentID] = map[string]string{}
+				}
+				agentMem[*row.AgentID][*row.MembershipID] = AddIntDecimal(agentMem[*row.AgentID][*row.MembershipID], tokens)
+			}
 		}
 		if row.ModelID != nil {
 			key := ""
@@ -2071,7 +2080,13 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 				key = *row.ProviderID + "/"
 			}
 			key += *row.ModelID
-			modelTok[key] = AddIntDecimal(modelTok[key], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
+			modelTok[key] = AddIntDecimal(modelTok[key], tokens)
+			if row.MembershipID != nil && tokens != "0" {
+				if modelMem[key] == nil {
+					modelMem[key] = map[string]string{}
+				}
+				modelMem[key][*row.MembershipID] = AddIntDecimal(modelMem[key][*row.MembershipID], tokens)
+			}
 		}
 		if row.MembershipID != nil {
 			contribTok[*row.MembershipID] = AddIntDecimal(contribTok[*row.MembershipID], AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)))
@@ -2118,6 +2133,8 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 	limit := clampLimit(q.Limit)
 	agents := pageBuckets(sortKV(agentTok), "agent", q.Collection == "agents", q.Cursor, limit, tokenTotal)
 	models := pageBuckets(sortKV(modelTok), "model", q.Collection == "models", q.Cursor, limit, tokenTotal)
+	attachBucketMembers(agents, "agent", agentMem, members, users)
+	attachBucketMembers(models, "model", modelMem, members, users)
 	contribs := pageContributions(sortKV(contribTok), members, users, q.Collection == "contributions", q.Cursor, limit)
 	// Only attach data to the authorized, paginated contribution identities.
 	loc, err := time.LoadLocation(team.TimezoneName)
@@ -2226,6 +2243,79 @@ func pageWindow(items []kv, paging bool, cursor string, limit int) (page []kv, s
 		next = &n
 	}
 	return page, start, end, next
+}
+
+func attachBucketMembers(page *domain.TeamPagedItems, kind string, byBucket map[string]map[string]string, members []domain.TeamMembership, users []domain.User) {
+	if page == nil {
+		return
+	}
+	current := map[string]struct{}{}
+	userByMem := map[string]domain.User{}
+	for _, mem := range members {
+		if mem.EndedAt != nil {
+			continue
+		}
+		current[mem.MembershipID] = struct{}{}
+	}
+	for _, u := range users {
+		for _, mem := range members {
+			if mem.UserID == u.UserID {
+				userByMem[mem.MembershipID] = u
+			}
+		}
+	}
+	for _, item := range page.Items {
+		lookup, _ := item["id"].(string)
+		if kind == "model" {
+			if label, ok := item["label"].(string); ok && label != "" {
+				lookup = label
+			}
+		}
+		dist, named := namedMemberCounts(byBucket[lookup], current, userByMem)
+		item["memberCount"] = strconv.Itoa(named)
+		item["members"] = dist
+	}
+}
+
+func namedMemberCounts(byMem map[string]string, current map[string]struct{}, userByMem map[string]domain.User) ([]map[string]any, int) {
+	dist := make([]map[string]any, 0)
+	named := 0
+	total := "0"
+	for _, uses := range byMem {
+		total = AddIntDecimal(total, emptyZero(uses))
+	}
+	for memID, uses := range byMem {
+		if emptyZero(uses) == "0" {
+			continue
+		}
+		if _, ok := current[memID]; !ok && len(current) > 0 {
+			continue
+		}
+		named++
+		display := memID
+		var handle *string
+		if u, ok := userByMem[memID]; ok {
+			display = u.DisplayName
+			handle = u.Handle
+		}
+		m := map[string]any{"membershipId": memID, "displayName": display, "useCount": uses}
+		if handle != nil {
+			m["handle"] = *handle
+		}
+		if share := tokenShare(uses, total); share != nil {
+			m["share"] = *share
+		}
+		dist = append(dist, m)
+	}
+	sort.Slice(dist, func(i, j int) bool {
+		a, _ := new(big.Int).SetString(emptyZero(dist[i]["useCount"].(string)), 10)
+		b, _ := new(big.Int).SetString(emptyZero(dist[j]["useCount"].(string)), 10)
+		if a.Cmp(b) != 0 {
+			return a.Cmp(b) > 0
+		}
+		return dist[i]["displayName"].(string) < dist[j]["displayName"].(string)
+	})
+	return dist, named
 }
 
 func pageBuckets(items []kv, kind string, paging bool, cursor string, limit int, tokenTotal string) *domain.TeamPagedItems {

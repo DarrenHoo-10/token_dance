@@ -236,6 +236,8 @@ export interface AnalysisBucketItem {
   usageEvents?: string | null;
   costType?: 'reported' | 'estimated' | 'none';
   coverage?: string | null;
+  memberCount?: string;
+  members?: SkillMemberUse[];
 }
 
 export interface ContributionItem {

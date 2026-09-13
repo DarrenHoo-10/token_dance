@@ -366,6 +366,14 @@ func TestAssembleAnalysisCollectionsMatchWeb(t *testing.T) {
 	if dto.Models.Items[0]["id"] != "gpt-test" || dto.Models.Items[0]["label"] != "openai/gpt-test" {
 		t.Fatalf("models %+v", dto.Models.Items)
 	}
+	agentMembers, _ := dto.Agents.Items[0]["members"].([]map[string]any)
+	if dto.Agents.Items[0]["memberCount"] != "1" || len(agentMembers) != 1 || agentMembers[0]["displayName"] != "Ada" {
+		t.Fatalf("agent members %+v", dto.Agents.Items[0])
+	}
+	modelMembers, _ := dto.Models.Items[0]["members"].([]map[string]any)
+	if dto.Models.Items[0]["memberCount"] != "1" || len(modelMembers) != 1 || modelMembers[0]["displayName"] != "Ada" {
+		t.Fatalf("model members %+v", dto.Models.Items[0])
+	}
 	if dto.Contributions.Items[0]["displayName"] != "Ada" || dto.Contributions.Items[0]["rank"] != "1" || dto.Contributions.Items[0]["membershipId"] != mem {
 		t.Fatalf("contributions %+v", dto.Contributions.Items)
 	}

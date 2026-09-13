@@ -171,8 +171,29 @@
 .team-cache-track { height: 5px; background: #edf1e7; border-radius: 8px; margin-top: 16px; overflow: hidden; }
 .team-cache-track span { display: block; height: 100%; background: #8db04e; border-radius: 8px; }
 .team-metric-foot { border-top: 1px solid #e4e9e1; margin-top: 17px; padding-top: 12px; font-size: 11px; color: #778172; }
-.team-usage-mix { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 8px; }
+.team-usage-section { margin-bottom: 8px; }
+.team-mix-tabs { margin: 0 0 14px; }
+.team-usage-mix { display: grid; grid-template-columns: 1.5fr 1fr; gap: 14px; margin-bottom: 8px; }
 .team-usage-mix > .panel { min-width: 0; }
+.team-mix-list { display: grid; gap: 4px; }
+.team-mix-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.team-mix-row.is-active { background: #f1f5ed; }
+.team-mix-row-copy { min-width: 0; }
+.team-mix-value { font-size: 12px; color: #56644d; }
 .team-donut-layout { display: flex; align-items: center; justify-content: center; margin: 13px 0 20px; }
 .team-donut { width: 155px; height: 155px; border-radius: 50%; display: grid; place-items: center; }
 .team-donut-center { width: 120px; height: 120px; border-radius: 50%; background: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; }

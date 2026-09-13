@@ -185,7 +185,9 @@ describe('Team analysis updating state', () => {
     expect(screen.queryByText('成员表现')).not.toBeInTheDocument();
     expect(screen.queryByText('我的共享')).not.toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '用量构成' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Skill 使用' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Harness' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Skill' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Skill 使用' })).not.toBeInTheDocument();
   });
 
   it('shows skill ranking and member distribution from static analysis', async () => {
@@ -218,14 +220,33 @@ describe('Team analysis updating state', () => {
       ],
       nextCursor: null,
     };
+    result.agents = {
+      items: [{
+        id: 'codex', label: 'codex', tokens: { value: '80000', state: 'available' }, share: '66.7',
+        members: [{ membershipId: 'tmb_1', displayName: 'Ada', useCount: '50000', share: '62.5' }],
+      }],
+      nextCursor: null,
+    };
+    result.models = {
+      items: [{
+        id: 'gpt-test', label: 'openai/gpt-test', tokens: { value: '40000', state: 'available' }, share: '33.3',
+        members: [{ membershipId: 'tmb_2', displayName: 'Bo', useCount: '40000', share: '100' }],
+      }],
+      nextCursor: null,
+    };
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    expect(await screen.findByRole('heading', { name: 'Skill 使用' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'frontend-design' })).toBeInTheDocument();
-    expect(screen.getByText('frontend-design · Codex')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'code-review' }));
-    expect(screen.getByText('code-review · Codex')).toBeInTheDocument();
-    expect(screen.getByText(/仅展示当前成员/)).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '用量构成' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /codex/ })).toBeInTheDocument();
+    expect(screen.getByText('Ada')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '模型' }));
+    expect(screen.getByRole('button', { name: /gpt-test/ })).toBeInTheDocument();
+    expect(screen.getByText('Bo')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Skill' }));
+    fireEvent.click(screen.getByRole('button', { name: /frontend-design/ }));
+    expect(screen.getAllByText('frontend-design · Codex').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('button', { name: /code-review/ }));
+    expect(screen.getAllByText('code-review · Codex').length).toBeGreaterThan(0);
   });
 
   it('shows a historical footnote and does not render a fake zero for empty ranges', async () => {
@@ -352,7 +373,8 @@ describe('Team analysis updating state', () => {
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(empty);
     renderTeamWorkspace('/teams/tem_0123456789abcdefghijklmnop');
     expect(await screen.findByText('团队总 Token')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Skill 使用' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '用量构成' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Skill' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Token 使用效率' })).toBeInTheDocument();
     expect(screen.getByLabelText('开始日期')).toBeInTheDocument();
     expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();

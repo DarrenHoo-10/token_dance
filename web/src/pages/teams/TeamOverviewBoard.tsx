@@ -1,5 +1,4 @@
 import React from 'react';
-import { AgentBreakdown } from '@/components/analytics/AgentBreakdown';
 import { Card } from '@/components/common/Card';
 import { useLocale } from '@/context/LocaleContext';
 import type { MetricValue, TeamAnalysisReady } from '@/api/teams';
@@ -11,7 +10,7 @@ import {
   metricDisplay,
 } from './teamUtils';
 import { TeamMemberInsights } from './TeamMemberInsights';
-import { TeamSkillUsage } from './TeamSkillUsage';
+import { TeamUsageMix } from './TeamUsageMix';
 
 function metricOf(analysis: TeamAnalysisReady, key: string): MetricValue | undefined {
   return analysis.summary.metrics?.[key];
@@ -55,18 +54,6 @@ export const TeamOverviewBoard: React.FC<{
     : null;
   const cacheWidth = cache.available ? Number(metricOf(analysis, 'cacheHitRate')?.value || '0') : 0;
   const cacheBar = `${Math.max(0, Math.min(100, (cacheWidth <= 1 ? cacheWidth * 100 : cacheWidth)))}%`;
-  const agents = (analysis.agents.items || []).map((item) => ({
-    key: item.id,
-    label: item.bucketType === 'unshared_classification' ? t('teams.analytics.unsharedBucket') : item.label,
-    tokenTotal: item.tokens.state === 'available' && item.tokens.value ? item.tokens.value : '0',
-    percentage: item.share ? Number(item.share) : 0,
-  }));
-  const models = (analysis.models.items || []).map((item) => ({
-    key: item.id + item.label,
-    label: item.label,
-    tokenTotal: item.tokens.state === 'available' && item.tokens.value ? item.tokens.value : '0',
-    percentage: item.share ? Number(item.share) : 0,
-  }));
 
   return (
     <>
@@ -129,24 +116,7 @@ export const TeamOverviewBoard: React.FC<{
 
       <TeamMemberInsights key={`${teamId}:${authRevision || ''}`} analysis={analysis} teamId={teamId} search={search} />
 
-      <div className="team-section-heading">
-        <div>
-          <h2>{t('teams.overview.usageMix')}</h2>
-          <p>{t('teams.overview.usageMixSub')}</p>
-        </div>
-      </div>
-      <section className="team-usage-mix">
-        <Card>
-          <div className="panel-header"><h2>{t('teams.overview.tools')}</h2></div>
-          <AgentBreakdown items={agents} />
-        </Card>
-        <Card>
-          <div className="panel-header"><h2>{t('teams.overview.models')}</h2></div>
-          <AgentBreakdown items={models} />
-        </Card>
-      </section>
-
-      <TeamSkillUsage analysis={analysis} />
+      <TeamUsageMix analysis={analysis} />
     </>
   );
 };
