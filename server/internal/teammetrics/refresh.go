@@ -418,28 +418,34 @@ func projectJoinDayHours(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 		return nil, fmt.Errorf("project join-day model hours: %w", err)
 	}
 	var out []DayRow
+	type joinHourUsage struct {
+		agent, provider, model, exact, derived, events, input, output, cacheIn, cacheRead, cacheKnown, inKnown, outKnown, observed string
+	}
+	var usages []joinHourUsage
 	for urows.Next() {
-		var agent, provider, model, exact, derived, events, input, output, cacheIn, cacheRead, cacheKnown, inKnown, outKnown, observed string
-		if err := urows.Scan(&agent, &provider, &model, &exact, &derived, &events, &input, &output, &cacheIn, &cacheRead, &cacheKnown, &inKnown, &outKnown, &observed); err != nil {
+		var u joinHourUsage
+		if err := urows.Scan(&u.agent, &u.provider, &u.model, &u.exact, &u.derived, &u.events, &u.input, &u.output, &u.cacheIn, &u.cacheRead, &u.cacheKnown, &u.inKnown, &u.outKnown, &u.observed); err != nil {
 			urows.Close()
 			return nil, err
 		}
-		hourly, err := loadHourly(ctx, tx, contrib.UserID, date, agent, provider, model, startMs)
-		if err != nil {
-			urows.Close()
-			return nil, err
-		}
-		row, err := usageRow(contrib, date, agent, provider, model, exact, derived, events, input, output, cacheIn, cacheRead, cacheKnown, inKnown, outKnown, observed, hourly, false)
-		if err != nil {
-			urows.Close()
-			return nil, err
-		}
-		out = append(out, row)
+		usages = append(usages, u)
 	}
 	err = urows.Err()
 	urows.Close()
 	if err != nil {
 		return nil, err
+	}
+	// A transaction has one MySQL connection; finish this result before loadHourly queries it again.
+	for _, u := range usages {
+		hourly, err := loadHourly(ctx, tx, contrib.UserID, date, u.agent, u.provider, u.model, startMs)
+		if err != nil {
+			return nil, err
+		}
+		row, err := usageRow(contrib, date, u.agent, u.provider, u.model, u.exact, u.derived, u.events, u.input, u.output, u.cacheIn, u.cacheRead, u.cacheKnown, u.inKnown, u.outKnown, u.observed, hourly, false)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, row)
 	}
 
 	arows, err := tx.QueryContext(ctx, `
