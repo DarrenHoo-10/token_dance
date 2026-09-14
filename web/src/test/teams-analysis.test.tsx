@@ -432,23 +432,23 @@ describe('Team member insights', () => {
     expect(screen.getByRole('heading', { name: '团队用量趋势' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '团队效率趋势' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Token 效率排行' })).toBeInTheDocument();
-    expect(usagePicker).toHaveTextContent('全部、Person 0、Person 1、Person 2');
-    expect(efficiencyPicker).toHaveTextContent('全部、Person 0、Person 1、Person 2');
-    expect(usagePicker).not.toHaveTextContent('Person 3');
-    expect(document.querySelectorAll('.team-member-trend .team-multiline-chart polyline')).toHaveLength(4);
-    expect(document.querySelectorAll('.team-efficiency-trend .team-multiline-chart polyline')).toHaveLength(4);
+    expect(usagePicker).toHaveTextContent('对比曲线4');
+    expect(efficiencyPicker).toHaveTextContent('对比曲线4');
+    expect(usagePicker).not.toHaveTextContent('Person 0');
+    expect(document.querySelectorAll('.team-member-trend .team-multiline-chart circle')).toHaveLength(4);
+    expect(document.querySelectorAll('.team-efficiency-trend .team-multiline-chart circle')).toHaveLength(4);
     expect(screen.queryByText('Token / 天')).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '成员用量趋势' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '团队 Token 趋势' })).not.toBeInTheDocument();
     expect(screen.getAllByText(/10\.0%/)).toHaveLength(11);
     expect(screen.getByText('50.0%')).toBeInTheDocument();
     fireEvent.click(usagePicker);
-    expect(screen.getByRole('option', { name: '全部' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('option', { name: '团队' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('option', { name: 'Person 2' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('option', { name: 'Person 3' })).toHaveAttribute('aria-selected', 'false');
     fireEvent.click(screen.getByRole('option', { name: 'Person 3' }));
-    expect(usagePicker).toHaveTextContent('Person 3');
-    expect(document.querySelectorAll('.team-member-trend .team-multiline-chart polyline')).toHaveLength(5);
+    expect(usagePicker).toHaveTextContent('对比曲线5');
+    expect(document.querySelectorAll('.team-member-trend .team-multiline-chart circle')).toHaveLength(5);
   });
 
   it('paginates member details, efficiency ranking, and mix lists by 10', async () => {
@@ -535,12 +535,18 @@ describe('Team member insights', () => {
     const result = readyAnalysis('1', '1000');
     result.efficiencyTrend = [
       { date: '2026-09-05', tokens: { value: '250', state: 'available' } },
-      { date: '2026-09-06', tokens: { value: '80', state: 'available' } },
+      { date: '2026-09-06', tokens: { value: null, state: 'empty' } },
+      { date: '2026-09-07', tokens: { value: '80', state: 'available' } },
     ];
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
     expect(await screen.findByRole('heading', { name: '团队效率趋势' })).toBeInTheDocument();
     expect(screen.getByRole('img', { name: '团队效率趋势' })).toBeInTheDocument();
+    expect(document.querySelectorAll('.team-efficiency-trend .team-trend-dates span')).toHaveLength(3);
+    expect([...document.querySelectorAll('.team-efficiency-trend .team-trend-dates span')].map((tick) => tick.textContent)).toEqual(['09/05', '09/06', '09/07']);
+    expect(document.querySelectorAll('.team-efficiency-trend .team-multiline-chart polyline')).toHaveLength(0);
+    expect(document.querySelectorAll('.team-efficiency-trend .team-multiline-chart circle')).toHaveLength(2);
+    expect(screen.getByText('仅在有生成代码行的日期显示效率，空白日期不连线。')).toBeInTheDocument();
   });
 });
 
@@ -646,4 +652,3 @@ describe('Team page tabs', () => {
     expect(screen.queryByRole('link', { name: '用量分析' })).not.toBeInTheDocument();
   });
 });
-
