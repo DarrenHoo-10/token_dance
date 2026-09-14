@@ -2130,13 +2130,13 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 				}
 			}
 		}
-		if row.Currency != nil && row.ReportedCostAmount != "" && row.ReportedCostAmount != "0" {
+		if row.Currency != nil && hasNonZeroCost(row.ReportedCostAmount) {
 			if reported[*row.Currency] == nil {
 				reported[*row.Currency] = &bigRatAcc{}
 			}
 			reported[*row.Currency].add(row.ReportedCostAmount)
 		}
-		if row.Currency != nil && row.EstimatedCostAmount != "" && row.EstimatedCostAmount != "0" {
+		if row.Currency != nil && hasNonZeroCost(row.EstimatedCostAmount) {
 			if estimatedCost[*row.Currency] == nil {
 				estimatedCost[*row.Currency] = &bigRatAcc{}
 			}
@@ -2522,13 +2522,13 @@ func rollupCosts(rows []domain.TeamAnalysisRow) costRollup {
 	estimated := map[string]*bigRatAcc{}
 	out := costRollup{unattributed: "0"}
 	for _, row := range rows {
-		if row.Currency != nil && row.ReportedCostAmount != "" && row.ReportedCostAmount != "0" {
+		if row.Currency != nil && hasNonZeroCost(row.ReportedCostAmount) {
 			if reported[*row.Currency] == nil {
 				reported[*row.Currency] = &bigRatAcc{}
 			}
 			reported[*row.Currency].add(row.ReportedCostAmount)
 		}
-		if row.Currency != nil && row.EstimatedCostAmount != "" && row.EstimatedCostAmount != "0" {
+		if row.Currency != nil && hasNonZeroCost(row.EstimatedCostAmount) {
 			if estimated[*row.Currency] == nil {
 				estimated[*row.Currency] = &bigRatAcc{}
 			}
@@ -2663,7 +2663,7 @@ func staticTenMetrics(rows []domain.TeamAnalysisRow, tokens domain.DecimalMetric
 	var estAcc bigRatAcc
 	for _, row := range rows {
 		skills = AddIntDecimal(skills, emptyZero(row.SkillUseCount))
-		if row.EstimatedCostAmount != "" && row.EstimatedCostAmount != "0" {
+		if hasNonZeroCost(row.EstimatedCostAmount) {
 			estAcc.add(row.EstimatedCostAmount)
 		}
 		if len(row.ResourcesJSON) > 0 {
@@ -2922,6 +2922,11 @@ func memberTokenTotals(rows []domain.TeamAnalysisRow) map[string]string {
 type bigRatAcc struct {
 	set bool
 	raw string
+}
+
+func hasNonZeroCost(raw string) bool {
+	amount, ok := parseDecimal(raw)
+	return ok && amount.Sign() != 0
 }
 
 func (a *bigRatAcc) add(v string) {

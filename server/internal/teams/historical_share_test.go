@@ -78,6 +78,33 @@ func TestStaticTenMetricsCostsCacheSkills(t *testing.T) {
 	}
 }
 
+func TestCostRollupIgnoresPaddedZeroAmounts(t *testing.T) {
+	usd := "USD"
+	rows := []domain.TeamAnalysisRow{
+		{Currency: &usd, ReportedCostAmount: "0.00000000", EstimatedCostAmount: "1.25000000"},
+		{Currency: &usd, ReportedCostAmount: "0.00000000", EstimatedCostAmount: "0.00000000"},
+	}
+	costs := rollupCosts(rows)
+	if len(costs.reported) != 0 || len(costs.estimated) != 1 || costs.estimated[0].Amount != "1.25000000" {
+		t.Fatalf("padded zero must not appear as a reported amount: %+v", costs)
+	}
+	metric := staticTenMetrics(rows, domain.DecimalMetric{Value: "0", State: domain.MetricEmpty})["estimatedCosts"]
+	if metric.State != domain.MetricAvailable || metric.Value != "1.25000000" {
+		t.Fatalf("estimated cost metric %+v", metric)
+	}
+	onlyZero := staticTenMetrics(rows[1:], domain.DecimalMetric{Value: "0", State: domain.MetricEmpty})["estimatedCosts"]
+	if onlyZero.State != domain.MetricEmpty {
+		t.Fatalf("zero-only amounts should not imply a known estimate: %+v", onlyZero)
+	}
+	from := time.Date(2026, 9, 6, 0, 0, 0, 0, time.UTC)
+	team := &domain.Team{TeamID: "tem_cost", TimezoneName: "UTC"}
+	snap := &domain.TeamAnalysisSnapshot{SnapshotID: "tas_cost", AsOf: from, Status: domain.SnapshotReady}
+	dto := assembleAnalysis(team, snap, rows, nil, nil, 0, from, from.AddDate(0, 0, 1), domain.TeamAnalysisFilters{}, AnalysisQuery{})
+	if len(dto.Costs.Reported) != 0 || len(dto.Costs.EstimatedUncovered) != 1 || dto.Costs.EstimatedUncovered[0].Amount != "1.25000000" {
+		t.Fatalf("assembled cost should omit padded zero: %+v", dto.Costs)
+	}
+}
+
 func TestAssembleStaticSkillsRanksPublicNameAndMembers(t *testing.T) {
 	a, b := "tmb_a", "tmb_b"
 	agent := "codex"
