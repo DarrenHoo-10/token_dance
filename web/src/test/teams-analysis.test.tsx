@@ -70,7 +70,7 @@ describe('Team cost card', () => {
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     const result = readyAnalysis('1', '1000');
     result.costs.reported = [{ currency: 'USD', amount: '0.00000000' }];
-    result.costs.estimatedUncovered = [{ currency: 'USD', amount: '1.25000000' }];
+    result.costs.estimatedUncovered = [{ currency: 'USD', amount: '1.25900000' }];
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
     const label = await screen.findByText('预估费用');

@@ -73,10 +73,10 @@ export function formatDecimalAmount(amount: string, currency: string): string {
   const negative = amount.startsWith('-');
   const raw = negative ? amount.slice(1) : amount;
   const [whole = '0', fraction = ''] = raw.split('.');
-  const trimmedFraction = fraction.replace(/0+$/, '');
-  const grouped = groupInteger(whole.replace(/^0+(?=\d)/, ''));
-  const body = trimmedFraction ? `${grouped}.${trimmedFraction}` : grouped;
-  const signed = `${negative ? '-' : ''}${body}`;
+  const normalizedWhole = (whole || '0').replace(/^0+(?=\d)/, '');
+  const cents = fraction.slice(0, 2).padEnd(2, '0');
+  const body = `${groupInteger(normalizedWhole)}.${cents}`;
+  const signed = `${negative && (normalizedWhole !== '0' || cents !== '00') ? '-' : ''}${body}`;
   return currency === 'USD' ? `$${signed}` : `${signed} ${currency}`;
 }
 
