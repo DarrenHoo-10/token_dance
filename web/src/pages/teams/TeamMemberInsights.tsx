@@ -19,17 +19,36 @@ function defaultSelectedIds(members: ContributionItem[]): string[] {
   return [TEAM_SERIES_ID, ...members.slice(0, 3).map((member) => member.membershipId)];
 }
 
+function datePosition(dates: string[], index: number): number {
+  if (dates.length === 1) return 0.5;
+  const start = Date.parse(`${dates[0]}T00:00:00Z`);
+  const end = Date.parse(`${dates[dates.length - 1]}T00:00:00Z`);
+  const current = Date.parse(`${dates[index]}T00:00:00Z`);
+  return Number.isFinite(current) && end > start ? (current - start) / (end - start) : index / (dates.length - 1);
+}
+
 function pointsFor(trend: AnalysisTrendPoint[] | undefined, dates: string[], max: bigint, width = 720, height = 190) {
   const values = new Map((trend || []).map(point => [point.date, integer(point.tokens.value)]));
   const padding = Math.min(12, height * 0.16);
   return dates.map((date, index) => {
     const value = values.get(date) || 0n;
-    return { date, value, x: dates.length === 1 ? width / 2 : 12 + index * (width - 24) / (dates.length - 1), y: height - padding - Number(value * 10000n / (max || 1n)) / 10000 * (height - padding * 2) };
+    return { date, value, x: 12 + datePosition(dates, index) * (width - 24), y: height - padding - Number(value * 10000n / (max || 1n)) / 10000 * (height - padding * 2) };
   });
 }
 
 function availableTrend(trend: AnalysisTrendPoint[] | undefined): AnalysisTrendPoint[] {
   return (trend || []).filter((point) => point.tokens?.state === 'available' && point.tokens.value != null);
+}
+
+function dateTicks(dates: string[]): { date: string; position: number }[] {
+  if (dates.length === 0) return [];
+  const step = Math.max(1, Math.ceil((dates.length - 1) / 6));
+  const indices = new Set<number>([0, dates.length - 1]);
+  for (let index = step; index < dates.length - 1; index += step) indices.add(index);
+  return [...indices].sort((a, b) => a - b).map((index) => ({
+    date: dates[index],
+    position: 100 * datePosition(dates, index),
+  }));
 }
 
 type ChartSeries = {
@@ -46,7 +65,8 @@ const MultiTrendChart: React.FC<{
   noneSelected: string;
   ariaLabel: string;
   skipEmpty?: boolean;
-}> = ({ dates, series, empty, noneSelected, ariaLabel, skipEmpty = false }) => {
+  missingHint?: string;
+}> = ({ dates, series, empty, noneSelected, ariaLabel, skipEmpty = false, missingHint }) => {
   if (series.length === 0) {
     return <p className="team-chart-empty">{noneSelected}</p>;
   }
@@ -70,12 +90,27 @@ const MultiTrendChart: React.FC<{
         {drawnSeries.map((item) => {
           const usable = usableById.get(item.id) || [];
           const chartPoints = pointsFor(skipEmpty ? usable : item.trend, axisDates, max);
-          const drawn = skipEmpty
-            ? chartPoints.filter((point) => usable.some((entry) => entry.date === point.date))
-            : chartPoints;
+          const availableDates = new Set(usable.map((point) => point.date));
+          const drawn = skipEmpty ? chartPoints.filter((point) => availableDates.has(point.date)) : chartPoints;
+          const segments: typeof chartPoints[] = [];
+          if (skipEmpty) {
+            let current: typeof chartPoints = [];
+            chartPoints.forEach((point) => {
+              if (availableDates.has(point.date)) {
+                if (current.length && Date.parse(`${point.date}T00:00:00Z`) - Date.parse(`${current[current.length - 1].date}T00:00:00Z`) > 86_400_000) {
+                  segments.push(current);
+                  current = [];
+                }
+                current.push(point);
+              } else if (current.length) { segments.push(current); current = []; }
+            });
+            if (current.length) segments.push(current);
+          } else segments.push(chartPoints);
           return (
             <g key={item.id}>
-              <polyline points={drawn.map((point) => `${point.x},${point.y}`).join(' ')} fill="none" stroke={item.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
+              {segments.filter((segment) => segment.length > 1).map((segment) => (
+                <polyline key={segment[0].date} points={segment.map((point) => `${point.x},${point.y}`).join(' ')} fill="none" stroke={item.color} strokeWidth="2.5" vectorEffect="non-scaling-stroke" />
+              ))}
               {drawn.map((point) => (
                 <circle key={`${item.id}:${point.date}`} cx={point.x} cy={point.y} r="3.5" fill={item.color}>
                   <title>{`${item.label} · ${point.date} · ${formatTokenExact(point.value.toString())}`}</title>
@@ -86,7 +121,12 @@ const MultiTrendChart: React.FC<{
         })}
       </svg>
       <div className="team-line-scale"><span>0</span></div>
-      <div className="team-line-dates"><span>{axisDates[0]}</span><span>{axisDates.length > 1 ? axisDates[axisDates.length - 1] : ''}</span></div>
+      <div className="team-trend-dates" aria-label={ariaLabel}>
+        {dateTicks(axisDates).map(({ date, position }) => (
+          <span key={date} style={{ left: `${position}%` }} title={date}>{date.slice(5).replace('-', '/')}</span>
+        ))}
+      </div>
+      {skipEmpty && missingHint && <p className="team-trend-hint">{missingHint}</p>}
       <div className="team-series-legend">
         {drawnSeries.map((item) => (
           <span key={item.id}><i className="team-dot" style={{ background: item.color }} aria-hidden="true" />{item.label}</span>
@@ -99,12 +139,13 @@ const MultiTrendChart: React.FC<{
 const SeriesPicker: React.FC<{
   label: string;
   teamLabel: string;
+  triggerLabel: string;
   listSep: string;
   members: ContributionItem[];
   selected: string[];
   colorFor: (id: string) => string;
   onChange: (next: string[]) => void;
-}> = ({ label, teamLabel, listSep, members, selected, colorFor, onChange }) => {
+}> = ({ label, teamLabel, triggerLabel, listSep, members, selected, colorFor, onChange }) => {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
@@ -114,7 +155,7 @@ const SeriesPicker: React.FC<{
     members.forEach((member) => {
       if (selectedSet.has(member.membershipId)) names.push(member.displayName);
     });
-    return names.join(listSep) || teamLabel;
+    return names.join(listSep);
   }, [listSep, members, selectedSet, teamLabel]);
 
   useEffect(() => {
@@ -151,9 +192,11 @@ const SeriesPicker: React.FC<{
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={label}
+        title={summary || undefined}
         onClick={() => setOpen((value) => !value)}
       >
-        <span className="team-series-trigger-label">{summary}</span>
+        <span className="team-series-trigger-label">{triggerLabel}</span>
+        <span className="team-series-count" aria-hidden="true">{selected.length}</span>
         <span className="team-series-caret" aria-hidden="true" />
       </button>
       {open && (
@@ -255,6 +298,7 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
           <SeriesPicker
             label={t('teams.insights.chooseUsageSeries')}
             teamLabel={t('teams.insights.teamSeries')}
+            triggerLabel={t('teams.insights.compareSeries')}
             listSep={t('teams.insights.listSep')}
             members={members}
             selected={usageSelected}
@@ -295,6 +339,7 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
           <SeriesPicker
             label={t('teams.insights.chooseEfficiencySeries')}
             teamLabel={t('teams.insights.teamSeries')}
+            triggerLabel={t('teams.insights.compareSeries')}
             listSep={t('teams.insights.listSep')}
             members={members}
             selected={efficiencySelected}
@@ -309,6 +354,7 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
           noneSelected={t('teams.insights.selectSeries')}
           ariaLabel={t('teams.insights.efficiencyTrend')}
           skipEmpty
+          missingHint={t('teams.insights.efficiencyMissingHint')}
         />
       </Card>
       <Card>
