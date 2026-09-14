@@ -21,10 +21,16 @@ function defaultSelectedIds(members: ContributionItem[]): string[] {
 
 function datePosition(dates: string[], index: number): number {
   if (dates.length === 1) return 0.5;
-  const start = Date.parse(`${dates[0]}T00:00:00Z`);
-  const end = Date.parse(`${dates[dates.length - 1]}T00:00:00Z`);
-  const current = Date.parse(`${dates[index]}T00:00:00Z`);
+  const instant = (value: string) => Date.parse(value.length === 10 ? `${value}T00:00:00Z` : value);
+  const start = instant(dates[0]);
+  const end = instant(dates[dates.length - 1]);
+  const current = instant(dates[index]);
   return Number.isFinite(current) && end > start ? (current - start) / (end - start) : index / (dates.length - 1);
+}
+
+function axisLabel(value: string, hourly: boolean, timezone: string): string {
+  if (!hourly) return value.slice(5).replace('-', '/');
+  return new Intl.DateTimeFormat('en-GB', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(value));
 }
 
 function pointsFor(trend: AnalysisTrendPoint[] | undefined, dates: string[], max: bigint, width = 720, height = 190) {
@@ -66,15 +72,28 @@ const MultiTrendChart: React.FC<{
   ariaLabel: string;
   skipEmpty?: boolean;
   missingHint?: string;
-}> = ({ dates, series, empty, noneSelected, ariaLabel, skipEmpty = false, missingHint }) => {
+  hourly?: boolean;
+  timezone?: string;
+}> = ({ dates, series, empty, noneSelected, ariaLabel, skipEmpty = false, missingHint, hourly = false, timezone = 'UTC' }) => {
   if (series.length === 0) {
     return <p className="team-chart-empty">{noneSelected}</p>;
   }
   const axisDates = dates.length ? dates : [...new Set(series.flatMap((item) => (item.trend || []).map((point) => point.date)))].sort();
   const usableById = new Map(series.map((item) => [item.id, skipEmpty ? availableTrend(item.trend) : (item.trend || [])]));
   const drawnSeries = series.filter((item) => (usableById.get(item.id) || []).length > 0);
-  if (axisDates.length === 0 || drawnSeries.length === 0) {
+  if (axisDates.length === 0) {
     return <p className="team-chart-empty">{empty}</p>;
+  }
+  if (drawnSeries.length === 0) {
+    return <>
+      <p className="team-chart-empty">{empty}</p>
+      <div className="team-trend-dates" aria-label={ariaLabel}>
+        {dateTicks(axisDates).map(({ date, position }) => (
+          <span key={date} style={{ left: `${position}%` }} title={date}>{axisLabel(date, hourly, timezone)}</span>
+        ))}
+      </div>
+      {skipEmpty && missingHint && <p className="team-trend-hint">{missingHint}</p>}
+    </>;
   }
   const max = drawnSeries.reduce((value, item) => {
     return (usableById.get(item.id) || []).reduce((current, point) => {
@@ -97,7 +116,8 @@ const MultiTrendChart: React.FC<{
             let current: typeof chartPoints = [];
             chartPoints.forEach((point) => {
               if (availableDates.has(point.date)) {
-                if (current.length && Date.parse(`${point.date}T00:00:00Z`) - Date.parse(`${current[current.length - 1].date}T00:00:00Z`) > 86_400_000) {
+                const instant = (value: string) => Date.parse(hourly ? value : `${value}T00:00:00Z`);
+                if (current.length && instant(point.date) - instant(current[current.length - 1].date) > (hourly ? 3_600_000 : 86_400_000)) {
                   segments.push(current);
                   current = [];
                 }
@@ -113,7 +133,7 @@ const MultiTrendChart: React.FC<{
               ))}
               {drawn.map((point) => (
                 <circle key={`${item.id}:${point.date}`} cx={point.x} cy={point.y} r="3.5" fill={item.color}>
-                  <title>{`${item.label} · ${point.date} · ${formatTokenExact(point.value.toString())}`}</title>
+                  <title>{`${item.label} · ${axisLabel(point.date, hourly, timezone)} · ${formatTokenExact(point.value.toString())}`}</title>
                 </circle>
               ))}
             </g>
@@ -123,7 +143,7 @@ const MultiTrendChart: React.FC<{
       <div className="team-line-scale"><span>0</span></div>
       <div className="team-trend-dates" aria-label={ariaLabel}>
         {dateTicks(axisDates).map(({ date, position }) => (
-          <span key={date} style={{ left: `${position}%` }} title={date}>{date.slice(5).replace('-', '/')}</span>
+          <span key={date} style={{ left: `${position}%` }} title={date}>{axisLabel(date, hourly, timezone)}</span>
         ))}
       </div>
       {skipEmpty && missingHint && <p className="team-trend-hint">{missingHint}</p>}
@@ -226,6 +246,8 @@ const SeriesPicker: React.FC<{
 
 export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ analysis }) => {
   const { t } = useLocale();
+  const hourly = analysis.trendGrain === 'hour';
+  const timezone = analysis.range.timezone;
   const members = analysis.contributions.items;
   const knownIds = useMemo(() => new Set([TEAM_SERIES_ID, ...members.map((member) => member.membershipId)]), [members]);
   const [usageIds, setUsageIds] = useState(() => defaultSelectedIds(members));
@@ -312,7 +334,10 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
           empty={t('teams.overview.emptyRange')}
           noneSelected={t('teams.insights.selectSeries')}
           ariaLabel={t('teams.insights.memberTrend')}
+          hourly={hourly}
+          timezone={timezone}
         />
+        {hourly && analysis.hourlyTrendPartial && <p className="team-trend-hint">{t('teams.insights.hourlyPartialHint')}</p>}
       </Card>
       <Card>
         <div className="panel-header"><div><h2>{t('teams.insights.memberShare')}</h2></div><span className="team-chart-unit">Token</span></div>
@@ -355,6 +380,8 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
           ariaLabel={t('teams.insights.efficiencyTrend')}
           skipEmpty
           missingHint={t('teams.insights.efficiencyMissingHint')}
+          hourly={hourly}
+          timezone={timezone}
         />
       </Card>
       <Card>
@@ -392,7 +419,7 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
           const memberMax = (member.trend || []).reduce((value, point) => integer(point.tokens.value) > value ? integer(point.tokens.value) : value, 1n);
           const points = pointsFor(member.trend, rankingDates, memberMax, 100, 30);
           const efficiency = member.tokensPerCodeLine ? formatTokenCompact(member.tokensPerCodeLine) : '—';
-          return <tr key={member.membershipId}><td><div className="team-person-cell"><span className="team-person-rank">{member.rank}</span><span className="team-person-avatar" aria-hidden="true">{firstGrapheme(member.displayName)}</span><span><strong>{member.displayName}</strong><small>{member.handle ? `@${member.handle}` : ''}</small></span></div></td><td><span className="share-cell"><span className="mono-num">{member.tokens.state === 'available' ? formatTokenCompact(member.tokens.value || '0') : '—'}</span> <span className="text-muted"> · {integer(total) > 0n ? `${memberPercent(member.tokens.value || '0', total).toFixed(1)}%` : '—'}</span><span className="team-person-share"><div><i style={{ width: `${memberPercent(member.tokens.value || '0', total)}%`, background: colorFor(member.membershipId) }} /></div></span></span></td><td className="mono-num">{efficiency}</td><td>{member.trend ? member.trend.filter(point => integer(point.tokens.value) > 0n).length : '—'}</td><td>{member.trend && points.length ? <svg width="100" height="30" viewBox="0 0 100 30" aria-label={`${member.displayName} ${t('teams.insights.periodTrend')}`} role="img"><polyline points={points.map(point => `${point.x},${point.y}`).join(' ')} stroke={colorFor(member.membershipId)} strokeWidth="2" fill="none" />{points.length === 1 && <circle cx={points[0].x} cy={points[0].y} r="3" fill={colorFor(member.membershipId)} />}</svg> : '—'}</td></tr>;
+          return <tr key={member.membershipId}><td><div className="team-person-cell"><span className="team-person-rank">{member.rank}</span><span className="team-person-avatar" aria-hidden="true">{firstGrapheme(member.displayName)}</span><span><strong>{member.displayName}</strong><small>{member.handle ? `@${member.handle}` : ''}</small></span></div></td><td><span className="share-cell"><span className="mono-num">{member.tokens.state === 'available' ? formatTokenCompact(member.tokens.value || '0') : '—'}</span> <span className="text-muted"> · {integer(total) > 0n ? `${memberPercent(member.tokens.value || '0', total).toFixed(1)}%` : '—'}</span><span className="team-person-share"><div><i style={{ width: `${memberPercent(member.tokens.value || '0', total)}%`, background: colorFor(member.membershipId) }} /></div></span></span></td><td className="mono-num">{efficiency}</td><td>{member.activeDays ?? (member.trend ? member.trend.filter(point => integer(point.tokens.value) > 0n).length : '—')}</td><td>{member.trend && points.length ? <svg width="100" height="30" viewBox="0 0 100 30" aria-label={`${member.displayName} ${t('teams.insights.periodTrend')}`} role="img"><polyline points={points.map(point => `${point.x},${point.y}`).join(' ')} stroke={colorFor(member.membershipId)} strokeWidth="2" fill="none" />{points.length === 1 && <circle cx={points[0].x} cy={points[0].y} r="3" fill={colorFor(member.membershipId)} />}</svg> : '—'}</td></tr>;
         })}</tbody></table></div>
         <TeamRankPager
           page={detailPage}

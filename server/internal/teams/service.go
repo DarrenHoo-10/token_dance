@@ -377,24 +377,26 @@ type FilterOptionsDTO struct {
 }
 
 type AnalysisDTO struct {
-	State           string                      `json:"state"`
-	SchemaVersion   int                         `json:"schemaVersion,omitempty"`
-	Snapshot        *snapshotDTO                `json:"snapshot,omitempty"`
-	Range           *domain.TeamAnalysisRange   `json:"range,omitempty"`
-	Filters         domain.TeamAnalysisFilters  `json:"filters,omitempty"`
-	Summary         *domain.TeamAnalysisSummary `json:"summary,omitempty"`
-	Costs           *domain.TeamAnalysisCosts   `json:"costs,omitempty"`
-	Trend           []domain.TeamTrendPoint     `json:"trend"`
-	EfficiencyTrend []domain.TeamTrendPoint     `json:"efficiencyTrend,omitempty"`
-	Agents          *domain.TeamPagedItems      `json:"agents,omitempty"`
-	Models          *domain.TeamPagedItems      `json:"models,omitempty"`
-	Contributions   *domain.TeamPagedItems      `json:"contributions,omitempty"`
-	Skills          *domain.TeamPagedItems      `json:"skills,omitempty"`
-	Quality         *domain.TeamAnalysisQuality `json:"quality,omitempty"`
-	FiltersHash     string                      `json:"filtersHash,omitempty"`
-	AuthRevision    *string                     `json:"authRevision,omitempty"`
-	RetryAfterMs    *int                        `json:"retryAfterMs,omitempty"`
-	MessageKey      *string                     `json:"messageKey,omitempty"`
+	State              string                      `json:"state"`
+	SchemaVersion      int                         `json:"schemaVersion,omitempty"`
+	Snapshot           *snapshotDTO                `json:"snapshot,omitempty"`
+	Range              *domain.TeamAnalysisRange   `json:"range,omitempty"`
+	Filters            domain.TeamAnalysisFilters  `json:"filters,omitempty"`
+	Summary            *domain.TeamAnalysisSummary `json:"summary,omitempty"`
+	Costs              *domain.TeamAnalysisCosts   `json:"costs,omitempty"`
+	Trend              []domain.TeamTrendPoint     `json:"trend"`
+	EfficiencyTrend    []domain.TeamTrendPoint     `json:"efficiencyTrend,omitempty"`
+	TrendGrain         string                      `json:"trendGrain,omitempty"`
+	HourlyTrendPartial bool                        `json:"hourlyTrendPartial,omitempty"`
+	Agents             *domain.TeamPagedItems      `json:"agents,omitempty"`
+	Models             *domain.TeamPagedItems      `json:"models,omitempty"`
+	Contributions      *domain.TeamPagedItems      `json:"contributions,omitempty"`
+	Skills             *domain.TeamPagedItems      `json:"skills,omitempty"`
+	Quality            *domain.TeamAnalysisQuality `json:"quality,omitempty"`
+	FiltersHash        string                      `json:"filtersHash,omitempty"`
+	AuthRevision       *string                     `json:"authRevision,omitempty"`
+	RetryAfterMs       *int                        `json:"retryAfterMs,omitempty"`
+	MessageKey         *string                     `json:"messageKey,omitempty"`
 }
 
 type snapshotDTO struct {
@@ -2051,6 +2053,125 @@ func dailyEfficiencyPoints(from, end time.Time, tokens, code map[string]string) 
 	return out
 }
 
+// Today's charts use the already projected hour buckets. Missing buckets are
+// not inferred from day totals: legacy rows have no trustworthy hour.
+func hourlyAnalysisTrends(rows []domain.TeamAnalysisRow, from, toEx, asOf time.Time) ([]domain.TeamTrendPoint, []domain.TeamTrendPoint, map[string][]domain.TeamTrendPoint, map[string][]domain.TeamTrendPoint, bool) {
+	usage := map[string]string{}
+	code := map[string]string{}
+	memberUsage := map[string]map[string]string{}
+	memberCode := map[string]map[string]string{}
+	partial := false
+	for _, row := range rows {
+		var hour struct {
+			Buckets []struct {
+				StartMs   string `json:"startMs"`
+				Exact     string `json:"exact"`
+				Derived   string `json:"derived"`
+				CodeLines string `json:"codeLines"`
+			} `json:"buckets"`
+		}
+		if json.Unmarshal(row.HourlyJSON, &hour) != nil {
+			if row.TokenExactTotal != "0" || row.TokenDerivedTotal != "0" || generatedCodeLineSum(row.ActivityJSON) != "0" {
+				partial = true
+			}
+			continue
+		}
+		rowTokens, rowCode := "0", "0"
+		for _, bucket := range hour.Buckets {
+			ms, err := strconv.ParseInt(bucket.StartMs, 10, 64)
+			if err != nil {
+				continue
+			}
+			instant := time.UnixMilli(ms).UTC()
+			if instant.Before(from) || !instant.Before(toEx) {
+				continue
+			}
+			key := instant.Format(time.RFC3339)
+			if row.MetricKind == teammetrics.KindActivity || (row.MetricKind == "" && bucket.CodeLines != "") {
+				if bucket.CodeLines == "" {
+					continue
+				}
+				code[key] = AddIntDecimal(code[key], bucket.CodeLines)
+				rowCode = AddIntDecimal(rowCode, bucket.CodeLines)
+				if row.MembershipID != nil {
+					id := *row.MembershipID
+					if memberCode[id] == nil {
+						memberCode[id] = map[string]string{}
+					}
+					memberCode[id][key] = AddIntDecimal(memberCode[id][key], bucket.CodeLines)
+				}
+			} else {
+				tokens := AddIntDecimal(emptyZero(bucket.Exact), emptyZero(bucket.Derived))
+				rowTokens = AddIntDecimal(rowTokens, tokens)
+				usage[key] = AddIntDecimal(usage[key], tokens)
+				if row.MembershipID != nil {
+					id := *row.MembershipID
+					if memberUsage[id] == nil {
+						memberUsage[id] = map[string]string{}
+					}
+					memberUsage[id][key] = AddIntDecimal(memberUsage[id][key], tokens)
+				}
+			}
+		}
+		if total, ok := new(big.Int).SetString(AddIntDecimal(emptyZero(row.TokenExactTotal), emptyZero(row.TokenDerivedTotal)), 10); ok {
+			if bucketed, valid := new(big.Int).SetString(rowTokens, 10); valid && total.Cmp(bucketed) > 0 {
+				partial = true
+			}
+		}
+		if total, ok := new(big.Int).SetString(generatedCodeLineSum(row.ActivityJSON), 10); ok {
+			if bucketed, valid := new(big.Int).SetString(rowCode, 10); valid && total.Cmp(bucketed) > 0 {
+				partial = true
+			}
+		}
+	}
+	end := toEx
+	if !asOf.IsZero() && asOf.Before(end) {
+		end = asOf.Truncate(time.Hour).Add(time.Hour)
+	}
+	if !end.After(from) {
+		end = from.Add(time.Hour)
+	}
+	if end.After(toEx) {
+		end = toEx
+	}
+	keys := make([]string, 0, 25)
+	for hour := from; hour.Before(end) && len(keys) < 25; hour = hour.Add(time.Hour) {
+		keys = append(keys, hour.UTC().Format(time.RFC3339))
+	}
+	points := func(values, denominators map[string]string) ([]domain.TeamTrendPoint, []domain.TeamTrendPoint) {
+		u := make([]domain.TeamTrendPoint, 0, len(keys))
+		e := make([]domain.TeamTrendPoint, 0, len(keys))
+		for _, key := range keys {
+			value := emptyZero(values[key])
+			state := domain.MetricEmpty
+			if value != "0" {
+				state = domain.MetricAvailable
+			}
+			u = append(u, domain.TeamTrendPoint{Date: key, Tokens: domain.DecimalMetric{Value: value, State: state}})
+			metric := domain.DecimalMetric{State: domain.MetricEmpty}
+			if den, ok := new(big.Int).SetString(emptyZero(denominators[key]), 10); ok && den.Sign() > 0 {
+				if num, ok := new(big.Int).SetString(value, 10); ok {
+					metric = domain.DecimalMetric{Value: new(big.Int).Quo(num, den).String(), State: domain.MetricAvailable}
+				}
+			}
+			e = append(e, domain.TeamTrendPoint{Date: key, Tokens: metric})
+		}
+		return u, e
+	}
+	teamU, teamE := points(usage, code)
+	byMemberU := map[string][]domain.TeamTrendPoint{}
+	byMemberE := map[string][]domain.TeamTrendPoint{}
+	for id, values := range memberUsage {
+		byMemberU[id], byMemberE[id] = points(values, memberCode[id])
+	}
+	for id, denominators := range memberCode {
+		if _, ok := byMemberU[id]; !ok {
+			byMemberU[id], byMemberE[id] = points(nil, denominators)
+		}
+	}
+	return teamU, teamE, byMemberU, byMemberE, partial
+}
+
 func parseLocalDate(value string, loc *time.Location) (time.Time, error) {
 	return time.ParseInLocation(dateLayout, strings.TrimSpace(value), loc)
 }
@@ -2193,6 +2314,13 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 			points = append(points, domain.TeamTrendPoint{Date: day, Tokens: domain.DecimalMetric{Value: value, State: state}})
 		}
 		item["trend"] = points
+		activeDays := 0
+		for _, value := range memberDays[id] {
+			if value != "0" {
+				activeDays++
+			}
+		}
+		item["activeDays"] = strconv.Itoa(activeDays)
 		item["efficiencyTrend"] = dailyEfficiencyPoints(from.In(loc), end, memberDays[id], memberCodeDays[id])
 		item["share"] = tokenShare(contribTok[id], tokenTotal)
 		lines := emptyZero(memberCode[id])
@@ -2201,6 +2329,18 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 			if num, ok := new(big.Int).SetString(emptyZero(contribTok[id]), 10); ok {
 				item["tokensPerCodeLine"] = new(big.Int).Quo(num, den).String()
 			}
+		}
+	}
+	trendGrain := "day"
+	hourlyTrendPartial := false
+	if q.RangeKey == "today" {
+		trendGrain = "hour"
+		var byMemberU, byMemberE map[string][]domain.TeamTrendPoint
+		trend, efficiencyTrend, byMemberU, byMemberE, hourlyTrendPartial = hourlyAnalysisTrends(filtered, from, toEx, snap.AsOf)
+		for _, item := range contribs.Items {
+			id, _ := item["membershipId"].(string)
+			item["trend"] = byMemberU[id]
+			item["efficiencyTrend"] = byMemberE[id]
 		}
 	}
 	costList := make([]domain.TeamCostAmount, 0, len(reported))
@@ -2236,7 +2376,7 @@ func assembleAnalysis(team *domain.Team, snap *domain.TeamAnalysisSnapshot, rows
 			Coverage:              domain.TeamCostCoverage{ReportedUsageEvents: formatUint(reportedUsage), EligibleUsageEvents: formatUint(eligibleUsage)},
 			UnattributedCostCount: unattributed,
 		},
-		Trend: trend, EfficiencyTrend: efficiencyTrend,
+		Trend: trend, EfficiencyTrend: efficiencyTrend, TrendGrain: trendGrain, HourlyTrendPartial: hourlyTrendPartial,
 		Agents: agents, Models: models, Contributions: contribs,
 		Quality:     &domain.TeamAnalysisQuality{UnsupportedEvents: formatUint(unsupported), EstimatedEvents: formatUint(estimated), HasLegacyAggregates: hasLegacy},
 		FiltersHash: analysisFiltersHash(filters),
