@@ -242,8 +242,7 @@
   align-items:center;
   gap:8px;
   height:36px;
-  min-width:148px;
-  max-width:240px;
+  min-width:142px;
   padding:0 12px;
   border:1px solid #e4e9e1;
   border-radius:8px;
@@ -253,12 +252,27 @@
   text-align:left;
   cursor:pointer;
 }
+.team-series-trigger:hover { border-color:#b9caaa; background:#fbfdf8; }
+.team-series-trigger:focus-visible { outline:2px solid #93c33a; outline-offset:2px; }
 .team-series-trigger-label {
   flex:1;
   min-width:0;
   overflow:hidden;
   text-overflow:ellipsis;
   white-space:nowrap;
+}
+.team-series-count {
+  display:grid;
+  place-items:center;
+  min-width:20px;
+  height:20px;
+  padding:0 5px;
+  border-radius:6px;
+  background:#edf3e5;
+  color:#4b6b24;
+  font-size:11px;
+  font-weight:700;
+  line-height:1;
 }
 .team-series-caret {
   width:0;
@@ -344,6 +358,11 @@
 .team-multiline-chart { display:block; width:100%; height:210px; }
 .team-line-scale { display:flex; justify-content:space-between; color:#76806e; font-size:10px; }
 .team-line-dates { display:flex; justify-content:space-between; gap:10px; font-size:10px; color:#76806e; margin:10px 0; }
+.team-trend-dates { position:relative; height:25px; margin:9px 0 2px; color:#76806e; font-size:10px; font-variant-numeric:tabular-nums; }
+.team-trend-dates span { position:absolute; top:0; transform:translateX(-50%); white-space:nowrap; }
+.team-trend-dates span:first-child { transform:none; }
+.team-trend-dates span:last-child { transform:translateX(-100%); }
+.team-trend-hint { margin:0 0 7px; color:#76806e; font-size:11px; }
 .team-table-scroll { max-width:100%; overflow-x:auto; }
 .team-table-scroll table { width:100%; border-collapse:collapse; font-size:12px; }
 .team-table-scroll th { text-align:left; color:#73806b; font-weight:500; padding:12px 10px; white-space:nowrap; }
