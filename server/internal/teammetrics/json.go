@@ -40,9 +40,10 @@ type activityV1 struct {
 }
 
 type hourlyBucket struct {
-	StartMs string `json:"startMs"`
-	Exact   string `json:"exact"`
-	Derived string `json:"derived"`
+	StartMs   string `json:"startMs"`
+	Exact     string `json:"exact"`
+	Derived   string `json:"derived"`
+	CodeLines string `json:"codeLines,omitempty"`
 }
 
 type hourlyV1 struct {
@@ -391,6 +392,11 @@ func ValidateHourlyJSON(raw json.RawMessage) error {
 		}
 		if _, err := parseRequiredNonNeg(b.Derived, fmt.Sprintf("hourly.buckets[%d].derived", i)); err != nil {
 			return err
+		}
+		if b.CodeLines != "" {
+			if _, err := parseRequiredNonNeg(b.CodeLines, fmt.Sprintf("hourly.buckets[%d].codeLines", i)); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

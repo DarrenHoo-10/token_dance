@@ -561,7 +561,46 @@ describe('Team member insights', () => {
     expect([...document.querySelectorAll('.team-efficiency-trend .team-trend-dates span')].map((tick) => tick.textContent)).toEqual(['09/05', '09/06', '09/07']);
     expect(document.querySelectorAll('.team-efficiency-trend .team-multiline-chart polyline')).toHaveLength(0);
     expect(document.querySelectorAll('.team-efficiency-trend .team-multiline-chart circle')).toHaveLength(2);
-    expect(screen.getByText('仅在有生成代码行的日期显示效率，空白日期不连线。')).toBeInTheDocument();
+    expect(screen.getByText('仅在有生成代码行的时间段显示效率，空白时间段不连线。')).toBeInTheDocument();
+  });
+
+  it('labels both today trends by team-local hour and keeps active days as days', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    const result = readyAnalysis('1', '1000');
+    result.trendGrain = 'hour';
+    result.trend = [
+      { date: '2026-09-06T16:00:00Z', tokens: { value: '100', state: 'available' } },
+      { date: '2026-09-06T17:00:00Z', tokens: { value: '200', state: 'available' } },
+    ];
+    result.efficiencyTrend = [
+      { date: '2026-09-06T16:00:00Z', tokens: { value: '50', state: 'available' } },
+      { date: '2026-09-06T17:00:00Z', tokens: { value: '60', state: 'available' } },
+    ];
+    result.contributions.items = [{
+      membershipId: 'tmb_1', displayName: 'Ada', handle: null, rank: '1',
+      tokens: { value: '300', state: 'available' }, activeDays: '1',
+      trend: result.trend, efficiencyTrend: result.efficiencyTrend,
+    }];
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
+    renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=today');
+    expect(await screen.findByRole('heading', { name: '团队效率趋势' })).toBeInTheDocument();
+    expect([...document.querySelectorAll('.team-member-trend .team-trend-dates span')].map((tick) => tick.textContent)).toEqual(['00:00', '01:00']);
+    expect([...document.querySelectorAll('.team-efficiency-trend .team-trend-dates span')].map((tick) => tick.textContent)).toEqual(['00:00', '01:00']);
+    expect(screen.getByRole('row', { name: /Ada/ })).toHaveTextContent('1');
+  });
+
+  it('keeps the hourly axis visible when no hourly efficiency denominator is available', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    const result = readyAnalysis('1', '100');
+    result.trendGrain = 'hour';
+    result.trend = [{ date: '2026-09-06T16:00:00Z', tokens: { value: '100', state: 'available' } }];
+    result.efficiencyTrend = [{ date: '2026-09-06T16:00:00Z', tokens: { value: null, state: 'empty' } }];
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
+    renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=today');
+    expect(await screen.findByRole('heading', { name: '团队效率趋势' })).toBeInTheDocument();
+    expect(document.querySelector('.team-efficiency-trend .team-trend-dates')).toHaveTextContent('00:00');
   });
 });
 

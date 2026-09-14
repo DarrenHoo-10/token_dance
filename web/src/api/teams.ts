@@ -249,6 +249,7 @@ export interface ContributionItem {
   namedShare?: boolean;
   share?: string | null;
   generatedCodeLines?: string;
+  activeDays?: string;
   tokensPerCodeLine?: string;
   trend?: AnalysisTrendPoint[];
   efficiencyTrend?: AnalysisTrendPoint[];
@@ -292,6 +293,8 @@ export interface TeamAnalysisReady {
   summary: AnalysisSummary;
   costs: AnalysisCosts;
   trend: AnalysisTrendPoint[];
+  trendGrain?: 'hour' | 'day';
+  hourlyTrendPartial?: boolean;
   efficiencyTrend?: AnalysisTrendPoint[];
   agents: CursorPage<AnalysisBucketItem>;
   models: CursorPage<AnalysisBucketItem>;
