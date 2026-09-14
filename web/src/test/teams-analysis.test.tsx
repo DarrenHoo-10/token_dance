@@ -64,6 +64,21 @@ const readyAnalysis = (authRevision: string, tokenValue: string): TeamAnalysisRe
   quality: { unsupportedEvents: '0', estimatedEvents: '0' },
 });
 
+describe('Team cost card', () => {
+  it('shows estimates rather than a zero reported amount', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    const result = readyAnalysis('1', '1000');
+    result.costs.reported = [{ currency: 'USD', amount: '0.00000000' }];
+    result.costs.estimatedUncovered = [{ currency: 'USD', amount: '1.25000000' }];
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
+    renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
+    const label = await screen.findByText('预估费用');
+    expect(label.closest('.team-kpi')).toHaveTextContent('$1.25');
+    expect(label.closest('.team-kpi')).not.toHaveTextContent('$0');
+  });
+});
+
 describe('Team analysis updating state', () => {
   beforeEach(() => {
     vi.restoreAllMocks();

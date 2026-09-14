@@ -27,14 +27,11 @@ export const TeamOverviewBoard: React.FC<{
 }> = ({ analysis, teamId, authRevision }) => {
   const { t } = useLocale();
   const tokens = metricDisplay(analysis.summary.tokens);
-  const reported = analysis.costs.reported || [];
   const estimated = analysis.costs.estimatedUncovered || [];
   const estimatedMetric = metricDisplay(metricOf(analysis, 'estimatedCosts'), (value) => formatDecimalAmount(value, 'USD'));
-  const costValue = reported.length
-    ? reported.map((item) => formatDecimalAmount(item.amount, item.currency)).join(' / ')
-    : estimated.length
-      ? estimated.map((item) => formatDecimalAmount(item.amount, item.currency)).join(' / ')
-      : dash(estimatedMetric.available ? estimatedMetric.text : null);
+  const costValue = estimated.length
+    ? estimated.map((item) => formatDecimalAmount(item.amount, item.currency)).join(' / ')
+    : dash(estimatedMetric.available ? estimatedMetric.text : null);
   const namedTokens = analysis.summary.currentMemberTokens || analysis.summary.tokens.value || '0';
   const activeMembers = analysis.summary.activeMembers || '0';
   const avgTokens = analysis.summary.tokens.state === 'available' && BigInt(activeMembers) > 0n
