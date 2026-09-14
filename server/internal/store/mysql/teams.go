@@ -2464,6 +2464,7 @@ func (s *teamsStore) ListStaticDayMetrics(ctx context.Context, teamID string, fr
 		}
 		date := d.MetricDate
 		row := domain.TeamAnalysisRow{
+			MetricKind:   d.MetricKind,
 			MembershipID: mem, MetricDate: &date, AgentID: d.AgentID, ProviderID: d.ProviderID, ModelID: d.ModelID,
 			Currency: d.Currency, TokenExactTotal: d.TokenExact, TokenDerivedTotal: d.TokenDerived,
 			UsageEventCount: d.UsageEventCount, ReportedCostAmount: d.ReportedCost, EstimatedCostAmount: d.EstimatedCost,
@@ -2479,6 +2480,7 @@ func (s *teamsStore) ListStaticDayMetrics(ctx context.Context, teamID string, fr
 		}
 		row.ResourcesJSON = d.Resources
 		row.ActivityJSON = d.Activity
+		row.HourlyJSON = d.Hourly
 		row.SkillUseCount = d.SkillUseCount
 		row.SkillID = d.SkillID
 		row.SkillPublicName = d.PublicName

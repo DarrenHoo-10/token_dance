@@ -242,20 +242,31 @@ func projectPersonalDays(ctx context.Context, tx *sql.Tx, contrib Contributor, d
 	}
 	defer arows.Close()
 	v2Activity := map[dayAgent]struct{}{}
+	type activityInput struct{ date, agent, code, dur, msgs, userMsgs, codeKnown, durKnown, msgKnown string }
+	var activityInputs []activityInput
 	for arows.Next() {
 		var date, agent, code, dur, msgs, userMsgs, codeKnown, durKnown, msgKnown string
 		if err := arows.Scan(&date, &agent, &code, &dur, &msgs, &userMsgs, &codeKnown, &durKnown, &msgKnown); err != nil {
 			return nil, err
 		}
+		activityInputs = append(activityInputs, activityInput{date, agent, code, dur, msgs, userMsgs, codeKnown, durKnown, msgKnown})
+	}
+	if err := arows.Err(); err != nil {
+		return nil, err
+	}
+	arows.Close()
+	for _, input := range activityInputs {
+		date, agent, code, dur, msgs, userMsgs, codeKnown, durKnown, msgKnown := input.date, input.agent, input.code, input.dur, input.msgs, input.userMsgs, input.codeKnown, input.durKnown, input.msgKnown
 		row, err := activityRow(contrib, date, agent, code, dur, msgs, userMsgs, codeKnown, durKnown, msgKnown)
+		if err != nil {
+			return nil, err
+		}
+		row.Hourly, err = loadActivityHourly(ctx, tx, contrib.UserID, date, agent)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, row)
 		v2Activity[dayAgent{date, agent}] = struct{}{}
-	}
-	if err := arows.Err(); err != nil {
-		return nil, err
 	}
 	legacyActivity, err := projectLegacyActivityRows(ctx, tx, contrib, dates, v2Activity)
 	if err != nil {
@@ -368,6 +379,44 @@ func loadHourly(ctx context.Context, tx *sql.Tx, userID, date, agent, provider, 
 			return nil, err
 		}
 		h.Buckets = append(h.Buckets, hourlyBucket{StartMs: fmt.Sprintf("%d", start), Exact: exact, Derived: derived})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(h.Buckets) == 0 {
+		h.Coverage = "none"
+	}
+	return mustJSON(h), nil
+}
+
+func loadActivityHourly(ctx context.Context, tx *sql.Tx, userID, date, agent string, minStartMs ...int64) (jsonRaw, error) {
+	startMs, err := domain.DayBucketStartMs(date)
+	if err != nil {
+		return defaultHourly(), nil
+	}
+	if len(minStartMs) > 0 && minStartMs[0] > startMs {
+		startMs = minStartMs[0]
+	}
+	endMs, _ := domain.DayBucketStartMs(date)
+	endMs += 24 * 60 * 60 * 1000
+	rows, err := tx.QueryContext(ctx, `
+		SELECT bucket_start, CAST(SUM(code_generated_lines) AS CHAR)
+		FROM telemetry_harness_metrics
+		WHERE user_id = ? AND grain = 'hour' AND delete_at IS NULL
+		  AND bucket_start >= ? AND bucket_start < ? AND harness_id = ?
+		GROUP BY bucket_start ORDER BY bucket_start`, userID, startMs, endMs, agent)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	h := hourlyV1{SchemaVersion: 1, Coverage: "complete", UnbucketedTokenTotal: "0", Buckets: []hourlyBucket{}}
+	for rows.Next() {
+		var start int64
+		var code string
+		if err := rows.Scan(&start, &code); err != nil {
+			return nil, err
+		}
+		h.Buckets = append(h.Buckets, hourlyBucket{StartMs: fmt.Sprintf("%d", start), Exact: "0", Derived: "0", CodeLines: code})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

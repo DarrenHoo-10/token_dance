@@ -340,6 +340,7 @@ type TeamAnalysisRow struct {
 	SnapshotID                 string     `json:"-"`
 	BuildGeneration            uint64     `json:"-"`
 	RowKey                     string     `json:"-"`
+	MetricKind                 string     `json:"-"`
 	MembershipID               *string    `json:"membershipId,omitempty"`
 	MetricDate                 *string    `json:"metricDate,omitempty"`
 	VisibilityMask             uint32     `json:"-"`
@@ -361,6 +362,7 @@ type TeamAnalysisRow struct {
 	MaxReceivedAt              *time.Time `json:"maxReceivedAt,omitempty"`
 	ResourcesJSON              []byte     `json:"-"`
 	ActivityJSON               []byte     `json:"-"`
+	HourlyJSON                 []byte     `json:"-"`
 	SkillUseCount              string     `json:"-"`
 	SkillID                    *int64     `json:"-"`
 	SkillPublicName            string     `json:"-"`
