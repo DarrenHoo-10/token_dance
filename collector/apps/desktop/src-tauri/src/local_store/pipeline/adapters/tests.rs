@@ -597,6 +597,27 @@ fn cursor_missing_timestamp_uses_previous_or_mtime() {
     .unwrap();
     assert!(matches!(outcome, RunOutcome::Committed(ref s) if s.emitted == 2));
 
+    let mut code_state = DecoderState {
+        version: 1,
+        json: json!({}),
+    };
+    let write = RawRecord {
+        ordinal: 0,
+        byte_start: Some(0),
+        byte_end: Some(10),
+        native_rowid: None,
+        payload: json!({"role":"assistant","timestamp":now,"message":{"content":[{"type":"tool_use","name":"Write","input":{"contents":"base-line\nCURSOR_LINE_PROBE\n"}}]}})
+            .to_string()
+            .into_bytes(),
+        file_mtime_ms: Some(now),
+    };
+    let DecodeOutcome::Emit(write_facts) = strategy.decode(&write, &mut code_state, "cursor-code").unwrap() else {
+        panic!("cursor write tool_use must emit code_changed");
+    };
+    assert!(write_facts.iter().any(|f| {
+        f.event_type == "code_changed" && f.payload_sections["code"]["generated"] == 2
+    }));
+
     // Aggregate must not become request detail.
     let mut state = DecoderState {
         version: 1,
@@ -1682,6 +1703,24 @@ fn code_counts_require_completed_edit_or_write_evidence() {
     assert_eq!(code["generated"], 2);
     assert!(code.get("removed").is_none());
     assert!(code.get("added").is_none());
+    let code = completed_code_payload(&json!({
+        "tool":"Write",
+        "state":{"status":"completed","input":{"contents":"base-line\nCURSOR_LINE_PROBE\n"}}
+    }))
+    .unwrap();
+    assert_eq!(code["generated"], 2);
+    let code = completed_code_payload(&json!({
+        "tool":"StrReplace",
+        "state":{"status":"completed","input":{"old_string":"base-line","new_string":"alpha\nbeta\n"}}
+    }))
+    .unwrap();
+    assert_eq!(code["generated"], 2);
+    assert_eq!(code["removed"], 1);
+    assert!(completed_code_payload(&json!({
+        "tool":"Write",
+        "state":{"status":"completed","input":{"contents":""}}
+    }))
+    .is_none());
     let code = patch_code_payload("*** Begin Patch\n*** Update File: fixture.rs\n@@\n context\n-old\n+new\n+next\n*** End Patch").unwrap();
     assert_eq!(code["generated"], 2);
     assert_eq!(code["removed"], 1);
