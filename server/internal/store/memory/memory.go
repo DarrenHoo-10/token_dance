@@ -2286,6 +2286,33 @@ func (m *MemoryStore) GetCommunityDailyStats(ctx context.Context, date string) (
 	return nil, nil
 }
 
+func (m *MemoryStore) ListCommunityDailyStats(ctx context.Context, from, to string) ([]store.CommunityDailyTotals, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var rows []store.CommunityDailyTotals
+	for date, totals := range m.communityDailyStats {
+		if date >= from && date <= to {
+			rows = append(rows, totals)
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].MetricDate < rows[j].MetricDate })
+	return rows, nil
+}
+
+// CountActiveDevelopers is a test double: memory fixtures have no per-user
+// identity, so the busiest day in range stands in for unique actives.
+func (m *MemoryStore) CountActiveDevelopers(ctx context.Context, from, to string) (uint64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var max uint64
+	for date, totals := range m.communityDailyStats {
+		if date >= from && date <= to && totals.Developers > max {
+			max = totals.Developers
+		}
+	}
+	return max, nil
+}
+
 func (m *MemoryStore) ReplaceCommunityAgentDay(ctx context.Context, date string, rows []store.CommunityAgentTokens) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

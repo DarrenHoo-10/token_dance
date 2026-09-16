@@ -14,6 +14,9 @@ function showPage() {
     <Route path="/leaderboard" element={<LeaderboardPage />} /><Route path="/me" element={<h1>我的数据</h1>} /><Route path="/settings/devices" element={<h1>设备设置</h1>} />
   </Routes></MemoryRouter></LocaleProvider>);
 }
+function heroTokenLabel() {
+  return document.querySelector('.hero-today-label');
+}
 beforeEach(() => {
   vi.restoreAllMocks(); localStorage.clear();
   vi.spyOn(api,'getPrivacy').mockResolvedValue(privacy);
@@ -21,7 +24,7 @@ beforeEach(() => {
   vi.spyOn(api,'getActivityCalendar').mockRejectedValue(new Error('unavailable'));
   vi.spyOn(api,'getLeaderboard').mockResolvedValue(board);
   vi.spyOn(api,'getMyLeaderboard').mockImplementation((params) => api.getLeaderboard(params));
-  vi.spyOn(api,'getCommunityStats').mockResolvedValue({ metricDate:'2026-09-09', timezone:'UTC' });
+  vi.spyOn(api,'getCommunityStats').mockResolvedValue({ metricDate:'2026-09-09', timezone:'UTC', window:'today' });
 });
 describe('Live leaderboard', () => {
   it('explains that a private profile still stays on the board', async () => {
@@ -48,7 +51,7 @@ describe('Live leaderboard', () => {
   });
   it('renders precomputed community totals in the hero', async () => {
     vi.mocked(api.getCommunityStats).mockResolvedValue({
-      metricDate:'2026-09-09', timezone:'UTC',
+      metricDate:'2026-09-09', timezone:'UTC', window:'today',
       tokens:'186400000', developers:128, codeLines:'32800', interactions:'4600', costAmount:268.42,
       deltas:{ tokens:12.6, developers:8.4, codeLines:-50, interactions:12.3, costAmount:11.8 },
       harnesses:[
@@ -58,6 +61,7 @@ describe('Live leaderboard', () => {
     });
     showPage();
     expect(await screen.findByText('186.4M')).toBeInTheDocument();
+    expect(heroTokenLabel()).toHaveTextContent('今日 Token');
     expect(screen.getByText('128')).toBeInTheDocument();
     expect(screen.getByText('32.8K')).toBeInTheDocument();
     expect(screen.getByText('4.6K')).toBeInTheDocument();
@@ -72,7 +76,7 @@ describe('Live leaderboard', () => {
   });
   it('lists community multi-currency costs instead of a fake $8.00', async () => {
     vi.mocked(api.getCommunityStats).mockResolvedValue({
-      metricDate:'2026-09-09', timezone:'UTC',
+      metricDate:'2026-09-09', timezone:'UTC', window:'today',
       tokens:'1215', developers:1, codeLines:'0', interactions:'6',
       costAmount: null,
       costs: [{ amount: 1, currency: 'USD' }, { amount: 7, currency: 'CNY' }],
@@ -103,6 +107,61 @@ describe('Live leaderboard', () => {
     expect((await screen.findAllByText('—')).length).toBeGreaterThan(0);
     expect(screen.queryByText('+0.0%')).not.toBeInTheDocument();
   });
+  it('reloads hero metrics when the leaderboard period changes', async () => {
+    vi.mocked(api.getCommunityStats).mockImplementation(async (window = 'today') => {
+      if (window === '7d') {
+        return { metricDate:'2026-09-09', timezone:'UTC', window:'7d', tokens:'7000000', developers:17, codeLines:'770', interactions:'71', costAmount:70 };
+      }
+      if (window === '30d') {
+        return { metricDate:'2026-09-09', timezone:'UTC', window:'30d', tokens:'30000000', developers:19, codeLines:'3300', interactions:'310', costAmount:90 };
+      }
+      if (window === 'all') {
+        return { metricDate:'2026-09-09', timezone:'UTC', window:'all', tokens:'400000000', developers:128, codeLines:'44000', interactions:'4100', costAmount:400 };
+      }
+      return { metricDate:'2026-09-09', timezone:'UTC', window:'today', tokens:'1000000', developers:12, codeLines:'110', interactions:'11', costAmount:8 };
+    });
+    showPage();
+    expect(await screen.findByText('1.0M')).toBeInTheDocument();
+    expect(heroTokenLabel()).toHaveTextContent('今日 Token');
+    expect(screen.getByText('12')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '近 7 天' }));
+    await waitFor(() => expect(heroTokenLabel()).toHaveTextContent('近 7 天 Token'));
+    expect(screen.getByText('7.0M')).toBeInTheDocument();
+    expect(screen.getByText('17')).toBeInTheDocument();
+    expect(screen.getByText('$70.00')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '近 30 天' }));
+    await waitFor(() => expect(heroTokenLabel()).toHaveTextContent('近 30 天 Token'));
+    expect(screen.getByText('30.0M')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '全部时间' }));
+    await waitFor(() => expect(heroTokenLabel()).toHaveTextContent('全部时间 Token'));
+    expect(screen.getByText('400.0M')).toBeInTheDocument();
+    expect(api.getCommunityStats).toHaveBeenCalledWith('all');
+  });
+
+  it('ignores a late community response from the previously selected period', async () => {
+    let resolveToday!: (value: { metricDate: string; timezone: string; window: string; tokens: string; developers: number; codeLines: string; interactions: string; costAmount: number }) => void;
+    vi.mocked(api.getCommunityStats).mockImplementation((window = 'today') => {
+      if (window === 'today') {
+        return new Promise(resolve => { resolveToday = resolve; });
+      }
+      return Promise.resolve({
+        metricDate:'2026-09-09', timezone:'UTC', window:'7d',
+        tokens:'7000000', developers:70, codeLines:'700', interactions:'70', costAmount:70,
+      });
+    });
+    showPage();
+    fireEvent.click(screen.getByRole('tab', { name: '近 7 天' }));
+    await waitFor(() => expect(heroTokenLabel()).toHaveTextContent('近 7 天 Token'));
+    expect(screen.getByText('7.0M')).toBeInTheDocument();
+    resolveToday({
+      metricDate:'2026-09-09', timezone:'UTC', window:'today',
+      tokens:'1000000', developers:12, codeLines:'100', interactions:'10', costAmount:8,
+    });
+    await waitFor(() => expect(screen.getByText('7.0M')).toBeInTheDocument());
+    expect(screen.queryByText('1.0M')).not.toBeInTheDocument();
+    expect(heroTokenLabel()).toHaveTextContent('近 7 天 Token');
+  });
+
   it('keeps existing rows and shows a short connection error after a failed refresh', async () => {
     const ranked = {
       ...board,

@@ -32,3 +32,39 @@ func StartOfDay(t time.Time) time.Time {
 func PreviousDayDate(t time.Time) string {
 	return StartOfDay(t).AddDate(0, 0, -1).Format("2006-01-02")
 }
+
+// WindowInclusiveDates returns the inclusive YYYY-MM-DD bounds for a
+// leaderboard / community-stats window on the product calendar.
+func WindowInclusiveDates(window string, now time.Time) (from, to string, err error) {
+	end := StartOfDay(now)
+	to = end.Format("2006-01-02")
+	switch window {
+	case "today":
+		return to, to, nil
+	case "7d":
+		return end.AddDate(0, 0, -6).Format("2006-01-02"), to, nil
+	case "30d":
+		return end.AddDate(0, 0, -29).Format("2006-01-02"), to, nil
+	case "all":
+		return "1000-01-01", to, nil
+	default:
+		return "", "", ErrInvalidArgument
+	}
+}
+
+// PreviousWindowInclusiveDates is the same-length window immediately before
+// WindowInclusiveDates. "all" and unknown keys have no comparison baseline.
+func PreviousWindowInclusiveDates(window string, now time.Time) (from, to string, ok bool) {
+	end := StartOfDay(now)
+	switch window {
+	case "today":
+		prev := end.AddDate(0, 0, -1).Format("2006-01-02")
+		return prev, prev, true
+	case "7d":
+		return end.AddDate(0, 0, -13).Format("2006-01-02"), end.AddDate(0, 0, -7).Format("2006-01-02"), true
+	case "30d":
+		return end.AddDate(0, 0, -59).Format("2006-01-02"), end.AddDate(0, 0, -30).Format("2006-01-02"), true
+	default:
+		return "", "", false
+	}
+}

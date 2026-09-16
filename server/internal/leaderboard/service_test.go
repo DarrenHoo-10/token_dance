@@ -104,9 +104,12 @@ func TestGetCommunityStatsServesPrecomputedRowsWithDeltas(t *testing.T) {
 		t.Fatalf("seed today: %v", err)
 	}
 
-	res, err := svc.GetCommunityStats(ctx, now)
+	res, err := svc.GetCommunityStats(ctx, now, "today")
 	if err != nil {
 		t.Fatalf("community stats: %v", err)
+	}
+	if res.Window != "today" {
+		t.Fatalf("expected today window: %+v", res)
 	}
 	if res.Tokens == nil || *res.Tokens != "112" || res.Developers == nil || *res.Developers != 5 {
 		t.Fatalf("today totals missing: %+v", res)
@@ -141,7 +144,7 @@ func TestGetCommunityStatsOmitsMixedCurrencyScalar(t *testing.T) {
 		t.Fatalf("seed today: %v", err)
 	}
 
-	res, err := svc.GetCommunityStats(ctx, now)
+	res, err := svc.GetCommunityStats(ctx, now, "")
 	if err != nil {
 		t.Fatalf("community stats: %v", err)
 	}
@@ -159,14 +162,67 @@ func TestGetCommunityStatsOmitsMixedCurrencyScalar(t *testing.T) {
 func TestGetCommunityStatsWithoutPrecomputedRowsStaysEmpty(t *testing.T) {
 	st := memory.NewMemoryStore()
 	svc := NewService(st)
-	res, err := svc.GetCommunityStats(context.Background(), time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC))
+	res, err := svc.GetCommunityStats(context.Background(), time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC), "today")
 	if err != nil {
 		t.Fatalf("community stats: %v", err)
 	}
 	if res.Tokens != nil || res.Developers != nil || res.Deltas != nil {
 		t.Fatalf("cold day must not fabricate zeros: %+v", res)
 	}
-	if res.MetricDate != "2026-09-09" || res.Timezone != domain.DayTZName {
+	if res.MetricDate != "2026-09-09" || res.Timezone != domain.DayTZName || res.Window != "today" {
 		t.Fatalf("unexpected envelope: %+v", res)
+	}
+}
+
+func TestGetCommunityStatsFollowsLeaderboardWindow(t *testing.T) {
+	ctx := context.Background()
+	st := memory.NewMemoryStore()
+	svc := NewService(st)
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+
+	seed := []store.CommunityDailyTotals{
+		{MetricDate: "2026-09-02", TokensTotal: 50, Developers: 2, CodeLines: 20, Interactions: 10, CostAmount: 5},
+		{MetricDate: "2026-09-08", TokensTotal: 100, Developers: 4, CodeLines: 40, Interactions: 20, CostAmount: 10},
+		{MetricDate: "2026-09-09", TokensTotal: 112, Developers: 5, CodeLines: 100, Interactions: 50, CostAmount: 8},
+	}
+	for _, row := range seed {
+		if err := st.CommunityStats().UpsertCommunityDailyStats(ctx, row); err != nil {
+			t.Fatalf("seed %s: %v", row.MetricDate, err)
+		}
+	}
+
+	week, err := svc.GetCommunityStats(ctx, now, "7d")
+	if err != nil {
+		t.Fatalf("7d stats: %v", err)
+	}
+	if week.Window != "7d" || week.Tokens == nil || *week.Tokens != "212" {
+		t.Fatalf("7d tokens should sum Sep 8+9: %+v", week)
+	}
+	if week.Developers == nil || *week.Developers != 5 {
+		t.Fatalf("7d developers should use unique-window count: %+v", week)
+	}
+	if week.CodeLines == nil || *week.CodeLines != "140" || week.Interactions == nil || *week.Interactions != "70" {
+		t.Fatalf("7d additive metrics: %+v", week)
+	}
+	if week.CostAmount == nil || *week.CostAmount != 18 {
+		t.Fatalf("7d cost should sum 10+8: %+v", week)
+	}
+	if week.Deltas == nil || week.Deltas.Tokens == nil || *week.Deltas.Tokens != 324 {
+		t.Fatalf("7d vs prior 7d token delta: %+v", week.Deltas)
+	}
+
+	all, err := svc.GetCommunityStats(ctx, now, "all")
+	if err != nil {
+		t.Fatalf("all stats: %v", err)
+	}
+	if all.Window != "all" || all.Tokens == nil || *all.Tokens != "262" {
+		t.Fatalf("all-time tokens: %+v", all)
+	}
+	if all.Deltas != nil {
+		t.Fatalf("all-time must omit period deltas: %+v", all.Deltas)
+	}
+
+	if _, err := svc.GetCommunityStats(ctx, now, "week"); err == nil {
+		t.Fatal("expected invalid window")
 	}
 }

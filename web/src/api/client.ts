@@ -580,8 +580,10 @@ class ApiHttpClient {
     return this.getLeaderboard(params);
   }
 
-  public async getCommunityStats(): Promise<CommunityStatsResponse> {
-    return this.request<CommunityStatsResponse>('/public/leaderboards/stats', { method: 'GET' });
+  public async getCommunityStats(window = 'today'): Promise<CommunityStatsResponse> {
+    const searchParams = new URLSearchParams();
+    if (window) searchParams.set('window', window);
+    return this.request<CommunityStatsResponse>(`/public/leaderboards/stats?${searchParams}`, { method: 'GET' });
   }
 
   private leaderboardQuery(params: {
