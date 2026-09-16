@@ -454,6 +454,11 @@ pub fn emit_activity_fact(
     }
 }
 
+fn input_text<'a>(input: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| input.get(*key).and_then(Value::as_str))
+}
+
 /// Only successful edit/write inputs are evidence of generated code, never arbitrary tools.
 pub fn completed_code_payload(part: &Value) -> Option<Value> {
     let state = part.get("state")?;
@@ -464,7 +469,7 @@ pub fn completed_code_payload(part: &Value) -> Option<Value> {
     let tool = part.get("tool")?.as_str()?.to_ascii_lowercase();
     let lines = |s: &str| s.lines().count() as u64;
     match tool.as_str() {
-        "edit" => {
+        "edit" | "strreplace" | "str_replace" | "searchreplace" | "search_replace" => {
             // Without a match count, replace-all has no reliable line delta.
             if input
                 .get("replace_all")
@@ -474,16 +479,8 @@ pub fn completed_code_payload(part: &Value) -> Option<Value> {
             {
                 return None;
             }
-            let old = input
-                .get("old_string")
-                .or_else(|| input.get("oldString"))
-                .or_else(|| input.get("oldText"))?
-                .as_str()?;
-            let new = input
-                .get("new_string")
-                .or_else(|| input.get("newString"))
-                .or_else(|| input.get("newText"))?
-                .as_str()?;
+            let old = input_text(input, &["old_string", "oldString", "oldText", "old_str"])?;
+            let new = input_text(input, &["new_string", "newString", "newText"])?;
             if old == new {
                 return None;
             }
@@ -492,7 +489,11 @@ pub fn completed_code_payload(part: &Value) -> Option<Value> {
             )
         }
         "write" => {
-            let text = input.get("content")?.as_str()?;
+            // Cursor Write uses `contents`; Claude-style tools use `content`.
+            let text = input_text(input, &["contents", "content"])?;
+            if text.is_empty() {
+                return None;
+            }
             // Generated content is known; overwritten old contents may not be available.
             Some(json!({"generated": lines(text), "file_touch_count": 1}))
         }

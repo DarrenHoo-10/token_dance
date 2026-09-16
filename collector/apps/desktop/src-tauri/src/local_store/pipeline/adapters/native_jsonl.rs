@@ -342,10 +342,15 @@ pub fn decode(c: &Context, value: &Value, state: &mut DecoderState) -> Option<Ve
             json!({"trigger":"user"}),
         ));
     }
-    for part in &parts {
+    for (index, part) in parts.iter().enumerate() {
         if matches!(part["type"].as_str(), Some("tool_use" | "toolCall")) {
-            if let (Some(call), Some(name)) = (text(part, &["id", "callId"]), text(part, &["name"]))
-            {
+            if let Some(name) = text(part, &["name"]) {
+                let call = text(part, &["id", "callId"]).unwrap_or_else(|| {
+                    format!(
+                        "offset:{}:{index}:{name}",
+                        c.record.byte_start.unwrap_or(c.record.ordinal)
+                    )
+                });
                 pending_call(
                     state,
                     &call,
@@ -354,6 +359,10 @@ pub fn decode(c: &Context, value: &Value, state: &mut DecoderState) -> Option<Ve
                         .or_else(|| part.get("arguments"))
                         .unwrap_or(&Value::Null),
                 );
+                // Cursor agent transcripts omit tool_result; count the tool_use itself.
+                if c.harness == "cursor" {
+                    finish_call(c, state, &call, &session, true, &mut out);
+                }
             }
         }
         if part["type"] == "tool_result" {
@@ -625,6 +634,83 @@ mod tests {
         assert_eq!(skills.len(), 1);
         assert_eq!(skills[0].payload_sections["activity"]["success"], false);
     }
+    fn native_facts(harness: &str, rows: Vec<Value>) -> Vec<FactDraft> {
+        fn alloc(_: [u8; 32], _: &str) -> i64 {
+            1
+        }
+        let book = SkillBook::new();
+        let secret = vec![7; 32];
+        let mut state = DecoderState {
+            version: 1,
+            json: json!({}),
+        };
+        let mut facts = Vec::new();
+        for (i, v) in rows.into_iter().enumerate() {
+            let row = RawRecord {
+                ordinal: i as u64,
+                byte_start: Some(i as u64),
+                byte_end: Some(i as u64 + 1),
+                native_rowid: None,
+                payload: v.to_string().into_bytes(),
+                file_mtime_ms: Some(1789257600000),
+            };
+            let ctx = Context {
+                harness,
+                secret: &secret,
+                scope: "fixture-session",
+                now: 1789257600000 + i as i64,
+                time_source: TimeSource::SourceRecord,
+                record: &row,
+                book: &book,
+                allocator: &alloc,
+            };
+            if let Some(mut f) = decode(&ctx, &v, &mut state) {
+                facts.append(&mut f);
+            }
+        }
+        facts
+    }
+
+    #[test]
+    fn cursor_tool_use_without_result_counts_write_and_strreplace() {
+        let facts = native_facts(
+            "cursor",
+            vec![
+                json!({"role":"user","message":{"content":[{"type":"text","text":"edit"}]}}),
+                json!({"role":"assistant","message":{"content":[{"type":"tool_use","name":"Write","input":{"path":"x.rs","contents":"base-line\nCURSOR_LINE_PROBE\n"}}]}}),
+                json!({"role":"assistant","message":{"content":[{"type":"tool_use","name":"StrReplace","input":{"old_string":"base-line","new_string":"alpha\nbeta\n"}}]}}),
+            ],
+        );
+        let generated: Vec<u64> = facts
+            .iter()
+            .filter(|f| f.event_type == "code_changed")
+            .map(|f| f.payload_sections["code"]["generated"].as_u64().unwrap())
+            .collect();
+        assert_eq!(generated, vec![2, 2]);
+    }
+
+    #[test]
+    fn claude_tool_use_waits_for_tool_result() {
+        let pending = native_facts(
+            "claude-code",
+            vec![json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"call-write-1","name":"Write","input":{"content":"a\nb\n"}}]}})],
+        );
+        assert!(pending.iter().all(|f| f.event_type != "code_changed"));
+        let completed = native_facts(
+            "claude-code",
+            vec![
+                json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"call-write-1","name":"Write","input":{"content":"a\nb\n"}}]}}),
+                json!({"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"call-write-1"}]}}),
+            ],
+        );
+        let generated: Vec<u64> = completed
+            .iter()
+            .filter(|f| f.event_type == "code_changed")
+            .map(|f| f.payload_sections["code"]["generated"].as_u64().unwrap())
+            .collect();
+        assert_eq!(generated, vec![2]);
+    }
+
     #[test]
     fn deepseek_final_message_correction_keeps_fact_key() {
         let facts = deepseek_facts(vec![
