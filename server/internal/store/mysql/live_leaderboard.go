@@ -14,20 +14,7 @@ import (
 // committed aggregates so first publication, new uploads and privacy changes
 // do not need a snapshot job.
 func leaderboardDates(window string, now time.Time) (string, string, error) {
-	end := now.In(domain.DayTZ)
-	start := end
-	switch window {
-	case "today":
-	case "7d":
-		start = end.AddDate(0, 0, -6)
-	case "30d":
-		start = end.AddDate(0, 0, -29)
-	case "all":
-		return "1000-01-01", end.Format("2006-01-02"), nil
-	default:
-		return "", "", domain.ErrInvalidArgument
-	}
-	return start.Format("2006-01-02"), end.Format("2006-01-02"), nil
+	return domain.WindowInclusiveDates(window, now)
 }
 
 func liveEligibleTotalsSQL() string {

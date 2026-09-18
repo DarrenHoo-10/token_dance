@@ -20,6 +20,26 @@ type Range = 'Today' | '7 Days' | '30 Days' | 'All Time';
 const ranges: Range[] = ['Today', '7 Days', '30 Days', 'All Time'];
 const windowByRange: Record<Range, string> = { Today: 'today', '7 Days': '7d', '30 Days': '30d', 'All Time': 'all' };
 
+function heroTokenLabel(range: Range, zh: boolean): string {
+  if (zh) {
+    return ({ Today: '今日 Token', '7 Days': '近 7 天 Token', '30 Days': '近 30 天 Token', 'All Time': '全部时间 Token' } as const)[range];
+  }
+  return ({ Today: 'Today’s tokens', '7 Days': '7-day tokens', '30 Days': '30-day tokens', 'All Time': 'All-time tokens' } as const)[range];
+}
+
+function heroDeltaSuffix(range: Range, zh: boolean): string | undefined {
+  if (range === 'All Time') return undefined;
+  if (zh) {
+    return ({ Today: 'vs 昨日', '7 Days': 'vs 前 7 天', '30 Days': 'vs 前 30 天' } as const)[range];
+  }
+  return ({ Today: 'vs yesterday', '7 Days': 'vs prior 7 days', '30 Days': 'vs prior 30 days' } as const)[range];
+}
+
+function communityMatchesRange(stats: CommunityStatsResponse | null, window: string): stats is CommunityStatsResponse {
+  if (!stats) return false;
+  return (stats.window ?? 'today') === window;
+}
+
 function formatTokens(raw: string | null | undefined): string {
   if (raw == null || raw === '') return '—';
   const value = Number(raw);
@@ -132,11 +152,12 @@ export const LeaderboardPage: React.FC = () => {
 
   const loadCommunity = useCallback(() => {
     let cancelled = false;
-    api.getCommunityStats()
+    const window = windowByRange[range];
+    api.getCommunityStats(window)
       .then((res) => { if (!cancelled) setCommunity(res); })
       .catch(() => { if (!cancelled) setCommunity(null); });
     return () => { cancelled = true; };
-  }, []);
+  }, [range]);
 
   useEffect(() => loadCommunity(), [loadCommunity, refreshTick]);
 
@@ -174,6 +195,8 @@ export const LeaderboardPage: React.FC = () => {
   useEffect(() => loadPersonal(), [loadPersonal, refreshTick]);
   useVisibleRefresh(() => setRefreshTick((tick) => tick + 1));
 
+  const selectedWindow = windowByRange[range];
+  const heroStats = communityMatchesRange(community, selectedWindow) ? community : null;
   const podium = entries.length >= 3 ? [entries[1], entries[0], entries[2]] : entries.slice(0, entries.length);
   const rankValue = summary?.ranking?.rank ?? null;
   const todayTokens = summary?.ranking?.entry?.metricValue ?? summary?.metrics?.totalTokens?.value ?? null;
@@ -217,15 +240,15 @@ export const LeaderboardPage: React.FC = () => {
           </div>
           <div className="hero-today">
             <div className="hero-today-main">
-              <span className="hero-today-label">{zh ? '今日 Token' : 'Today’s tokens'}</span>
-              <strong className="hero-today-value">{community?.tokens != null ? formatTokens(community.tokens) : '—'}</strong>
-              <DeltaChip value={community?.deltas?.tokens} suffix={zh ? 'vs 昨日' : 'vs yesterday'} />
+              <span className="hero-today-label">{heroTokenLabel(range, zh)}</span>
+              <strong className="hero-today-value">{heroStats?.tokens != null ? formatTokens(heroStats.tokens) : '—'}</strong>
+              <DeltaChip value={heroStats?.deltas?.tokens} suffix={heroDeltaSuffix(range, zh)} />
             </div>
             <div className="hero-mini-grid">
-              <HeroMiniCard label={zh ? '活跃开发者' : 'Active devs'} value={community?.developers != null ? community.developers.toLocaleString('en-US') : '—'} delta={community?.deltas?.developers} />
-              <HeroMiniCard label={zh ? '生成代码行' : 'Code lines'} value={formatTokens(community?.codeLines)} delta={community?.deltas?.codeLines} />
-              <HeroMiniCard label={zh ? 'AI 交互' : 'AI turns'} value={formatTokens(community?.interactions)} delta={community?.deltas?.interactions} />
-              <HeroMiniCard label={zh ? '预估费用' : 'Est. cost'} value={formatCommunityCost(community ?? {})} delta={community?.deltas?.costAmount} />
+              <HeroMiniCard label={zh ? '活跃开发者' : 'Active devs'} value={heroStats?.developers != null ? heroStats.developers.toLocaleString('en-US') : '—'} delta={heroStats?.deltas?.developers} />
+              <HeroMiniCard label={zh ? '生成代码行' : 'Code lines'} value={formatTokens(heroStats?.codeLines)} delta={heroStats?.deltas?.codeLines} />
+              <HeroMiniCard label={zh ? 'AI 交互' : 'AI turns'} value={formatTokens(heroStats?.interactions)} delta={heroStats?.deltas?.interactions} />
+              <HeroMiniCard label={zh ? '预估费用' : 'Est. cost'} value={formatCommunityCost(heroStats ?? {})} delta={heroStats?.deltas?.costAmount} />
             </div>
           </div>
         </div>

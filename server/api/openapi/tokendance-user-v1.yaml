@@ -1591,6 +1591,33 @@ paths:
                 $ref: '#/components/schemas/LeaderboardResponse'
         '400':
           $ref: '#/components/responses/ErrorResponse'
+  /api/v1/public/leaderboards/stats:
+    get:
+      tags:
+      - Public
+      operationId: getLeaderboardStats
+      summary: Get community hero totals for a leaderboard window
+      security: []
+      parameters:
+      - name: window
+        in: query
+        schema:
+          type: string
+          enum:
+          - today
+          - 7d
+          - 30d
+          - all
+          default: today
+      responses:
+        '200':
+          description: Precomputed community totals for the selected window
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommunityStatsResponse'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
   /api/v1/public/compare:
     get:
       tags:
@@ -2734,6 +2761,58 @@ components:
           type: string
           format: date-time
           nullable: true
+    CommunityStatsResponse:
+      type: object
+      required:
+      - metricDate
+      - window
+      - timezone
+      properties:
+        metricDate:
+          type: string
+          description: End date of the window on the product calendar (UTC+8)
+        window:
+          type: string
+          enum:
+          - today
+          - 7d
+          - 30d
+          - all
+        timezone:
+          type: string
+        tokens:
+          type: string
+        developers:
+          type: integer
+        codeLines:
+          type: string
+        interactions:
+          type: string
+        costAmount:
+          type: number
+          nullable: true
+        costs:
+          type: array
+          items:
+            type: object
+            required:
+            - amount
+            - currency
+            properties:
+              amount:
+                type: number
+              currency:
+                type: string
+        deltas:
+          type: object
+          description: Percent change versus the previous same-length window. Omitted for all-time.
+        harnesses:
+          type: array
+          items:
+            type: object
+        computedAt:
+          type: string
+          format: date-time
     CompareUserItem:
       type: object
       required:

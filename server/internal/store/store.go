@@ -140,7 +140,8 @@ type CommunityCost struct {
 
 // CommunityDailyTotals is one precomputed day of whole-community aggregates.
 // The stats worker recomputes a day from telemetry_* tables and overwrites
-// the row; request paths only read these rows, never aggregate.
+// the row. Request paths compose these rows for multi-day windows; unique
+// developer counts for a window come from CountActiveDevelopers.
 type CommunityDailyTotals struct {
 	MetricDate   string          `json:"metricDate"`
 	TokensTotal  uint64          `json:"tokensTotal"`
@@ -157,6 +158,8 @@ type CommunityStatsStore interface {
 	SumCommunityDay(ctx context.Context, date string) (CommunityDailyTotals, error)
 	UpsertCommunityDailyStats(ctx context.Context, totals CommunityDailyTotals) error
 	GetCommunityDailyStats(ctx context.Context, date string) (*CommunityDailyTotals, error)
+	ListCommunityDailyStats(ctx context.Context, from, to string) ([]CommunityDailyTotals, error)
+	CountActiveDevelopers(ctx context.Context, from, to string) (uint64, error)
 	ReplaceCommunityAgentDay(ctx context.Context, date string, rows []CommunityAgentTokens) error
 	GetCommunityHarnessShares(ctx context.Context, date string, limit int) ([]CommunityHarness, error)
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"sort"
 	"strconv"
 	"time"
 
@@ -59,22 +60,39 @@ func (s *Service) Query(ctx context.Context, q store.LeaderboardQuery) (*domain.
 	return result, err
 }
 
-// GetCommunityStats serves precomputed daily community totals with the day
-// over day percentage change. It only reads rows the stats worker wrote; a
-// missing day yields omitted fields so clients can show an empty state
-// instead of a fabricated zero.
-func (s *Service) GetCommunityStats(ctx context.Context, now time.Time) (*domain.CommunityStatsResponse, error) {
+// GetCommunityStats serves precomputed community totals for the same
+// today/7d/30d/all window as the leaderboard. Multi-day windows sum the
+// worker's daily rows; unique developers are counted across the window.
+// A window with no precomputed days yields omitted fields so clients can
+// show an empty state instead of a fabricated zero.
+func (s *Service) GetCommunityStats(ctx context.Context, now time.Time, window string) (*domain.CommunityStatsResponse, error) {
+	if window == "" {
+		window = "today"
+	}
+	from, to, err := domain.WindowInclusiveDates(window, now)
+	if err != nil {
+		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidArgument", "invalid community stats window", nil, err)
+	}
 	today := domain.DayDate(now)
-	current, err := s.community.GetCommunityDailyStats(ctx, today)
+	rows, err := s.community.ListCommunityDailyStats(ctx, from, to)
 	if err != nil {
 		return nil, err
 	}
+	current := composeCommunityRange(rows)
 	if current == nil {
-		return &domain.CommunityStatsResponse{MetricDate: today, Timezone: domain.DayTZName}, nil
+		return &domain.CommunityStatsResponse{MetricDate: today, Window: window, Timezone: domain.DayTZName}, nil
+	}
+	if window != "today" {
+		developers, err := s.community.CountActiveDevelopers(ctx, from, to)
+		if err != nil {
+			return nil, err
+		}
+		current.Developers = developers
 	}
 	costAmount, costs := communityCostProjection(*current)
 	response := &domain.CommunityStatsResponse{
-		MetricDate:   current.MetricDate,
+		MetricDate:   today,
+		Window:       window,
 		Timezone:     domain.DayTZName,
 		Tokens:       uint64String(current.TokensTotal),
 		Developers:   &current.Developers,
@@ -84,17 +102,30 @@ func (s *Service) GetCommunityStats(ctx context.Context, now time.Time) (*domain
 		Costs:        costs,
 		ComputedAt:   &current.ComputedAt,
 	}
-	previous, err := s.community.GetCommunityDailyStats(ctx, domain.PreviousDayDate(now))
-	if err != nil {
-		return nil, err
+	if prevFrom, prevTo, ok := domain.PreviousWindowInclusiveDates(window, now); ok {
+		previous, err := s.communityRangeTotals(ctx, window, prevFrom, prevTo)
+		if err != nil {
+			return nil, err
+		}
+		if previous != nil {
+			response.Deltas = &domain.CommunityStatsDeltaDTO{
+				Tokens:       deltaPct(current.TokensTotal, previous.TokensTotal),
+				Developers:   deltaPct(current.Developers, previous.Developers),
+				CodeLines:    deltaPct(current.CodeLines, previous.CodeLines),
+				Interactions: deltaPct(current.Interactions, previous.Interactions),
+				CostAmount:   communityCostDelta(*current, *previous),
+			}
+		}
 	}
-	if previous != nil {
-		response.Deltas = &domain.CommunityStatsDeltaDTO{
-			Tokens:       deltaPct(current.TokensTotal, previous.TokensTotal),
-			Developers:   deltaPct(current.Developers, previous.Developers),
-			CodeLines:    deltaPct(current.CodeLines, previous.CodeLines),
-			Interactions: deltaPct(current.Interactions, previous.Interactions),
-			CostAmount:   communityCostDelta(*current, *previous),
+	harnessBase := current.TokensTotal
+	if window != "today" {
+		todayRow, err := s.community.GetCommunityDailyStats(ctx, today)
+		if err != nil {
+			return nil, err
+		}
+		harnessBase = 0
+		if todayRow != nil {
+			harnessBase = todayRow.TokensTotal
 		}
 	}
 	harnesses, err := s.community.GetCommunityHarnessShares(ctx, today, 5)
@@ -103,8 +134,8 @@ func (s *Service) GetCommunityStats(ctx context.Context, now time.Time) (*domain
 	}
 	for _, harness := range harnesses {
 		share := float64(0)
-		if current.TokensTotal > 0 {
-			share = math.Round(float64(harness.TokensTotal)/float64(current.TokensTotal)*1000) / 10
+		if harnessBase > 0 {
+			share = math.Round(float64(harness.TokensTotal)/float64(harnessBase)*1000) / 10
 		}
 		response.Harnesses = append(response.Harnesses, domain.CommunityHarnessDTO{
 			AgentID:  harness.AgentID,
@@ -114,6 +145,81 @@ func (s *Service) GetCommunityStats(ctx context.Context, now time.Time) (*domain
 		})
 	}
 	return response, nil
+}
+
+func (s *Service) communityRangeTotals(ctx context.Context, window, from, to string) (*store.CommunityDailyTotals, error) {
+	rows, err := s.community.ListCommunityDailyStats(ctx, from, to)
+	if err != nil {
+		return nil, err
+	}
+	totals := composeCommunityRange(rows)
+	if totals == nil {
+		return nil, nil
+	}
+	if window != "today" {
+		developers, err := s.community.CountActiveDevelopers(ctx, from, to)
+		if err != nil {
+			return nil, err
+		}
+		totals.Developers = developers
+	}
+	return totals, nil
+}
+
+// composeCommunityRange sums additive daily totals. Developers stay as the
+// busiest day until the caller replaces them with a unique window count.
+func composeCommunityRange(rows []store.CommunityDailyTotals) *store.CommunityDailyTotals {
+	if len(rows) == 0 {
+		return nil
+	}
+	out := store.CommunityDailyTotals{
+		MetricDate: rows[0].MetricDate,
+		Developers: rows[0].Developers,
+		ComputedAt: rows[0].ComputedAt,
+	}
+	costByCurrency := map[string]float64{}
+	var currencies []string
+	legacyCost := 0.0
+	hasLegacy := false
+	hasCosts := false
+	for _, row := range rows {
+		out.TokensTotal += row.TokensTotal
+		out.CodeLines += row.CodeLines
+		out.Interactions += row.Interactions
+		if row.Developers > out.Developers {
+			out.Developers = row.Developers
+		}
+		if row.MetricDate > out.MetricDate {
+			out.MetricDate = row.MetricDate
+		}
+		if row.ComputedAt.After(out.ComputedAt) {
+			out.ComputedAt = row.ComputedAt
+		}
+		if len(row.Costs) > 0 {
+			hasCosts = true
+			for _, cost := range row.Costs {
+				if _, seen := costByCurrency[cost.Currency]; !seen {
+					currencies = append(currencies, cost.Currency)
+				}
+				costByCurrency[cost.Currency] += cost.Amount
+			}
+			continue
+		}
+		if row.CostAmount != 0 {
+			hasLegacy = true
+			legacyCost += row.CostAmount
+		}
+	}
+	if hasCosts {
+		sort.Strings(currencies)
+		out.Costs = make([]store.CommunityCost, 0, len(currencies))
+		for _, currency := range currencies {
+			out.Costs = append(out.Costs, store.CommunityCost{Currency: currency, Amount: costByCurrency[currency]})
+		}
+	} else if hasLegacy {
+		out.CostAmount = legacyCost
+	}
+	return &out
 }
 
 // deltaPct returns (current-previous)/previous in percent with one decimal.

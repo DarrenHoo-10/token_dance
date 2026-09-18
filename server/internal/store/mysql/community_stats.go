@@ -173,14 +173,26 @@ func (s *communityStatsStore) UpsertCommunityDailyStats(ctx context.Context, tot
 }
 
 func (s *communityStatsStore) GetCommunityDailyStats(ctx context.Context, date string) (*store.CommunityDailyTotals, error) {
+	totals, err := scanCommunityDailyTotals(s.db.QueryRowContext(ctx, communityDailyStatsSelectSQL+` WHERE metric_date = ?`, date))
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get community daily stats %s: %w", date, err)
+	}
+	return &totals, nil
+}
+
+const communityDailyStatsSelectSQL = `
+		SELECT metric_date, tokens_total, developers, code_lines, interactions,
+		       cost_amount, cost_amounts, is_final, computed_at
+		FROM community_daily_stats`
+
+func scanCommunityDailyTotals(scanner interface{ Scan(dest ...any) error }) (store.CommunityDailyTotals, error) {
 	var totals store.CommunityDailyTotals
 	var isFinal bool
 	var costJSON sql.NullString
-	err := s.db.QueryRowContext(ctx, `
-		SELECT metric_date, tokens_total, developers, code_lines, interactions,
-		       cost_amount, cost_amounts, is_final, computed_at
-		FROM community_daily_stats
-		WHERE metric_date = ?`, date).Scan(
+	if err := scanner.Scan(
 		&totals.MetricDate,
 		&totals.TokensTotal,
 		&totals.Developers,
@@ -190,20 +202,52 @@ func (s *communityStatsStore) GetCommunityDailyStats(ctx context.Context, date s
 		&costJSON,
 		&isFinal,
 		&totals.ComputedAt,
-	)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get community daily stats %s: %w", date, err)
+	); err != nil {
+		return store.CommunityDailyTotals{}, err
 	}
 	totals.IsFinal = isFinal
 	if costJSON.Valid && costJSON.String != "" && costJSON.String != "null" {
 		if err := json.Unmarshal([]byte(costJSON.String), &totals.Costs); err != nil {
-			return nil, fmt.Errorf("decode community costs %s: %w", date, err)
+			return store.CommunityDailyTotals{}, fmt.Errorf("decode community costs %s: %w", totals.MetricDate, err)
 		}
 	}
-	return &totals, nil
+	return totals, nil
+}
+
+func (s *communityStatsStore) ListCommunityDailyStats(ctx context.Context, from, to string) ([]store.CommunityDailyTotals, error) {
+	rows, err := s.db.QueryContext(ctx, communityDailyStatsSelectSQL+`
+		WHERE metric_date >= ? AND metric_date <= ?
+		ORDER BY metric_date`, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("list community daily stats %s..%s: %w", from, to, err)
+	}
+	defer rows.Close()
+	var out []store.CommunityDailyTotals
+	for rows.Next() {
+		totals, err := scanCommunityDailyTotals(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan community daily stats %s..%s: %w", from, to, err)
+		}
+		out = append(out, totals)
+	}
+	return out, rows.Err()
+}
+
+func (s *communityStatsStore) CountActiveDevelopers(ctx context.Context, from, to string) (uint64, error) {
+	fromMs, toMs, err := dayGrainBucketRange(from, to)
+	if err != nil {
+		return 0, err
+	}
+	var count uint64
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(DISTINCT CASE WHEN exact_token_total + derived_token_total > 0 THEN user_id END)
+		FROM bound_telemetry_model_metrics
+		WHERE grain = 'day'
+		  AND delete_at IS NULL
+		  AND bucket_start >= ? AND bucket_start <= ?`, fromMs, toMs).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count community developers %s..%s: %w", from, to, err)
+	}
+	return count, nil
 }
 
 // ReplaceCommunityAgentDay swaps the day's per-harness totals in one go; the

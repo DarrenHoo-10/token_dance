@@ -560,6 +560,7 @@ export interface CommunityCostAmount {
 
 export interface CommunityStatsResponse {
   metricDate: string;
+  window?: string;
   timezone: string;
   tokens?: string | null;
   developers?: number | null;

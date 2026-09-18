@@ -697,11 +697,13 @@ type CommunityCostDTO struct {
 	Currency string  `json:"currency"`
 }
 
-// CommunityStatsResponse projects precomputed daily community totals. Every
-// field is nil/omitted when the precomputed row is missing so clients can
+// CommunityStatsResponse projects precomputed community totals for a
+// leaderboard window (today / 7d / 30d / all). Every metric field is
+// nil/omitted when no precomputed day exists in the window so clients can
 // render an empty state instead of a zero.
 type CommunityStatsResponse struct {
 	MetricDate   string                  `json:"metricDate"`
+	Window       string                  `json:"window"`
 	Timezone     string                  `json:"timezone"`
 	Tokens       *string                 `json:"tokens,omitempty"`
 	Developers   *uint64                 `json:"developers,omitempty"`
