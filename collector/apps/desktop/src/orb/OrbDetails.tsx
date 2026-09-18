@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { quotaWindowLabel } from '../usage-analytics';
 import { syncStatusText } from '../sync-status';
 import { orbAction, patchOrbPreferences, readOrbDetailsMode, readOrbGeneration, useOrbTransparentRoot, useOrbWindowReady } from './bridge';
 import { compareTokenStrings, formatCompactTokens, formatObservedTime, formatRemainingLabel, formatResetCountdown, parseTokenCount, quotaStatusLine } from './format';
@@ -52,7 +53,10 @@ export function OrbDetails({ generation, mode }: { generation?: number; mode?: '
     );
   }
 
-  const source = [snapshot.quota.agentName, snapshot.quota.windowLabel].filter(Boolean).join(' · ');
+  const windowTitle = snapshot.quota.windowLabel
+    ? quotaWindowLabel({ label: snapshot.quota.windowLabel }, zh)
+    : '';
+  const source = [snapshot.quota.agentName, windowTitle].filter(Boolean).join(' · ');
   const reset = snapshot.quota.resetsAtMs != null ? formatResetCountdown(snapshot.quota.resetsAtMs, nowMs, zh) : t('重置时间未知', 'Reset time unknown');
   const observed = snapshot.quota.observedAtMs != null ? formatObservedTime(snapshot.quota.observedAtMs, zh) : t('观测时间未知', 'Observation time unknown');
   const status = quotaState === 'fresh' && remaining != null ? formatRemainingLabel(remaining, zh) : quotaStatusLine(quotaState, zh, paused);
@@ -94,7 +98,7 @@ export function OrbDetails({ generation, mode }: { generation?: number; mode?: '
           <select id="orb-source-picker" value={selected} onChange={event => void changeSelection(event.target.value)}>
             {snapshot.options.map(option => (
               <option key={`${option.agentId}:${option.windowId}`} value={`${option.agentId}\0${option.windowId}`}>
-                {option.agentName} · {option.windowLabel}
+                {option.agentName} · {quotaWindowLabel({ label: option.windowLabel }, zh)}
               </option>
             ))}
           </select>
@@ -104,9 +108,6 @@ export function OrbDetails({ generation, mode }: { generation?: number; mode?: '
             <p>{t('记录时间', 'Observed')} · {observed}</p>
             <p>{reset}</p>
             <p>{syncStatusText(snapshot.collector.syncState, 0, zh)}</p>
-            {(snapshot.quota.identityConfidence === 'unavailable' || snapshot.quota.identityNote) && (
-              <p className="orb-note">{snapshot.quota.identityNote || t('来自最近本地日志', 'From recent local logs')}</p>
-            )}
             {snapshot.usage.hasUnmeasuredSources && <p className="orb-note">{t('部分来源尚未计入今日 Token', 'Some sources are not included in today\'s tokens')}</p>}
           </div>
           <div className="orb-sources">

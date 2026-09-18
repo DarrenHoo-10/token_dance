@@ -10,14 +10,16 @@ export interface AgentQuota {
   windows: { usedPercent: number; windowMinutes: number; resetsAt: number | null; provider?: string; label?: string }[];
 }
 
-export function quotaWindowLabel(window: AgentQuota['windows'][number], zh: boolean): string {
+export function quotaWindowLabel(window: { label?: string | null; windowMinutes?: number }, zh: boolean): string {
   const labels: Record<string, [string, string]> = {
+    five_hour: ['5 小时额度', '5-hour quota'], weekly: ['周额度', 'Weekly quota'],
     shared_week: ['共享周额度', 'Shared weekly quota'], shared_quota: ['共享套餐额度', 'Shared plan quota'],
     auto: ['Auto 额度', 'Auto quota'], api: ['API 额度', 'API quota'],
     plan: ['套餐额度', 'Plan quota'], personal_limit: ['个人额度上限', 'Personal limit'],
   };
   if (window.label && labels[window.label]) return labels[window.label][zh ? 0 : 1];
-  const mins = window.windowMinutes;
+  if (window.label) return window.label;
+  const mins = window.windowMinutes ?? 0;
   if (mins <= 0) return zh ? '当前周期额度' : 'Current cycle quota';
   return mins % 1440 === 0 ? `${mins / 1440}${zh ? ' 日额度' : '-day quota'}` : mins % 60 === 0 ? `${mins / 60}${zh ? ' 小时额度' : '-hour quota'}` : `${mins}${zh ? ' 分钟额度' : '-minute quota'}`;
 }
@@ -145,7 +147,8 @@ export function annualUsage(agents: AgentConfig[], now = new Date()) {
 export function quotaStale(quota: AgentQuota, resetsAt: number | null, now = Date.now()) {
   if (quota.status && quota.status !== 'ready') return true;
   const observed = Date.parse(quota.observedAt);
-  return !Number.isFinite(observed) || observed > now || (resetsAt != null && resetsAt * 1000 <= now);
+  if (!Number.isFinite(observed) || observed > now || (resetsAt != null && resetsAt * 1000 <= now)) return true;
+  return !quota.status && now - observed >= 30 * 60_000;
 }
 
 /** Collection status is separate from billing quota availability. */

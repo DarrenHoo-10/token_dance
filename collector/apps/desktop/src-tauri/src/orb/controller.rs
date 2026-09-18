@@ -578,9 +578,9 @@ impl OrbController {
         self.broker.drop_missing(&present);
         let now = now_ms();
         self.broker.maybe_auto_select(now);
-        if self.prefs.snapshot().selection.is_none() {
-            if let Some(selection) = self.broker.selection().cloned() {
-                let current = self.prefs.snapshot();
+        if let Some(selection) = self.broker.selection().cloned() {
+            let current = self.prefs.snapshot();
+            if current.selection.as_ref() != Some(&selection) {
                 let _ = self.prefs.patch(PreferencesPatch {
                     expected_revision: current.revision,
                     selection: Some(Some(selection)),
@@ -650,12 +650,7 @@ impl OrbController {
             })
             .unwrap_or_else(|| self.snapshot.collector.clone());
         self.broker.maybe_auto_select(now);
-        let mut quota = self.broker.view(now);
-        if quota.identity_confidence == super::model::IdentityConfidence::Unavailable
-            && quota.selection.as_ref().is_some_and(|item| item.agent_id == "codex")
-        {
-            quota.identity_note = Some("来自最近本地日志".into());
-        }
+        let quota = self.broker.view(now);
         let visible = self.orb_visible();
         if detect_usage_pulse {
             self.pulse = usage_pulse(
@@ -1187,15 +1182,14 @@ fn quota_record(quota: AgentQuota) -> QuotaRecord {
         windows: quota
             .windows
             .into_iter()
-            .enumerate()
-            .map(|(index, window)| QuotaWindowRecord {
+            .map(|window| QuotaWindowRecord {
                 used_percent: window.used_percent,
                 window_minutes: window.window_minutes,
                 resets_at: window.resets_at,
                 provider: window.provider,
                 label: window.label.clone(),
                 key: if agent == "codex" {
-                    Some(if index == 0 { "primary".into() } else { "secondary".into() })
+                    Some("primary".into())
                 } else {
                     window.label
                 },

@@ -4,10 +4,13 @@ import { collectionStatusText, usageTokens, usageCosts, annualUsage, usageTrend,
 import { lastSevenDays } from '../src/weekly-usage.ts';
 const now = new Date(2026, 8, 5, 12);
 const dates = lastSevenDays(now);
-test('quota labels separate shared weekly usage and Cursor billing pools', () => {
+test('quota labels separate Codex windows, shared weekly usage and Cursor billing pools', () => {
   assert.equal(quotaWindowLabel({label:'shared_week', windowMinutes:10080}, true), '共享周额度');
   assert.equal(quotaWindowLabel({label:'auto', windowMinutes:44640}, true), 'Auto 额度');
   assert.equal(quotaWindowLabel({label:'api', windowMinutes:0}, false), 'API quota');
+  assert.equal(quotaWindowLabel({label:'five_hour', windowMinutes:300}, true), '5 小时额度');
+  assert.equal(quotaWindowLabel({label:'weekly', windowMinutes:10080}, true), '周额度');
+  assert.equal(quotaWindowLabel({label:'weekly', windowMinutes:10080}, false), 'Weekly quota');
   assert.equal(quotaWindowLabel({windowMinutes:0}, true), '当前周期额度');
   assert.equal(quotaWindowLabel({windowMinutes:300}, true), '5 小时额度');
   for (const [agentId, name] of [['grok-build','Grok Build'],['cursor','Cursor']]) {
@@ -82,13 +85,15 @@ test('annual calendar includes leap day and local date boundaries', () => {
   assert.equal(year.days.length, 366);
   assert.ok(year.days.some(day => day.date === '2024-02-29'));
 });
-test('quota age does not expire a valid reading, but reset and invalid timestamps do', () => {
+test('quota age expires log readings after 30 minutes, but live ready readings stay until reset', () => {
   const time = now.getTime();
   const quota = { observedAt: now.toISOString() };
   assert.equal(quotaStale(quota, time / 1000 + 600, time), false);
   assert.equal(quotaStale(quota, time / 1000 - 1, time), true);
-  assert.equal(quotaStale(quota, null, time + 31 * 60000), false);
-  assert.equal(quotaStale(quota, time / 1000 + 7 * 86400, time + 86400000), false);
+  assert.equal(quotaStale(quota, null, time + 30 * 60000 - 1), false);
+  assert.equal(quotaStale(quota, null, time + 30 * 60000), true);
+  assert.equal(quotaStale({ ...quota, status: 'ready' }, null, time + 31 * 60000), false);
+  assert.equal(quotaStale({ ...quota, status: 'ready' }, time / 1000 + 7 * 86400, time + 86400000), false);
   assert.equal(quotaStale({ observedAt: 'invalid' }, null, time), true);
 });
 
