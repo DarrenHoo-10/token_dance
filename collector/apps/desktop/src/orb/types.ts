@@ -116,7 +116,7 @@ export interface OrbDetailsSnapshot {
   hidden?: boolean;
   usage: OrbUsageSummary & { sources: OrbTodaySource[] };
   collector: OrbCollectorStatus;
-  quota: OrbQuotaView & { identityNote?: string | null };
+  quota: OrbQuotaView;
   options: OrbQuotaOption[];
 }
 

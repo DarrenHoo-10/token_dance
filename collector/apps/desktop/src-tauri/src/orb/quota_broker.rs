@@ -88,8 +88,20 @@ impl QuotaBroker {
     }
 
     pub fn maybe_auto_select(&mut self, now_ms: i64) {
-        if self.selection.is_some() {
-            return;
+        if let Some(selection) = &self.selection {
+            if self.selection_window_present(selection) {
+                return;
+            }
+            // Keep a persisted selection while that source is still loading.
+            // If the source came back without this window, pick another one.
+            if self
+                .cache
+                .get(&selection.agent_id)
+                .is_none_or(|record| record.windows.is_empty())
+            {
+                return;
+            }
+            self.selection = None;
         }
         let sources = self.fresh_sources(now_ms);
         let refs: Vec<(&str, &[QuotaWindowRecord])> = sources
@@ -97,6 +109,17 @@ impl QuotaBroker {
             .map(|(id, windows)| (id.as_str(), windows.as_slice()))
             .collect();
         self.selection = pick_initial_selection(refs);
+    }
+
+    fn selection_window_present(&self, selection: &QuotaSelection) -> bool {
+        self.cache.get(&selection.agent_id).is_some_and(|record| {
+            record.windows.iter().any(|window| {
+                super::model::window_id(&record.agent_id, window)
+                    .ok()
+                    .as_deref()
+                    == Some(selection.window_id.as_str())
+            })
+        })
     }
 
     pub fn view(&self, now_ms: i64) -> OrbQuotaSnapshot {
@@ -254,7 +277,13 @@ mod tests {
         }));
         broker.ingest_async(
             0,
-            ready("codex", now - 31 * 60_000, vec![window("primary", 300, 20.0, None)]),
+            QuotaRecord {
+                agent_id: "codex".into(),
+                observed_at: rfc3339(now - 31 * 60_000),
+                plan: None,
+                windows: vec![window("primary", 300, 20.0, None)],
+                status: Some("ready".into()),
+            },
         );
         broker.maybe_auto_select(now);
         let view = broker.view(now);
@@ -269,6 +298,56 @@ mod tests {
         assert_eq!(updated.state, QuotaState::Fresh);
         assert_eq!(updated.remaining_percent, Some(71.0));
         assert_eq!(updated.observed_at_ms, Some(now));
+    }
+
+    #[test]
+    fn log_based_codex_expires_after_thirty_minutes() {
+        let now = 1_000_000_000_000i64;
+        let mut broker = QuotaBroker::new();
+        broker.restore_selection(Some(QuotaSelection {
+            agent_id: "codex".into(),
+            window_id: "codex:primary:300m".into(),
+        }));
+        broker.ingest_async(
+            0,
+            ready("codex", now - crate::orb::model::LOG_STALE_MS, vec![window("primary", 300, 20.0, None)]),
+        );
+        let view = broker.view(now);
+        assert_eq!(view.state, QuotaState::Stale);
+        assert_eq!(view.remaining_percent, None);
+        assert_eq!(view.last_known_remaining_percent, Some(80.0));
+        assert_eq!(view.stale_at_ms, Some(now));
+    }
+
+    #[test]
+    fn missing_selected_window_reselects_remaining_codex_window() {
+        let now = 1_000_000_000_000i64;
+        let mut broker = QuotaBroker::new();
+        broker.restore_selection(Some(QuotaSelection {
+            agent_id: "codex".into(),
+            window_id: "codex:primary:300m".into(),
+        }));
+        broker.ingest_async(
+            0,
+            QuotaRecord {
+                agent_id: "codex".into(),
+                observed_at: rfc3339(now),
+                plan: None,
+                windows: vec![window("primary", 10080, 49.0, None)],
+                status: Some("ready".into()),
+            },
+        );
+        broker.maybe_auto_select(now);
+        assert_eq!(
+            broker.selection(),
+            Some(&QuotaSelection {
+                agent_id: "codex".into(),
+                window_id: "codex:primary:10080m".into(),
+            })
+        );
+        let view = broker.view(now);
+        assert_eq!(view.state, QuotaState::Fresh);
+        assert_eq!(view.remaining_percent, Some(51.0));
     }
 
     #[test]
@@ -337,6 +416,6 @@ mod tests {
         let view = broker.view(now);
         assert_eq!(view.state, QuotaState::Fresh);
         assert_eq!(view.remaining_percent, Some(72.0));
-        assert_eq!(view.identity_confidence, crate::orb::model::IdentityConfidence::Unavailable);
+        assert_eq!(view.identity_confidence, crate::orb::model::IdentityConfidence::SourceVerified);
     }
 }

@@ -476,7 +476,11 @@ pub fn resets_at_ms(resets_at_secs: Option<i64>) -> Option<i64> {
 }
 
 /// Matches `quotaStale` in usage-analytics.ts: status present and not ready,
-/// invalid/future observation, or past resetsAt. Observation age alone is not expiry.
+/// invalid/future observation, or past resetsAt. Log-based Codex (no status)
+/// also expires 30 minutes after the observation. Live `ready` readings stay
+/// fresh until reset.
+pub const LOG_STALE_MS: i64 = 30 * 60_000;
+
 pub fn quota_observation_stale(
     status: Option<&str>,
     observed_at_ms: Option<i64>,
@@ -497,7 +501,23 @@ pub fn quota_observation_stale(
             return true;
         }
     }
-    false
+    status.is_none() && now_ms.saturating_sub(observed) >= LOG_STALE_MS
+}
+
+fn observation_stale_at(
+    status: Option<&str>,
+    observed: Option<i64>,
+    reset_ms: Option<i64>,
+) -> Option<i64> {
+    let age_deadline = status
+        .is_none()
+        .then(|| observed.and_then(|ms| ms.checked_add(LOG_STALE_MS)))
+        .flatten();
+    match (age_deadline, reset_ms) {
+        (Some(age), Some(reset)) => Some(age.min(reset)),
+        (Some(age), None) => Some(age),
+        (None, reset) => reset,
+    }
 }
 
 pub fn terminal_quota_state(status: Option<&str>) -> Option<QuotaState> {
@@ -537,14 +557,7 @@ pub fn window_id(agent_id: &str, window: &QuotaWindowRecord) -> Result<String, W
         agent_id: agent_id.into(),
     };
     match agent_id {
-        "codex" => {
-            let slot = window
-                .key
-                .as_deref()
-                .or(window.label.as_deref())
-                .unwrap_or("primary");
-            Ok(format!("codex:{slot}:{minutes}"))
-        }
+        "codex" => Ok(format!("codex:primary:{minutes}")),
         "cursor" => window
             .label
             .as_deref()
@@ -626,10 +639,7 @@ where
     None
 }
 
-pub fn identity_confidence(agent_id: &str, state: QuotaState) -> IdentityConfidence {
-    if agent_id == "codex" {
-        return IdentityConfidence::Unavailable;
-    }
+pub fn identity_confidence(_agent_id: &str, state: QuotaState) -> IdentityConfidence {
     match state {
         QuotaState::NotConnected
         | QuotaState::AuthRequired
@@ -667,7 +677,7 @@ pub fn evaluate_window(
 ) -> (QuotaState, Option<f64>, Option<f64>, Option<i64>, Option<i64>, Option<i64>) {
     let observed = observed_at_ms(&record.observed_at);
     let reset_ms = resets_at_ms(window.resets_at);
-    let stale_at = reset_ms;
+    let stale_at = observation_stale_at(record.status.as_deref(), observed, reset_ms);
     if let Some(state) = terminal_quota_state(record.status.as_deref()) {
         return (
             state,
@@ -728,9 +738,6 @@ pub fn quota_snapshot_from_record(
     snapshot.resets_at_ms = reset_ms;
     snapshot.stale_at_ms = stale_at;
     snapshot.identity_confidence = identity_confidence(&selection.agent_id, state);
-    if snapshot.identity_confidence == IdentityConfidence::Unavailable && selection.agent_id == "codex" {
-        snapshot.identity_note = Some("来自最近本地日志".into());
-    }
     snapshot
 }
 
@@ -874,6 +881,18 @@ mod tests {
     fn window_id_matches_stable_spec_examples() {
         let primary = window("primary", 300, 37.0);
         assert_eq!(window_id("codex", &primary).unwrap(), "codex:primary:300m");
+        let weekly = window("secondary", 10080, 49.0);
+        assert_eq!(window_id("codex", &weekly).unwrap(), "codex:primary:10080m");
+        let weekly_labeled = QuotaWindowRecord {
+            used_percent: 49.0,
+            window_minutes: 10080,
+            resets_at: None,
+            provider: None,
+            label: Some("weekly".into()),
+            key: None,
+        };
+        assert_eq!(window_id("codex", &weekly_labeled).unwrap(), "codex:primary:10080m");
+        assert_eq!(window_label(&weekly_labeled), "weekly");
         let auto = labeled("auto", 31.4);
         auto_eq_cursor(&auto);
         let week = labeled("shared_week", 65.0);
@@ -887,6 +906,31 @@ mod tests {
             key: None,
         };
         assert_eq!(window_id("zcode", &glm).unwrap(), "zcode:GLM:300m");
+        let both = [
+            QuotaWindowRecord {
+                used_percent: 12.0,
+                window_minutes: 300,
+                resets_at: None,
+                provider: None,
+                label: Some("five_hour".into()),
+                key: Some("primary".into()),
+            },
+            QuotaWindowRecord {
+                used_percent: 49.0,
+                window_minutes: 10080,
+                resets_at: None,
+                provider: None,
+                label: Some("weekly".into()),
+                key: Some("primary".into()),
+            },
+        ];
+        assert_eq!(
+            unique_window_ids("codex", &both).unwrap(),
+            vec![
+                "codex:primary:300m".to_string(),
+                "codex:primary:10080m".to_string()
+            ]
+        );
     }
 
     fn auto_eq_cursor(window: &QuotaWindowRecord) {
@@ -961,6 +1005,9 @@ mod tests {
         assert!(quota_observation_stale(Some("unavailable"), Some(now), None, now));
         assert!(quota_observation_stale(Some("network_error"), Some(now), None, now));
         assert!(!quota_observation_stale(None, Some(now), None, now));
+        assert!(!quota_observation_stale(None, Some(now), None, now + LOG_STALE_MS - 1));
+        assert!(quota_observation_stale(None, Some(now), None, now + LOG_STALE_MS));
+        assert!(!quota_observation_stale(ready, Some(now), None, now + LOG_STALE_MS));
     }
 
     #[test]

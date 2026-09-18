@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { quotaWindowLabel } from '../usage-analytics';
 import { patchOrbPreferences } from './bridge';
 import { DEFAULT_ORB_DIAMETER, ORB_DIAMETERS, type EffectsMode, type OrbDiameter, type OrbPreferencesPatch } from './types';
 import { useOrbDetailsSnapshot, useOrbLanguage, useOrbPreferences } from './useOrbSnapshot';
@@ -102,7 +103,7 @@ export function OrbSettings({ zh: zhProp }: { zh?: boolean } = {}) {
         <div className="settings-row">
           <div>
             <h3>{t('关注额度', 'Watched quota')}</h3>
-            <p>{t('颜色与弧长只反映这一来源窗口，不会自动轮播', 'Color and arc follow this source window only')}</p>
+            <p>{t('球体只跟踪你选中的窗口。Codex 可分别选 5 小时或周额度，不会自动轮播', 'The orb follows the window you pick. Codex has separate 5-hour and weekly quotas')}</p>
           </div>
           <select
             aria-label={t('关注额度', 'Watched quota')}
@@ -116,7 +117,7 @@ export function OrbSettings({ zh: zhProp }: { zh?: boolean } = {}) {
             <option value="">{t('尚未选择', 'Not selected')}</option>
             {options.map(option => (
               <option key={`${option.agentId}:${option.windowId}`} value={`${option.agentId}\0${option.windowId}`}>
-                {option.agentName} · {option.windowLabel}
+                {option.agentName} · {quotaWindowLabel({ label: option.windowLabel }, zh)}
               </option>
             ))}
           </select>

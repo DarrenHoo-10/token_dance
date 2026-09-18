@@ -39,14 +39,14 @@ function mockSnapshot(revision = '1'): OrbSnapshot {
     quota: {
       selection: { agentId: 'codex', windowId: 'codex:primary:300m' },
       agentName: 'Codex',
-      windowLabel: '5 小时额度',
+      windowLabel: 'five_hour',
       state: params.get('previewState') === 'stale' ? 'stale' : 'fresh',
       remainingPercent: remaining,
       lastKnownRemainingPercent: remaining,
       observedAtMs: now - 60_000,
       resetsAtMs: now + 2 * 3_600_000 + 18 * 60_000,
       staleAtMs: now + 2 * 3_600_000 + 18 * 60_000,
-      identityConfidence: 'unavailable',
+      identityConfidence: 'source_verified',
     },
     effect: { mode: 'orbit', reducedMotion: false, pulse: null },
   };
@@ -91,13 +91,13 @@ function mockDetailsSnapshot(): OrbDetailsSnapshot {
       ],
     },
     collector: snap.collector,
-    quota: { ...snap.quota, identityNote: '来自最近本地日志' },
+    quota: snap.quota,
     options: [
-      { agentId: 'codex', agentName: 'Codex', windowId: 'codex:primary:300m', windowLabel: '5 小时额度', state: 'fresh', remainingPercent: 72, lastKnownRemainingPercent: 72, observedAtMs: snap.quota.observedAtMs, resetsAtMs: snap.quota.resetsAtMs },
-      { agentId: 'codex', agentName: 'Codex', windowId: 'codex:primary:10080m', windowLabel: '7 日额度', state: 'fresh', remainingPercent: 88, lastKnownRemainingPercent: 88, observedAtMs: snap.quota.observedAtMs, resetsAtMs: snap.quota.resetsAtMs },
-      { agentId: 'cursor', agentName: 'Cursor', windowId: 'cursor:auto', windowLabel: 'Auto 额度', state: 'fresh', remainingPercent: 54, lastKnownRemainingPercent: 54, observedAtMs: snap.quota.observedAtMs, resetsAtMs: snap.quota.resetsAtMs },
-      { agentId: 'cursor', agentName: 'Cursor', windowId: 'cursor:api', windowLabel: 'API 额度', state: 'fresh', remainingPercent: 91, lastKnownRemainingPercent: 91, observedAtMs: snap.quota.observedAtMs, resetsAtMs: snap.quota.resetsAtMs },
-      { agentId: 'grok-build', agentName: 'Grok Build', windowId: 'grok:shared_week', windowLabel: '共享周额度', state: 'fresh', remainingPercent: 40, lastKnownRemainingPercent: 40, observedAtMs: snap.quota.observedAtMs, resetsAtMs: snap.quota.resetsAtMs },
+      { agentId: 'codex', agentName: 'Codex', windowId: 'codex:primary:300m', windowLabel: 'five_hour', state: 'fresh', remainingPercent: 72, lastKnownRemainingPercent: 72, observedAtMs: snap.quota.observedAtMs, resetsAtMs: snap.quota.resetsAtMs },
+      { agentId: 'codex', agentName: 'Codex', windowId: 'codex:primary:10080m', windowLabel: 'weekly', state: 'fresh', remainingPercent: 88, lastKnownRemainingPercent: 88, observedAtMs: snap.quota.observedAtMs, resetsAtMs: snap.quota.resetsAtMs },
+      { agentId: 'cursor', agentName: 'Cursor', windowId: 'cursor:auto', windowLabel: 'auto', state: 'fresh', remainingPercent: 54, lastKnownRemainingPercent: 54, observedAtMs: snap.quota.observedAtMs, resetsAtMs: snap.quota.resetsAtMs },
+      { agentId: 'cursor', agentName: 'Cursor', windowId: 'cursor:api', windowLabel: 'api', state: 'fresh', remainingPercent: 91, lastKnownRemainingPercent: 91, observedAtMs: snap.quota.observedAtMs, resetsAtMs: snap.quota.resetsAtMs },
+      { agentId: 'grok-build', agentName: 'Grok Build', windowId: 'grok:shared_week', windowLabel: 'shared_week', state: 'fresh', remainingPercent: 40, lastKnownRemainingPercent: 40, observedAtMs: snap.quota.observedAtMs, resetsAtMs: snap.quota.resetsAtMs },
     ],
   };
 }

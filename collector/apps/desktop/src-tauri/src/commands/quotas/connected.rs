@@ -3,7 +3,7 @@
 use super::{AgentQuota, QuotaWindow};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use reqwest::{
-    header::{HeaderMap, HeaderValue, AUTHORIZATION},
+    header::{HeaderMap, HeaderValue, AUTHORIZATION, ORIGIN, REFERER},
     Client,
 };
 use serde_json::Value;
@@ -22,17 +22,20 @@ const GROK_SETTINGS: &str = "https://cli-chat-proxy.grok.com/v1/settings";
 const CURSOR_USAGE: &str =
     "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage";
 const CURSOR_PLAN: &str = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetPlanInfo";
+const CODEX_USAGE: &str = "https://chatgpt.com/backend-api/wham/usage";
 
 #[derive(Clone, Copy)]
 enum Source {
     Grok,
     Cursor,
+    Codex,
 }
 impl Source {
     fn id(self) -> &'static str {
         match self {
             Self::Grok => "grok-build",
             Self::Cursor => "cursor",
+            Self::Codex => "codex",
         }
     }
 }
@@ -193,6 +196,221 @@ fn parse_cursor_rpc(value: &Value, plan: Option<&Value>) -> Result<AgentQuota, &
     parse_cursor(&normalized)
 }
 
+fn json_number(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_i64().map(|n| n as f64))
+        .or_else(|| value.as_u64().map(|n| n as f64))
+        .filter(|n| n.is_finite())
+}
+
+fn jwt_payload(token: &str) -> Option<Value> {
+    let parts = token.split('.').collect::<Vec<_>>();
+    if parts.len() != 3 {
+        return None;
+    }
+    let bytes = URL_SAFE_NO_PAD.decode(parts[1]).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn limit_id(value: &Value) -> Option<&str> {
+    value
+        .get("limit_id")
+        .or_else(|| value.get("limitId"))
+        .and_then(Value::as_str)
+}
+
+fn codex_limits(value: &Value) -> Option<&Value> {
+    let by_id = value
+        .get("rateLimitsByLimitId")
+        .or_else(|| value.get("rate_limits_by_limit_id"));
+    if let Some(codex) = by_id.and_then(|map| map.get("codex")) {
+        return Some(codex);
+    }
+    let limits = value
+        .get("rateLimits")
+        .or_else(|| value.get("rate_limits"))
+        .or_else(|| value.get("rate_limit"))
+        .unwrap_or(value);
+    if let Some(nested) = limits.get("codex").filter(|item| item.is_object()) {
+        return match limit_id(nested) {
+            None | Some("codex") => Some(nested),
+            Some(_) => None,
+        };
+    }
+    match limit_id(limits) {
+        None | Some("codex") => Some(limits),
+        Some(_) => None,
+    }
+}
+
+fn codex_slot<'a>(limits: &'a Value, slot: &str) -> Option<&'a Value> {
+    let names: &[&str] = match slot {
+        "primary" => &["primary", "primary_window", "primaryWindow"],
+        "secondary" => &["secondary", "secondary_window", "secondaryWindow"],
+        _ => return None,
+    };
+    names
+        .iter()
+        .find_map(|name| limits.get(*name))
+        .filter(|value| value.is_object())
+}
+
+fn first_number(value: &Value, keys: &[&str]) -> Option<f64> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(json_number))
+}
+
+fn unix_seconds(value: &Value) -> Option<i64> {
+    let raw = value
+        .as_i64()
+        .or_else(|| json_number(value).map(|n| n as i64))
+        .or_else(|| timestamp(value))?;
+    // Live WHAM uses seconds; some camelCase payloads send milliseconds.
+    Some(if raw > 10_000_000_000 { raw / 1000 } else { raw })
+}
+
+fn reset_at(window: &Value) -> Option<i64> {
+    ["resets_at", "resetsAt", "reset_at", "resetAt"]
+        .into_iter()
+        .find_map(|key| window.get(key).and_then(unix_seconds))
+}
+
+fn window_minutes(window: &Value) -> Option<u64> {
+    if let Some(mins) = first_number(
+        window,
+        &[
+            "window_minutes",
+            "windowDurationMins",
+            "window_duration_mins",
+        ],
+    )
+    .filter(|n| *n > 0.0 && *n <= 527_040.0)
+    {
+        return Some(mins as u64);
+    }
+    let secs = first_number(
+        window,
+        &[
+            "limit_window_seconds",
+            "limitWindowSeconds",
+            "window_duration_seconds",
+            "windowDurationSeconds",
+        ],
+    )
+    .filter(|n| *n > 0.0 && *n <= 527_040.0 * 60.0)?;
+    let mins = (secs / 60.0).round();
+    (mins > 0.0 && mins <= 527_040.0).then_some(mins as u64)
+}
+
+fn named_plan(value: &Value) -> Option<String> {
+    match value
+        .get("plan_type")
+        .or_else(|| value.get("planType"))
+        .and_then(Value::as_str)
+        .unwrap_or("")
+    {
+        "plus" => Some("Plus"),
+        "pro" | "prolite" => Some("Pro"),
+        "team" => Some("Team"),
+        "business" => Some("Business"),
+        "enterprise" => Some("Enterprise"),
+        "edu" => Some("Edu"),
+        "free" => Some("Free"),
+        "go" => Some("Go"),
+        _ => None,
+    }
+    .map(str::to_owned)
+}
+
+fn credits_unlimited(value: &Value) -> bool {
+    value
+        .get("credits")
+        .and_then(|credits| credits.get("unlimited"))
+        .and_then(Value::as_bool)
+        == Some(true)
+}
+
+fn parse_codex(value: &Value) -> Result<AgentQuota, &'static str> {
+    let limits = codex_limits(value).ok_or("no_quota")?;
+    if (credits_unlimited(limits) || credits_unlimited(value))
+        && codex_slot(limits, "primary").is_none()
+        && codex_slot(limits, "secondary").is_none()
+    {
+        return Err("unlimited");
+    }
+    let mut quota = empty(Source::Codex, "ready");
+    quota.plan = named_plan(limits).or_else(|| named_plan(value));
+    for key in ["primary", "secondary"] {
+        let Some(window) = codex_slot(limits, key) else {
+            continue;
+        };
+        let Some(used) = first_number(window, &["used_percent", "usedPercent"]) else {
+            continue;
+        };
+        let Some(minutes) = window_minutes(window) else {
+            continue;
+        };
+        if let Some(parsed) = super::decorate_codex_window(used, minutes, reset_at(window)) {
+            quota.windows.push(parsed);
+        }
+    }
+    if quota.windows.is_empty() {
+        return Err("no_quota");
+    }
+    quota.windows.sort_by_key(|window| window.window_minutes);
+    Ok(quota)
+}
+
+fn chatgpt_account_id(tokens: &Value) -> Option<String> {
+    if let Some(id) = tokens["account_id"].as_str().filter(|id| !id.is_empty()) {
+        return Some(id.to_string());
+    }
+    jwt_payload(tokens["id_token"].as_str()?).and_then(|payload| {
+        payload["https://api.openai.com/auth"]["chatgpt_account_id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+    })
+}
+
+fn account_header(value: &str) -> Result<HeaderValue, &'static str> {
+    if value.len() > 256
+        || !value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    {
+        return Err("auth_required");
+    }
+    secret_header(value)
+}
+
+fn token_expired(token: &str) -> bool {
+    jwt_payload(token)
+        .and_then(|payload| payload["exp"].as_i64())
+        .is_some_and(|exp| exp <= chrono::Utc::now().timestamp())
+}
+
+fn codex_credential(value: &Value) -> Result<Credential, &'static str> {
+    let tokens = value.get("tokens").ok_or("not_connected")?;
+    let access = tokens["access_token"]
+        .as_str()
+        .filter(|token| !token.is_empty() && token.len() <= 32768)
+        .ok_or("auth_required")?;
+    if token_expired(access) {
+        return Err("auth_required");
+    }
+    let mut headers = HeaderMap::new();
+    headers.insert(AUTHORIZATION, secret_header(&format!("Bearer {access}"))?);
+    if let Some(account) = chatgpt_account_id(tokens) {
+        headers.insert("ChatGPT-Account-Id", account_header(&account)?);
+    }
+    Ok(Credential {
+        headers,
+        identity: Sha256::digest(access.as_bytes()).to_vec(),
+    })
+}
+
 fn read_json(path: &Path) -> Result<Option<Value>, &'static str> {
     let file = match std::fs::File::open(path) {
         Ok(file) => file,
@@ -346,6 +564,16 @@ fn load(source: Source) -> Result<Option<Credential>, &'static str> {
                 &base.join("Cursor/User/globalStorage/state.vscdb"),
             )
         }
+        Source::Codex => {
+            let base = std::env::var_os("CODEX_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| home.join(".codex"));
+            match read_json(&base.join("auth.json"))? {
+                None => Ok(None),
+                Some(value) if value.get("tokens").is_none() => Ok(None),
+                Some(value) => codex_credential(&value).map(Some),
+            }
+        }
     }
 }
 
@@ -444,6 +672,12 @@ async fn fetch(source: Source, credential: &Credential) -> Result<AgentQuota, &'
             );
             parse_cursor_rpc(&usage?, plan.as_ref().ok())
         }
+        Source::Codex => {
+            let mut headers = credential.headers.clone();
+            headers.insert(REFERER, HeaderValue::from_static("https://chatgpt.com/"));
+            headers.insert(ORIGIN, HeaderValue::from_static("https://chatgpt.com"));
+            parse_codex(&get(&client, CODEX_USAGE, headers).await?)
+        }
     }
 }
 fn previous_for(cache: &mut Option<Cached>, identity: &[u8]) {
@@ -497,6 +731,10 @@ pub(super) async fn grok() -> Option<AgentQuota> {
 pub(super) async fn cursor() -> Option<AgentQuota> {
     static CACHE: Mutex<Option<Cached>> = Mutex::const_new(None);
     read(Source::Cursor, &CACHE).await
+}
+pub(super) async fn codex() -> Option<AgentQuota> {
+    static CACHE: Mutex<Option<Cached>> = Mutex::const_new(None);
+    read(Source::Codex, &CACHE).await
 }
 
 #[cfg(test)]
@@ -677,6 +915,197 @@ mod tests {
             server.await.unwrap();
         }
     }
+    #[test]
+    fn parse_codex_usage_accepts_named_windows_and_camel_case() {
+        let quota = parse_codex(&json!({
+            "rate_limit": {
+                "limit_id": "codex",
+                "primary_window": {
+                    "used_percent": 12.5,
+                    "window_minutes": 300,
+                    "resets_at": 1_800_000_000
+                },
+                "secondary_window": {
+                    "used_percent": 49.0,
+                    "window_minutes": 10080,
+                    "resets_at": 1_789_805_411
+                }
+            }
+        }))
+        .unwrap();
+        assert_eq!(quota.windows.len(), 2);
+        assert_eq!(quota.windows[0].label.as_deref(), Some("five_hour"));
+        assert_eq!(quota.windows[0].used_percent, 12.5);
+        assert_eq!(quota.windows[0].window_minutes, 300);
+        assert_eq!(quota.windows[1].label.as_deref(), Some("weekly"));
+        assert_eq!(quota.windows[1].used_percent, 49.0);
+        let reversed = parse_codex(&json!({
+            "rate_limit": {
+                "limit_id": "codex",
+                "primary_window": {
+                    "used_percent": 49.0,
+                    "window_minutes": 10080
+                },
+                "secondary_window": {
+                    "used_percent": 12.0,
+                    "window_minutes": 299
+                }
+            }
+        }))
+        .unwrap();
+        assert_eq!(reversed.windows[0].label.as_deref(), Some("five_hour"));
+        assert_eq!(reversed.windows[1].label.as_deref(), Some("weekly"));
+        let camel = parse_codex(&json!({
+            "rateLimits": {
+                "limitId": "codex",
+                "primaryWindow": {
+                    "usedPercent": 31.4,
+                    "windowDurationMins": 299,
+                    "resetsAt": 1_800_000_000
+                }
+            }
+        }))
+        .unwrap();
+        assert_eq!(camel.windows.len(), 1);
+        assert_eq!(camel.windows[0].label.as_deref(), Some("five_hour"));
+        assert_eq!(camel.windows[0].window_minutes, 300);
+        let by_id = parse_codex(&json!({
+            "rateLimitsByLimitId": {
+                "codex": {
+                    "limitId": "codex",
+                    "primaryWindow": {
+                        "usedPercent": 8.0,
+                        "windowDurationMins": 10080
+                    }
+                },
+                "spark": {
+                    "limitId": "spark",
+                    "primaryWindow": {
+                        "usedPercent": 99.0,
+                        "windowDurationMins": 300
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        assert_eq!(by_id.windows.len(), 1);
+        assert_eq!(by_id.windows[0].label.as_deref(), Some("weekly"));
+        assert_eq!(
+            parse_codex(&json!({"rate_limit":{"limit_id":"spark","primary_window":{"used_percent":1.0,"window_minutes":300}}})).unwrap_err(),
+            "no_quota"
+        );
+        assert_eq!(parse_codex(&json!({})).unwrap_err(), "no_quota");
+    }
+    #[test]
+    fn parse_codex_wham_usage_uses_seconds_and_reset_at() {
+        let quota = parse_codex(&json!({
+            "plan_type": "pro",
+            "rate_limit": {
+                "allowed": true,
+                "limit_reached": false,
+                "primary_window": {
+                    "used_percent": 55,
+                    "limit_window_seconds": 18000,
+                    "reset_after_seconds": 2547,
+                    "reset_at": 1_800_000_000
+                },
+                "secondary_window": {
+                    "used_percent": 51,
+                    "limit_window_seconds": 604800,
+                    "reset_after_seconds": 489405,
+                    "reset_at": 1_789_805_411
+                }
+            },
+            "credits": { "unlimited": false, "balance": "0" },
+            "additional_rate_limits": [{
+                "limit_name": "GPT-5.3-Codex-Spark",
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 99,
+                        "limit_window_seconds": 18000,
+                        "reset_at": 1_800_000_000
+                    }
+                }
+            }]
+        }))
+        .unwrap();
+        assert_eq!(quota.plan.as_deref(), Some("Pro"));
+        assert_eq!(quota.status.as_deref(), Some("ready"));
+        assert_eq!(quota.windows.len(), 2);
+        assert_eq!(quota.windows[0].label.as_deref(), Some("five_hour"));
+        assert_eq!(quota.windows[0].used_percent, 55.0);
+        assert_eq!(quota.windows[0].window_minutes, 300);
+        assert_eq!(quota.windows[0].resets_at, Some(1_800_000_000));
+        assert_eq!(quota.windows[1].label.as_deref(), Some("weekly"));
+        assert_eq!(quota.windows[1].used_percent, 51.0);
+        assert_eq!(quota.windows[1].window_minutes, 10080);
+        assert_eq!(quota.windows[1].resets_at, Some(1_789_805_411));
+    }
+
+    #[test]
+    fn parse_codex_skips_unknown_window_lengths() {
+        let quota = parse_codex(&json!({
+            "rate_limit": {
+                "limit_id": "codex",
+                "primary_window": {
+                    "used_percent": 10.0,
+                    "window_minutes": 30
+                },
+                "secondary_window": {
+                    "used_percent": 20.0,
+                    "window_minutes": 10080
+                }
+            }
+        }))
+        .unwrap();
+        assert_eq!(quota.windows.len(), 1);
+        assert_eq!(quota.windows[0].label.as_deref(), Some("weekly"));
+    }
+    #[test]
+    fn parse_codex_auth_json_requires_chatgpt_access_token() {
+        let cred = codex_credential(&json!({
+            "tokens": {
+                "access_token": "tok",
+                "account_id": "acct-1",
+                "id_token": "id",
+                "refresh_token": "refresh"
+            }
+        }))
+        .unwrap();
+        assert_eq!(
+            cred.headers.get(AUTHORIZATION).unwrap().to_str().unwrap(),
+            "Bearer tok"
+        );
+        assert_eq!(
+            cred.headers
+                .get("chatgpt-account-id")
+                .unwrap()
+                .to_str()
+                .unwrap(),
+            "acct-1"
+        );
+        assert_eq!(cred.identity, Sha256::digest(b"tok").to_vec());
+        assert_eq!(
+            codex_credential(&json!({"OPENAI_API_KEY":"sk-..."})).err(),
+            Some("not_connected")
+        );
+        assert_eq!(
+            codex_credential(&json!({"tokens":{"access_token":""}})).err(),
+            Some("auth_required")
+        );
+        assert_eq!(
+            codex_credential(&json!({"tokens":{"refresh_token":"only"}})).err(),
+            Some("auth_required")
+        );
+        let expired = format!(
+            "e30.{}.sig",
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&json!({"exp": 1})).unwrap())
+        );
+        assert_eq!(
+            codex_credential(&json!({"tokens":{"access_token": expired}})).err(),
+            Some("auth_required")
+        );
+    }
     #[tokio::test]
     #[ignore = "explicit read-only verification using this machine's logged-in accounts"]
     async fn live_connected_quotas() {
@@ -687,9 +1116,17 @@ mod tests {
         assert!(load(Source::Cursor)
             .expect("Cursor credential parsing")
             .is_some());
-        let (grok, cursor) = tokio::join!(grok(), cursor());
+        let (grok, cursor, codex) = tokio::join!(grok(), cursor(), codex());
         for quota in [grok, cursor] {
             let quota = quota.expect("client session available");
+            assert_eq!(quota.status.as_deref(), Some("ready"));
+            println!("{}", serde_json::to_string(&quota).unwrap());
+        }
+        if load(Source::Codex)
+            .expect("Codex credential parsing")
+            .is_some()
+        {
+            let quota = codex.expect("client session available");
             assert_eq!(quota.status.as_deref(), Some("ready"));
             println!("{}", serde_json::to_string(&quota).unwrap());
         }

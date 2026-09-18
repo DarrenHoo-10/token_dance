@@ -16,6 +16,30 @@ pub struct QuotaWindow {
     pub(crate) label: Option<String>,
 }
 
+/// Snap remaining-minutes noise (e.g. 299) onto the 5-hour / weekly buckets
+/// so the picker keeps stable `codex:primary:300m` / `codex:primary:10080m` ids.
+pub(crate) fn classify_codex_minutes(minutes: u64) -> Option<(&'static str, u64)> {
+    if (180..=360).contains(&minutes) {
+        Some(("five_hour", 300))
+    } else if (9000..=11_520).contains(&minutes) {
+        Some(("weekly", 10080))
+    } else {
+        None
+    }
+}
+
+pub(crate) fn decorate_codex_window(used: f64, minutes: u64, resets_at: Option<i64>) -> Option<QuotaWindow> {
+    if !used.is_finite() || !(0.0..=100.0).contains(&used) || minutes == 0 { return None; }
+    let (label, minutes) = classify_codex_minutes(minutes)?;
+    Some(QuotaWindow {
+        used_percent: used,
+        window_minutes: minutes,
+        resets_at,
+        provider: None,
+        label: Some(label.into()),
+    })
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentQuota {
@@ -41,13 +65,11 @@ fn parse_quota(line: &str) -> Option<AgentQuota> {
     }
     let observed_at = value["timestamp"].as_str()?;
     chrono::DateTime::parse_from_rfc3339(observed_at).ok()?;
-    let windows = ["primary", "secondary"].into_iter().filter_map(|key| {
+    let mut windows = ["primary", "secondary"].into_iter().filter_map(|key| {
         let window = &limits[key];
-        let used_percent = window["used_percent"].as_f64()?;
-        let window_minutes = window["window_minutes"].as_u64()?;
-        if !used_percent.is_finite() || !(0.0..=100.0).contains(&used_percent) || window_minutes == 0 { return None; }
-        Some(QuotaWindow { used_percent, window_minutes, resets_at: window["resets_at"].as_i64(), provider: None, label: None })
+        decorate_codex_window(window["used_percent"].as_f64()?, window["window_minutes"].as_u64()?, window["resets_at"].as_i64())
     }).collect::<Vec<_>>();
+    windows.sort_by_key(|window| window.window_minutes);
     if windows.is_empty() { return None; }
     Some(AgentQuota {
         agent_id: "codex".into(), observed_at: observed_at.into(),
@@ -117,6 +139,7 @@ static REMOTE_QUOTAS: Mutex<std::collections::BTreeMap<&'static str, AgentQuota>
 static ZCODE_REFRESH: AtomicBool = AtomicBool::new(false);
 static GROK_REFRESH: AtomicBool = AtomicBool::new(false);
 static CURSOR_REFRESH: AtomicBool = AtomicBool::new(false);
+static CODEX_REFRESH: AtomicBool = AtomicBool::new(false);
 
 fn refresh_remote(id: &'static str, inflight: &'static AtomicBool, future: impl std::future::Future<Output=Option<AgentQuota>> + Send + 'static) {
     if inflight.compare_exchange(false,true,Ordering::AcqRel,Ordering::Relaxed).is_err() { return; }
@@ -147,10 +170,23 @@ pub async fn get_agent_quotas() -> Result<Vec<AgentQuota>, String> {
     // Local tests can inspect log-based quotas without using connected accounts.
     if crate::local_test::enabled() { return Ok(result); }
     // Publish local observations immediately; slow network providers refresh independently.
+    refresh_remote("codex", &CODEX_REFRESH, connected::codex());
     refresh_remote("zcode", &ZCODE_REFRESH, zcode::read_quota());
     refresh_remote("grok-build", &GROK_REFRESH, connected::grok());
     refresh_remote("cursor", &CURSOR_REFRESH, connected::cursor());
-    result.extend(REMOTE_QUOTAS.lock().map_err(|_| "Quota cache unavailable")?.values().cloned());
+    let remotes = REMOTE_QUOTAS.lock().map_err(|_| "Quota cache unavailable")?;
+    if let Some(codex) = remotes.get("codex") {
+        let replace = match codex.status.as_deref() {
+            Some("ready" | "auth_required" | "no_quota" | "unlimited") => true,
+            Some(_) if !codex.windows.is_empty() => true,
+            _ => !result.iter().any(|quota| quota.agent_id == "codex"),
+        };
+        if replace {
+            result.retain(|quota| quota.agent_id != "codex");
+            result.push(codex.clone());
+        }
+    }
+    result.extend(remotes.values().filter(|quota| quota.agent_id != "codex").cloned());
     Ok(result)
 }
 
@@ -162,9 +198,25 @@ mod tests {
         let valid = r#"{"type":"event_msg","timestamp":"2026-09-05T12:00:00Z","payload":{"type":"token_count","rate_limits":{"rate_limit_id":"codex","primary":{"used_percent":37,"window_minutes":300,"resets_at":1788613200}}}}"#;
         let quota = parse_quota(valid).unwrap();
         assert_eq!(quota.windows[0].used_percent, 37.0);
+        assert_eq!(quota.windows[0].window_minutes, 300);
+        assert_eq!(quota.windows[0].label.as_deref(), Some("five_hour"));
         assert!(parse_quota(&valid.replace("37", "-1")).is_none());
         assert!(parse_quota(&valid.replace("\"codex\"", "\"other\"")).is_none());
         assert!(parse_quota(&valid.replace("token_count", "agent_message")).is_none());
+        assert!(parse_quota(&valid.replace("300", "30")).is_none());
+    }
+
+    #[test]
+    fn five_hour_window_sorts_ahead_of_weekly_for_the_picker() {
+        assert_eq!(classify_codex_minutes(299), Some(("five_hour", 300)));
+        assert_eq!(classify_codex_minutes(10_080), Some(("weekly", 10_080)));
+        assert_eq!(classify_codex_minutes(30), None);
+        let both = r#"{"type":"event_msg","timestamp":"2026-09-05T12:00:00Z","payload":{"type":"token_count","rate_limits":{"limit_id":"codex","primary":{"used_percent":49,"window_minutes":10080,"resets_at":1788613200},"secondary":{"used_percent":12,"window_minutes":299,"resets_at":1788600000}}}}"#;
+        let quota = parse_quota(both).unwrap();
+        assert_eq!(quota.windows[0].label.as_deref(), Some("five_hour"));
+        assert_eq!(quota.windows[0].window_minutes, 300);
+        assert_eq!(quota.windows[1].label.as_deref(), Some("weekly"));
+        assert_eq!(quota.windows[1].window_minutes, 10080);
     }
 
     fn event(id: Option<&str>, used: f64, timestamp: &str) -> String {
@@ -191,6 +243,8 @@ mod tests {
         assert_eq!(read_codex_quota_from(dir.path())[0].observed_at, "2026-09-12T13:00:00Z");
         writeln!(file, "{}", event(Some("codex"), 30.0, "2026-09-12T13:00:03Z")).unwrap();
         assert_eq!(read_codex_quota_from(dir.path())[0].windows[0].used_percent, 30.0);
+        assert_eq!(read_codex_quota_from(dir.path())[0].windows[0].label.as_deref(), Some("weekly"));
+        assert_eq!(read_codex_quota_from(dir.path())[0].windows[0].window_minutes, 10080);
     }
 
     #[test]
