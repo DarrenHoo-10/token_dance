@@ -29,7 +29,7 @@ pub use flags::event_pipeline_v2_client_enabled;
 pub use query::{
     query_consumer_backlog, query_harness_token_series, query_skill_ranks, query_usage_summary,
     ConsumerBacklog, CostByCurrency, CoverageLevel, CoveredValue, RatioValue, SkillRankRow,
-    UsageSummary,
+    UsageSummary, ModelUsage,
 };
 pub use rollout::{
     ensure_rollout, workers_allowed, RolloutPhase, RolloutStatus, CLOSED_BETA_GENERATION,

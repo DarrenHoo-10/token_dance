@@ -5,6 +5,7 @@ import type { AgentConfig, DaemonStatus } from './tauri-bridge';
 import { collectionStatusText, usageTokens, usageCosts, usageTrend, type UsageRange, type AgentQuota } from './usage-analytics';
 import { WeeklyTrend } from './components/WeeklyTrend';
 import { AnnualActivity, QuotaRings } from './components/UsageDetails';
+import { ModelUsageList } from './components/ModelUsageList';
 import { brandLogo, localTestBuild } from './brand';
 import './styles/usage-panel.css';
 import { useWindowReady } from './window-ready';
@@ -109,11 +110,12 @@ export function UsagePanel() {
           return <article className="usage-agent-card" key={agent.id}><div className="usage-agent-top"><div className="usage-agent-name"><span className="usage-agent-symbol">{agent.name.slice(0, 2)}</span><strong>{agent.name}</strong>{quota?.plan && <small>{quota.plan}</small>}</div><div className="usage-agent-value"><strong>{tokens === null ? '—' : format(tokens)}</strong><small>{costLabel([agent], range)}</small></div></div>
             {showAgentWarning(agent) && <div className="usage-agent-warning">{agentState(agent)}</div>}
             <QuotaRings quota={quota} zh={zh} />
+            <ModelUsageList key={range} models={agent.modelUsage} range={range} zh={zh} />
           </article>;
         })}
         {others.length > 0 && <details className="usage-other-sources"><summary>{text('其他来源', 'Other sources')} · {others.length}</summary>{others.map(agent => {
           const quota = quotas.find(item => item.agentId === agent.id);
-          return <div className="usage-other-source" key={agent.id}><div className="usage-source-row"><span>{agent.name}{quota?.plan && <small> · {quota.plan}</small>}</span>{showAgentWarning(agent) && <small>{agentState(agent)}</small>}<strong>{usageTokens(agent, range) === null ? '—' : format(usageTokens(agent, range)!)}</strong></div>{quota && <QuotaRings quota={quota} zh={zh} />}</div>;
+          return <div className="usage-other-source" key={agent.id}><div className="usage-source-row"><span>{agent.name}{quota?.plan && <small> · {quota.plan}</small>}</span>{showAgentWarning(agent) && <small>{agentState(agent)}</small>}<strong>{usageTokens(agent, range) === null ? '—' : format(usageTokens(agent, range)!)}</strong></div>{quota && <QuotaRings quota={quota} zh={zh} />}<ModelUsageList key={range} models={agent.modelUsage} range={range} zh={zh} /></div>;
         })}</details>}
         {data && agents.length === 0 && <p className="usage-empty">{text('尚未检测到 Agent，在设置中连接。', 'No agents found. Connect one in Settings.')}</p>}
       </section>
