@@ -254,7 +254,7 @@ export const zhCN = {
     metricValue: '指标数值',
     topAgent: '主力 Agent',
     activeDays: '活跃天数',
-    windowToday: '今天',
+    windowToday: '过去 24 小时',
     window7d: '7 天',
     window30d: '30 天',
     windowAll: '全部时间',

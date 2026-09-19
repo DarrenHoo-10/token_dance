@@ -27,4 +27,11 @@ describe('leaderboard rank comparisons', () => {
     expect(within(rows[5]).getAllByRole('cell')[3]).toBeEmptyDOMElement();
     expect(screen.getByRole('columnheader', { name: '较昨日' })).toBeInTheDocument();
   });
+
+  it('labels the rolling leaderboard comparison as the prior 24 hours', () => {
+    render(<LocaleProvider><MemoryRouter><LeaderboardTable window="today" entries={[
+      { rankNo: 1, handle: 'ada', displayName: 'Ada', avatarUrl: null, metricValue: '100', rankDelta: 1 },
+    ]} /></MemoryRouter></LocaleProvider>);
+    expect(screen.getByRole('columnheader', { name: '较前 24h' })).toHaveAttribute('title', '与前一个 24 小时周期比较 · 北京时间');
+  });
 });

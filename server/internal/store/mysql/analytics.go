@@ -48,6 +48,15 @@ func agentDisplayName(id string) string {
 	}
 }
 
+func analyticsMetricBucketRange(r domain.TimeRange) (string, int64, int64, error) {
+	if r.Key == domain.TimeRangeToday {
+		return domain.TelemetryGrainHour, r.From.UnixMilli(), r.To.UnixMilli(), nil
+	}
+	from, to, _ := rangeDateStrings(r)
+	fromMs, toMs, err := dayGrainBucketRange(from, to)
+	return domain.TelemetryGrainDay, fromMs, toMs, err
+}
+
 func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, r domain.TimeRange) (*domain.PersonalSummary, error) {
 	uAuth := &authStore{db: s.db}
 	u, err := uAuth.FindUserByID(ctx, userID)
@@ -56,8 +65,7 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 	}
 
 	plan := planUTCAggregates(r)
-	fromStr, toStr := plan.fromDate, plan.toDate
-	fromMs, toMs, err := dayGrainBucketRange(fromStr, toStr)
+	grain, fromMs, toMs, err := analyticsMetricBucketRange(r)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +98,7 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 			MAX(metric_semantics_version),
 			`+telemetryWatermarkSQL+`
 		FROM bound_telemetry_model_metrics
-		WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL
+		WHERE user_id = ? AND grain = '`+grain+`' AND delete_at IS NULL
 		  AND bucket_start >= ? AND bucket_start <= ?`,
 		userID, fromMs, toMs,
 	).Scan(
@@ -115,7 +123,7 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 			SUM(user_turn_started_count),
 			`+telemetryWatermarkSQL+`
 		FROM bound_telemetry_harness_metrics
-		WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL
+		WHERE user_id = ? AND grain = '`+grain+`' AND delete_at IS NULL
 		  AND bucket_start >= ? AND bucket_start <= ?`,
 		userID, fromMs, toMs,
 	).Scan(&harnessRows, &codeLines, &activeDurationNull, &messageCountNull, &userMsgNull, &harnessWatermark)
@@ -136,7 +144,7 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 			CAST(COALESCE(SUM(reported_request_count + estimated_request_count), 0) AS UNSIGNED),
 			CAST(COALESCE(SUM(reported_request_count + estimated_request_count + unpriced_request_count), 0) AS UNSIGNED)
 		FROM bound_telemetry_cost_metrics
-		WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL
+		WHERE user_id = ? AND grain = '`+grain+`' AND delete_at IS NULL
 		  AND bucket_start >= ? AND bucket_start <= ?
 		GROUP BY currency
 		ORDER BY currency`,
@@ -196,7 +204,7 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 			CAST(COALESCE(SUM(duration_known_count), 0) AS UNSIGNED),
 			CAST(COALESCE(SUM(message_known_count), 0) AS UNSIGNED)
 		FROM bound_telemetry_harness_metrics
-		WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL
+		WHERE user_id = ? AND grain = '`+grain+`' AND delete_at IS NULL
 		  AND bucket_start >= ? AND bucket_start <= ?`,
 		userID, fromMs, toMs,
 	).Scan(&codeRecords, &durationRecords, &messageRecords)
@@ -358,14 +366,17 @@ func (s *analyticsStore) GetTokenTrend(ctx context.Context, userID string, r dom
 		return nil, err
 	}
 
-	grain := "day"
+	grain := trendGranularityForRange(r.Key)
 	dateSQL := telemetryMetricDateSQL
 	prefixedDateSQL := telemetryMetricDateSQLPrefixed("m")
-	if r.Key == domain.TimeRangeToday {
-		grain = "hour"
+	switch grain {
+	case "hour":
 		fromMs = r.From.UnixMilli()
 		toMs = r.To.UnixMilli()
 		dateSQL = "DATE_FORMAT(CONVERT_TZ(FROM_UNIXTIME(bucket_start / 1000), '+00:00', '+08:00'), '%Y-%m-%d %H:00')"
+		prefixedDateSQL = strings.ReplaceAll(dateSQL, "bucket_start", "m.bucket_start")
+	case "month":
+		dateSQL = "DATE_FORMAT(CONVERT_TZ(FROM_UNIXTIME(bucket_start / 1000), '+00:00', '+08:00'), '%Y-%m')"
 		prefixedDateSQL = strings.ReplaceAll(dateSQL, "bucket_start", "m.bucket_start")
 	}
 	hasModelFilter := (providerID != nil && *providerID != "" && *providerID != "all") || (modelID != nil && *modelID != "" && *modelID != "all")
@@ -569,10 +580,20 @@ func (s *analyticsStore) GetTokenTrend(ctx context.Context, userID string, r dom
 	}, nil
 }
 
+func trendGranularityForRange(key domain.TimeRangeKey) string {
+	switch key {
+	case domain.TimeRangeToday:
+		return "hour"
+	case domain.TimeRangeAll:
+		return "month"
+	default:
+		return "day"
+	}
+}
+
 func (s *analyticsStore) GetAgentBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error) {
 	plan := planUTCAggregates(r)
-	fromStr, toStr := plan.fromDate, plan.toDate
-	fromMs, toMs, err := dayGrainBucketRange(fromStr, toStr)
+	grain, fromMs, toMs, err := analyticsMetricBucketRange(r)
 	if err != nil {
 		return nil, err
 	}
@@ -584,7 +605,7 @@ func (s *analyticsStore) GetAgentBreakdown(ctx context.Context, userID string, r
 			` + telemetryWatermarkSQL + ` AS max_computed_at,
 			MAX(metric_semantics_version) AS max_agg_ver
 		FROM bound_telemetry_model_metrics
-		WHERE user_id = ? AND grain = 'day' AND delete_at IS NULL
+		WHERE user_id = ? AND grain = '` + grain + `' AND delete_at IS NULL
 		  AND bucket_start >= ? AND bucket_start <= ?
 		GROUP BY harness_id
 		ORDER BY total_tokens DESC`
@@ -692,8 +713,7 @@ func (s *analyticsStore) GetAgentBreakdown(ctx context.Context, userID string, r
 
 func (s *analyticsStore) GetModelBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error) {
 	plan := planUTCAggregates(r)
-	fromStr, toStr := plan.fromDate, plan.toDate
-	fromMs, toMs, err := dayGrainBucketRange(fromStr, toStr)
+	grain, fromMs, toMs, err := analyticsMetricBucketRange(r)
 	if err != nil {
 		return nil, err
 	}
@@ -706,7 +726,7 @@ func (s *analyticsStore) GetModelBreakdown(ctx context.Context, userID string, r
 			MAX(m.metric_semantics_version) AS max_agg_ver
 		FROM bound_telemetry_model_metrics m
 		JOIN telemetry_models tm ON tm.id = m.model_key
-		WHERE m.user_id = ? AND m.grain = 'day' AND m.delete_at IS NULL
+		WHERE m.user_id = ? AND m.grain = '` + grain + `' AND m.delete_at IS NULL
 		  AND m.bucket_start >= ? AND m.bucket_start <= ?
 		GROUP BY tm.model_id
 		ORDER BY total_tokens DESC`
@@ -813,10 +833,13 @@ func (s *analyticsStore) GetModelBreakdown(ctx context.Context, userID string, r
 }
 
 func (s *analyticsStore) GetSkillRanking(ctx context.Context, userID string, r domain.TimeRange) (*domain.SkillsResponse, error) {
-	fromStr, toStr, _ := rangeDateStrings(r)
-	fromMs, toMs, err := dayGrainBucketRange(fromStr, toStr)
+	grain, fromMs, toMs, err := analyticsMetricBucketRange(r)
 	if err != nil {
 		return nil, err
+	}
+	activeDaysSQL := "COUNT(DISTINCT m.bucket_start)"
+	if grain == domain.TelemetryGrainHour {
+		activeDaysSQL = "COUNT(DISTINCT DATE_FORMAT(CONVERT_TZ(FROM_UNIXTIME(m.bucket_start / 1000), '+00:00', '+08:00'), '%Y-%m-%d'))"
 	}
 
 	query := `
@@ -824,14 +847,14 @@ func (s *analyticsStore) GetSkillRanking(ctx context.Context, userID string, r d
 			HEX(s.skill_key) AS skill_hex,
 			COALESCE(s.public_name, '') AS skill_public_name,
 			SUM(m.use_count) AS total_use_count,
-			COUNT(DISTINCT m.bucket_start) AS active_days,
+			` + activeDaysSQL + ` AS active_days,
 			SUM(m.success_count) AS total_success,
 			SUM(m.failure_count) AS total_failure,
 			FROM_UNIXTIME(MAX(m.updated_at) / 1000) AS max_computed_at,
 			MAX(m.metric_semantics_version) AS max_agg_ver
 		FROM bound_telemetry_skill_metrics m
 		JOIN telemetry_skills s ON s.id = m.skill_id
-		WHERE m.user_id = ? AND m.grain = 'day' AND m.delete_at IS NULL
+		WHERE m.user_id = ? AND m.grain = '` + grain + `' AND m.delete_at IS NULL
 		  AND m.bucket_start >= ? AND m.bucket_start <= ?
 		GROUP BY s.skill_key, s.public_name
 		ORDER BY total_use_count DESC`

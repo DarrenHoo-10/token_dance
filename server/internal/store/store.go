@@ -142,21 +142,22 @@ type CommunityCost struct {
 // The stats worker recomputes a day from telemetry_* tables and overwrites
 // the row; request paths only read these rows, never aggregate.
 type CommunityDailyTotals struct {
-	MetricDate   string          `json:"metricDate"`
-	TokensTotal  uint64          `json:"tokensTotal"`
-	Developers   uint64          `json:"developers"`
-	CodeLines    uint64          `json:"codeLines"`
-	Interactions uint64          `json:"interactions"`
-	CostAmount   float64                `json:"costAmount"`
-	Costs        []CommunityCost        `json:"costs,omitempty"`
-	ModelShares  []CommunityModelShare  `json:"modelShares,omitempty"`
-	SkillShares  []CommunitySkillShare  `json:"skillShares,omitempty"`
-	IsFinal      bool                   `json:"isFinal"`
-	ComputedAt   time.Time              `json:"computedAt"`
+	MetricDate   string                `json:"metricDate"`
+	TokensTotal  uint64                `json:"tokensTotal"`
+	Developers   uint64                `json:"developers"`
+	CodeLines    uint64                `json:"codeLines"`
+	Interactions uint64                `json:"interactions"`
+	CostAmount   float64               `json:"costAmount"`
+	Costs        []CommunityCost       `json:"costs,omitempty"`
+	ModelShares  []CommunityModelShare `json:"modelShares,omitempty"`
+	SkillShares  []CommunitySkillShare `json:"skillShares,omitempty"`
+	IsFinal      bool                  `json:"isFinal"`
+	ComputedAt   time.Time             `json:"computedAt"`
 }
 
 type CommunityStatsStore interface {
 	SumCommunityDay(ctx context.Context, date string) (CommunityDailyTotals, error)
+	GetCommunityRollingStats(ctx context.Context, fromBucketMs, toBucketMs int64) (CommunityDailyTotals, []CommunityHarness, error)
 	SumCommunityModelShares(ctx context.Context, date string) ([]CommunityModelShare, error)
 	SumCommunitySkillShares(ctx context.Context, date string) ([]CommunitySkillShare, error)
 	UpsertCommunityDailyStats(ctx context.Context, totals CommunityDailyTotals) error

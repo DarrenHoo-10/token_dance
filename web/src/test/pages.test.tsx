@@ -37,6 +37,7 @@ function renderWithProviders(ui: React.ReactElement, initialRoute = '/') {
 describe('Shipped Pages & Failed API Paths Tests', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    localStorage.clear();
   });
 
   describe('LeaderboardPage', () => {
@@ -55,7 +56,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
     };
 
     beforeEach(() => {
-      vi.spyOn(api, 'getCommunityStats').mockResolvedValue({ metricDate: '2026-09-09', timezone: 'UTC', window: '7d' });
+      vi.spyOn(api, 'getCommunityStats').mockResolvedValue({ metricDate: '2026-09-09', timezone: 'UTC', window: 'today' });
       vi.spyOn(api, 'getPublicTokenTrends').mockResolvedValue({ visible: false });
       vi.spyOn(api, 'getPublicProfile').mockRejectedValue(new Error('hidden'));
     });
@@ -69,7 +70,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       expect(screen.queryByText('grace')).not.toBeInTheDocument();
       expect(screen.queryByText('@ada')).not.toBeInTheDocument();
       expect(screen.getAllByText('325.7M')).toHaveLength(2);
-      expect(spy).toHaveBeenCalledWith({ window: '7d', limit: 10 });
+      expect(spy).toHaveBeenCalledWith({ window: 'today', limit: 10 });
     });
 
     it('shows the nickname on podium and list, and falls back to handle only when the nickname is empty', async () => {

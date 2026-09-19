@@ -79,4 +79,20 @@ func TestDashboardHourlyReadOnlyMySQL(t *testing.T) {
 	if *response.Points[0].TokenTotal != "100" || *response.Points[1].TokenTotal != "200" {
 		t.Fatal("hourly totals differ")
 	}
+	monthBucket, err := domain.BucketStartMs(domain.TelemetryGrainMonth, bucket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec("INSERT INTO bound_telemetry_model_metrics (user_id,grain,bucket_start,harness_id,exact_token_total,updated_at) VALUES (?,'month',?,'codex',300,?)", user, monthBucket, bucket); err != nil {
+		t.Fatal(err)
+	}
+	r.Key = domain.TimeRangeAll
+	r.From = time.UnixMilli(monthBucket)
+	monthly, err := a.GetTokenTrend(context.Background(), user, r, "total", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if monthly.Granularity != "month" || len(monthly.Points) != 1 || monthly.Points[0].Date != "2026-09" {
+		t.Fatalf("all-time trend did not use monthly buckets: %+v", monthly)
+	}
 }

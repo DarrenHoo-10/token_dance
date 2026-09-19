@@ -254,7 +254,7 @@ export const enUS = {
     metricValue: 'Metric Value',
     topAgent: 'Primary Agent',
     activeDays: 'Active Days',
-    windowToday: 'Today',
+    windowToday: 'Past 24 hours',
     window7d: '7 Days',
     window30d: '30 Days',
     windowAll: 'All Time',

@@ -44,21 +44,23 @@ func seedTelemetryDayModelTokens(t *testing.T, db *sql.DB, userID, date, harness
 		t.Fatal(err)
 	}
 	nowMs := now.UnixMilli()
-	_, err = db.Exec(`
-		INSERT INTO telemetry_model_metrics (
-			created_at, updated_at, installation_id, grain, bucket_start,
-			harness_id, model_key, exact_token_total, derived_token_total,
-			input_context_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
-			model_request_count, usage_observed_count, token_total_known_count,
-			metric_semantics_version
-		) VALUES (?, ?, ?, 'day', ?, ?, 1, ?, ?, 0, 0, 0, 0, 0, 1, 1, 1, 1)
-		ON DUPLICATE KEY UPDATE
-			exact_token_total = exact_token_total + VALUES(exact_token_total),
-			derived_token_total = derived_token_total + VALUES(derived_token_total),
-			updated_at = VALUES(updated_at)`,
-		nowMs, nowMs, installationID, bucket, harness, exact, derived)
-	if err != nil {
-		t.Fatalf("seed telemetry model metrics: %v", err)
+	for _, grain := range []string{domain.TelemetryGrainHour, domain.TelemetryGrainDay} {
+		_, err = db.Exec(`
+			INSERT INTO telemetry_model_metrics (
+				created_at, updated_at, installation_id, grain, bucket_start,
+				harness_id, model_key, exact_token_total, derived_token_total,
+				input_context_tokens, output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
+				model_request_count, usage_observed_count, token_total_known_count,
+				metric_semantics_version
+			) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, 0, 0, 0, 0, 0, 1, 1, 1, 1)
+			ON DUPLICATE KEY UPDATE
+				exact_token_total = exact_token_total + VALUES(exact_token_total),
+				derived_token_total = derived_token_total + VALUES(derived_token_total),
+				updated_at = VALUES(updated_at)`,
+			nowMs, nowMs, installationID, grain, bucket, harness, exact, derived)
+		if err != nil {
+			t.Fatalf("seed %s telemetry model metrics: %v", grain, err)
+		}
 	}
 }
 

@@ -17,13 +17,13 @@ describe('Sky analytics interactions', () => {
     const zero = screen.getByRole('button', { name: /2026-02-01/ });
     expect(zero).toBeEnabled();
     fireEvent.click(zero);
-    expect(screen.getByText('0 Token')).toBeInTheDocument();
+    expect(zero).toHaveAccessibleName('2026-02-01：0 Token');
     expect(screen.getByRole('button', { name: /2026-02-02/ })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: '上个月' }));
-    expect(screen.getByText('2,100 Token')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '2026-01-31：2100 Token' })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByRole('button', { name: '上个月' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: '下个月' }));
-    expect(screen.getByText('8,400 Token')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '2026-02-28：8400 Token' })).toHaveAttribute('aria-pressed', 'true');
   });
   it('supports keyboard trend selection and clamps it after the date range shrinks', () => {
     const view = (trends: { date: string; tokenTotal: string }[]) => <LocaleProvider><TokenTrendChart trends={trends} /></LocaleProvider>;

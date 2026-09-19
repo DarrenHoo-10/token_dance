@@ -115,7 +115,7 @@ describe('Personal analytics overlay', () => {
     expect(screen.getByRole('heading', { name: '平台排行榜' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '个人数据' }));
     const dialog = await screen.findByRole('dialog', { name: 'Test Dev，你的创造正在发生。' });
-    expect(within(dialog).getByRole('button', { name: '今天' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(dialog).getByRole('button', { name: '过去 24 小时' })).toHaveAttribute('aria-pressed', 'true');
     expect(within(dialog).getByRole('button', { name: '近 7 天' })).toBeInTheDocument();
     expect(within(dialog).getByRole('img', { name: 'Test Dev' })).toHaveClass('personal-heading-avatar');
     expect(screen.queryByText('独立个人页')).not.toBeInTheDocument();
@@ -172,7 +172,7 @@ describe('Personal analytics overlay', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: '个人数据' }));
     const reopened = await screen.findByRole('dialog', { name: 'Test Dev，你的创造正在发生。' });
-    expect(within(reopened).getByRole('button', { name: '今天' })).toBeInTheDocument();
+    expect(within(reopened).getByRole('button', { name: '过去 24 小时' })).toBeInTheDocument();
     expect(screen.queryByText('数据加载失败')).not.toBeInTheDocument();
   });
 });

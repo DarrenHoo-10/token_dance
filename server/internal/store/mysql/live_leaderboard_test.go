@@ -79,6 +79,21 @@ func TestLeaderboardStatisticsDays(t *testing.T) {
 	}
 }
 
+func TestLiveLeaderboardTodayUsesRolling24HourBuckets(t *testing.T) {
+	now := time.Date(2026, 1, 1, 20, 37, 0, 0, domain.DayTZ)
+	grain, fromMs, toMs, err := liveLeaderboardBucketRange("today", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if grain != domain.TelemetryGrainHour {
+		t.Fatalf("today grain = %q, want hour", grain)
+	}
+	from, to := time.UnixMilli(fromMs).In(domain.DayTZ), time.UnixMilli(toMs).In(domain.DayTZ)
+	if from.Format("2006-01-02 15:04") != "2025-12-31 21:00" || to.Format("2006-01-02 15:04") != "2026-01-01 20:00" {
+		t.Fatalf("unexpected rolling window %v..%v", from, to)
+	}
+}
+
 func TestTodayLeaderboardUsesCanonicalMetricsDespiteStaleProjectionsMySQL(t *testing.T) {
 	st, db, cleanup := getTestStore(t)
 	defer cleanup()
