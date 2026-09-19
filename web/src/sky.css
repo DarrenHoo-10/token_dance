@@ -586,3 +586,5 @@
 
 .product-sky .sky-detail-heading{margin-top:25px;flex-wrap:wrap;gap:10px}
 @media(min-width:375px) and (max-width:760px){.product-sky .navbar .nav-brand span{display:block;font-size:20px}}
+
+.sky-harness-caption{margin-top:18px;font-size:11px;color:var(--text-muted)}

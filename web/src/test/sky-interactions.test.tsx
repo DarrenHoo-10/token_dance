@@ -71,4 +71,3 @@ describe('Team sharing persistence', () => {
     expect(patch).toHaveBeenCalledTimes(1);
   });
 });
-
