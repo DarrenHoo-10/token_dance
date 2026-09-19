@@ -153,7 +153,7 @@ export const Navbar: React.FC = () => {
                   onClick={() => { setDropdownOpen(false); personalAnalytics.show(); }}
                 >
                   <UserRound size={16} aria-hidden="true" />
-                  {t('publicProfile.headline')}
+                  {locale === 'zh-CN' ? '我的数据' : 'My analytics'}
                 </button>
 
                 <NavLink

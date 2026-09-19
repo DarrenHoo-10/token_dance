@@ -5,7 +5,7 @@ import { AuthProvider } from '@/context/AuthContext';
 import { LocaleProvider } from '@/context/LocaleContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { PersonalAnalyticsProvider, usePersonalAnalytics } from '@/context/PersonalAnalyticsContext';
-import { api, ApiError } from '@/api/client';
+import { api } from '@/api/client';
 
 function LocationLabel() {
   const { pathname } = useLocation();
@@ -145,7 +145,7 @@ describe('Personal analytics overlay', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Test Dev，你的创造正在发生。' });
     fireEvent.click(within(dialog).getByRole('button', { name: '近 7 天' }));
     await waitFor(() => expect(api.getPersonalSummary).toHaveBeenCalledWith('7d'));
-    fireEvent.change(within(dialog).getByLabelText('Agent 筛选'), { target: { value: 'cursor' } });
+    fireEvent.change(within(dialog).getByLabelText('趋势 Agent 筛选'), { target: { value: 'cursor' } });
     expect(await within(dialog).findByText('没有符合筛选的记录')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: /重置筛选/ }));
     await waitFor(() => expect(within(dialog).queryByText('没有符合筛选的记录')).not.toBeInTheDocument());
@@ -168,12 +168,11 @@ describe('Personal analytics overlay', () => {
     expect(screen.getByTestId('path')).toHaveTextContent('/leaderboard');
     expect(screen.queryByText('独立个人页')).not.toBeInTheDocument();
 
-    vi.mocked(api.getPersonalSummary).mockRejectedValueOnce(
-      new ApiError(500, { code: 'HTTP_500', messageKey: 'errors.http_500' }),
-    );
     fireEvent.click(screen.getByRole('button', { name: '关闭' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: '个人数据' }));
-    expect(await screen.findByText('数据加载失败')).toBeInTheDocument();
+    const reopened = await screen.findByRole('dialog', { name: 'Test Dev，你的创造正在发生。' });
+    expect(within(reopened).getByRole('button', { name: '今天' })).toBeInTheDocument();
+    expect(screen.queryByText('数据加载失败')).not.toBeInTheDocument();
   });
 });

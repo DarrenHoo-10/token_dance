@@ -64,6 +64,9 @@ describe('Homepage podium public trends', () => {
     expect(await screen.findByRole('heading', { name: 'Linus的创作轨迹' })).toBeInTheDocument();
     await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('linus', { range: '30d' }));
     expect(screen.getByRole('link', { name: '公开资料' })).toHaveAttribute('href', '/u/linus');
+    const hero = screen.getByRole('link', { name: /开始记录你的创造/ });
+    expect(hero).toHaveClass('hero-action');
+    expect(hero).toHaveAttribute('href', '/download');
   });
 
   it('shows an empty-range state instead of a login wall', async () => {

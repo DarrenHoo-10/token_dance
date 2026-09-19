@@ -40,7 +40,8 @@
 .sky-hero-copy h1 span{color:#91d52f;position:relative}
 .sky-hero-copy h1 span:after{content:'';position:absolute;bottom:-9px;height:7px;left:1%;right:-8%;border-top:2px solid #a8e93f;border-radius:50%;transform:rotate(-4deg)}
 .sky-hero-copy>p:not(.eyebrow){font-size:16px;margin-top:22px;letter-spacing:.4px}
-.sky-hero-copy>.sky-text-link{margin-top:25px;border-bottom:1px solid #91a780;padding-bottom:8px}
+.sky-hero-copy>.hero-action{display:flex;gap:12px;align-items:center;margin-top:27px;padding:0 0 8px;border:0;border-bottom:1px solid #8ca478;background:none;cursor:pointer;font:inherit;font-size:12px;color:#3c5630}
+.sky-hero-copy>.hero-action:hover{color:#111b0b;border-color:#273d12}
 .sky-orb{position:absolute;top:93px;left:50.2%;transform:translateX(-50%);display:flex;align-items:center;flex-direction:column;width:350px;text-align:center;z-index:2}
 .sky-orb>span:first-child{font-size:20px;font-weight:600}
 .sky-orb>strong{font-family:'Arial Black',var(--font-sans);font-size:clamp(75px,7.6vw,119px);line-height:1.2;letter-spacing:-7px;color:#0d1607;font-weight:950;max-width:100%;overflow-wrap:anywhere}
@@ -104,6 +105,7 @@
 .token-trend-empty{display:grid;place-items:center;color:var(--text-subtle);font-size:12px;text-align:center}
 .product-sky .chart-axis-labels{font-size:10px;color:#829272;display:flex;justify-content:space-between;margin-top:2px}
 .sky-detail-grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(0,1fr);gap:20px;align-items:start;margin-top:20px}
+.sky-share-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;min-width:0}
 .sky-side{display:grid;gap:20px;min-width:0}
 .sky-ranking{min-width:0}
 .sky-home .leaderboard-table{min-width:480px}
@@ -331,7 +333,8 @@
 .product-sky .personal-dashboard .grid-3{grid-template-columns:1fr 1fr}
 .product-sky .personal-dashboard .grid-3>.panel:last-child{grid-column:1/-1}
 .product-sky .personal-dashboard .grid-2>.panel:first-child .panel-header{align-items:flex-start;flex-direction:column;gap:13px}}
-@media(max-width:1000px){.product-sky .nav-links{gap:16px}
+@media(max-width:1000px){
+.product-sky .nav-links{gap:16px}
 .product-sky .nav-link{font-size:12px}
 .product-sky .nav-actions{gap:10px}
 .sky-account-name{display:none}
@@ -398,7 +401,7 @@
 .sky-hero-copy h1{font-size:clamp(37px,8.8vw,63px);letter-spacing:-2.6px}
 .sky-hero-copy .eyebrow{font-size:8px;letter-spacing:2.6px;margin-bottom:16px}
 .sky-hero-copy>p:not(.eyebrow){font-size:13px;margin-top:22px}
-.sky-hero-copy>.sky-text-link{font-size:11px;margin-top:18px}
+.sky-hero-copy>.hero-action{font-size:11px;margin-top:18px}
 .sky-orb{left:50%;top:266px;width:275px}
 .sky-orb>strong{font-size:90px;letter-spacing:-5px}
 .sky-orb>span:first-child{font-size:18px}
@@ -415,6 +418,7 @@
 .sky-metric-value{gap:5px}
 .sky-metric-value>.hero-delta{font-size:10px}
 .sky-feature-grid,.sky-detail-grid{grid-template-columns:1fr;gap:17px}
+.sky-home-shell .sky-share-grid,.sky-share-grid{grid-template-columns:1fr}
 .sky-home-content{padding:0 18px}
 .sky-home .panel{padding:25px 24px}
 .sky-home .panel-header h2{font-size:21px}

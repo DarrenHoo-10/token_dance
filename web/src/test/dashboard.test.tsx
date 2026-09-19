@@ -143,8 +143,8 @@ describe('Dashboard Components Tests', () => {
     expect(screen.getByText('当前筛选条件下暂无趋势数据')).toBeInTheDocument();
     expect(screen.getByText('尚未记录 Agent 数据')).toBeInTheDocument();
     expect(screen.getByText('尚未记录 Skill 使用数据')).toBeInTheDocument();
-    expect(screen.getByText('较少')).toBeInTheDocument();
-    expect(screen.getByText('较多')).toBeInTheDocument();
+    expect(screen.getByText('少')).toBeInTheDocument();
+    expect(screen.getByText('多')).toBeInTheDocument();
     expect(screen.getByRole('grid', { name: '活跃度热力图' })).toBeInTheDocument();
   });
 

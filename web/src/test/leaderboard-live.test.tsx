@@ -83,6 +83,9 @@ describe('Live leaderboard', () => {
     expect(screen.getByRole('heading', { name: '社区 Skill 排行榜' })).toBeInTheDocument();
     expect(screen.getByText('暂无社区模型用量数据。')).toBeInTheDocument();
     expect(screen.getByText('暂无社区 Skill 用量数据。')).toBeInTheDocument();
+    expect(document.querySelector('.sky-share-grid')?.querySelectorAll('.sky-share-board')).toHaveLength(3);
+    expect(document.querySelector('.sky-side')?.querySelector('.sky-share-board')).toBeNull();
+    expect(screen.getByRole('heading', { name: '正在创造的他们' })).toBeInTheDocument();
   });
 
   it('switches the shared trend chart to the clicked podium builder', async () => {

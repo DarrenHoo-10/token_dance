@@ -284,14 +284,14 @@ export const LeaderboardPage: React.FC = () => {
           <h1 id="sky-hero-title">Let Token <span>Dance</span></h1>
           <p>{zh ? '看见你与 AI 一起创造的每一天。' : 'Every day you create with AI, made visible.'}</p>
           {authenticated ? (
-            <button type="button" className="sky-text-link" onClick={personalAnalytics.show}>
+            <button type="button" className="hero-action" onClick={personalAnalytics.show}>
               {zh ? '查看我的创作足迹' : 'Explore my activity'}
-              <ArrowUpRight size={17} />
+              <ArrowUpRight size={18} />
             </button>
           ) : (
-            <Link className="sky-text-link" to="/download">
+            <Link className="hero-action" to="/download">
               {zh ? '开始记录你的创造' : 'Start your journey'}
-              <ArrowUpRight size={17} />
+              <ArrowUpRight size={18} />
             </Link>
           )}
         </div>
@@ -389,7 +389,7 @@ export const LeaderboardPage: React.FC = () => {
         </div>
         <div className="sky-detail-grid">
           <section className="panel sky-ranking">
-            {entries.length > 0 && <HomeLeaderboard key={range} entries={entries} ownEntry={authenticated ? boardSummary.ownEntry : null} window={windowByRange[range]} />}
+            <HomeLeaderboard key={range} entries={entries} ownEntry={authenticated ? boardSummary.ownEntry : null} window={windowByRange[range]} />
           </section>
           <aside className="sky-side">
             <section className="panel sky-personal">
@@ -430,6 +430,8 @@ export const LeaderboardPage: React.FC = () => {
                 <p className="side-card-empty">{zh ? '登录后查看你的排名与统计。' : 'Sign in to see your rank and stats.'}</p>
               )}
             </section>
+          </aside>
+          <div className="sky-share-grid">
             <CommunityShareBoard
               title={zh ? '常用 harness' : 'Top harnesses'}
               helpTo="/docs/sources"
@@ -471,7 +473,7 @@ export const LeaderboardPage: React.FC = () => {
                 sharePct: skill.sharePct,
               }))}
             />
-          </aside>
+          </div>
         </div>
         <section className="sky-download-strip">
           <Monitor size={35} />

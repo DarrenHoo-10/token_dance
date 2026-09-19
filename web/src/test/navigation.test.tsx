@@ -144,7 +144,7 @@ describe('Navigation & Locale Switching Tests', () => {
 
     expect(menuTrigger).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByRole('menu')).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Personal Data' })).not.toHaveAttribute('href');
+    expect(screen.getByRole('menuitem', { name: 'My analytics' })).not.toHaveAttribute('href');
     expect(screen.getByRole('menuitem', { name: 'Settings' })).toHaveAttribute(
       'href',
       '/settings/privacy'
