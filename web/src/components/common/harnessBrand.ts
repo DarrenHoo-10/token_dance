@@ -19,13 +19,13 @@ const KNOWN: Record<string, KnownHarness> = {
   cursor: { color: '#F54E00', markBg: '#F54E00', markFg: '#fff' },
   zcode: { color: '#171717', markBg: '#171717', markFg: '#fff' },
   'claude-code': { color: '#D97757', markBg: '#FAF9F5', markFg: '#D97757', border: '#E8E0D6' },
-  codex: { color: '#10A37F', markBg: '#10A37F', markFg: '#fff' },
+  codex: { color: '#3941FF', markBg: '#3941FF', markFg: '#fff' },
   'grok-build': { color: '#111111', markBg: '#111111', markFg: '#fff' },
   'deepseek-harness': { color: '#4D6BFE', markBg: '#4D6BFE', markFg: '#fff' },
-  opencode: { color: '#007AFF', markBg: '#fff', markFg: '#007AFF', border: '#C5D8F0' },
-  pi: { color: '#6B2A9A', markBg: '#6B2A9A', markFg: '#fff' },
-  workbuddy: { color: '#07C160', markBg: '#07C160', markFg: '#fff' },
-  'doubao-work': { color: '#2B7FFF', markBg: '#2B7FFF', markFg: '#fff' },
+  opencode: { color: '#211E1E', markBg: '#211E1E', markFg: '#F4F2F1' },
+  pi: { color: '#4D9ABF', markBg: '#FFF8F1', markFg: '#111', border: '#E8E0D6' },
+  workbuddy: { color: '#01C886', markBg: '#01C886', markFg: '#fff' },
+  'doubao-work': { color: '#1E37FC', markBg: '#F4F6FF', markFg: '#1E37FC', border: '#D6DCF8' },
 };
 
 const ALIASES: Record<string, string> = {

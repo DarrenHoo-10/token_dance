@@ -30,12 +30,18 @@ describe('harness brand identity', () => {
         <HarnessMark agentId="cursor" label="Cursor" />
         <HarnessMark agentId="zcode" label="Zcode" />
         <HarnessMark agentId="claude-code" label="Claude Code" />
+        <HarnessMark agentId="codex" label="Codex CLI" />
+        <HarnessMark agentId="grok-build" label="Grok" />
+        <HarnessMark agentId="opencode" label="OpenCode" />
+        <HarnessMark agentId="pi" label="Pi" />
+        <HarnessMark agentId="workbuddy" label="WorkBuddy" />
+        <HarnessMark agentId="doubao-work" label="Doubao" />
       </>,
     );
-    expect(container.querySelectorAll('svg')).toHaveLength(3);
-    expect(container.querySelector('[data-harness="cursor"]')).toBeTruthy();
-    expect(container.querySelector('[data-harness="zcode"]')).toBeTruthy();
-    expect(container.querySelector('[data-harness="claude-code"]')).toBeTruthy();
+    expect(container.querySelectorAll('svg')).toHaveLength(9);
+    expect(container.querySelector('[data-harness="codex"] svg')).toBeTruthy();
+    expect(container.querySelector('[data-harness="pi"] svg')).toBeTruthy();
+    expect(container.textContent).not.toMatch(/π/);
     expect(container.textContent).not.toMatch(/C.*C/);
   });
 });
