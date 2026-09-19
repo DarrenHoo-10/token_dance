@@ -22,6 +22,8 @@ beforeEach(() => {
   vi.spyOn(api,'getLeaderboard').mockResolvedValue(board);
   vi.spyOn(api,'getMyLeaderboard').mockImplementation((params) => api.getLeaderboard(params));
   vi.spyOn(api,'getCommunityStats').mockResolvedValue({ metricDate:'2026-09-09', timezone:'UTC', window:'7d' });
+  vi.spyOn(api,'getPublicTokenTrends').mockResolvedValue({ visible: false });
+  vi.spyOn(api,'getPublicProfile').mockRejectedValue(new Error('hidden'));
 });
 describe('Live leaderboard', () => {
   it('explains that a private profile still stays on the board', async () => {
@@ -75,6 +77,54 @@ describe('Live leaderboard', () => {
     expect(document.querySelector('[data-harness="codex"] svg')).toBeTruthy();
     expect(screen.queryByText('社区今日 Token 占比 · 按 harness')).not.toBeInTheDocument();
     expect(screen.queryByText('今天，整个社区正在持续燃烧 Token')).not.toBeInTheDocument();
+    expect(screen.queryByText(/More builders/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/A brighter tomorrow/)).not.toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '社区模型排行榜' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '社区 Skill 排行榜' })).toBeInTheDocument();
+    expect(screen.getByText('暂无社区模型用量数据。')).toBeInTheDocument();
+    expect(screen.getByText('暂无社区 Skill 用量数据。')).toBeInTheDocument();
+  });
+
+  it('switches the shared trend chart to the clicked podium builder', async () => {
+    vi.mocked(api.getLeaderboard).mockResolvedValue({
+      ...board,
+      entries: [
+        { rankNo: 1, handle: 'ada', displayName: 'Ada', avatarUrl: null, metricValue: '200', rankDelta: 0 },
+        { rankNo: 2, handle: 'grace', displayName: 'Grace', avatarUrl: null, metricValue: '100', rankDelta: 0 },
+        { rankNo: 3, handle: 'linus', displayName: 'Linus', avatarUrl: null, metricValue: '50', rankDelta: 0 },
+      ],
+    });
+    vi.mocked(api.getPublicTokenTrends).mockImplementation(async (handle) => ({
+      visible: true,
+      points: handle === 'grace'
+        ? [{ date: '2026-09-18', tokenTotal: '40' }, { date: '2026-09-19', tokenTotal: '60' }]
+        : [{ date: '2026-09-18', tokenTotal: '10' }, { date: '2026-09-19', tokenTotal: '20' }],
+    }));
+    showPage();
+    expect(await screen.findByRole('heading', { name: 'Ada的创作轨迹' })).toBeInTheDocument();
+    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('ada', { range: '30d' }));
+    expect(screen.queryByText('登录，留下你的足迹')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '查看 Grace 的公开创作轨迹' }));
+    expect(await screen.findByRole('heading', { name: 'Grace的创作轨迹' })).toBeInTheDocument();
+    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('grace', { range: '30d' }));
+    expect(screen.getByRole('link', { name: '公开资料' })).toHaveAttribute('href', '/u/grace');
+    expect(screen.queryByRole('link', { name: 'Ada Lovelace' })).not.toBeInTheDocument();
+  });
+
+  it('renders community model and skill boards from the public stats payload', async () => {
+    vi.mocked(api.getCommunityStats).mockResolvedValue({
+      metricDate: '2026-09-09', timezone: 'UTC', window: '7d',
+      harnesses: [{ agentId: 'codex', label: 'Codex CLI', tokens: '70', sharePct: 70 }],
+      models: [{ modelId: 'gpt-5', label: 'gpt-5', tokens: '50', sharePct: 50 }],
+      skills: [{ skillId: 'review', label: 'review', uses: '9', sharePct: 90 }],
+    });
+    showPage();
+    expect(await screen.findByText('gpt-5')).toBeInTheDocument();
+    expect(screen.getByText('review')).toBeInTheDocument();
+    expect(screen.getByText('社区近 7 天 Token 占比 · 按模型')).toBeInTheDocument();
+    expect(screen.getByText('社区近 7 天 调用占比 · 按 Skill')).toBeInTheDocument();
+    expect(screen.getByText('50%')).toBeInTheDocument();
+    expect(screen.getByText('90%')).toBeInTheDocument();
   });
 
   it('uses seven days by default and reloads hero stats with the selected homepage period', async () => {

@@ -53,6 +53,12 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       dataWatermarkAt: null,
     };
 
+    beforeEach(() => {
+      vi.spyOn(api, 'getCommunityStats').mockResolvedValue({ metricDate: '2026-09-09', timezone: 'UTC', window: '7d' });
+      vi.spyOn(api, 'getPublicTokenTrends').mockResolvedValue({ visible: false });
+      vi.spyOn(api, 'getPublicProfile').mockRejectedValue(new Error('hidden'));
+    });
+
     it('renders real leaderboard entries returned by the API', async () => {
       const spy = vi.spyOn(api, 'getLeaderboard').mockResolvedValue(leaderboardPayload);
       renderWithProviders(<LeaderboardPage />, '/leaderboard');

@@ -131,7 +131,111 @@ func (s *Service) GetCommunityStats(ctx context.Context, now time.Time, window s
 			SharePct: &share,
 		})
 	}
+	response.Models = projectCommunityModels(rows, current.TokensTotal, 5)
+	response.Skills = projectCommunitySkills(rows, 5)
 	return response, nil
+}
+
+func projectCommunityModels(rows []store.CommunityDailyTotals, tokenTotal uint64, limit int) []domain.CommunityModelDTO {
+	merged := make(map[string]store.CommunityModelShare)
+	for _, row := range rows {
+		for _, item := range row.ModelShares {
+			if item.ModelID == "" {
+				continue
+			}
+			existing := merged[item.ModelID]
+			existing.ModelID = item.ModelID
+			if existing.Label == "" {
+				existing.Label = item.Label
+			}
+			existing.Tokens += item.Tokens
+			merged[item.ModelID] = existing
+		}
+	}
+	list := make([]store.CommunityModelShare, 0, len(merged))
+	for _, item := range merged {
+		if item.Label == "" {
+			item.Label = item.ModelID
+		}
+		list = append(list, item)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].Tokens != list[j].Tokens {
+			return list[i].Tokens > list[j].Tokens
+		}
+		return list[i].ModelID < list[j].ModelID
+	})
+	if limit > 0 && len(list) > limit {
+		list = list[:limit]
+	}
+	out := make([]domain.CommunityModelDTO, 0, len(list))
+	for _, item := range list {
+		share := float64(0)
+		if tokenTotal > 0 {
+			share = math.Round(float64(item.Tokens)/float64(tokenTotal)*1000) / 10
+		}
+		out = append(out, domain.CommunityModelDTO{
+			ModelID:  item.ModelID,
+			Label:    item.Label,
+			Tokens:   uint64String(item.Tokens),
+			SharePct: &share,
+		})
+	}
+	return out
+}
+
+func projectCommunitySkills(rows []store.CommunityDailyTotals, limit int) []domain.CommunitySkillDTO {
+	merged := make(map[string]store.CommunitySkillShare)
+	var useTotal uint64
+	for _, row := range rows {
+		for _, item := range row.SkillShares {
+			key := item.SkillID
+			if key == "" {
+				key = item.Label
+			}
+			if key == "" {
+				continue
+			}
+			existing := merged[key]
+			existing.SkillID = key
+			if existing.Label == "" {
+				existing.Label = item.Label
+			}
+			existing.Uses += item.Uses
+			merged[key] = existing
+			useTotal += item.Uses
+		}
+	}
+	list := make([]store.CommunitySkillShare, 0, len(merged))
+	for _, item := range merged {
+		if item.Label == "" {
+			item.Label = item.SkillID
+		}
+		list = append(list, item)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if list[i].Uses != list[j].Uses {
+			return list[i].Uses > list[j].Uses
+		}
+		return list[i].SkillID < list[j].SkillID
+	})
+	if limit > 0 && len(list) > limit {
+		list = list[:limit]
+	}
+	out := make([]domain.CommunitySkillDTO, 0, len(list))
+	for _, item := range list {
+		share := float64(0)
+		if useTotal > 0 {
+			share = math.Round(float64(item.Uses)/float64(useTotal)*1000) / 10
+		}
+		out = append(out, domain.CommunitySkillDTO{
+			SkillID:  item.SkillID,
+			Label:    item.Label,
+			Uses:     uint64String(item.Uses),
+			SharePct: &share,
+		})
+	}
+	return out
 }
 
 func communityWindowDates(window string, now time.Time) (string, string, string, string, error) {

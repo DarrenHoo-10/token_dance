@@ -54,6 +54,20 @@ it('keeps community snapshots scoped to the selected period', () => {
   expect(readHomeCommunity('community:30d')).toBeNull();
 });
 
+it('persists community model and skill boards with the selected period', () => {
+  writeHomeCommunity('community:7d', {
+    metricDate: publicHomeDay(), timezone: 'UTC+8', window: '7d',
+    models: [{modelId:'gpt-5', label:'gpt-5', tokens:'50', sharePct:50}],
+    skills: [{skillId:'review', label:'review', uses:'9', sharePct:90}],
+  });
+  const cached = readHomeCommunity('community:7d');
+  expect(cached?.models?.[0].label).toBe('gpt-5');
+  expect(cached?.skills?.[0].label).toBe('review');
+  const key = Array.from({length: localStorage.length}, (_, i) => localStorage.key(i)!).find(k => k.endsWith(':community:7d'))!;
+  localStorage.setItem(key, JSON.stringify({day: publicHomeDay(), data: {metricDate: publicHomeDay(), timezone:'UTC+8', window:'7d', models: [null]}}));
+  expect(readHomeCommunity('community:7d')).toBeNull();
+});
+
 it('continues when storage is disabled or full', () => {
   vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('disabled'); });
   vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });

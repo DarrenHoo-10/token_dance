@@ -46,7 +46,6 @@
 .sky-orb>strong{font-family:'Arial Black',var(--font-sans);font-size:clamp(75px,7.6vw,119px);line-height:1.2;letter-spacing:-7px;color:#0d1607;font-weight:950;max-width:100%;overflow-wrap:anywhere}
 .sky-orb>i{height:10px;width:280px;border-radius:65% 40%;background:var(--lime);transform:rotate(-8deg);margin:3px 0 17px}
 .sky-orb>small{margin-top:18px;font-size:9px;letter-spacing:3px;line-height:2;color:#7e8f70}
-.sky-hero-note{position:absolute;right:4.5%;top:280px;font-family:'Segoe Print',cursive;font-size:17px;color:#738279;transform:rotate(-8deg);line-height:1.7}
 .product-sky .hero-delta,.sky-change{display:inline-flex;align-items:center;font-size:13px;font-weight:650;white-space:nowrap;margin:0;opacity:1;position:static;transform:none;color:#438128;background:transparent;padding:0}
 .product-sky .hero-delta.down,.sky-change.down{color:#c25c48}
 .product-sky .hero-delta.flat,.sky-change.flat{color:#7c8775}
@@ -310,7 +309,6 @@
 .sky-hero{height:540px}
 .sky-hero-copy h1{font-size:4.2vw}
 .sky-hero-copy>p:not(.eyebrow){font-size:14px}
-.sky-hero-note{display:none}
 .sky-metrics{left:4%;right:4%;padding:24px 4px}
 .product-sky .hero-mini-card{padding:0 18px;gap:10px}
 .sky-metric-icon svg{width:27px;height:27px}

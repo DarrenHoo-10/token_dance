@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { HomeLeaderboard } from '@/components/analytics/HomeLeaderboard';
+import { CommunityShareBoard } from '@/components/analytics/CommunityShareBoard';
 import { calendarPeriodChange } from '@/components/analytics/calendarPeriodChange';
 import { LocaleProvider } from '@/context/LocaleContext';
+import { usageColor } from '@/utils/usageColors';
 
 describe('Approved homepage interactions', () => {
   it('expands six entries, searches loaded names and handles, and keeps the full-board route', () => {
@@ -29,5 +31,42 @@ describe('Approved homepage interactions', () => {
     expect(calendarPeriodChange(days.map((day,i)=>i===7?{...day,date:'2026-08-01'}:day),7)).toBeNull();
     expect(calendarPeriodChange(days.map((day,i)=>i<7?{...day,tokenTotal:'0'}:day),7)).toBeNull();
     expect(calendarPeriodChange(days.map((day,i)=>i>=7?{...day,tokenTotal:'0'}:day),7)).toBe(-100);
+  });
+  it('renders community share boards and keeps the empty caption', () => {
+    const { rerender } = render(
+      <LocaleProvider>
+        <MemoryRouter>
+          <CommunityShareBoard
+            title="社区模型排行榜"
+            helpTo="/docs/sources"
+            helpLabel="模型用量说明"
+            empty="暂无社区模型用量数据。"
+            caption="社区近 7 天 Token 占比 · 按模型"
+            items={[{ id: 'gpt-5', label: 'gpt-5', sharePct: 41 }]}
+          />
+        </MemoryRouter>
+      </LocaleProvider>,
+    );
+    expect(screen.getByRole('heading', { name: '社区模型排行榜' })).toBeInTheDocument();
+    expect(screen.getByText('gpt-5')).toBeInTheDocument();
+    expect(screen.getByText('41%')).toBeInTheDocument();
+    expect((document.querySelector('.tool-track i') as HTMLElement).style.backgroundColor).toBe('rgb(139, 92, 246)');
+    expect(usageColor('gpt-5')).toBe('#8B5CF6');
+    rerender(
+      <LocaleProvider>
+        <MemoryRouter>
+          <CommunityShareBoard
+            title="社区 Skill 排行榜"
+            helpTo="/docs/sources"
+            helpLabel="Skill 用量说明"
+            empty="暂无社区 Skill 用量数据。"
+            caption="社区近 7 天 调用占比 · 按 Skill"
+            items={[]}
+          />
+        </MemoryRouter>
+      </LocaleProvider>,
+    );
+    expect(screen.getByRole('heading', { name: '社区 Skill 排行榜' })).toBeInTheDocument();
+    expect(screen.getByText('暂无社区 Skill 用量数据。')).toBeInTheDocument();
   });
 });

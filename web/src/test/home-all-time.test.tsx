@@ -44,6 +44,8 @@ describe('Home all-time usage', () => {
       snapshotId: 'empty', boardKey: 'global', window: 'today', metric: 'tokens', entries: [],
     });
     vi.spyOn(api, 'getMyLeaderboard').mockImplementation((params) => api.getLeaderboard(params));
+    vi.spyOn(api, 'getCommunityStats').mockResolvedValue({ metricDate: '2026-09-09', timezone: 'UTC', window: '7d' });
+    vi.spyOn(api, 'getPublicTokenTrends').mockResolvedValue({ visible: false });
     vi.spyOn(api, 'getActivityCalendar').mockResolvedValue({
       days: [], currentStreak: 0, longestStreak: 0, totalActiveDays: 0, aggregationVersion: 1,
     });

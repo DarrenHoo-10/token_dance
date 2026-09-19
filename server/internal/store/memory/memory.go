@@ -2259,6 +2259,22 @@ func (m *MemoryStore) GetLeaderboardView(ctx context.Context, q store.Leaderboar
 
 func (m *MemoryStore) CommunityStats() store.CommunityStatsStore { return m }
 
+func (m *MemoryStore) SumCommunityModelShares(ctx context.Context, date string) ([]store.CommunityModelShare, error) {
+	totals, err := m.GetCommunityDailyStats(ctx, date)
+	if err != nil || totals == nil {
+		return nil, err
+	}
+	return totals.ModelShares, nil
+}
+
+func (m *MemoryStore) SumCommunitySkillShares(ctx context.Context, date string) ([]store.CommunitySkillShare, error) {
+	totals, err := m.GetCommunityDailyStats(ctx, date)
+	if err != nil || totals == nil {
+		return nil, err
+	}
+	return totals.SkillShares, nil
+}
+
 func (m *MemoryStore) SumCommunityDay(ctx context.Context, date string) (store.CommunityDailyTotals, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

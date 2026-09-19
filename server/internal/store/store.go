@@ -147,14 +147,18 @@ type CommunityDailyTotals struct {
 	Developers   uint64          `json:"developers"`
 	CodeLines    uint64          `json:"codeLines"`
 	Interactions uint64          `json:"interactions"`
-	CostAmount   float64         `json:"costAmount"`
-	Costs        []CommunityCost `json:"costs,omitempty"`
-	IsFinal      bool            `json:"isFinal"`
-	ComputedAt   time.Time       `json:"computedAt"`
+	CostAmount   float64                `json:"costAmount"`
+	Costs        []CommunityCost        `json:"costs,omitempty"`
+	ModelShares  []CommunityModelShare  `json:"modelShares,omitempty"`
+	SkillShares  []CommunitySkillShare  `json:"skillShares,omitempty"`
+	IsFinal      bool                   `json:"isFinal"`
+	ComputedAt   time.Time              `json:"computedAt"`
 }
 
 type CommunityStatsStore interface {
 	SumCommunityDay(ctx context.Context, date string) (CommunityDailyTotals, error)
+	SumCommunityModelShares(ctx context.Context, date string) ([]CommunityModelShare, error)
+	SumCommunitySkillShares(ctx context.Context, date string) ([]CommunitySkillShare, error)
 	UpsertCommunityDailyStats(ctx context.Context, totals CommunityDailyTotals) error
 	GetCommunityDailyStats(ctx context.Context, date string) (*CommunityDailyTotals, error)
 	ListCommunityDailyStats(ctx context.Context, fromDate, toDate string) ([]CommunityDailyTotals, error)
@@ -176,6 +180,20 @@ type CommunityHarness struct {
 	AgentID     string
 	Label       string
 	TokensTotal uint64
+}
+
+// CommunityModelShare is one model's token total inside a metric day.
+type CommunityModelShare struct {
+	ModelID string `json:"modelId"`
+	Label   string `json:"label"`
+	Tokens  uint64 `json:"tokens"`
+}
+
+// CommunitySkillShare is one publicly named skill's use count inside a metric day.
+type CommunitySkillShare struct {
+	SkillID string `json:"skillId"`
+	Label   string `json:"label"`
+	Uses    uint64 `json:"uses"`
 }
 
 type AvatarReadyMeta struct {

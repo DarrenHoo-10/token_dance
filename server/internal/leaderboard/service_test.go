@@ -203,6 +203,28 @@ func TestGetCommunityStatsAggregatesSelectedWindowAndPreviousPeriod(t *testing.T
 	if err := st.CommunityStats().ReplaceCommunityAgentDay(ctx, "2026-09-09", []store.CommunityAgentTokens{{AgentID: "codex", TokensTotal: 70}, {AgentID: "cursor", TokensTotal: 30}}); err != nil {
 		t.Fatalf("seed harness: %v", err)
 	}
+	if err := st.CommunityStats().UpsertCommunityDailyStats(ctx, store.CommunityDailyTotals{
+		MetricDate: "2026-09-03", TokensTotal: 80, Developers: 4, CodeLines: 30, Interactions: 8,
+		Costs: []store.CommunityCost{{Currency: "USD", Amount: 3}},
+		ModelShares: []store.CommunityModelShare{{ModelID: "gpt-5", Label: "gpt-5", Tokens: 50}},
+		SkillShares: []store.CommunitySkillShare{{SkillID: "review", Label: "review", Uses: 4}},
+	}); err != nil {
+		t.Fatalf("seed 2026-09-03 shares: %v", err)
+	}
+	if err := st.CommunityStats().UpsertCommunityDailyStats(ctx, store.CommunityDailyTotals{
+		MetricDate: "2026-09-09", TokensTotal: 120, Developers: 5, CodeLines: 70, Interactions: 12,
+		Costs: []store.CommunityCost{{Currency: "USD", Amount: 6}},
+		ModelShares: []store.CommunityModelShare{
+			{ModelID: "gpt-5", Label: "gpt-5", Tokens: 70},
+			{ModelID: "sonnet", Label: "sonnet", Tokens: 30},
+		},
+		SkillShares: []store.CommunitySkillShare{
+			{SkillID: "review", Label: "review", Uses: 6},
+			{SkillID: "commit", Label: "commit", Uses: 2},
+		},
+	}); err != nil {
+		t.Fatalf("seed 2026-09-09 shares: %v", err)
+	}
 
 	res, err := svc.GetCommunityStats(ctx, now, "7d")
 	if err != nil {
@@ -225,5 +247,17 @@ func TestGetCommunityStatsAggregatesSelectedWindowAndPreviousPeriod(t *testing.T
 	}
 	if len(res.Harnesses) != 2 || res.Harnesses[0].AgentID != "codex" || res.Harnesses[0].Tokens == nil || *res.Harnesses[0].Tokens != "120" {
 		t.Fatalf("unexpected range harnesses: %+v", res.Harnesses)
+	}
+	if len(res.Models) != 2 || res.Models[0].ModelID != "gpt-5" || res.Models[0].Tokens == nil || *res.Models[0].Tokens != "120" {
+		t.Fatalf("unexpected range models: %+v", res.Models)
+	}
+	if res.Models[0].SharePct == nil || *res.Models[0].SharePct != 60 {
+		t.Fatalf("unexpected model share: %+v", res.Models[0])
+	}
+	if len(res.Skills) != 2 || res.Skills[0].SkillID != "review" || res.Skills[0].Uses == nil || *res.Skills[0].Uses != "10" {
+		t.Fatalf("unexpected range skills: %+v", res.Skills)
+	}
+	if res.Skills[0].SharePct == nil || *res.Skills[0].SharePct != 83.3 {
+		t.Fatalf("unexpected skill share: %+v", res.Skills[0])
 	}
 }
