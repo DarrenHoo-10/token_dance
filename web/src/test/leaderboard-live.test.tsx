@@ -21,7 +21,7 @@ beforeEach(() => {
   vi.spyOn(api,'getActivityCalendar').mockRejectedValue(new Error('unavailable'));
   vi.spyOn(api,'getLeaderboard').mockResolvedValue(board);
   vi.spyOn(api,'getMyLeaderboard').mockImplementation((params) => api.getLeaderboard(params));
-  vi.spyOn(api,'getCommunityStats').mockResolvedValue({ metricDate:'2026-09-09', timezone:'UTC', window:'7d' });
+  vi.spyOn(api,'getCommunityStats').mockImplementation(async (window) => ({ metricDate:'2026-09-09', timezone:'UTC', window }));
   vi.spyOn(api,'getPublicTokenTrends').mockResolvedValue({ visible: false });
   vi.spyOn(api,'getPublicProfile').mockRejectedValue(new Error('hidden'));
 });
@@ -53,19 +53,19 @@ describe('Live leaderboard', () => {
       window,
       entries: [{ rankNo: 1, handle: 'ada', displayName: 'Ada', avatarUrl: null, metricValue, rankDelta: 0 }],
     });
-    let resolveWeek!: (value: LeaderboardResponse) => void;
-    vi.mocked(api.getLeaderboard).mockImplementation(({window}={}) => window==='7d' ? new Promise(resolve => {resolveWeek=resolve;}) : Promise.resolve(ranked('30d','30000000')));
+    let resolveToday!: (value: LeaderboardResponse) => void;
+    vi.mocked(api.getLeaderboard).mockImplementation(({window}={}) => window==='today' ? new Promise(resolve => {resolveToday=resolve;}) : Promise.resolve(ranked('30d','30000000')));
     showPage();
-    expect(screen.getByRole('tab',{name:'近 7 天'})).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab',{name:'今天'})).toHaveAttribute('aria-selected', 'true');
     fireEvent.click(screen.getByRole('tab',{name:'近 30 天'}));
     expect((await screen.findAllByText('30.0M')).length).toBeGreaterThan(0);
-    resolveWeek(ranked('7d','7000000'));
+    resolveToday(ranked('today','7000000'));
     await waitFor(()=>expect(screen.getAllByText('30.0M').length).toBeGreaterThan(0));
     expect(screen.queryAllByText('7.0M')).toHaveLength(0);
   });
   it('renders precomputed community totals in the hero', async () => {
     vi.mocked(api.getCommunityStats).mockResolvedValue({
-      metricDate:'2026-09-09', timezone:'UTC', window:'7d',
+      metricDate:'2026-09-09', timezone:'UTC', window:'today',
       tokens:'186400000', developers:128, codeLines:'32800', interactions:'4600', costAmount:268.42,
       deltas:{ tokens:12.6, developers:8.4, codeLines:-50, interactions:12.3, costAmount:11.8 },
       harnesses:[
@@ -79,12 +79,12 @@ describe('Live leaderboard', () => {
     expect(screen.getByText('32.8K')).toBeInTheDocument();
     expect(screen.getByText('4.6K')).toBeInTheDocument();
     expect(screen.getByText('$268.42')).toBeInTheDocument();
-    expect(screen.getByText('较上 7 天').closest('.hero-delta')).toHaveTextContent('↑ +12.6% 较上 7 天');
+    expect(screen.getByText('较昨日').closest('.hero-delta')).toHaveTextContent('↑ +12.6% 较昨日');
     expect(screen.getByText('↓ −50.0%')).toBeInTheDocument();
     expect(screen.getByText('Zcode')).toBeInTheDocument();
     expect(screen.getByText('Codex CLI')).toBeInTheDocument();
     expect(screen.getByText('64%')).toBeInTheDocument();
-    expect(screen.getByText('社区近 7 天 Token 占比 · 按 harness')).toBeInTheDocument();
+    expect(screen.getByText('社区今天 Token 占比 · 按 harness')).toBeInTheDocument();
     expect(document.querySelector('[data-harness="zcode"]')).toBeTruthy();
     expect(document.querySelector('[data-harness="codex"]')).toBeTruthy();
     expect(document.querySelector('[data-harness="zcode"] svg')).toBeTruthy();
@@ -120,18 +120,18 @@ describe('Live leaderboard', () => {
     }));
     showPage();
     expect(await screen.findByRole('heading', { name: 'Ada的创作轨迹' })).toBeInTheDocument();
-    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('ada', { range: '30d' }));
+    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('ada', { range: 'today' }));
     expect(screen.queryByText('登录，留下你的足迹')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '查看 Grace 的公开创作轨迹' }));
     expect(await screen.findByRole('heading', { name: 'Grace的创作轨迹' })).toBeInTheDocument();
-    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('grace', { range: '30d' }));
+    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('grace', { range: 'today' }));
     expect(screen.getByRole('link', { name: '公开资料' })).toHaveAttribute('href', '/u/grace');
     expect(screen.queryByRole('link', { name: 'Ada Lovelace' })).not.toBeInTheDocument();
   });
 
   it('renders community model and skill boards from the public stats payload', async () => {
     vi.mocked(api.getCommunityStats).mockResolvedValue({
-      metricDate: '2026-09-09', timezone: 'UTC', window: '7d',
+      metricDate: '2026-09-09', timezone: 'UTC', window: 'today',
       harnesses: [{ agentId: 'codex', label: 'Codex CLI', tokens: '70', sharePct: 70 }],
       models: [{ modelId: 'gpt-5', label: 'gpt-5', tokens: '50', sharePct: 50 }],
       skills: [{ skillId: 'review', label: 'review', uses: '9', sharePct: 90 }],
@@ -139,22 +139,22 @@ describe('Live leaderboard', () => {
     showPage();
     expect(await screen.findByText('gpt-5')).toBeInTheDocument();
     expect(screen.getByText('review')).toBeInTheDocument();
-    expect(screen.getByText('社区近 7 天 Token 占比 · 按模型')).toBeInTheDocument();
-    expect(screen.getByText('社区近 7 天 调用占比 · 按 Skill')).toBeInTheDocument();
+    expect(screen.getByText('社区今天 Token 占比 · 按模型')).toBeInTheDocument();
+    expect(screen.getByText('社区今天 调用占比 · 按 Skill')).toBeInTheDocument();
     expect(screen.getByText('50%')).toBeInTheDocument();
     expect(screen.getByText('90%')).toBeInTheDocument();
   });
 
-  it('uses seven days by default and reloads hero stats with the selected homepage period', async () => {
+  it('uses today by default and reloads hero stats with the selected homepage period', async () => {
     vi.mocked(api.getCommunityStats).mockImplementation(async (window) => ({ metricDate:'2026-09-09', timezone:'UTC+8', window }));
     showPage();
-    await waitFor(() => expect(api.getCommunityStats).toHaveBeenCalledWith('7d'));
-    expect(api.getMyLeaderboard).toHaveBeenCalledWith(expect.objectContaining({ window: '7d' }));
-    expect(screen.getByText('近 7 天 Token')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('tab', { name: '今天' }));
-    await waitFor(() => expect(api.getCommunityStats).toHaveBeenLastCalledWith('today'));
-    expect(api.getMyLeaderboard).toHaveBeenLastCalledWith(expect.objectContaining({ window: 'today' }));
+    await waitFor(() => expect(api.getCommunityStats).toHaveBeenCalledWith('today'));
+    expect(api.getMyLeaderboard).toHaveBeenCalledWith(expect.objectContaining({ window: 'today' }));
     expect(screen.getAllByText('今日 Token').length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole('tab', { name: '近 7 天' }));
+    await waitFor(() => expect(api.getCommunityStats).toHaveBeenLastCalledWith('7d'));
+    expect(api.getMyLeaderboard).toHaveBeenLastCalledWith(expect.objectContaining({ window: '7d' }));
+    expect(screen.getByText('近 7 天 Token')).toBeInTheDocument();
   });
   it('updates the common harness breakdown with the selected homepage period', async () => {
     vi.mocked(api.getCommunityStats).mockImplementation(async (window) => ({
@@ -173,29 +173,29 @@ describe('Live leaderboard', () => {
   });
   it('does not display harness data returned for a different period', async () => {
     vi.mocked(api.getCommunityStats).mockResolvedValue({
-      metricDate:'2026-09-09', timezone:'UTC+8', window:'today',
+      metricDate:'2026-09-09', timezone:'UTC+8', window:'7d',
       harnesses: [{ agentId:'codex', label:'Codex CLI', tokens:'700', sharePct:70 }],
     });
     showPage();
-    await waitFor(() => expect(api.getCommunityStats).toHaveBeenCalledWith('7d'));
+    await waitFor(() => expect(api.getCommunityStats).toHaveBeenCalledWith('today'));
     expect(screen.queryByText('Codex CLI')).not.toBeInTheDocument();
   });
   it('ignores late hero statistics from the previously selected period', async () => {
-    let resolveWeek!: (value: Awaited<ReturnType<typeof api.getCommunityStats>>) => void;
-    vi.mocked(api.getCommunityStats).mockImplementation((window) => window === '7d'
-      ? new Promise(resolve => { resolveWeek = resolve; })
-      : Promise.resolve({ metricDate:'2026-09-09', timezone:'UTC+8', window:'today', tokens:'1000' }));
+    let resolveToday!: (value: Awaited<ReturnType<typeof api.getCommunityStats>>) => void;
+    vi.mocked(api.getCommunityStats).mockImplementation((window) => window === 'today'
+      ? new Promise(resolve => { resolveToday = resolve; })
+      : Promise.resolve({ metricDate:'2026-09-09', timezone:'UTC+8', window:'7d', tokens:'1000' }));
     showPage();
-    fireEvent.click(screen.getByRole('tab', { name: '今天' }));
+    fireEvent.click(screen.getByRole('tab', { name: '近 7 天' }));
     expect(await screen.findByText('1.0K')).toBeInTheDocument();
-    resolveWeek({ metricDate:'2026-09-09', timezone:'UTC+8', window:'7d', tokens:'7000000' });
+    resolveToday({ metricDate:'2026-09-09', timezone:'UTC+8', window:'today', tokens:'7000000' });
     await act(async () => {});
     expect(screen.queryByText('7.0M')).not.toBeInTheDocument();
     expect(screen.getByText('1.0K')).toBeInTheDocument();
   });
   it('lists community multi-currency costs instead of a fake $8.00', async () => {
     vi.mocked(api.getCommunityStats).mockResolvedValue({
-      metricDate:'2026-09-09', timezone:'UTC', window:'7d',
+      metricDate:'2026-09-09', timezone:'UTC', window:'today',
       tokens:'1215', developers:1, codeLines:'0', interactions:'6',
       costAmount: null,
       costs: [{ amount: 1, currency: 'USD' }, { amount: 7, currency: 'CNY' }],

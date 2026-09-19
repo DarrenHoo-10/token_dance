@@ -129,7 +129,26 @@ func (s *leaderboardStore) GetLeaderboardView(ctx context.Context, q store.Leade
 	if q.Metric == "" {
 		q.Metric = "tokens"
 	}
-	if q.BoardKey == "global" && q.Metric == "tokens" && s.index != nil {
+	now := time.Now()
+	useRankingIndex := q.BoardKey == "global" && q.Metric == "tokens" && s.index != nil
+	checkFreshness := useRankingIndex && q.SnapshotID == ""
+	if checkFreshness {
+		var unpublished bool
+		if err := s.db.QueryRowContext(ctx, `
+			SELECT EXISTS(
+				SELECT 1 FROM ranking_outbox
+				WHERE window_key = ? AND generation = ? AND task_status <> 'applied'
+				LIMIT 1
+			)`, q.Window, WindowGeneration(now)).Scan(&unpublished); err != nil {
+			log.Printf("ranking freshness check failed, falling back to mysql: %v", err)
+			useRankingIndex = false
+		} else if unpublished {
+			// The durable score is newer than Redis. Serving the hot snapshot here
+			// makes the board disagree with personal summaries until the outbox drains.
+			useRankingIndex = false
+		}
+	}
+	if useRankingIndex {
 		offset := 0
 		if q.Cursor != nil {
 			parsed, err := strconv.Atoi(*q.Cursor)
@@ -152,13 +171,13 @@ func (s *leaderboardStore) GetLeaderboardView(ctx context.Context, q store.Leade
 		}
 	}
 	if q.BoardKey == "global" && q.Metric == "tokens" {
-		resp, err := s.getLiveTokenLeaderboard(ctx, q.Window, q.Cursor, q.Limit, time.Now())
+		resp, err := s.getLiveTokenLeaderboard(ctx, q.Window, q.Cursor, q.Limit, now)
 		if err != nil {
 			return nil, err
 		}
 		resp.ViewKind = "mysql"
 		if q.ViewerUserID != "" {
-			own, _, err := s.liveOwnTokenEntry(ctx, q.ViewerUserID, q.Window, time.Now())
+			own, _, err := s.liveOwnTokenEntry(ctx, q.ViewerUserID, q.Window, now)
 			if err != nil {
 				return nil, err
 			}

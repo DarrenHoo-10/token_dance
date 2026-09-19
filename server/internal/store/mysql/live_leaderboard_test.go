@@ -8,7 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
 	"tokendance/internal/domain"
+	"tokendance/internal/ranking"
 )
 
 func seedRankUsage(t *testing.T, db *sql.DB, userID, date, agent string, exact, derived, estimated int) {
@@ -72,6 +76,38 @@ func TestLeaderboardStatisticsDays(t *testing.T) {
 	}
 	if _, _, err := leaderboardDates("bad", now); err == nil {
 		t.Fatal("invalid window accepted")
+	}
+}
+
+func TestLeaderboardBypassesStaleRedisWhileRankingWritesArePendingMySQL(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	seedTestUser(t, db, st, "usr_fresh_board", "fresh_board", "Fresh Board", "fresh@board.test", true, now)
+	seedRankUsage(t, db, "usr_fresh_board", domain.DayDate(now), "codex", 100, 0, 0)
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+	idx := ranking.NewIndex(rdb)
+	st.SetRanking(idx)
+	if _, err := idx.Apply(ctx, ranking.ApplyInput{
+		Window: "today", Generation: WindowGeneration(now), UserID: "usr_fresh_board",
+		Tokens: 21, Revision: 1, RegisteredAt: now, Op: ranking.OpUpsert, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.PublishDirtyWindows(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+
+	board, err := st.Leaderboard().GetLeaderboard(ctx, "global", "today", "tokens", nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if board.ViewKind != "mysql" || len(board.Entries) != 1 || board.Entries[0].MetricValue != "100" {
+		t.Fatalf("pending durable score must bypass stale Redis: %+v", board)
 	}
 }
 
