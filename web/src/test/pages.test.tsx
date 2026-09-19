@@ -683,10 +683,10 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       renderWithProviders(<PersonalDashboardPage />, '/me');
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { name: '个人数据页' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Test Dev，你的创造正在发生。' })).toBeInTheDocument();
         expect(screen.getByText('$120.50')).toBeInTheDocument();
-        expect(screen.getByText('50.0M')).toBeInTheDocument();
-        expect(screen.getByText('Claude Code')).toBeInTheDocument();
+        expect(screen.getAllByText('50.0M')[0]).toBeInTheDocument();
+        expect(screen.getAllByText('Claude Code')[0]).toBeInTheDocument();
         expect(screen.getByText('code-review')).toBeInTheDocument();
         expect(screen.getByText('正常')).toBeInTheDocument();
       });

@@ -71,7 +71,7 @@ export const TeamLayout: React.FC = () => {
             <div className="sky-team-eyebrow">BUILD SOMETHING TOGETHER <span>{t(`teams.role.${scope.membership.role}`)}</span></div>
             <h1>{team.name}</h1>
             <p>{team.description || t('teams.overview.noDescription')}</p>
-            <div className="sky-team-meta">{team.memberCount != null && <span><UsersRound size={14} />{team.memberCount} {t('teams.nav.members')}</span>}<span><Globe2 size={13} />{team.timezone}</span></div>
+            <div className="sky-team-meta">{team.memberCount != null && <span><UsersRound size={14} />{team.memberCount} {t('teams.nav.members')}</span>}<span><Globe2 size={13} />{team.timezone}</span>{team.createdAt && <span>{locale === 'zh-CN' ? '创建于' : 'Created'} {team.createdAt.slice(0, 10)}</span>}</div>
           </div>
         </div>
         <div className="sky-team-art" aria-hidden="true"><i /><img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" /><span>SMALL IDEAS.<br />SHARED POSSIBILITIES.</span></div>

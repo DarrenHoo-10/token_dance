@@ -22,7 +22,7 @@ import { persistTeamAvatar, TeamAvatar, teamErrorMessage } from './TeamShared';
 import { TeamSharingCard } from './TeamSharingCard';
 
 export const TeamSettingsPage: React.FC = () => {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const { showToast } = useNotification();
   const { scope, applyScope, clearScope } = useTeam();
   const navigate = useNavigate();
@@ -89,7 +89,7 @@ export const TeamSettingsPage: React.FC = () => {
   return (
     <div className="sky-team-settings">
       <Card className="sky-team-profile">
-        <div className="panel-header"><h2>{t('teams.settings.profile')}</h2></div>
+        <div className="panel-header sky-settings-heading"><div><h2>{t('teams.settings.profile')}</h2><p>{locale === 'zh-CN' ? '给共同的创造，一个熟悉的名字。' : 'Give your shared work a familiar name.'}</p></div></div>
         <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 16 }}>
           <TeamAvatar team={scope.team} size="lg" />
           {scope.permissions.editProfile && (
@@ -105,7 +105,7 @@ export const TeamSettingsPage: React.FC = () => {
           <textarea className="form-input" value={description} disabled={!scope.permissions.editProfile || busy} onChange={(e) => setDescription(e.target.value)} style={{ minHeight: 80, padding: '10px 14px' }} />
         </div>
         {scope.permissions.editProfile && (
-          <Button variant="dark" loading={busy} onClick={() => void saveProfile()}>{t('common.save')}</Button>
+          <div className="sky-settings-actions"><Button variant="outline" disabled={busy} onClick={() => { setName(scope.team.name); setDescription(scope.team.description); }}>{t('common.cancel')}</Button><Button variant="dark" loading={busy} onClick={() => void saveProfile()}>{t('common.save')}</Button></div>
         )}
       </Card>
 
@@ -113,7 +113,7 @@ export const TeamSettingsPage: React.FC = () => {
 
       {(scope.permissions.leave || scope.permissions.transferOwnership || scope.permissions.dissolve) && (
         <Card className="sky-team-management">
-          <div className="panel-header"><h2>{t('teams.settings.management')}</h2></div>
+          <div className="panel-header sky-settings-heading"><div><h2>{t('teams.settings.management')}</h2><p>{locale === 'zh-CN' ? '成员关系发生变化时，个人记录仍然保留。' : 'Personal records remain when membership changes.'}</p></div></div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {scope.permissions.leave && <Button variant="outline" onClick={() => setLeaveOpen(true)}>{t('teams.settings.leave')}</Button>}
             {scope.permissions.transferOwnership && <Button variant="outline" onClick={() => setTransferOpen(true)}>{t('teams.settings.transfer')}</Button>}

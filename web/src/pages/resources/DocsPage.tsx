@@ -1,6 +1,6 @@
-import { Fragment, useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { Link, NavLink, useLocation, useParams } from 'react-router-dom';
-import { ArrowDownToLine, ArrowRight, ArrowLeft } from 'lucide-react';
+import { ArrowDownToLine, ArrowRight, ArrowLeft, BookOpen } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { NotFoundPage } from '@/pages/system/NotFoundPage';
 import { getArticles, type DocSection } from './docsContent';
@@ -32,20 +32,27 @@ export function DocsPage() {
     if (details) details.open = true;
   }, [hash, slug]);
   if (!article) return <NotFoundPage />;
-  return <div className="desktop-resources">
-    <header className="docs-heading"><div><h1>{zh ? '使用文档' : 'Documentation'}</h1><p>{zh ? '从第一次接入，到读懂每一份用量。' : 'From your first connection to understanding your usage.'}</p></div><Link className="resource-link" to="/download">{zh ? '获取桌面客户端' : 'Get the desktop app'}<ArrowDownToLine size={16} aria-hidden="true" /></Link></header>
-    <div className="docs-layout">
-      <nav className="docs-menu" aria-label={zh ? '文档导航' : 'Documentation navigation'}>
-        {articles.map((item, index) => <Fragment key={item.slug}>{item.group !== articles[index - 1]?.group && <div className="doc-menu-group">{item.group}</div>}<NavLink to={`/docs/${item.slug}`} className={({ isActive }) => isActive ? 'active' : ''}>{item.label}</NavLink></Fragment>)}
-        <div className="doc-help-box"><p>{zh ? '还没安装客户端？' : 'Need the desktop app?'}</p><Link className="resource-link" to="/download">{zh ? '前往下载页' : 'Go to downloads'}<ArrowRight size={14} aria-hidden="true" /></Link></div>
+  return <div className="resource-stage resource-docs-stage">
+    <section className="resource-dialog resource-docs-dialog" aria-labelledby="docs-heading">
+      <Link className="resource-dialog-close" to="/leaderboard" aria-label={zh ? '返回 TokenBoard' : 'Back to TokenBoard'}>×</Link>
+      <div className="resource-dialog-kicker"><BookOpen size={18} />{zh ? '使用文档' : 'Documentation'}</div>
+      <h1 id="docs-heading">{zh ? '从第一份记录开始。' : 'Start with your first record.'}</h1>
+      <p className="resource-dialog-lead">{zh ? '从下载客户端，到理解统计口径与数据隐私。' : 'From installing the app to understanding metrics and privacy.'}</p>
+      <nav className="resource-doc-tabs" aria-label={zh ? '文档导航' : 'Documentation navigation'}>
+        {articles.map((item) => <NavLink key={item.slug} to={`/docs/${item.slug}`} className={({ isActive }) => isActive ? 'active' : ''}>{item.label}</NavLink>)}
       </nav>
-      <article className="doc-article" ref={articleRef}>
-        <div className="doc-breadcrumb">{zh ? '使用文档' : 'Docs'} / {article.group}</div><h2>{article.title}</h2><p className="doc-lead">{article.lead}</p>
-        {article.sections.map((section, index) => article.slug === 'faq' ? <details className="doc-faq" key={section.id} id={section.id} open={index === 0 || hash === `#${section.id}`}><summary>{section.title}</summary><SectionBody section={section} /></details> : <section className="doc-section" key={section.id} id={section.id}><h3>{section.title}</h3><SectionBody section={section} /></section>)}
-        {article.slug === 'releases' && <Link className="resource-link" to="/download">{zh ? '查看当前版本与更新说明' : 'View the current version and release notes'}<ArrowRight size={15} aria-hidden="true" /></Link>}
-        <div className="doc-next"><Link className="resource-link" to="/leaderboard"><ArrowLeft size={15} aria-hidden="true" />{zh ? '返回排行榜' : 'Back to leaderboard'}</Link>{next && <Link to={`/docs/${next.slug}`}><small>{zh ? '继续阅读' : 'Read next'}</small><strong>{next.label} →</strong></Link>}</div>
-      </article>
-      <nav className="doc-toc" aria-label={zh ? '本页目录' : 'On this page'}><strong>{zh ? '本页内容' : 'On this page'}</strong>{article.sections.map(section => <Link key={section.id} to={`#${section.id}`} aria-current={hash === `#${section.id}` ? 'location' : undefined}>{section.title.replace(/^\d\. /, '')}</Link>)}</nav>
-    </div>
+      <div className="resource-doc-body">
+        <article className="doc-article" ref={articleRef}>
+          <div className="doc-breadcrumb">{article.group}</div><h2>{article.title}</h2><p className="doc-lead">{article.lead}</p>
+          {article.sections.map((section, index) => article.slug === 'faq' ? <details className="doc-faq" key={section.id} id={section.id} open={index === 0 || hash === `#${section.id}`}><summary>{section.title}</summary><SectionBody section={section} /></details> : <section className="doc-section" key={section.id} id={section.id}><h3>{section.title}</h3><SectionBody section={section} /></section>)}
+          {article.slug === 'releases' && <Link className="resource-link" to="/download">{zh ? '查看当前版本与更新说明' : 'View the current version and release notes'}<ArrowRight size={15} aria-hidden="true" /></Link>}
+          <div className="doc-next"><Link className="resource-link" to="/leaderboard"><ArrowLeft size={15} aria-hidden="true" />{zh ? '返回排行榜' : 'Back to leaderboard'}</Link>{next && <Link to={`/docs/${next.slug}`}><small>{zh ? '继续阅读' : 'Read next'}</small><strong>{next.label} →</strong></Link>}</div>
+        </article>
+        <aside className="resource-doc-aside">
+          <nav className="doc-toc" aria-label={zh ? '本页目录' : 'On this page'}><strong>{zh ? '本页内容' : 'On this page'}</strong>{article.sections.map(section => <Link key={section.id} to={`#${section.id}`} aria-current={hash === `#${section.id}` ? 'location' : undefined}>{section.title.replace(/^\d\. /, '')}</Link>)}</nav>
+          <div className="doc-help-box"><p>{zh ? '还没安装客户端？' : 'Need the desktop app?'}</p><Link className="resource-link" to="/download">{zh ? '前往客户端下载' : 'Go to downloads'}<ArrowDownToLine size={14} /></Link></div>
+        </aside>
+      </div>
+    </section>
   </div>;
 }

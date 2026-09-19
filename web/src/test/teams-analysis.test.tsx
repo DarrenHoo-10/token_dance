@@ -150,6 +150,7 @@ describe('Team analysis updating state', () => {
     const query = vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
     renderTeamWorkspace('/teams/tem_0123456789abcdefghijklmnop?range=7d');
     const chart = await screen.findByRole('heading', { name: '团队用量趋势' });
+    fireEvent.click(screen.getByRole('tab', { name: '自定义' }));
     const from = screen.getByLabelText('开始日期');
     expect(from.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole('heading', { name: '团队用量趋势' })).toBeInTheDocument();
@@ -316,8 +317,8 @@ describe('Team analysis updating state', () => {
     expect(await screen.findByTestId('analysis-skeleton')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '今天' })).toHaveAttribute('aria-selected', 'true');
     expect(teamsApi.getAnalysis).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ range: 'today' }), expect.any(AbortSignal));
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['今天', '7 天', '30 天']);
-    expect(screen.getByLabelText('开始日期')).toBeInTheDocument();
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['今天', '7 天', '30 天', '自定义']);
+    expect(screen.queryByLabelText('开始日期')).not.toBeInTheDocument();
     expect(screen.getByText('正在汇总团队数据，请稍候…')).toBeInTheDocument();
     expect(screen.queryByText('0')).not.toBeInTheDocument();
     expect(screen.queryByText('$0')).not.toBeInTheDocument();
@@ -417,7 +418,8 @@ describe('Team analysis updating state', () => {
     expect(screen.getByRole('heading', { name: '用量构成' })).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Skill' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Token 使用效率' })).not.toBeInTheDocument();
-    expect(screen.getByLabelText('开始日期')).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '自定义' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('开始日期')).not.toBeInTheDocument();
     expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();
   });
 });

@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { useOutletContext } from 'react-router-dom';
+import { Plus, Search } from 'lucide-react';
 import { ApiError } from '@/api/client';
 import {
   teamsApi,
@@ -8,7 +10,6 @@ import {
   type TeamMember,
   type TeamRole,
 } from '@/api/teams';
-import { Badge } from '@/components/common/Badge';
 import { Button } from '@/components/common/Button';
 import { Card } from '@/components/common/Card';
 import { Input } from '@/components/common/Input';
@@ -25,9 +26,10 @@ import { useTeamAnalysis } from './useTeamAnalysis';
 type MemberTab = 'joined' | 'pending' | 'links';
 
 export const TeamMembersPage: React.FC = () => {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const { showToast } = useNotification();
   const { scope, authRevision, refresh, applyScope } = useTeam();
+  const outlet = useOutletContext<{ openInvite?: () => void } | undefined>();
   const { range, from, to, agent, provider, model } = useTeamSearchFilters();
   const { analysis, updating, error: analysisError } = useTeamAnalysis({
     teamId: scope?.team.id,
@@ -108,34 +110,42 @@ export const TeamMembersPage: React.FC = () => {
 
   return (
     <div className="sky-team-members">
-      <div className="segmented-control" role="tablist" style={{ marginBottom: 16 }}>
-        <button type="button" className={`segmented-item ${tab === 'joined' ? 'active' : ''}`} onClick={() => setTab('joined')}>
-          {t('teams.members.joined', { count: members.length })}
-        </button>
-        {canManage && (
-          <button type="button" className={`segmented-item ${tab === 'pending' ? 'active' : ''}`} onClick={() => setTab('pending')}>
-            {t('teams.members.pending', { count: invitations.filter((item) => item.status === 'pending').length })}
+      <div className="sky-team-members-heading">
+        <div>
+          <h2>{locale === 'zh-CN' ? '一起创造的伙伴' : 'People creating together'}</h2>
+          <p>{locale === 'zh-CN' ? '管理团队成员，邀请下一位同行者。' : 'Manage your team and invite the next collaborator.'}</p>
+        </div>
+        {canManage && <Button variant="primary" onClick={() => outlet?.openInvite?.()}><Plus size={16} />{t('teams.invite.action')}</Button>}
+      </div>
+      <div className="sky-team-members-toolbar">
+        <div className="segmented-control" role="tablist">
+          <button type="button" className={`segmented-item ${tab === 'joined' ? 'active' : ''}`} onClick={() => setTab('joined')}>
+            {t('teams.members.joined', { count: members.length })}
           </button>
-        )}
-        {canManage && (
-          <button type="button" className={`segmented-item ${tab === 'links' ? 'active' : ''}`} onClick={() => setTab('links')}>
-            {t('teams.members.links')}
-          </button>
-        )}
+          {canManage && (
+            <button type="button" className={`segmented-item ${tab === 'pending' ? 'active' : ''}`} onClick={() => setTab('pending')}>
+              {t('teams.members.pending', { count: invitations.filter((item) => item.status === 'pending').length })}
+            </button>
+          )}
+          {canManage && (
+            <button type="button" className={`segmented-item ${tab === 'links' ? 'active' : ''}`} onClick={() => setTab('links')}>
+              {t('teams.members.links')}
+            </button>
+          )}
+        </div>
+        {tab === 'joined' && <div className="sky-team-member-search"><Search size={16} /><Input label={t('teams.members.search')} value={query} onChange={(e) => setQuery(e.target.value)} /></div>}
       </div>
 
       {tab === 'joined' && (
         <>
-          <Input label={t('teams.members.search')} value={query} onChange={(e) => setQuery(e.target.value)} />
           <Card>
             <table className="team-member-table">
               <thead>
                 <tr>
                   <th>{t('teams.members.person')}</th>
                   <th>{t('teams.members.role')}</th>
-                  <th>{t('teams.members.sharing')}</th>
-                  <th>{t('teams.members.sync')}</th>
-                  <th>{t('teams.members.periodTokens')}</th>
+                  <th>{locale === 'zh-CN' ? '共享状态' : 'Sharing status'}</th>
+                  <th>{locale === 'zh-CN' ? '加入日期' : 'Joined'}</th>
                   <th>{t('common.actions')}</th>
                 </tr>
               </thead>
@@ -296,7 +306,7 @@ const MemberRow: React.FC<{
   onRole: () => void;
 }> = ({ member, canManage, assignAdmins, onOpen, onRemove, onRole }) => {
   const { t } = useLocale();
-  const tokens = metricDisplay(member.periodTokens, formatTokenCompact);
+  const syncStatus = member.syncStatus || (member.sharing.base ? 'waiting' : 'not_shared');
   return (
     <tr>
       <td>
@@ -306,9 +316,8 @@ const MemberRow: React.FC<{
         </button>
       </td>
       <td><RoleBadge role={member.role} /></td>
-      <td><Badge variant={member.sharing.base ? 'good' : 'warning'}>{t(`teams.members.share.${member.sharing.base ? 'on' : 'off'}`)}</Badge></td>
-      <td>{t(`teams.members.syncState.${member.syncStatus}`)}</td>
-      <td className="mono-num">{member.canOpenDetail && tokens.available ? tokens.text : '—'}</td>
+      <td><span className={`team-sync-state ${syncStatus}`}>{t(`teams.members.syncState.${syncStatus}`)}</span></td>
+      <td className="mono-num team-member-joined">{member.joinedAt?.slice(0, 10) || '—'}</td>
       <td>
         {canManage && member.role !== 'owner' && (
           <Button size="sm" onClick={member.role === 'admin' && !assignAdmins ? undefined : onRole} disabled={member.role === 'admin' && !assignAdmins}>

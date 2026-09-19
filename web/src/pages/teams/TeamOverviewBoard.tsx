@@ -44,9 +44,6 @@ export const TeamOverviewBoard: React.FC<{
   const duration = metricDisplay(metricOf(analysis, 'activeDurationMs'), (value) => formatDurationHours(value) || '—');
   const messages = metricDisplay(metricOf(analysis, 'messageCount'));
   const userMessages = metricDisplay(metricOf(analysis, 'userMessageCount'));
-  const avgDuration = duration.available && BigInt(activeMembers) > 0n && metricOf(analysis, 'activeDurationMs')?.value
-    ? formatDurationHours(String(BigInt(metricOf(analysis, 'activeDurationMs')!.value || '0') / BigInt(activeMembers)))
-    : null;
 
   const change = analysis.summary.comparison?.tokensDeltaPct;
   const delta = change == null ? null : Number(change);
@@ -57,9 +54,10 @@ export const TeamOverviewBoard: React.FC<{
     [t('teams.metrics.output'), output.available ? output.text : '—'],
     [t('teams.metrics.cache'), cache.available ? cache.text : '—'],
     [t('teams.metrics.duration'), duration.available ? duration.text : '—'],
-    [t('teams.metrics.messages'), messages.available ? messages.text : '—'],
-    [t('teams.metrics.userMessages'), userMessages.available ? userMessages.text : '—'],
-    [t('teams.metrics.avgDuration'), avgDuration || '—'],
+    [
+      locale === 'zh-CN' ? '总消息 / 用户消息' : 'Messages / user messages',
+      `${messages.available ? messages.text : '—'} / ${userMessages.available ? userMessages.text : '—'}`,
+    ],
   ];
   return <>
     {analysis.summary.tokens.state === 'empty' && <div className="team-status-banner">{t('teams.overview.emptyRange')}</div>}

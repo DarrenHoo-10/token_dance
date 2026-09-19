@@ -10,7 +10,7 @@ import { SharingControls, teamErrorMessage } from './TeamShared';
 
 export function TeamSharingCard() {
   const { scope, applyScope } = useTeam();
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const [data, setData] = useState<MySharingResponse | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -39,5 +39,5 @@ export function TeamSharingCard() {
       if (!controller.signal.aborted) setError(err instanceof ApiError ? teamErrorMessage(t, err) : t('errors.unknown'));
     } finally { if (!controller.signal.aborted) setBusy(false); }
   }
-  return <Card className="sky-team-sharing"><div className="panel-header"><h2><ShieldCheck size={21} />{t('teams.sharing.title')}</h2></div>{data ? <SharingControls value={data.sharing} onChange={sharing => void save(sharing)} disabled={busy} revealDetailsWithBase={false} /> : !error && <p className="text-muted">{t('common.loading')}</p>}{error && <div className="sky-sharing-error" role="alert"><p>{error}</p><Button variant="outline" onClick={() => { setBusy(false); setRetry(value => value + 1); }}>{t('common.retry')}</Button></div>}<p className="sky-sharing-note"><ShieldCheck size={16} />{t('teams.sharing.closeBaseHint')}</p></Card>;
+  return <Card className="sky-team-sharing"><div className="panel-header sky-settings-heading"><div><h2><ShieldCheck size={21} />{t('teams.sharing.title')}</h2><p>{locale === 'zh-CN' ? '由你决定，哪些用量参与团队分析。' : 'You decide which usage joins team analytics.'}</p></div></div>{data ? <SharingControls value={data.sharing} onChange={sharing => void save(sharing)} disabled={busy} revealDetailsWithBase={false} /> : !error && <p className="text-muted">{t('common.loading')}</p>}{error && <div className="sky-sharing-error" role="alert"><p>{error}</p><Button variant="outline" onClick={() => { setBusy(false); setRetry(value => value + 1); }}>{t('common.retry')}</Button></div>}<p className="sky-sharing-note"><ShieldCheck size={16} />{t('teams.sharing.closeBaseHint')}</p></Card>;
 }

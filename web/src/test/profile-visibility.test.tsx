@@ -83,7 +83,7 @@ describe('Personal data visibility', () => {
     renderWithProviders(<PersonalDashboardPage />, '/me');
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: '个人数据页' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Test Dev，你的创造正在发生。' })).toBeInTheDocument();
     });
 
     expect(screen.queryByRole('checkbox', { name: '公开我的数据' })).not.toBeInTheDocument();
@@ -101,7 +101,7 @@ describe('Personal data visibility', () => {
     renderWithProviders(<PersonalDashboardPage />, '/me');
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: '个人数据页' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Test Dev，你的创造正在发生。' })).toBeInTheDocument();
     });
     expect(screen.queryByText(/公开状态暂时无法读取/)).not.toBeInTheDocument();
   });
