@@ -89,7 +89,7 @@ export const TeamLayout: React.FC = () => {
   };
 
   return (
-    <section className="product-page-shell team-dashboard team-page tw-workspace">
+    <section className="team-dashboard team-page tw-workspace">
       <div className="tw-breadcrumb">
         <span>{t('teams.workspace')}</span>
         <span>/</span>
@@ -141,7 +141,7 @@ export const TeamLayout: React.FC = () => {
           <NavLink to={`/teams/${team.id}${query}`} end className={({ isActive }) => (isActive ? 'active' : '')}>
             <BarChart3 size={17} />{t('teams.nav.panel')}
           </NavLink>
-          <NavLink to={`/teams/${team.id}/members${query}`} aria-label={t('teams.nav.members')} className={({ isActive }) => (isActive ? 'active' : '')}>
+          <NavLink to={`/teams/${team.id}/members${query}`} className={({ isActive }) => (isActive ? 'active' : '')}>
             <UsersRound size={17} />{t('teams.nav.members')}{Number(memberCount) > 0 && <span>{memberCount}</span>}
           </NavLink>
           <NavLink to={`/teams/${team.id}/settings${query}`} className={({ isActive }) => (isActive ? 'active' : '')}>

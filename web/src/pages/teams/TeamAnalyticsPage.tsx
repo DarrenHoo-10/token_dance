@@ -74,20 +74,20 @@ export const TeamAnalyticsPage: React.FC = () => {
 
   const filterBar = (
     <>
-      <section className="tw-toolbar team-filter-toolbar" aria-label={t('teams.insights.usageTitle')}>
+      <section className="tw-toolbar team-filter-toolbar" aria-label={t('teams.overview.filtersLabel')}>
         <TeamDateRangeBar timezone={scope.team.timezone} part="controls" />
         <div className="tw-filter-selects">
           <label>
-            <span className="sr-only">{t('dashboard.agentFilter')}</span>
-            <select aria-label={t('dashboard.agentFilter')} value={agent || 'all'} onChange={(e) => setFilter('agent', e.target.value)}>
+            <span className="sr-only">{t('teams.overview.agentFilter')}</span>
+            <select aria-label={t('teams.overview.agentFilter')} value={agent || 'all'} onChange={(e) => setFilter('agent', e.target.value)}>
               <option value="all">{t('dashboard.allAgents')}</option>
               {filters.agents.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>
             <ChevronDown size={13} />
           </label>
           <label>
-            <span className="sr-only">{t('dashboard.modelFilter')}</span>
-            <select aria-label={t('dashboard.modelFilter')} value={model || 'all'} onChange={(e) => setFilter('model', e.target.value)}>
+            <span className="sr-only">{t('teams.overview.modelFilter')}</span>
+            <select aria-label={t('teams.overview.modelFilter')} value={model || 'all'} onChange={(e) => setFilter('model', e.target.value)}>
               <option value="all">{t('dashboard.allModels')}</option>
               {filters.models.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>

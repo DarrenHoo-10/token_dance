@@ -628,7 +628,7 @@ describe('Team page tabs', () => {
     expect(heading?.contains(screen.getByRole('tab', { name: '近 7 天' }))).toBe(false);
     expect(heading?.contains(screen.getByRole('button', { name: '邀请伙伴' }))).toBe(true);
     expect(toolbar?.contains(screen.getByRole('tab', { name: '近 7 天' }))).toBe(true);
-    expect(toolbar?.contains(screen.getByLabelText('Agent 筛选'))).toBe(true);
+    expect(toolbar?.contains(screen.getByLabelText('团队 Agent 筛选'))).toBe(true);
     expect(nav.contains(screen.getByRole('tab', { name: '近 7 天' }))).toBe(false);
 
     fireEvent.click(screen.getByRole('link', { name: '成员' }));

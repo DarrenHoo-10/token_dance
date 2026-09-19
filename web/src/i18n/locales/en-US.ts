@@ -305,7 +305,7 @@ export const enUS = {
       firstPage: 'Showing the first {count} items',
       member: 'Member',
       share: 'Team share',
-      activeDays: 'Days with usage',
+      activeDays: 'Active days',
       periodTrend: 'Period trend',
       average: 'Tokens per active member',
       peak: 'Peak daily tokens',
@@ -525,6 +525,9 @@ export const enUS = {
       contributionFoot: 'Shared usage only. Tokens per line describe usage, not performance.',
       filtersApply: 'Filters apply to all team analytics',
       resetFilters: 'Reset filters',
+      filtersLabel: 'Team analytics filters',
+      agentFilter: 'Team Agent filter',
+      modelFilter: 'Team model filter',
     },
     skills: {
       title: 'Skill usage',

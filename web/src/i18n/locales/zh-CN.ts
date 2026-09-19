@@ -305,7 +305,7 @@ export const zhCN = {
       firstPage: '当前展示前 {count} 项',
       member: '成员',
       share: '团队占比',
-      activeDays: '有用量天数',
+      activeDays: '活跃天数',
       periodTrend: '周期趋势',
       average: '活跃成员人均 Token',
       peak: '单日峰值 Token',
@@ -525,6 +525,9 @@ export const zhCN = {
       contributionFoot: '仅展示已共享的用量；单行 Token 用于理解使用方式，不作为绩效评分。',
       filtersApply: '当前筛选作用于全部团队分析',
       resetFilters: '重置筛选',
+      filtersLabel: '团队数据筛选',
+      agentFilter: '团队 Agent 筛选',
+      modelFilter: '团队模型筛选',
     },
     skills: {
       title: 'Skill 使用',
