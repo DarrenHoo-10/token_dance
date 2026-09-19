@@ -1,7 +1,9 @@
 import { HomeLeaderboard } from '@/components/analytics/HomeLeaderboard';
 import { publicLeaderboardName } from '@/components/analytics/leaderboardName';
+import { HarnessMark } from '@/components/common/HarnessMark';
 import { UserAvatar } from '@/components/common/UserAvatar';
-import React, { useCallback, useRef, useEffect, useState } from 'react';
+import { resolveHarnessBrand } from '@/components/common/harnessBrand';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowRight, ArrowUpRight, BarChart3, Code2, Crown, Download, Monitor, UsersRound, Wallet, Zap,
@@ -9,7 +11,9 @@ import {
 } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from '@/context/AuthContext';
+import { usePublicHomeResource } from '@/hooks/usePublicHomeResource';
 import { useVisibleRefresh } from '@/hooks/useVisibleRefresh';
+import { readHomeBoard, readHomeCommunity, writeHomeBoard, writeHomeCommunity } from '@/utils/publicHomeCache';
 import { api } from '@/api/client';
 import type { LeaderboardEntry, LeaderboardResponse, PersonalSummary, CalendarDay, CommunityStatsResponse } from '@/types/api';
 import { formatCommunityCost } from '@/utils/cost';
@@ -21,6 +25,15 @@ type Range = 'Today' | '7 Days' | '30 Days' | 'All Time';
 
 const ranges: Range[] = ['Today', '7 Days', '30 Days', 'All Time'];
 const windowByRange: Record<Range, 'today' | '7d' | '30d' | 'all'> = { Today: 'today', '7 Days': '7d', '30 Days': '30d', 'All Time': 'all' };
+
+function readHomeBoardView(key: string): Partial<LeaderboardResponse> | null {
+  const entries = readHomeBoard(key);
+  return entries ? { entries, totalParticipants: entries.length } : null;
+}
+
+function writeHomeBoardView(key: string, board: Partial<LeaderboardResponse>) {
+  writeHomeBoard(key, board.entries ?? []);
+}
 
 function formatTokens(raw: string | null | undefined): string {
   if (raw == null || raw === '') return '—';
@@ -65,7 +78,7 @@ function TrendBadge({ value }: { value: number | null | undefined }) {
 
 function PersonAvatar({ entry, className = '' }: { entry: LeaderboardEntry; className?: string }) {
   const name = publicLeaderboardName(entry);
-  return <UserAvatar url={entry.avatarUrl} name={name} className={`leader-avatar ${className}`} fallbackClassName={`leader-avatar ${className} avatar-fallback`} alt={`${name} profile`} />;
+  return <UserAvatar url={entry.avatarUrl} name={name} className={`leader-avatar ${className}`} fallbackClassName={`leader-avatar ${className} avatar-fallback`} alt={`${name} profile`} fetchPriority="high" />;
 }
 
 function PodiumCard({ entry }: { entry: LeaderboardEntry }) {
@@ -87,15 +100,7 @@ export const LeaderboardPage: React.FC = () => {
   const zh = locale === 'zh-CN';
   const accountKey = user?.userId ?? user?.handle ?? '';
   const [range, setRange] = useState<Range>('7 Days');
-  const requestId = useRef(0);
-  const communityRequestId = useRef(0);
-  const hasSnapshotRef = useRef(false);
-  const [boardSummary, setBoardSummary] = useState<Partial<LeaderboardResponse>>({});
   const [sharing, setSharing] = useState<{ publicProfileEnabled: boolean; showTokenTotal: boolean } | null>(null);
-
-  const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
 
   const [summary, setSummary] = useState<PersonalSummary | null>(null);
   const [allTimeSummary, setAllTimeSummary] = useState<PersonalSummary | null>(null);
@@ -103,40 +108,18 @@ export const LeaderboardPage: React.FC = () => {
   const [streak, setStreak] = useState(0);
   const [trendRange, setTrendRange] = useState('30d');
   const [refreshTick, setRefreshTick] = useState(0);
-  const [community, setCommunity] = useState<CommunityStatsResponse | null>(null);
-
-  const fetchLeaderboard = useCallback(async () => {
-    const id = ++requestId.current;
-    if (!hasSnapshotRef.current) setLoading(true);
-    try {
-      const res = await api.getLeaderboardView(authenticated, { window: windowByRange[range], limit: 10 });
-      if (id !== requestId.current) return;
-      hasSnapshotRef.current = true;
-      setBoardSummary(res);
-      setEntries(res.entries || []);
-      setLoadError(false);
-    } catch {
-      if (id !== requestId.current) return;
-      setLoadError(true);
-    } finally {
-      if (id === requestId.current) setLoading(false);
-    }
-  }, [range, authenticated]);
-
-  useEffect(() => {
-    void fetchLeaderboard();
-  }, [fetchLeaderboard, accountKey, refreshTick]);
-
-  const loadCommunity = useCallback(() => {
-	const id = ++communityRequestId.current;
-	setCommunity(null);
-	api.getCommunityStats(windowByRange[range])
-	  .then((res) => { if (id === communityRequestId.current) setCommunity(res); })
-	  .catch(() => { if (id === communityRequestId.current) setCommunity(null); });
-	return () => { if (id === communityRequestId.current) communityRequestId.current += 1; };
-  }, [range]);
-
-  useEffect(() => loadCommunity(), [loadCommunity, refreshTick]);
+  const fetchLeaderboard = useCallback(
+    () => api.getLeaderboardView(authenticated, { window: windowByRange[range], limit: 10 }),
+    [accountKey, authenticated, range],
+  );
+  const board = usePublicHomeResource(`board:${windowByRange[range]}`, readHomeBoardView, writeHomeBoardView, fetchLeaderboard, refreshTick);
+  const boardSummary = board.data ?? {};
+  const entries = boardSummary.entries ?? [];
+  const loading = board.data === null && !board.failed;
+  const loadError = board.failed;
+  const loadCommunity = useCallback(() => api.getCommunityStats(windowByRange[range]), [range]);
+  const communityResource = usePublicHomeResource(`community:${windowByRange[range]}`, readHomeCommunity, writeHomeCommunity, loadCommunity, refreshTick);
+  const community: CommunityStatsResponse | null = communityResource.data;
 
   const loadPersonal = useCallback(() => {
     if (!authenticated) {
@@ -198,9 +181,9 @@ export const LeaderboardPage: React.FC = () => {
         <section className="panel sky-podium-panel" id="leaderboard"><div className="panel-header"><div><h2><Crown size={25} />{zh ? '平台排行榜' : 'TokenBoard'}</h2><p>{zh ? '每一份创造，都值得被看见。' : 'A little recognition for every creator.'}</p></div><Link className="sky-text-link" to={`/leaderboard/list?window=${windowByRange[range]}`}>{zh ? '完整榜单' : 'Full board'}<ArrowRight size={15} /></Link></div><div className="range-tabs" role="tablist" aria-label={zh ? '首页统计周期' : 'Homepage statistics period'}>{ranges.map(item => <button key={item} type="button" role="tab" aria-selected={range === item} className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{zh ? ({ Today: '今天', '7 Days': '近 7 天', '30 Days': '近 30 天', 'All Time': '全部时间' }[item]) : item}</button>)}</div>{emptyBoard}{podium.length > 0 && <div className="podium-grid">{podium.map(entry => <PodiumCard key={entry.rankNo} entry={entry} />)}</div>}<div className="sky-panel-foot"><UsersRound size={14} />{zh ? `${boardSummary.totalParticipants ?? entries.length} 位开发者正在创造` : `${boardSummary.totalParticipants ?? entries.length} developers creating`}<span>{rangeLabel} · UTC+8</span></div></section>
         <section className="panel sky-rhythm"><div className="panel-header"><div><h2><BarChart3 size={24} />{zh ? '你的创作轨迹' : 'Your creative rhythm'}</h2><p>{zh ? '让每一次与 AI 的协作，留下足迹。' : 'Small steps. A story worth seeing.'}</p></div><select className="form-input" value={trendRange} onChange={e => setTrendRange(e.target.value)} aria-label={zh ? '用量趋势周期' : 'Trend period'}><option value="7d">{zh ? '近 7 天' : '7 days'}</option><option value="30d">{zh ? '近 30 天' : '30 days'}</option></select></div>{authenticated ? <><div className="sky-rhythm-total"><strong>{trendDays.length ? formatTokens(String(trendDays.reduce((total, day) => total + Number(day.tokenTotal || 0), 0))) : '—'}<small>Token</small><DeltaChip value={trendChange} /></strong><Link to="/me" className="sky-text-link">{zh ? '个人数据' : 'My analytics'}<ArrowUpRight size={16} /></Link></div><TokenTrendChart trends={trendDays} height={205} /><div className="sky-panel-foot sky-chart-footer"><span><i />{zh ? '已同步 Token' : 'Synced tokens'}</span><span><Flame size={14} />{zh ? `连续活跃 ${streak} 天` : `${streak}-day streak`}</span></div></> : <div className="sky-guest"><BarChart3 size={34} /><h3>{zh ? '你的下一次创造，从这里开始' : 'Your next creation starts here'}</h3><p>{zh ? '登录后查看用量趋势与活跃记录。' : 'Sign in to see your usage and activity.'}</p><Link className="btn btn-primary" to="/login?return_to=%2Fme">{zh ? '登录，留下你的足迹' : 'Sign in to see your story'}<ArrowRight size={16} /></Link></div>}</section>
       </div>
-      <div className="sky-detail-grid"><section className="panel sky-ranking"><HomeLeaderboard key={range} entries={entries} ownEntry={authenticated ? boardSummary.ownEntry : null} window={windowByRange[range]} />{authenticated && sharing && !sharing.publicProfileEnabled && <div className="sky-privacy-note" role="status"><p>{zh ? '公开开关只控制详细资料页。排行榜仍显示头像、昵称、Token 和排名。' : 'The public switch only controls your detailed profile. Your avatar, nickname, tokens, and rank stay on the leaderboard.'}</p><button className="btn btn-outline" onClick={() => navigate('/me')}>{zh ? '管理公开设置' : 'Manage sharing'}</button></div>}</section>
+      <div className="sky-detail-grid"><section className="panel sky-ranking">{entries.length > 0 && <HomeLeaderboard key={range} entries={entries} ownEntry={authenticated ? boardSummary.ownEntry : null} window={windowByRange[range]} />}{authenticated && sharing && !sharing.publicProfileEnabled && <div className="sky-privacy-note" role="status"><p>{zh ? '公开开关只控制详细资料页。排行榜仍显示头像、昵称、Token 和排名。' : 'The public switch only controls your detailed profile. Your avatar, nickname, tokens, and rank stay on the leaderboard.'}</p><button className="btn btn-outline" onClick={() => navigate('/me')}>{zh ? '管理公开设置' : 'Manage sharing'}</button></div>}</section>
         <aside className="sky-side"><section className="panel sky-personal"><div className="panel-header"><h2>{zh ? '我的今日' : 'My day'}</h2><button className="sky-icon-button" type="button" onClick={() => navigate('/me')} aria-label={zh ? '打开个人数据' : 'Open analytics'}><ArrowUpRight size={19} /></button></div>{authenticated ? <><div className="sky-personal-id"><UserAvatar url={user?.avatarUrl} name={user?.displayName || user?.handle || ''} alt="" /><div><strong>{user?.displayName || user?.handle}</strong><p>{zh ? '保持好奇，继续创造。' : 'Stay curious. Keep building.'}</p></div></div><div className="sky-personal-stats"><div className="stat-block"><span>{zh ? '今日排名' : 'Today’s rank'}</span><div className="stat-line"><strong>{rankValue ?? '—'}</strong><TrendBadge value={summary?.ranking?.delta} />{summary?.ranking?.percentile != null && <em>{zh ? `前 ${formatPercentile(summary.ranking.percentile)}%` : `Top ${formatPercentile(summary.ranking.percentile)}%`}</em>}</div></div><div className="stat-block"><span>{zh ? '今日 Token' : 'Today’s Tokens'}</span><div className="stat-line"><strong>{formatTokens(todayTokens)}</strong></div></div><div className="stat-block"><span>{zh ? '累计 Token' : 'All time Tokens'}</span><div className="stat-line"><strong>{formatTokens(allTimeTokens)}</strong></div></div></div><ActivityCalendar days={calendarDays} streakDays={streak} /></> : <p className="side-card-empty">{zh ? '登录后查看你的排名与统计。' : 'Sign in to see your rank and stats.'}</p>}</section>
-        <section className="panel sky-harnesses"><div className="panel-header"><h2>{zh ? '常用 harness' : 'Top harnesses'}</h2><Link className="sky-text-link" to="/docs/sources"><HelpCircle size={18} /><span className="sr-only">{zh ? '支持的工具' : 'Supported tools'}</span></Link></div>{community?.harnesses?.length ? <div className="tool-list">{community.harnesses.map((harness, index) => <div className="tool-row" key={harness.agentId}><span className="tool-mark" data-accent={index === 0 || undefined}>{harness.label.slice(0, 1).toUpperCase()}</span><strong>{harness.label}</strong><div className="tool-track"><i style={{ width: `${Math.max(0, Math.min(100, harness.sharePct ?? 0))}%` }} /></div><span>{Math.round(harness.sharePct ?? 0)}%</span></div>)}</div> : <p className="side-card-empty">{zh ? '暂无社区 harness 用量数据。' : 'No harness usage recorded yet.'}</p>}<p className="sky-harness-caption">{zh ? `社区${rangeLabel} Token 占比 · 按 harness` : `Community token share · ${rangeLabel} · by harness`}</p></section></aside></div>
+        <section className="panel sky-harnesses"><div className="panel-header"><h2>{zh ? '常用 harness' : 'Top harnesses'}</h2><Link className="sky-text-link" to="/docs/sources"><HelpCircle size={18} /><span className="sr-only">{zh ? '支持的工具' : 'Supported tools'}</span></Link></div>{community?.harnesses?.length ? <div className="tool-list">{community.harnesses.map((harness) => { const brand = resolveHarnessBrand(harness.agentId, harness.label); const share = Math.round(harness.sharePct ?? 0); return <div className="tool-row" key={harness.agentId}><HarnessMark agentId={harness.agentId} label={harness.label} /><strong>{harness.label}</strong><div className="tool-track"><i style={{ width: `${Math.max(0, Math.min(100, share))}%`, background: brand.color }} /></div><span>{share}%</span></div>; })}</div> : <p className="side-card-empty">{zh ? '暂无社区 harness 用量数据。' : 'No harness usage recorded yet.'}</p>}<p className="sky-harness-caption">{zh ? `社区${rangeLabel} Token 占比 · 按 harness` : `Community token share · ${rangeLabel} · by harness`}</p></section></aside></div>
       <section className="sky-download-strip"><Monitor size={35} /><div><h2>{zh ? '让创造，常驻桌面。' : 'Keep your creativity close.'}</h2><p>{zh ? '连接你的 AI 工具，自动记录每一天的用量。' : 'Connect your AI tools. Make every day count.'}</p></div><Link className="btn btn-primary" to="/download"><Download size={17} />{zh ? '下载 TokenDance' : 'Get TokenDance'}</Link></section><footer className="sky-home-footer"><Link to="/leaderboard"><img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" />TokenDance</Link><span>{zh ? '每一个 Token，都是更好明天的开始。' : 'Small tokens. A brighter tomorrow.'}</span><Link to="/docs/privacy"><ShieldCheck size={14} />{zh ? '数据与隐私' : 'Data & privacy'}</Link></footer>
     </div>
   </div>;

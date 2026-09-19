@@ -73,6 +73,18 @@ pub struct HarnessDayUsage {
 pub struct HarnessUsageHistory {
     pub days: Vec<HarnessDayUsage>,
     pub hours: Vec<(i64, i64)>,
+    pub models: Vec<ModelUsage>,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelUsage {
+    pub model_key: i64,
+    pub model_id: String,
+    pub provider_id: String,
+    pub today_tokens: u64,
+    pub week_tokens: u64,
+    pub total_tokens: u64,
 }
 
 /// Read the complete day history and today's hourly series in one writer
@@ -133,9 +145,27 @@ pub fn query_harness_usage_history(
             .push(cost);
     }
     let hours = query_harness_token_series(conn, Grain::Hour, today_start, range_end, harness_id)?;
+    let mut stmt = conn.prepare(
+        "SELECT m.model_key,COALESCE(d.model_id,''),COALESCE(d.provider_id,''),
+                SUM(CASE WHEN m.bucket_start>=?3 THEN m.exact_token_total+m.derived_token_total ELSE 0 END),
+                SUM(CASE WHEN m.bucket_start>=?4 THEN m.exact_token_total+m.derived_token_total ELSE 0 END),
+                SUM(m.exact_token_total+m.derived_token_total)
+         FROM model_metrics m LEFT JOIN model_dimensions d ON d.id=m.model_key AND d.delete_at IS NULL
+         WHERE m.delete_at IS NULL AND m.grain='day' AND m.harness_id=?1 AND m.bucket_start<?2
+         GROUP BY m.model_key HAVING SUM(m.token_total_known_count)>0 ORDER BY m.model_key",
+    )?;
+    let models = stmt.query_map(params![harness_id, range_end, today_start, today_start - 6 * 86_400_000], |r| {
+        Ok(ModelUsage {
+            model_key: r.get(0)?, model_id: r.get(1)?, provider_id: r.get(2)?,
+            today_tokens: r.get::<_, i64>(3)?.max(0) as u64,
+            week_tokens: r.get::<_, i64>(4)?.max(0) as u64,
+            total_tokens: r.get::<_, i64>(5)?.max(0) as u64,
+        })
+    })?.collect::<Result<Vec<_>, _>>()?;
     Ok(HarnessUsageHistory {
         days: days.into_values().collect(),
         hours,
+        models,
     })
 }
 

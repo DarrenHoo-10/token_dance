@@ -655,6 +655,100 @@ fn request_cost_uses_prices_and_freezes_quote_on_replay(){
 }
 
 #[test]
+fn harness_model_usage_respects_periods_sources_and_soft_deletes() {
+    let mut store = open_store();
+    let a = store.upsert_model("provider-a", "shared-name").unwrap();
+    let b = store.upsert_model("provider-b", "shared-name").unwrap();
+    let today = beijing_day_start(1_700_000_000_000);
+    store.with_connection(|c| {
+        for (harness, model, offset, grain, deleted, tokens) in [
+            ("cursor", a, 0, "day", None, 100),
+            ("cursor", a, -6, "day", None, 200),
+            ("cursor", a, -7, "day", None, 400),
+            ("cursor", a, 1, "day", None, 800),
+            ("cursor", a, -1, "day", Some(today), 1600),
+            ("cursor", a, 0, "hour", None, 3200),
+            ("codex", a, 0, "day", None, 6400),
+            ("cursor", b, 0, "day", None, 50),
+        ] {
+            c.execute("INSERT INTO model_metrics
+                (created_at,updated_at,delete_at,grain,bucket_start,harness_id,model_key,
+                 exact_token_total,derived_token_total,usage_observed_count,token_total_known_count,metric_semantics_version)
+                VALUES (0,0,?1,?2,?3,?4,?5,?6,10,1,1,1)",
+                rusqlite::params![deleted, grain, today + offset * 86_400_000, harness, model, tokens])?;
+        }
+        let history = super::query::query_harness_usage_history(c, "cursor", today, today + 86_400_000)?;
+        assert_eq!(history.models.len(), 2);
+        let first = history.models.iter().find(|m| m.model_key == a).unwrap();
+        assert_eq!((first.today_tokens, first.week_tokens, first.total_tokens), (110, 320, 730));
+        assert_eq!(first.provider_id, "provider-a");
+        let second = history.models.iter().find(|m| m.model_key == b).unwrap();
+        assert_eq!((second.today_tokens, second.week_tokens, second.total_tokens), (60, 60, 60));
+        assert_eq!(second.provider_id, "provider-b");
+        assert!(super::query::query_harness_usage_history(c, "missing", today, today + 86_400_000)?.models.is_empty());
+        Ok(())
+    }).unwrap();
+}
+
+#[test]
+fn cursor_base_model_price_backfills_retained_usage_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = PipelineStore::open(dir.path()).unwrap();
+    store.set_clock_ms(1_700_000_000_000);
+    let model = store.upsert_model("cursor", "cursor-grok-4.6-xhigh-fast").unwrap();
+    let source = store.register_source(&RegisterSource {
+        harness_id: "cursor".into(),
+        source_key: blob(1),
+        source_kind: SourceKind::Other,
+        locator_ref: "local:cursor/usage-events".into(),
+        stream_key: "official-usage-events".into(),
+        cursor_kind: CursorKind::Opaque,
+        cursor_json: "{}".into(),
+        decoder_state_version: 1,
+        decoder_state_json: "{}".into(),
+        observed_boundary_json: "{}".into(),
+        next_poll_at: None,
+    }).unwrap();
+    let (token, _, seq) = store.lease_source(source, DEFAULT_LEASE_MS).unwrap();
+    let mut event = candidate(11, None);
+    event.model_key = model;
+    event.payload_json = serde_json::json!({
+        "meta": {"accuracy": "exact", "time_source": "source_record"},
+        "usage": {"token_total": 1100, "input_context_tokens": 1000,
+                  "output_tokens": 100, "cache_read_tokens": 800, "cache_write_tokens": 0},
+    }).to_string();
+    commit_one(&mut store, source, &token, seq, vec![event], "{}");
+    assert_eq!(store.event_count().unwrap(), 1);
+    // Simulate an upgrade: retained usage is repriced by maintenance on restart.
+    std::fs::write(dir.path().join("openrouter-prices.json"), r#"{"data":[{"id":"x-ai/grok-4.6","pricing":{"prompt":"0.000002","completion":"0.000006","input_cache_read":"0.0000005"}}]}"#).unwrap();
+    drop(store);
+    let mut store = PipelineStore::open(dir.path()).unwrap();
+    store.set_clock_ms(1_700_000_000_000);
+    for _ in 0..3 {
+        store.backfill_derived_metrics(128).unwrap();
+    }
+    assert_eq!(store.event_count().unwrap(), 2);
+    for consumer in [Consumer::Hour, Consumer::Day, Consumer::Month] {
+        for task in store.claim_tasks(consumer, 16, DEFAULT_LEASE_MS).unwrap() {
+            store.apply_and_complete_metrics(&task).unwrap();
+        }
+    }
+    store.with_connection(|c| {
+        let (cost, requests): (i64, i64) = c.query_row(
+            "SELECT estimated_cost_units,estimated_request_count FROM cost_metrics WHERE harness_id='cursor' AND grain='day'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        assert_eq!((cost, requests), (140_000, 1));
+        let tokens: i64 = c.query_row(
+            "SELECT exact_token_total FROM model_metrics WHERE harness_id='cursor' AND grain='day'",
+            [], |r| r.get(0),
+        )?;
+        assert_eq!(tokens, 1100);
+        Ok(())
+    }).unwrap();
+}
+
+#[test]
 fn late_price_catalog_backfills_existing_usage_without_replaying_tokens() {
  let dir=tempfile::tempdir().unwrap();
  let mut store=PipelineStore::open(dir.path()).unwrap();store.set_clock_ms(1_700_000_000_000);
