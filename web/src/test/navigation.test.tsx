@@ -6,7 +6,6 @@ import { LocaleProvider, useLocale } from '@/context/LocaleContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { AuthProvider } from '@/context/AuthContext';
 import { Navbar } from '@/components/layout/Navbar';
-import { PersonalAnalyticsProvider } from '@/context/PersonalAnalyticsContext';
 import { RootRedirect } from '@/App';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
 import { api } from '@/api/client';
