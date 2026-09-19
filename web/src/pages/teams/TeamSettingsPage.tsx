@@ -1,11 +1,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Check, Crown, Globe2, Layers3, LockKeyhole, Settings2, Trash2, Upload } from 'lucide-react';
 import { ApiError } from '@/api/client';
 import { teamsApi, type TeamMember } from '@/api/teams';
-import { Button } from '@/components/common/Button';
-import { Card } from '@/components/common/Card';
-import { Input } from '@/components/common/Input';
-import { Modal } from '@/components/common/Modal';
 import { ErrorState } from '@/components/states/ErrorState';
 import { LoadingState } from '@/components/states/LoadingState';
 import { useLocale } from '@/context/LocaleContext';
@@ -16,13 +13,15 @@ import {
   TEAM_NAME_MAX,
   TEAM_NAME_MIN,
   createIdempotencyKey,
+  formatUtcOffset,
   graphemeLength,
 } from './teamUtils';
-import { persistTeamAvatar, TeamAvatar, teamErrorMessage } from './TeamShared';
+import { persistTeamAvatar, teamErrorMessage } from './TeamShared';
 import { TeamSharingCard } from './TeamSharingCard';
+import { avatarUrl } from '@/utils/avatar';
 
 export const TeamSettingsPage: React.FC = () => {
-  const { t, locale } = useLocale();
+  const { t } = useLocale();
   const { showToast } = useNotification();
   const { scope, applyScope, clearScope } = useTeam();
   const navigate = useNavigate();
@@ -55,6 +54,11 @@ export const TeamSettingsPage: React.FC = () => {
   if (!scope) return <LoadingState />;
   if (error) return <ErrorState error={error} description={teamErrorMessage(t, error)} />;
 
+  const canEdit = scope.permissions.editProfile;
+  const avatarSrc = scope.team.avatarUrl
+    ? avatarUrl(scope.team.avatarUrl.startsWith('/api/') ? scope.team.avatarUrl : `/api/v1/teams/${scope.team.id}/avatar/content`)
+    : '';
+
   const saveProfile = async () => {
     const trimmed = name.trim();
     if (graphemeLength(trimmed) < TEAM_NAME_MIN || graphemeLength(trimmed) > TEAM_NAME_MAX) return;
@@ -86,93 +90,144 @@ export const TeamSettingsPage: React.FC = () => {
     } finally { setBusy(false); }
   };
 
+  const confirmDialog = (open: boolean, onClose: () => void, title: string, lead: string, danger: boolean, onConfirm: () => Promise<void>, extra?: React.ReactNode) => (
+    open ? (
+      <dialog className="tw-dialog" open onCancel={onClose} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+        <div className="tw-dialog-inner">
+          <h2>{title}</h2>
+          <p className="tw-dialog-lead">{lead}</p>
+          <form className="tw-form" onSubmit={(event) => { event.preventDefault(); void onConfirm(); }}>
+            {extra}
+            <div className="tw-form-actions">
+              <button type="button" className="button secondary" onClick={onClose}>{t('common.cancel')}</button>
+              <button type="submit" className={`button ${danger ? 'tw-danger' : 'primary'}`}>{t('common.confirm')}</button>
+            </div>
+          </form>
+        </div>
+      </dialog>
+    ) : null
+  );
+
   return (
-    <div className="sky-team-settings">
-      <Card className="sky-team-profile">
-        <div className="panel-header sky-settings-heading"><div><h2>{t('teams.settings.profile')}</h2><p>{locale === 'zh-CN' ? '给共同的创造，一个熟悉的名字。' : 'Give your shared work a familiar name.'}</p></div></div>
-        <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 16 }}>
-          <TeamAvatar team={scope.team} size="lg" />
-          {scope.permissions.editProfile && (
-            <>
-              <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadAvatar(file); e.target.value = ''; }} />
-              <Button variant="outline" disabled={busy} onClick={() => fileRef.current?.click()}>{t('teams.settings.changeAvatar')}</Button>
-            </>
+    <div className="tw-settings-grid">
+      <section className="tw-card">
+        <div className="tw-card-heading">
+          <div>
+            <h2><Settings2 size={19} />{t('teams.settings.profile')}</h2>
+            <p>{t('teams.settings.profileHint')}</p>
+          </div>
+        </div>
+        <form className="tw-form" onSubmit={(event) => { event.preventDefault(); void saveProfile(); }}>
+          <div className="tw-avatar-upload">
+            <div className="tw-team-avatar">{avatarSrc ? <img src={avatarSrc} alt="" /> : <Layers3 size={30} />}</div>
+            <div>
+              <label className={`button secondary ${!canEdit || busy ? 'disabled' : ''}`}>
+                <Upload size={14} />{t('teams.settings.changeAvatar')}
+                <input
+                  ref={fileRef}
+                  type="file"
+                  disabled={!canEdit || busy}
+                  accept="image/png,image/jpeg,image/webp"
+                  aria-label={t('teams.settings.changeAvatar')}
+                  onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadAvatar(file); e.target.value = ''; }}
+                />
+              </label>
+              <small>PNG / JPG / WebP · ≤ 2 MB</small>
+            </div>
+          </div>
+          <label>
+            {t('teams.create.name')}
+            <input value={name} onChange={(e) => setName(e.target.value)} minLength={TEAM_NAME_MIN} maxLength={TEAM_NAME_MAX} required disabled={!canEdit || busy} />
+          </label>
+          <label>
+            {t('teams.settings.intro')}
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)} maxLength={TEAM_DESCRIPTION_MAX} rows={3} disabled={!canEdit || busy} />
+            <small>{graphemeLength(description)} / {TEAM_DESCRIPTION_MAX}</small>
+          </label>
+          <div className="tw-profile-meta">
+            <span><LockKeyhole size={14} />{t('teams.settings.privateTeam')}</span>
+            <span><Globe2 size={14} />{scope.team.timezone} · {formatUtcOffset(scope.team.timezone)}</span>
+          </div>
+          {canEdit && (
+            <div className="tw-form-actions">
+              <button type="button" className="button secondary" disabled={busy} onClick={() => { setName(scope.team.name); setDescription(scope.team.description); }}>{t('teams.settings.discard')}</button>
+              <button type="submit" className="button primary" disabled={busy}><Check size={15} />{t('teams.settings.saveProfile')}</button>
+            </div>
           )}
-        </div>
-        <Input label={t('teams.create.name')} value={name} onChange={(e) => setName(e.target.value)} disabled={!scope.permissions.editProfile || busy} />
-        <div className="form-group">
-          <label className="form-label">{t('teams.create.description')}</label>
-          <textarea className="form-input" value={description} disabled={!scope.permissions.editProfile || busy} onChange={(e) => setDescription(e.target.value)} style={{ minHeight: 80, padding: '10px 14px' }} />
-        </div>
-        {scope.permissions.editProfile && (
-          <div className="sky-settings-actions"><Button variant="outline" disabled={busy} onClick={() => { setName(scope.team.name); setDescription(scope.team.description); }}>{t('common.cancel')}</Button><Button variant="dark" loading={busy} onClick={() => void saveProfile()}>{t('common.save')}</Button></div>
-        )}
-      </Card>
+        </form>
+      </section>
 
       <TeamSharingCard />
 
       {(scope.permissions.leave || scope.permissions.transferOwnership || scope.permissions.dissolve) && (
-        <Card className="sky-team-management">
-          <div className="panel-header sky-settings-heading"><div><h2>{t('teams.settings.management')}</h2><p>{locale === 'zh-CN' ? '成员关系发生变化时，个人记录仍然保留。' : 'Personal records remain when membership changes.'}</p></div></div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {scope.permissions.leave && <Button variant="outline" onClick={() => setLeaveOpen(true)}>{t('teams.settings.leave')}</Button>}
-            {scope.permissions.transferOwnership && <Button variant="outline" onClick={() => setTransferOpen(true)}>{t('teams.settings.transfer')}</Button>}
-            {scope.permissions.dissolve && <Button variant="danger" onClick={() => setDissolveOpen(true)}>{t('teams.settings.dissolve')}</Button>}
+        <section className="tw-card tw-management">
+          <div>
+            <h2>{t('teams.settings.management')}</h2>
+            <p>{t('teams.settings.managementHint')}</p>
           </div>
-        </Card>
+          <div>
+            {scope.permissions.transferOwnership && (
+              <button type="button" className="button secondary" onClick={() => setTransferOpen(true)}>
+                <Crown size={15} />{t('teams.settings.transfer')}
+              </button>
+            )}
+            {scope.permissions.dissolve && (
+              <button type="button" className="button tw-danger" onClick={() => setDissolveOpen(true)}>
+                <Trash2 size={15} />{t('teams.settings.dissolve')}
+              </button>
+            )}
+            {scope.permissions.leave && (
+              <button type="button" className="button tw-danger" onClick={() => setLeaveOpen(true)}>
+                {t('teams.settings.leave')}
+              </button>
+            )}
+          </div>
+        </section>
       )}
 
-      <Modal isOpen={leaveOpen} onClose={() => setLeaveOpen(false)} title={t('teams.settings.leave')} footer={
-        <>
-          <Button variant="outline" onClick={() => setLeaveOpen(false)}>{t('common.cancel')}</Button>
-          <Button variant="danger" onClick={async () => {
-            await teamsApi.leaveTeam(scope.team.id, { expectedAuthRevision: scope.team.authRevision }, { idempotencyKey: createIdempotencyKey() });
-            clearScope();
-            navigate('/teams', { replace: true });
-          }}>{t('common.confirm')}</Button>
-        </>
-      }>
-        <p>{t('teams.settings.leaveDesc')}</p>
-      </Modal>
+      {confirmDialog(leaveOpen, () => setLeaveOpen(false), t('teams.settings.leave'), t('teams.settings.leaveDesc'), true, async () => {
+        await teamsApi.leaveTeam(scope.team.id, { expectedAuthRevision: scope.team.authRevision }, { idempotencyKey: createIdempotencyKey() });
+        clearScope();
+        navigate('/teams', { replace: true });
+      })}
 
-      <Modal isOpen={transferOpen} onClose={() => setTransferOpen(false)} title={t('teams.settings.transfer')} footer={
+      {confirmDialog(transferOpen, () => setTransferOpen(false), t('teams.settings.transfer'), t('teams.settings.transferDesc'), false, async () => {
+        const next = await teamsApi.transferOwnership(scope.team.id, {
+          targetMembershipId,
+          confirmTeamName: confirmName,
+          expectedAuthRevision: scope.team.authRevision,
+        }, { idempotencyKey: createIdempotencyKey() });
+        applyScope(next);
+        setTransferOpen(false);
+        showToast(t('teams.settings.transferred'), 'success');
+      }, (
         <>
-          <Button variant="outline" onClick={() => setTransferOpen(false)}>{t('common.cancel')}</Button>
-          <Button variant="dark" onClick={async () => {
-            const next = await teamsApi.transferOwnership(scope.team.id, {
-              targetMembershipId,
-              confirmTeamName: confirmName,
-              expectedAuthRevision: scope.team.authRevision,
-            }, { idempotencyKey: createIdempotencyKey() });
-            applyScope(next);
-            setTransferOpen(false);
-            showToast(t('teams.settings.transferred'), 'success');
-          }}>{t('common.confirm')}</Button>
+          <label>
+            {t('teams.settings.chooseMember')}
+            <select value={targetMembershipId} onChange={(e) => setTargetMembershipId(e.target.value)} aria-label={t('teams.settings.chooseMember')}>
+              <option value="">{t('teams.settings.chooseMember')}</option>
+              {members.filter((item) => item.role !== 'owner').map((item) => (
+                <option key={item.membershipId} value={item.membershipId}>{item.displayName}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            {t('teams.settings.confirmName')}
+            <input value={confirmName} placeholder={scope.team.name} onChange={(e) => setConfirmName(e.target.value)} required />
+          </label>
         </>
-      }>
-        <p>{t('teams.settings.transferDesc')}</p>
-        <select className="form-input" value={targetMembershipId} onChange={(e) => setTargetMembershipId(e.target.value)}>
-          <option value="">{t('teams.settings.chooseMember')}</option>
-          {members.filter((item) => item.role !== 'owner').map((item) => (
-            <option key={item.membershipId} value={item.membershipId}>{item.displayName}</option>
-          ))}
-        </select>
-        <Input label={t('teams.settings.confirmName')} value={confirmName} onChange={(e) => setConfirmName(e.target.value)} />
-      </Modal>
+      ))}
 
-      <Modal isOpen={dissolveOpen} onClose={() => setDissolveOpen(false)} title={t('teams.settings.dissolve')} footer={
-        <>
-          <Button variant="outline" onClick={() => setDissolveOpen(false)}>{t('common.cancel')}</Button>
-          <Button variant="danger" onClick={async () => {
-            await teamsApi.dissolveTeam(scope.team.id, { confirmTeamName: confirmName, expectedAuthRevision: scope.team.authRevision }, { idempotencyKey: createIdempotencyKey() });
-            clearScope();
-            navigate('/teams', { replace: true });
-          }}>{t('common.confirm')}</Button>
-        </>
-      }>
-        <p>{t('teams.settings.dissolveDesc')}</p>
-        <Input label={t('teams.settings.confirmName')} value={confirmName} onChange={(e) => setConfirmName(e.target.value)} />
-      </Modal>
+      {confirmDialog(dissolveOpen, () => setDissolveOpen(false), t('teams.settings.dissolve'), t('teams.settings.dissolveDesc'), true, async () => {
+        await teamsApi.dissolveTeam(scope.team.id, { confirmTeamName: confirmName, expectedAuthRevision: scope.team.authRevision }, { idempotencyKey: createIdempotencyKey() });
+        clearScope();
+        navigate('/teams', { replace: true });
+      }, (
+        <label>
+          {t('teams.settings.confirmName')}
+          <input value={confirmName} placeholder={scope.team.name} onChange={(e) => setConfirmName(e.target.value)} required />
+        </label>
+      ))}
     </div>
   );
 };

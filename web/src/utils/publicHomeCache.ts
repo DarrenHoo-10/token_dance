@@ -60,12 +60,18 @@ export function readHomeCommunity(key: string): CommunityStatsResponse | null {
   if (value.harnesses != null && (!Array.isArray(value.harnesses) || !value.harnesses.every(item => record(item)
     && typeof item.agentId === 'string' && typeof item.label === 'string'
     && stringOrNull(item.tokens) && numberOrNull(item.sharePct)))) return null;
+  if (value.models != null && (!Array.isArray(value.models) || !value.models.every(item => record(item)
+    && typeof item.modelId === 'string' && typeof item.label === 'string'
+    && stringOrNull(item.tokens) && numberOrNull(item.sharePct)))) return null;
+  if (value.skills != null && (!Array.isArray(value.skills) || !value.skills.every(item => record(item)
+    && typeof item.skillId === 'string' && typeof item.label === 'string'
+    && stringOrNull(item.uses) && numberOrNull(item.sharePct)))) return null;
   return value as unknown as CommunityStatsResponse;
 }
 
 export function writeHomeCommunity(key: string, stats: CommunityStatsResponse) {
-  const { metricDate, timezone, window, tokens, developers, codeLines, interactions, costAmount, costs, deltas, harnesses, computedAt } = stats;
+  const { metricDate, timezone, window, tokens, developers, codeLines, interactions, costAmount, costs, deltas, harnesses, models, skills, computedAt } = stats;
   const expectedWindow = communityWindowFromKey(key);
   if (expectedWindow && window !== expectedWindow) return;
-  if (metricDate === publicHomeDay()) write(key, { metricDate, timezone, window, tokens, developers, codeLines, interactions, costAmount, costs, deltas, harnesses, computedAt });
+  if (metricDate === publicHomeDay()) write(key, { metricDate, timezone, window, tokens, developers, codeLines, interactions, costAmount, costs, deltas, harnesses, models, skills, computedAt });
 }

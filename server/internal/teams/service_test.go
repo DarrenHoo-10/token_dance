@@ -403,7 +403,8 @@ func TestAssembleMemberDetailPreservesCosts(t *testing.T) {
 		VisibilityMask: VisibilityNamed | VisibilityClassification | VisibilityCost,
 	}
 	target := &domain.TeamMembership{MembershipID: mem, UserID: "usr_1", JoinedAt: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)}
-	user := &domain.User{UserID: "usr_1", DisplayName: "Ada"}
+	avatar := "/images/avatars/fox-256.jpg"
+	user := &domain.User{UserID: "usr_1", DisplayName: "Ada", AvatarURL: &avatar}
 	team := &domain.Team{TimezoneName: "UTC", OwnerUserID: "usr_1"}
 	snap := &domain.TeamAnalysisSnapshot{
 		SnapshotID:      "tas_1",
@@ -421,6 +422,9 @@ func TestAssembleMemberDetailPreservesCosts(t *testing.T) {
 	}
 	if got["dimensions"].(map[string]string)["cost"] != "available" {
 		t.Fatalf("dims %+v", got["dimensions"])
+	}
+	if got["avatarUrl"] != avatar {
+		t.Fatalf("avatar %v", got["avatarUrl"])
 	}
 	hidden := assembleMemberDetail(target, user, team, snap, []domain.TeamAnalysisRow{row}, domain.SharingFlags{Base: true, Named: true})
 	hiddenCosts := hidden["costs"].(domain.TeamAnalysisCosts)

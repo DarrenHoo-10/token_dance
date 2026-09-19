@@ -1,13 +1,12 @@
 import React, { useMemo, useState } from 'react';
+import { ArrowRight, Layers3, LockKeyhole, Sparkles } from 'lucide-react';
 import type { AnalysisBucketItem, SkillItem, SkillMemberUse, TeamAnalysisReady } from '@/api/teams';
-import { Card } from '@/components/common/Card';
 import { HarnessMark } from '@/components/common/HarnessMark';
 import { resolveHarnessBrand } from '@/components/common/harnessBrand';
+import { usageColor, usageColorAt } from '@/utils/usageColors';
 import { useLocale } from '@/context/LocaleContext';
-import { TeamRankPager } from './TeamShared';
-import { formatTokenCompact, rankPageSlice } from './teamUtils';
-
-const COLORS = ['#577d21', '#277d96', '#8668a6', '#bc7939', '#bb5275'];
+import { MemberAvatar } from './TeamShared';
+import { formatTokenCompact } from './teamUtils';
 
 type MixKind = 'harness' | 'model' | 'skill';
 
@@ -48,6 +47,15 @@ function bucketItems(items: AnalysisBucketItem[] | undefined): MixItem[] {
     .filter((item) => item.value !== '0');
 }
 
+function markContent(kind: MixKind, item: MixItem) {
+  if (kind === 'skill') return <Sparkles size={17} />;
+  if (kind === 'harness') {
+    if (/claude code/i.test(item.label)) return '✳';
+    return <HarnessMark agentId={item.id} label={item.label} size="sm" />;
+  }
+  return item.label.slice(0, 1).toUpperCase();
+}
+
 export const TeamUsageMix: React.FC<{ analysis: TeamAnalysisReady }> = ({ analysis }) => {
   const { t } = useLocale();
   const harness = useMemo(() => bucketItems(analysis.agents.items), [analysis.agents.items]);
@@ -69,119 +77,96 @@ export const TeamUsageMix: React.FC<{ analysis: TeamAnalysisReady }> = ({ analys
   ];
   const firstKind = (groups.find((group) => group.items.length > 0)?.kind || 'harness') as MixKind;
   const [kind, setKind] = useState<MixKind>(firstKind);
-  const [listPage, setListPage] = useState(1);
-  const [distPage, setDistPage] = useState(1);
   const active = groups.find((group) => group.kind === kind) || groups[0];
   const [selectedKey, setSelectedKey] = useState(active.items[0] ? itemKey(active.items[0]) : '');
   const selected = active.items.find((item) => itemKey(item) === selectedKey) || active.items[0];
   const empty = active.items.length === 0;
-  const visibleItems = rankPageSlice(active.items, listPage);
-  const visibleMembers = selected ? rankPageSlice(selected.members, distPage) : [];
+  const mixTotal = active.items.reduce((sum, item) => sum + Number(item.value || 0), 0);
+  const peakMember = selected?.members.reduce((max, member) => Math.max(max, Number(member.useCount || 0)), 0) || 1;
+  const classified = formatTokenCompact(
+    String((analysis.agents.items || []).filter((item) => item.bucketType !== 'unshared_classification')
+      .reduce((sum, item) => sum + (item.tokens.state === 'available' ? Number(item.tokens.value || 0) : 0), 0)),
+  );
 
   const switchKind = (next: MixKind) => {
     const group = groups.find((item) => item.kind === next);
     setKind(next);
     setSelectedKey(group?.items[0] ? itemKey(group.items[0]) : '');
-    setListPage(1);
-    setDistPage(1);
   };
 
   return (
-    <section className="team-usage-section" aria-labelledby="team-usage-mix-heading">
-      <div className="team-section-heading">
-        <h2 id="team-usage-mix-heading">{t('teams.overview.usageMix')}</h2>
+    <section className="tw-card tw-mix-card" aria-labelledby="team-usage-mix-heading">
+      <div className="tw-card-heading">
+        <div>
+          <h2 id="team-usage-mix-heading"><Layers3 size={20} />{t('teams.overview.toolkit')}</h2>
+          <p>{t('teams.overview.toolkitHint')}</p>
+        </div>
+        <div className="tw-mini-tabs">
+          {groups.map((group) => (
+            <button
+              key={group.kind}
+              type="button"
+              aria-pressed={kind === group.kind}
+              onClick={() => switchKind(group.kind)}
+            >
+              {group.label}
+            </button>
+          ))}
+        </div>
       </div>
-      <div className="segmented-control team-mix-tabs" role="tablist" aria-label={t('teams.overview.usageMix')}>
-        {groups.map((group) => (
-          <button
-            key={group.kind}
-            type="button"
-            role="tab"
-            aria-selected={kind === group.kind}
-            className={`segmented-item ${kind === group.kind ? 'active' : ''}`}
-            onClick={() => switchKind(group.kind)}
-          >
-            {group.label}
-          </button>
-        ))}
-      </div>
-      <div className="team-usage-mix">
-        <Card>
-          <div className="panel-header">
-            <h2>{active.label}</h2>
-            <span className="team-chart-unit">{active.unit}</span>
+      {empty ? (
+        <div className="tw-no-data"><p>{t('teams.overview.mixEmpty')}</p></div>
+      ) : (
+        <div className="tw-mix-grid">
+          <div className="tw-mix-list">
+            {active.items.map((item, index) => {
+              const key = itemKey(item);
+              const pct = mixTotal > 0 ? (Number(item.value) / mixTotal) * 100 : Number(item.share || 0);
+              const color = kind === 'harness' ? resolveHarnessBrand(item.id, item.label).color : usageColorAt(index);
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  className={selectedKey === key ? 'selected' : ''}
+                  onClick={() => setSelectedKey(key)}
+                >
+                  <span className={`tw-tool-mark tool-${index % 4}`}>{markContent(kind, item)}</span>
+                  <span className="tw-mix-name">
+                    <strong>{item.label}</strong>
+                    <span className="tw-mix-track"><i style={{ width: `${Math.max(0, Math.min(100, pct))}%`, background: color }} /></span>
+                  </span>
+                  <span>
+                    <strong>{kind === 'skill' ? item.value : formatTokenCompact(item.value)}</strong>
+                    <small>{pct.toFixed(1)}%</small>
+                  </span>
+                  <ArrowRight size={15} />
+                </button>
+              );
+            })}
           </div>
-          {empty ? (
-            <p className="team-chart-empty">{t('teams.overview.mixEmpty')}</p>
-          ) : (
-            <>
-              <div className="team-mix-list" key={kind}>
-                {visibleItems.map((item) => {
-                  const pct = Number(item.share || '0');
-                  const key = itemKey(item);
-                  const isActive = selectedKey === key;
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      className={`team-mix-row ${isActive ? 'is-active' : ''}`}
-                      aria-pressed={isActive}
-                      onClick={() => {
-                        setSelectedKey(key);
-                        setDistPage(1);
-                      }}
-                    >
-                      <div className="team-mix-row-copy">
-                        <div className="team-bar-label">
-                          <span>{kind === 'harness' ? <HarnessMark agentId={item.id} label={item.label} size="sm" /> : null}{item.label}</span>
-                          <span className="mono-num">{item.share ? `${item.share}%` : '—'}</span>
-                        </div>
-                        <div className="team-bar-track"><span style={{ width: `${Math.max(0, Math.min(100, pct))}%`, background: kind === 'harness' ? resolveHarnessBrand(item.id, item.label).color : '#577d21' }} /></div>
-                      </div>
-                      <span className="mono-num team-mix-value">{formatTokenCompact(item.value)}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              <TeamRankPager
-                page={listPage}
-                total={active.items.length}
-                onPage={setListPage}
-                label={t('teams.insights.mixPages')}
-              />
-            </>
-          )}
-        </Card>
-        <Card>
-          <div className="panel-header">
+          <div className="tw-tool-members">
             <div>
-              <h2>{t('teams.overview.memberDist')}</h2>
-              <p>{empty || !selected ? t('teams.overview.mixEmpty') : selected.label}</p>
+              <span>{selected?.label}</span>
+              <small>{t('teams.overview.memberDist')} · {active.unit}</small>
             </div>
-            <span className="team-chart-unit">{active.unit}</span>
+            {selected?.members.length ? selected.members.map((member) => (
+              <button type="button" key={member.membershipId}>
+                <MemberAvatar name={member.displayName} url={member.avatarUrl} />
+                <span>{member.displayName}</span>
+                <span className="tw-tool-member-track">
+                  <i style={{ width: `${Math.max(0, Number(member.useCount || 0) / peakMember * 100)}%`, background: usageColor(member.membershipId) }} />
+                </span>
+                <strong>{kind === 'skill' ? member.useCount : formatTokenCompact(member.useCount)}</strong>
+              </button>
+            )) : <p className="tw-muted">{t('teams.overview.mixEmptyDetail')}</p>}
           </div>
-          {empty || !selected || selected.members.length === 0 ? (
-            <p className="team-chart-empty">{t('teams.overview.mixEmptyDetail')}</p>
-          ) : (
-            <>
-              {visibleMembers.map((member, index) => (
-                <div className="team-bar-item" key={member.membershipId}>
-                  <div className="team-bar-label">
-                    <span><i className="team-dot" style={{ background: COLORS[index % COLORS.length] }} aria-hidden="true" />{member.displayName}</span>
-                    <span className="mono-num">{formatTokenCompact(member.useCount)}{member.share ? ` · ${member.share}%` : ''}</span>
-                  </div>
-                  <div className="team-bar-track"><span style={{ width: `${Math.max(0, Number(member.share || '0'))}%`, background: COLORS[index % COLORS.length] }} /></div>
-                </div>
-              ))}
-              <TeamRankPager
-                page={distPage}
-                total={selected.members.length}
-                onPage={setDistPage}
-                label={t('teams.insights.memberDistPages')}
-              />
-            </>
-          )}
-        </Card>
+        </div>
+      )}
+      <div className="tw-table-footer">
+        <LockKeyhole size={13} />
+        {kind === 'skill'
+          ? t('teams.overview.skillFoot')
+          : t('teams.overview.mixFoot', { tokens: classified })}
       </div>
     </section>
   );

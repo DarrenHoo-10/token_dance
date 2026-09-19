@@ -32,6 +32,7 @@ import { PublicProfilePage } from '@/pages/public/PublicProfilePage';
 import { LeaderboardPage } from '@/pages/public/LeaderboardPage';
 import { CommunityPage } from '@/pages/public/CommunityPage';
 import { TeamProvider } from '@/context/TeamContext';
+import { PersonalAnalyticsProvider } from '@/context/PersonalAnalyticsContext';
 import { TeamDashboardPage } from '@/pages/teams/TeamDashboardPage';
 import { CreateTeamPage } from '@/pages/teams/CreateTeamPage';
 import { InvitationPage } from '@/pages/teams/InvitationPage';
@@ -62,6 +63,7 @@ export const App: React.FC = () => {
         <AuthProvider>
           <BrowserRouter basename={import.meta.env.BASE_URL} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <TeamProvider>
+            <PersonalAnalyticsProvider>
             <Routes>
               {/* Standalone Auth & Onboarding */}
               <Route path="/login" element={<LoginPage />} />
@@ -74,7 +76,7 @@ export const App: React.FC = () => {
               {/* Main Application Layout */}
               <Route element={<AppLayout />}>
                 <Route path="/" element={<RootRedirect />} />
-                <Route path="/dashboard" element={<Navigate to="/me" replace />} />
+                <Route path="/dashboard" element={<PersonalDashboardPage />} />
                 
                 {/* /me personal dashboard & activity */}
                 <Route path="/me" element={<PersonalDashboardPage />} />
@@ -113,6 +115,7 @@ export const App: React.FC = () => {
                 <Route path="*" element={<NotFoundPage />} />
               </Route>
             </Routes>
+            </PersonalAnalyticsProvider>
             </TeamProvider>
           </BrowserRouter>
         </AuthProvider>

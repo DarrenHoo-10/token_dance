@@ -20,6 +20,7 @@ describe('harness brand identity', () => {
   it('matches labels such as Codex CLI without treating model names as harnesses', () => {
     expect(matchHarnessId(undefined, 'Codex CLI')).toBe('codex');
     expect(matchHarnessId(undefined, 'Claude Code')).toBe('claude-code');
+    expect(matchHarnessId('cursor-agent', 'Cursor')).toBe('cursor');
     expect(matchHarnessId(undefined, 'claude-sonnet-4')).toBeNull();
     expect(resolveHarnessBrand('gpt-4.1', 'gpt-4.1').known).toBe(false);
   });

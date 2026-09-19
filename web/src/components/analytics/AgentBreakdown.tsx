@@ -1,6 +1,7 @@
 import React from 'react';
 import { HarnessMark } from '@/components/common/HarnessMark';
 import { resolveHarnessBrand } from '@/components/common/harnessBrand';
+import { usageColor } from '@/utils/usageColors';
 import { useLocale } from '@/context/LocaleContext';
 import type { AgentBreakdownItem } from '@/types/api';
 
@@ -9,23 +10,21 @@ export interface AgentBreakdownProps {
   variant?: 'bars' | 'donut';
 }
 
-function formatTokens(tokenTotal: string): string {
+function formatTokens(tokenTotal: string, decimals = 1): string {
   const num = parseFloat(tokenTotal) || 0;
-  if (num >= 1_000_000_000) return (num / 1_000_000_000).toFixed(1) + 'B';
-  if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + 'M';
+  if (num >= 1_000_000_000) return (num / 1_000_000_000).toFixed(decimals) + 'B';
+  if (num >= 1_000_000) return (num / 1_000_000).toFixed(decimals) + 'M';
   if (num >= 1_000) return (num / 1_000).toFixed(1) + 'K';
   return num.toLocaleString();
 }
-
-const colors = ['#82c436', '#b5cf85', '#dce9c8', '#91c7ba', '#a9a1d2'];
 
 export const AgentBreakdown: React.FC<AgentBreakdownProps> = ({ items, variant = 'bars' }) => {
   const { t } = useLocale();
 
   if (!items || items.length === 0) {
     return (
-      <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-subtle)', fontSize: 12 }}>
-        {t('dashboard.noAgentData')}
+      <div className="analytics-chart-empty">
+        <strong>{t('dashboard.noAgentData')}</strong>
       </div>
     );
   }
@@ -33,30 +32,40 @@ export const AgentBreakdown: React.FC<AgentBreakdownProps> = ({ items, variant =
   if (variant === 'donut') {
     const normalized = items.map((agent, idx) => {
       const percentage = typeof agent.percentage === 'number' ? agent.percentage : parseFloat(agent.percentage) || 0;
+      const key = agent.key || agent.agentId || `agent-${idx}`;
+      const label = agent.displayName || agent.label || agent.key || agent.agentId || t('dashboard.unknownAgent');
+      const brand = resolveHarnessBrand(agent.agentId || agent.key, label);
       return {
-        key: agent.key || agent.agentId || `agent-${idx}`,
-        label: agent.displayName || agent.label || agent.key || agent.agentId || t('dashboard.unknownAgent'),
+        key,
+        label,
         percentage: Math.max(0, percentage),
         tokenTotal: agent.tokenTotal,
-        color: colors[idx % colors.length],
+        color: brand.known ? brand.color : usageColor(key),
       };
     });
     const totalPct = normalized.reduce((sum, item) => sum + item.percentage, 0) || 1;
     let cursor = 0;
-    const stops = normalized.map((item) => {
+    const stops = normalized.map((item, index) => {
       const start = cursor;
       cursor += item.percentage / totalPct * 100;
-      return `${item.color} ${start}% ${cursor}%`;
+      const gap = index < normalized.length - 1 ? 0.5 : 0;
+      const end = Math.max(start, cursor - gap);
+      return gap
+        ? `${item.color} ${start}% ${end}%, #fff ${end}% ${cursor}%`
+        : `${item.color} ${start}% ${cursor}%`;
     }).join(', ');
     const totalTokens = normalized.reduce((sum, item) => sum + (Number(item.tokenTotal) || 0), 0);
+    const center = formatTokens(String(totalTokens), 2);
+    const centerUnit = /[MBK]$/.test(center) ? center.slice(-1) : '';
+    const centerValue = centerUnit ? center.slice(0, -1) : center;
     return <div className="agent-donut-breakdown">
-      <div className="agent-donut-composition">
-        <div className="agent-donut-chart" style={{ background: `conic-gradient(${stops})` }} role="img" aria-label={normalized.map(item => `${item.label} ${item.percentage.toFixed(0)}%`).join(', ')}>
-          <div><span>{t('metrics.totalTokens')}</span><strong>{formatTokens(String(totalTokens))}</strong></div>
+      <div className="agent-composition agent-donut-composition">
+        <div className="agent-donut agent-donut-chart" style={{ background: `conic-gradient(${stops})` }} role="img" aria-label={normalized.map(item => `${item.label} ${item.percentage.toFixed(0)}%`).join(', ')}>
+          <div><span>{t('metrics.totalTokens')}</span><strong>{centerValue}{centerUnit ? <small>{centerUnit}</small> : null}</strong></div>
         </div>
-        <div className="agent-donut-legend">{normalized.map(item => <div key={item.key}><i style={{ background: item.color }} /><span>{item.label}</span><strong>{item.percentage.toFixed(0)}%</strong></div>)}</div>
+        <div className="agent-legend agent-donut-legend">{normalized.map(item => <div key={item.key}><i style={{ background: item.color }} /><span>{item.label}</span><strong>{item.percentage.toFixed(0)}%</strong></div>)}</div>
       </div>
-      <div className="agent-donut-rows">{normalized.map(item => <div key={item.key}><span>{item.label}</span><strong>{formatTokens(item.tokenTotal)}</strong><small>Token</small></div>)}</div>
+      <div className="agent-token-rows agent-donut-rows">{normalized.map(item => <div key={item.key}><span>{item.label}</span><strong>{formatTokens(item.tokenTotal, 2)}</strong><small>Token</small></div>)}</div>
     </div>;
   }
 
@@ -78,7 +87,7 @@ export const AgentBreakdown: React.FC<AgentBreakdownProps> = ({ items, variant =
               <div className="progress-track">
                 <div
                   className="progress-fill"
-                  style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: brand.known ? brand.color : undefined }}
+                  style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: brand.known ? brand.color : usageColor(itemKey) }}
                 />
               </div>
             </div>

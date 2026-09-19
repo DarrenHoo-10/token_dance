@@ -1,5 +1,4 @@
 import React, { useEffect } from 'react';
-import { ArrowRight } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ApiError } from '@/api/client';
 import { teamsApi, type SharingFlags, type Team, type TeamRole, type TeamScope } from '@/api/teams';
@@ -8,6 +7,7 @@ import { Switch } from '@/components/common/Switch';
 import { useLocale } from '@/context/LocaleContext';
 import { TeamDateField } from './TeamDateField';
 import { getApiErrorMessage } from '@/i18n';
+import { UserAvatar } from '@/components/common/UserAvatar';
 import { avatarUrl } from '@/utils/avatar';
 import {
   TEAM_RANGE_MAX_DAYS,
@@ -17,8 +17,10 @@ import {
   rankPageCount,
   sha256Hex,
   TEAM_RANK_PAGE_SIZE,
+  formatDotDate,
 } from './teamUtils';
 import './teams.css';
+import './sky-team.css';
 
 export function teamErrorMessage(t: (key: string, params?: Record<string, string | number>) => string, error: ApiError): string {
   const byTeams = t(`teams.errors.${error.code}`);
@@ -50,6 +52,24 @@ export const TeamAvatar: React.FC<{ team: Pick<Team, 'id' | 'name' | 'avatarUrl'
     </span>
   );
 };
+
+export const MemberAvatar: React.FC<{ name: string; url?: string | null; size?: 'sm' | 'md' }> = ({
+  name,
+  url,
+  size = 'sm',
+}) => (
+  <UserAvatar
+    url={url}
+    name={name}
+    className={`team-member-avatar ${size}`}
+    fallbackClassName={`team-member-avatar ${size} is-fallback`}
+    alt=""
+  />
+);
+
+export function memberContributionState(_member?: { syncStatus?: string | null; lastReceivedAt?: string | null }): 'joined' | 'waiting' {
+  return 'joined';
+}
 
 export const RoleBadge: React.FC<{ role: TeamRole }> = ({ role }) => {
   const { t } = useLocale();
@@ -123,7 +143,7 @@ function shiftIsoDate(iso: string, days: number): string {
   return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
 }
 
-export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) => {
+export const TeamDateRangeBar: React.FC<{ timezone: string; part?: 'controls' | 'custom' | 'all' }> = ({ timezone, part = 'all' }) => {
   const { t, locale } = useLocale();
   const [params, setParams] = useSearchParams();
   const range = params.get('range') || 'today';
@@ -166,13 +186,13 @@ export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) =
     setParams(nextParams, { replace: true });
   }, [from, params, range, setParams, to, today]);
 
-  return (
-    <div className="team-date-toolbar">
-      <div className="segmented-control team-date-presets" role="tablist" aria-label={t('dashboard.timeRangeSelector')}>
+  const controls = (
+    <>
+      <div className="tw-periods" role="tablist" aria-label={t('dashboard.timeRangeSelector')}>
         {[
           { key: 'today', label: t('common.today') },
-          { key: '7d', label: t('common.days7') },
-          { key: '30d', label: t('common.days30') },
+          { key: '7d', label: t('teams.range.days7') },
+          { key: '30d', label: t('teams.range.days30') },
           { key: 'custom', label: t('common.custom') },
         ].map((item) => (
           <button
@@ -180,42 +200,51 @@ export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) =
             type="button"
             role="tab"
             aria-selected={range === item.key}
-            className={`segmented-item ${range === item.key ? 'active' : ''}`}
+            aria-pressed={range === item.key}
             onClick={() => setRange(item.key)}
           >
             {item.label}
           </button>
         ))}
       </div>
-      {range === 'custom' ? <div className="team-date-custom">
-        <div className="team-date-fields">
-          <TeamDateField
-            value={displayedFrom}
-            onChange={(next) => setDate('from', next)}
-            label={t('teams.range.from')}
-            max={today}
-            locale={locale}
-            invalid={Boolean(spanError)}
-            align="start"
-          />
-          <ArrowRight className="team-date-arrow" size={16} aria-hidden="true" />
-          <TeamDateField
-            value={displayedTo}
-            onChange={(next) => setDate('to', next)}
-            label={t('teams.range.to')}
-            min={range === 'custom' && from ? from : undefined}
-            max={today}
-            locale={locale}
-            invalid={Boolean(spanError)}
-            align="end"
-          />
-        </div>
-        {spanError && (
-          <p className="team-date-hint is-error" role="alert">{t('teams.range.tooLong')}</p>
-        )}
-      </div> : <span className="team-date-summary">{displayedFrom} — {displayedTo}</span>}
-    </div>
+      <span className="tw-date-label">{formatDotDate(displayedFrom)} — {displayedTo.slice(5).replace('-', '.')}</span>
+    </>
   );
+  const custom = range === 'custom' ? (
+        <form className="tw-custom-range" onSubmit={(event) => event.preventDefault()}>
+          <label>
+            {t('teams.range.from')}
+            <TeamDateField
+              value={displayedFrom}
+              onChange={(next) => setDate('from', next)}
+              label={t('teams.range.from')}
+              max={today}
+              locale={locale}
+              invalid={Boolean(spanError)}
+              align="start"
+            />
+          </label>
+          <span>—</span>
+          <label>
+            {t('teams.range.to')}
+            <TeamDateField
+              value={displayedTo}
+              onChange={(next) => setDate('to', next)}
+              label={t('teams.range.to')}
+              min={range === 'custom' && from ? from : undefined}
+              max={today}
+              locale={locale}
+              invalid={Boolean(spanError)}
+              align="end"
+            />
+          </label>
+          <span>{t('teams.range.customHint')}</span>
+          {spanError && <p role="alert">{t('teams.range.tooLong')}</p>}
+        </form>
+  ) : null;
+  if (part === 'controls') return controls;
+  if (part === 'custom') return custom;
+  return <>{controls}{custom}</>;
 };
 
 export function useTeamSearchFilters() {

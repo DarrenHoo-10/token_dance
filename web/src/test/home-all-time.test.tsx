@@ -44,6 +44,8 @@ describe('Home all-time usage', () => {
       snapshotId: 'empty', boardKey: 'global', window: 'today', metric: 'tokens', entries: [],
     });
     vi.spyOn(api, 'getMyLeaderboard').mockImplementation((params) => api.getLeaderboard(params));
+    vi.spyOn(api, 'getCommunityStats').mockResolvedValue({ metricDate: '2026-09-09', timezone: 'UTC', window: '7d' });
+    vi.spyOn(api, 'getPublicTokenTrends').mockResolvedValue({ visible: false });
     vi.spyOn(api, 'getActivityCalendar').mockResolvedValue({
       days: [], currentStreak: 0, longestStreak: 0, totalActiveDays: 0, aggregationVersion: 1,
     });
@@ -60,6 +62,7 @@ describe('Home all-time usage', () => {
     expect(screen.getByText('19.2M')).toBeInTheDocument();
     expect(request).toHaveBeenCalledWith('all');
     expect(request).toHaveBeenCalledWith('today');
+    expect(screen.getByRole('button', { name: /查看我的创作足迹/ })).toHaveClass('hero-action');
   });
 
   it('keeps today visible if the historical request fails', async () => {

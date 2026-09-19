@@ -154,6 +154,16 @@ func (w *Worker) recomputeCommunityDay(ctx context.Context, date string, now tim
 	}
 	totals.IsFinal = final
 	totals.ComputedAt = now
+	models, err := w.communityStatsStore().SumCommunityModelShares(ctx, date)
+	if err != nil {
+		return fmt.Errorf("sum community model shares %s: %w", date, err)
+	}
+	skills, err := w.communityStatsStore().SumCommunitySkillShares(ctx, date)
+	if err != nil {
+		return fmt.Errorf("sum community skill shares %s: %w", date, err)
+	}
+	totals.ModelShares = models
+	totals.SkillShares = skills
 	if err := w.communityStatsStore().UpsertCommunityDailyStats(ctx, totals); err != nil {
 		return fmt.Errorf("store community day %s: %w", date, err)
 	}

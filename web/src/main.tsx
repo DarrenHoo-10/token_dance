@@ -4,6 +4,7 @@ import App from './App';
 import './index.css';
 import './sky.css';
 import './home.css';
+import './personal-analytics.css';
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

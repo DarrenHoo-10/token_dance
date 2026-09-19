@@ -14,32 +14,30 @@ function formatCount(val: string | number | undefined): string {
 }
 
 export const SkillRanking: React.FC<SkillRankingProps> = ({ skills }) => {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
+  const zh = locale === 'zh-CN';
 
   if (!skills || skills.length === 0) {
     return (
-      <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-subtle)', fontSize: 12 }}>
+      <div className="analytics-skills-empty">
         {t('dashboard.noSkillData')}
       </div>
     );
   }
 
   return (
-    <div className="skill-table">
-      {skills.slice(0, 5).map((skill, idx) => (
-        <div key={skill.skillId || skill.skillPublicName + idx} className="skill-row">
-          <span className="skill-rank-badge">{skill.rankNo || idx + 1}</span>
+    <div className="analytics-skills">
+      {skills.slice(0, 4).map((skill, index) => (
+        <div key={skill.skillId || skill.skillPublicName + index}>
+          <span className="skill-order">{String(skill.rankNo || index + 1).padStart(2, '0')}</span>
           <div>
-            <div style={{ fontWeight: 700, fontSize: 12 }}>{skill.skillPublicName}</div>
-            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-              {skill.activeDays} {t('dashboard.daysUsed')}
-            </div>
+            <strong>{skill.skillPublicName}</strong>
+            <small>{zh ? `使用 ${skill.activeDays} 天` : `Used on ${skill.activeDays} days`}</small>
           </div>
-          <div style={{ textAlign: 'right' }}>
-            <strong className="mono-num" style={{ fontSize: 13 }}>
-              {formatCount(skill.useCount)}
-            </strong>
-          </div>
+          <span className="skill-count">
+            {formatCount(skill.useCount)}
+            <small>{zh ? '次' : 'uses'}</small>
+          </span>
         </div>
       ))}
     </div>

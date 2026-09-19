@@ -714,6 +714,8 @@ type CommunityStatsResponse struct {
 	Costs        []CommunityCostDTO      `json:"costs,omitempty"`
 	Deltas       *CommunityStatsDeltaDTO `json:"deltas,omitempty"`
 	Harnesses    []CommunityHarnessDTO   `json:"harnesses,omitempty"`
+	Models       []CommunityModelDTO     `json:"models,omitempty"`
+	Skills       []CommunitySkillDTO     `json:"skills,omitempty"`
 	ComputedAt   *time.Time              `json:"computedAt,omitempty"`
 }
 
@@ -730,6 +732,22 @@ type CommunityHarnessDTO struct {
 	AgentID  string   `json:"agentId"`
 	Label    string   `json:"label"`
 	Tokens   *string  `json:"tokens,omitempty"`
+	SharePct *float64 `json:"sharePct,omitempty"`
+}
+
+// CommunityModelDTO is one model's share of community tokens (top N).
+type CommunityModelDTO struct {
+	ModelID  string   `json:"modelId"`
+	Label    string   `json:"label"`
+	Tokens   *string  `json:"tokens,omitempty"`
+	SharePct *float64 `json:"sharePct,omitempty"`
+}
+
+// CommunitySkillDTO is one publicly named skill's share of community uses (top N).
+type CommunitySkillDTO struct {
+	SkillID  string   `json:"skillId"`
+	Label    string   `json:"label"`
+	Uses     *string  `json:"uses,omitempty"`
 	SharePct *float64 `json:"sharePct,omitempty"`
 }
 

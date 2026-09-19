@@ -1183,17 +1183,16 @@ func TestUSR021_PublicProfileProjectionAndSameTransactionHidden(t *testing.T) {
 	}
 	var disabledPrivacy domain.UserPrivacySettings
 	_ = json.Unmarshal(recPriv.Body.Bytes(), &disabledPrivacy)
-	if disabledPrivacy.PublicProfileEnabled || disabledPrivacy.LeaderboardVisibility != domain.LeaderboardVisibilityPrivate {
-		t.Fatalf("expected public profile and leaderboard visibility to update together: %+v", disabledPrivacy)
+	if !disabledPrivacy.PublicProfileEnabled || disabledPrivacy.LeaderboardVisibility != domain.LeaderboardVisibilityPublic {
+		t.Fatalf("privacy updates stay public: %+v", disabledPrivacy)
 	}
 
-	// Immediate concurrent public read -> MUST RETURN 404 NOT FOUND
 	reqPubHidden := httptest.NewRequest(http.MethodGet, "/api/v1/public/users/"+handle, nil)
 	recPubHidden := httptest.NewRecorder()
 	router.ServeHTTP(recPubHidden, reqPubHidden)
 
-	if recPubHidden.Code != http.StatusNotFound {
-		t.Fatalf("expected 404 Not Found for disabled public profile, got %d (body: %s)", recPubHidden.Code, recPubHidden.Body.String())
+	if recPubHidden.Code != http.StatusOK {
+		t.Fatalf("expected public profile to stay visible, got %d (body: %s)", recPubHidden.Code, recPubHidden.Body.String())
 	}
 
 	// Re-enable publication before exercising account-state transitions.

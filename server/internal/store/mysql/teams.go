@@ -983,7 +983,7 @@ func (s *teamsStore) listMembersCombined(ctx context.Context, teamID, query, cur
 	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT m.membership_id, m.team_id, m.user_id, m.base_role, m.sharing_version, m.joined_at, m.ended_at, m.end_reason,
-		       u.user_id, u.display_name, u.handle, u.account_status, u.timezone_name, u.locale, u.created_at, u.updated_at
+		       u.user_id, u.display_name, u.handle, u.avatar_url, u.account_status, u.timezone_name, u.locale, u.created_at, u.updated_at
 		FROM team_memberships m
 		INNER JOIN users u ON u.user_id = m.user_id
 		WHERE `+cond.String()+`
@@ -1001,9 +1001,10 @@ func (s *teamsStore) listMembersCombined(ctx context.Context, teamID, query, cur
 		var reason sql.NullString
 		var user domain.User
 		var handle sql.NullString
+		var avatar sql.NullString
 		if err := rows.Scan(
 			&mem.MembershipID, &mem.TeamID, &mem.UserID, &mem.BaseRole, &mem.SharingVersion, &mem.JoinedAt, &ended, &reason,
-			&user.UserID, &user.DisplayName, &handle, &user.AccountStatus, &user.TimezoneName, &user.Locale, &user.CreatedAt, &user.UpdatedAt,
+			&user.UserID, &user.DisplayName, &handle, &avatar, &user.AccountStatus, &user.TimezoneName, &user.Locale, &user.CreatedAt, &user.UpdatedAt,
 		); err != nil {
 			return nil, nil, "", err
 		}
@@ -1014,6 +1015,9 @@ func (s *teamsStore) listMembersCombined(ctx context.Context, teamID, query, cur
 		}
 		if handle.Valid {
 			user.Handle = &handle.String
+		}
+		if avatar.Valid {
+			user.AvatarURL = &avatar.String
 		}
 		mems = append(mems, mem)
 		users = append(users, user)

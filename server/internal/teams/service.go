@@ -332,6 +332,7 @@ type MemberDTO struct {
 	UserID         string                `json:"userId"`
 	DisplayName    string                `json:"displayName"`
 	Handle         *string               `json:"handle"`
+	AvatarURL      *string               `json:"avatarUrl,omitempty"`
 	Role           string                `json:"role"`
 	JoinedAt       string                `json:"joinedAt"`
 	Sharing        domain.SharingFlags   `json:"sharing"`
@@ -604,8 +605,9 @@ func (s *Service) ListMembers(ctx context.Context, userID, teamID string, q Memb
 		}
 		item := MemberDTO{
 			MembershipID: m.MembershipID, UserID: m.UserID, DisplayName: u.DisplayName, Handle: u.Handle,
-			Role:     string(team.PublicRoleFor(m.UserID, m.BaseRole)),
-			JoinedAt: formatTime(m.JoinedAt), Sharing: sharing, CanOpenDetail: true,
+			AvatarURL: userAvatarPtr(u),
+			Role:      string(team.PublicRoleFor(m.UserID, m.BaseRole)),
+			JoinedAt:  formatTime(m.JoinedAt), Sharing: sharing, CanOpenDetail: true,
 		}
 		if received, ok := receivedByMem[m.MembershipID]; ok {
 			formatted := formatTime(received)
@@ -2480,13 +2482,18 @@ func namedMemberCounts(byMem map[string]string, current map[string]struct{}, use
 		named++
 		display := memID
 		var handle *string
+		var avatar *string
 		if u, ok := userByMem[memID]; ok {
 			display = u.DisplayName
 			handle = u.Handle
+			avatar = userAvatarPtr(u)
 		}
 		m := map[string]any{"membershipId": memID, "displayName": display, "useCount": uses}
 		if handle != nil {
 			m["handle"] = *handle
+		}
+		if avatar != nil {
+			m["avatarUrl"] = *avatar
 		}
 		if share := tokenShare(uses, total); share != nil {
 			m["share"] = *share
@@ -2543,20 +2550,26 @@ func pageContributions(items []kv, members []domain.TeamMembership, users []doma
 	for i, it := range page {
 		display := ""
 		var handle *string
+		var avatar *string
 		if mem, ok := memByID[it.Key]; ok {
 			if u, found := userByID[mem.UserID]; found {
 				display = u.DisplayName
 				handle = u.Handle
+				avatar = userAvatarPtr(u)
 			}
 		}
-		out = append(out, map[string]any{
+		item := map[string]any{
 			"membershipId": it.Key,
 			"displayName":  display,
 			"handle":       handle,
 			"rank":         strconv.Itoa(start + i + 1),
 			"tokens":       domain.DecimalMetric{Value: it.Value, State: domain.MetricAvailable},
 			"namedShare":   true,
-		})
+		}
+		if avatar != nil {
+			item["avatarUrl"] = *avatar
+		}
+		out = append(out, item)
 	}
 	return &domain.TeamPagedItems{Items: out, NextCursor: next}
 }
@@ -2630,7 +2643,7 @@ func assembleMemberDetail(target *domain.TeamMembership, user *domain.User, team
 	agentTok, modelTok := classificationTotals(classRows)
 	agents := pageBuckets(sortKV(agentTok), "agent", false, "", 20, tokens)
 	models := pageBuckets(sortKV(modelTok), "model", false, "", 20, tokens)
-	return map[string]any{
+	detail := map[string]any{
 		"membershipId": target.MembershipID, "displayName": display, "handle": handle,
 		"role":     string(team.PublicRoleFor(target.UserID, target.BaseRole)),
 		"joinedAt": formatTime(target.JoinedAt),
@@ -2649,6 +2662,19 @@ func assembleMemberDetail(target *domain.TeamMembership, user *domain.User, team
 			"cost":           dimensionState(sharing.Cost),
 		},
 	}
+	if user != nil {
+		if url := userAvatarPtr(*user); url != nil {
+			detail["avatarUrl"] = *url
+		}
+	}
+	return detail
+}
+
+func userAvatarPtr(u domain.User) *string {
+	if u.AvatarURL == nil || strings.TrimSpace(*u.AvatarURL) == "" {
+		return nil
+	}
+	return u.AvatarURL
 }
 
 type costRollup struct {
@@ -2979,13 +3005,18 @@ func assembleStaticSkills(rows []domain.TeamAnalysisRow, members []domain.TeamMe
 			named++
 			display := memID
 			var handle *string
+			var avatar *string
 			if u, ok := userByMem[memID]; ok {
 				display = u.DisplayName
 				handle = u.Handle
+				avatar = userAvatarPtr(u)
 			}
 			m := map[string]any{"membershipId": memID, "displayName": display, "useCount": uses}
 			if handle != nil {
 				m["handle"] = *handle
+			}
+			if avatar != nil {
+				m["avatarUrl"] = *avatar
 			}
 			if share := tokenShare(uses, it.g.uses); share != nil {
 				m["share"] = *share

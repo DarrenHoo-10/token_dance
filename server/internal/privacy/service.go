@@ -33,6 +33,7 @@ func (s *Service) GetPrivacy(ctx context.Context, userID string) (*domain.UserPr
 	if err != nil {
 		return nil, domain.NewAppError(404, "RESOURCE_NOT_FOUND", "api.privacyNotFound", "privacy settings not found", nil, err)
 	}
+	domain.ApplyAlwaysPublic(p)
 	return p, nil
 }
 
@@ -50,17 +51,7 @@ type UpdatePrivacyInput struct {
 }
 
 func (s *Service) UpdatePrivacy(ctx context.Context, userID string, in UpdatePrivacyInput) (*domain.UserPrivacySettings, error) {
-	if in.LeaderboardVisibility == "" {
-		if in.PublicProfileEnabled {
-			in.LeaderboardVisibility = domain.LeaderboardVisibilityPublic
-		} else {
-			in.LeaderboardVisibility = domain.LeaderboardVisibilityPrivate
-		}
-	}
-	if (in.LeaderboardVisibility != domain.LeaderboardVisibilityPublic && in.LeaderboardVisibility != domain.LeaderboardVisibilityPrivate) ||
-		(in.PublicProfileEnabled != (in.LeaderboardVisibility == domain.LeaderboardVisibilityPublic)) {
-		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "privacy.visibilityMismatch", "leaderboard visibility must match public profile state", nil, domain.ErrInvalidArgument)
-	}
+	settings := domain.AlwaysPublicSettings(userID)
 
 	now := s.clk.Now()
 	eventID, _ := crypto.GenerateOpaqueToken(13)
@@ -70,20 +61,7 @@ func (s *Service) UpdatePrivacy(ctx context.Context, userID string, in UpdatePri
 		EventType:    "privacy_changed",
 		Outcome:      "success",
 		CreatedAt:    now,
-		MetadataJSON: map[string]interface{}{"publicProfileEnabled": in.PublicProfileEnabled},
-	}
-
-	settings := domain.UserPrivacySettings{
-		UserID:                userID,
-		PublicProfileEnabled:  in.PublicProfileEnabled,
-		LeaderboardVisibility: in.LeaderboardVisibility,
-		ShowBio:               in.ShowBio,
-		ShowTokenTotal:        in.ShowTokenTotal,
-		ShowTrends:            in.ShowTrends,
-		ShowActivityCalendar:  in.ShowActivityCalendar,
-		ShowAgentBreakdown:    in.ShowAgentBreakdown,
-		ShowSkillRanking:      in.ShowSkillRanking,
-		ShowAchievements:      in.ShowAchievements,
+		MetadataJSON: map[string]interface{}{"publicProfileEnabled": settings.PublicProfileEnabled},
 	}
 
 	p, err := s.store.UpdatePrivacyTx(ctx, userID, settings, in.ExpectedVersion, event, now)
@@ -94,6 +72,7 @@ func (s *Service) UpdatePrivacy(ctx context.Context, userID string, in UpdatePri
 		return nil, domain.NewAppError(500, "INTERNAL_ERROR", "api.internal", "failed to update privacy settings", nil, err)
 	}
 
+	domain.ApplyAlwaysPublic(p)
 	return p, nil
 }
 
@@ -102,8 +81,7 @@ func (s *Service) GetPublicPreview(ctx context.Context, userID string) (*domain.
 	if err != nil {
 		return nil, domain.NewAppError(404, "RESOURCE_NOT_FOUND", "api.userNotFound", "user not found", nil, err)
 	}
-	priv, err := s.store.GetPrivacy(ctx, userID)
-	if err != nil {
+	if _, err := s.store.GetPrivacy(ctx, userID); err != nil {
 		return nil, domain.NewAppError(404, "RESOURCE_NOT_FOUND", "api.privacyNotFound", "privacy settings not found", nil, err)
 	}
 
@@ -112,34 +90,23 @@ func (s *Service) GetPublicPreview(ctx context.Context, userID string) (*domain.
 		handle = *u.Handle
 	}
 
-	var bio *string
-	if priv.ShowBio {
-		bio = u.Bio
+	pub := &domain.PublicUserProfile{
+		UserID:            userID,
+		Handle:            handle,
+		DisplayName:       u.DisplayName,
+		AvatarURL:         u.AvatarURL,
+		Bio:               u.Bio,
+		ProjectionVersion: 1,
 	}
-
-	return &domain.PublicUserProfile{
-		UserID:               userID,
-		Handle:               handle,
-		DisplayName:          u.DisplayName,
-		AvatarURL:            u.AvatarURL,
-		Bio:                  bio,
-		ProfileStatus:        domain.ProfileStatusPublished,
-		ShowBio:              priv.ShowBio,
-		ShowTokenTotal:       priv.ShowTokenTotal,
-		ShowTrends:           priv.ShowTrends,
-		ShowActivityCalendar: priv.ShowActivityCalendar,
-		ShowAgentBreakdown:   priv.ShowAgentBreakdown,
-		ShowSkillRanking:     priv.ShowSkillRanking,
-		ShowAchievements:     priv.ShowAchievements,
-		ProjectionVersion:    1,
-	}, nil
+	domain.RevealPublicProfile(pub)
+	return pub, nil
 }
 
 func (s *Service) GetPublicProfileByHandle(ctx context.Context, handle string) (*domain.PublicUserProfile, string, error) {
 	now := s.clk.Now()
 	pub, err := s.store.GetPublicProfileByHandle(ctx, handle, now)
 	if err == nil {
-		return pub, "", nil
+		return s.revealLivePublicProfile(ctx, pub), "", nil
 	}
 
 	// Check if old handle has redirect
@@ -147,11 +114,27 @@ func (s *Service) GetPublicProfileByHandle(ctx context.Context, handle string) (
 	if errRedirect == nil && redirectHandle != "" {
 		pubRedirect, errPub := s.store.GetPublicProfileByHandle(ctx, redirectHandle, now)
 		if errPub == nil {
-			return pubRedirect, redirectHandle, nil
+			return s.revealLivePublicProfile(ctx, pubRedirect), redirectHandle, nil
 		}
 	}
 
 	return nil, "", domain.NewAppError(404, "PUBLIC_PROFILE_NOT_FOUND", "profile.notFound", "public profile not found", nil, domain.ErrNotFound)
+}
+
+func (s *Service) revealLivePublicProfile(ctx context.Context, pub *domain.PublicUserProfile) *domain.PublicUserProfile {
+	domain.RevealPublicProfile(pub)
+	if pub == nil {
+		return pub
+	}
+	if u, err := s.pStore.GetUserProfile(ctx, pub.UserID); err == nil && u != nil {
+		pub.DisplayName = u.DisplayName
+		pub.AvatarURL = u.AvatarURL
+		pub.Bio = u.Bio
+		if u.Handle != nil && *u.Handle != "" {
+			pub.Handle = *u.Handle
+		}
+	}
+	return pub
 }
 
 type DeletionRequestInput struct {

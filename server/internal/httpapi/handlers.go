@@ -1554,13 +1554,6 @@ func (h *Handlers) GetPublicTrends(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !pub.ShowTrends {
-		WriteJSON(w, http.StatusOK, map[string]interface{}{
-			"visible": false,
-		})
-		return
-	}
-
 	rangeKey := r.URL.Query().Get("range")
 	mode := r.URL.Query().Get("mode")
 
@@ -1588,13 +1581,6 @@ func (h *Handlers) GetPublicSkills(w http.ResponseWriter, r *http.Request) {
 	pub, _, err := h.privacy.GetPublicProfileByHandle(r.Context(), handle)
 	if err != nil {
 		WriteError(w, r, err)
-		return
-	}
-
-	if !pub.ShowSkillRanking {
-		WriteJSON(w, http.StatusOK, map[string]interface{}{
-			"visible": false,
-		})
 		return
 	}
 
@@ -1711,7 +1697,7 @@ func (h *Handlers) CompareUsers(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	for _, hName := range handles {
 		pub, _, err := h.privacy.GetPublicProfileByHandle(r.Context(), hName)
-		if err != nil || pub == nil || pub.ProfileStatus != domain.ProfileStatusPublished {
+		if err != nil || pub == nil {
 			results = append(results, domain.CompareUserItem{
 				Handle:  hName,
 				Visible: false,

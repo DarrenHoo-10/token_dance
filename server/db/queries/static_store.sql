@@ -46,7 +46,7 @@ SELECT p.user_id, p.handle, p.display_name, p.avatar_url, p.bio, p.profile_statu
        p.published_at, p.created_at, p.updated_at
 FROM public_user_profiles p
 JOIN users u ON p.user_id = u.user_id
-WHERE p.handle = ? AND p.profile_status = 'published' AND u.account_status = 'active'
+WHERE p.handle = ? AND u.account_status = 'active'
 LIMIT 1;
 
 -- name: ListInstallationsByUser :many

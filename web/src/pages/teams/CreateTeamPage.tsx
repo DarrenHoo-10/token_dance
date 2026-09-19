@@ -310,6 +310,7 @@ export const CreateTeamPage: React.FC = () => {
           isOpen={inviteOpen}
           onClose={() => setInviteOpen(false)}
           teamId={created.team.id}
+          teamName={created.team.name}
           permissions={created.permissions}
         />
       </section>

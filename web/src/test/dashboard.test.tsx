@@ -108,8 +108,9 @@ describe('Dashboard Components Tests', () => {
 
     expect(screen.getByText('同步状态')).toBeInTheDocument();
     expect(screen.getByText('正常')).toBeInTheDocument();
-    expect(screen.getByText('最近活跃')).toBeInTheDocument();
+    expect(screen.getByText('最近提交')).toBeInTheDocument();
     expect(screen.getByText('刚刚')).toBeInTheDocument();
+    expect(screen.getByText('待同步记录')).toBeInTheDocument();
     expect(screen.queryByText('待同步事件')).not.toBeInTheDocument();
   });
 
@@ -123,7 +124,8 @@ describe('Dashboard Components Tests', () => {
       </LocaleProvider>
     );
 
-    expect(screen.getByText('最近活跃')).toBeInTheDocument();
+    expect(screen.getByText('最近提交')).toBeInTheDocument();
+    expect(screen.getByText('待同步记录')).toBeInTheDocument();
     expect(screen.queryByText('待同步事件')).not.toBeInTheDocument();
     expect(screen.queryByText('未知')).not.toBeInTheDocument();
   });
@@ -141,8 +143,8 @@ describe('Dashboard Components Tests', () => {
     expect(screen.getByText('当前筛选条件下暂无趋势数据')).toBeInTheDocument();
     expect(screen.getByText('尚未记录 Agent 数据')).toBeInTheDocument();
     expect(screen.getByText('尚未记录 Skill 使用数据')).toBeInTheDocument();
-    expect(screen.getByText('较少')).toBeInTheDocument();
-    expect(screen.getByText('较多')).toBeInTheDocument();
+    expect(screen.getByText('少')).toBeInTheDocument();
+    expect(screen.getByText('多')).toBeInTheDocument();
     expect(screen.getByRole('grid', { name: '活跃度热力图' })).toBeInTheDocument();
   });
 

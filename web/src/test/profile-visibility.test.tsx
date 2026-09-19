@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { AuthProvider } from '@/context/AuthContext';
 import { LocaleProvider } from '@/context/LocaleContext';
 import { NotificationProvider } from '@/context/NotificationContext';
-import { PersonalDashboardPage } from '@/pages/me/PersonalDashboardPage';
+import { PersonalAnalytics } from '@/pages/me/PersonalAnalytics';
 import { api, ApiError } from '@/api/client';
 
 function renderWithProviders(ui: React.ReactElement, initialRoute = '/') {
@@ -80,7 +80,7 @@ describe('Personal data visibility', () => {
     mockAuthenticatedDashboard();
     const getPrivacy = vi.spyOn(api, 'getPrivacy');
 
-    renderWithProviders(<PersonalDashboardPage />, '/me');
+    renderWithProviders(<PersonalAnalytics />, '/leaderboard');
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Test Dev，你的创造正在发生。' })).toBeInTheDocument();
@@ -98,7 +98,7 @@ describe('Personal data visibility', () => {
       new ApiError(500, { code: 'HTTP_500', messageKey: 'errors.http_500' }),
     );
 
-    renderWithProviders(<PersonalDashboardPage />, '/me');
+    renderWithProviders(<PersonalAnalytics />, '/leaderboard');
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Test Dev，你的创造正在发生。' })).toBeInTheDocument();

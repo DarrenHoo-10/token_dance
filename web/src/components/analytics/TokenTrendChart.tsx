@@ -35,7 +35,7 @@ export const TokenTrendChart: React.FC<TokenTrendChartProps> = ({ trends, height
     setSelected(Math.round(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * (points.length - 1)));
   };
   const amount = new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 2 }).format(points[active].total);
-  return <div className="token-trend-interactive token-trend-soft" ref={chart}>
+  return <div className="token-trend-interactive token-trend-soft trend-chart" ref={chart}>
     <div className="token-trend-readout" aria-live="polite"><span>{points[active].date}</span><strong>{points[active].total.toLocaleString(locale)} <small>Token</small></strong></div>
     <svg viewBox={`0 0 ${width} ${height}`} style={{ height }} role="img" aria-label={`${t('dashboard.tokenTrends')}: ${points[active].date}, ${points[active].total.toLocaleString(locale)} Token`} onPointerMove={selectPosition} onPointerDown={selectPosition} onPointerLeave={() => setSelected(null)}>
       <defs><linearGradient id={`token-area-${id}`} x1="0" y1="0" x2="0" y2="1"><stop stopColor="#a6ef35" stopOpacity=".75" /><stop offset="1" stopColor="#baff5d" stopOpacity=".035" /></linearGradient></defs>

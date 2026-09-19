@@ -1,7 +1,7 @@
 import { avatarUrl } from '@/utils/avatar';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link2, LockKeyhole } from 'lucide-react';
-import { Link, Navigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
 import { AgentBreakdown } from '@/components/analytics/AgentBreakdown';
 import { MetricGrid } from '@/components/analytics/MetricGrid';
@@ -10,6 +10,7 @@ import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
 import { Button } from '@/components/common/Button';
 import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from '@/context/AuthContext';
+import { usePersonalAnalytics } from '@/context/PersonalAnalyticsContext';
 import { EmptyState } from '@/components/states/EmptyState';
 import { useNotification } from '@/context/NotificationContext';
 import { ErrorState } from '@/components/states/ErrorState';
@@ -20,11 +21,21 @@ import type { PersonalSummaryMetrics, PublicUserProfile, SkillItem, TokenTrendPo
 export const PublicProfilePage: React.FC = () => {
   const { handle } = useParams<{ handle: string }>();
   const { user, loading } = useAuth();
+  const personalAnalytics = usePersonalAnalytics();
   if (loading) return <LoadingState />;
   if (user?.handle && user.handle.toLowerCase() === handle?.toLowerCase()) {
-    return <Navigate to="/me" replace />;
+    return <OwnAnalyticsOpener show={personalAnalytics.show} />;
   }
   return <PublicProfileContent />;
+};
+
+const OwnAnalyticsOpener: React.FC<{ show: () => void }> = ({ show }) => {
+  const navigate = useNavigate();
+  useEffect(() => {
+    show();
+    navigate('/leaderboard', { replace: true });
+  }, [navigate, show]);
+  return null;
 };
 
 const PublicProfileContent: React.FC = () => {

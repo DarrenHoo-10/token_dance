@@ -1,5 +1,6 @@
 .team-page { width: min(1360px, 100%); margin: 0 auto; color: #111512; }
-.team-page h1 { letter-spacing: -0.04em; }
+.team-page:not(.tw-workspace) h1 { letter-spacing: -0.04em; }
+.team-page.tw-workspace { width: min(1440px, 100%); color: #202a1b; }
 .team-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 24px; }
 .team-tabs a {
   display: inline-flex; align-items: center; justify-content: center;
@@ -24,6 +25,32 @@
 }
 .team-letter-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .team-letter-avatar.sm { flex-basis: 32px; width: 32px; height: 32px; font-size: 13px; }
+.team-member-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  object-fit: cover;
+  flex: none;
+}
+.team-member-avatar.md { width: 36px; height: 36px; }
+.team-member-avatar.is-fallback {
+  display: grid;
+  place-items: center;
+  background: #eff5e6;
+  color: #819d5d;
+  font-size: 12px;
+  font-weight: 700;
+}
+.team-member-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-start;
+  min-width: 0;
+}
+.team-member-identity span { display: flex; flex-direction: column; align-items: flex-start; min-width: 0; }
+.team-member-identity strong { font-size: 13px; font-weight: 600; }
+.team-member-identity small { font-size: 11px; color: #7d8c70; }
 .team-letter-avatar.lg { flex-basis: 88px; width: 88px; height: 88px; font-size: 32px; }
 .team-create-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.9fr); gap: 24px; align-items: start; }
 .team-preview-card { position: sticky; top: 24px; }

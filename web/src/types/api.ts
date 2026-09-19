@@ -553,6 +553,20 @@ export interface CommunityHarness {
   sharePct?: number | null;
 }
 
+export interface CommunityModel {
+  modelId: string;
+  label: string;
+  tokens?: string | null;
+  sharePct?: number | null;
+}
+
+export interface CommunitySkill {
+  skillId: string;
+  label: string;
+  uses?: string | null;
+  sharePct?: number | null;
+}
+
 export interface CommunityCostAmount {
   amount: number;
   currency: string;
@@ -573,5 +587,7 @@ export interface CommunityStatsResponse {
   costs?: CommunityCostAmount[] | null;
   deltas?: CommunityStatsDeltas | null;
   harnesses?: CommunityHarness[] | null;
+  models?: CommunityModel[] | null;
+  skills?: CommunitySkill[] | null;
   computedAt?: string | null;
 }

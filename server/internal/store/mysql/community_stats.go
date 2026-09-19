@@ -142,19 +142,42 @@ func applyCommunityCosts(totals *store.CommunityDailyTotals, costs []store.Commu
 	totals.CostAmount = 0
 }
 
+func marshalCommunityJSON[T any](items []T) ([]byte, error) {
+	if items == nil {
+		return []byte("[]"), nil
+	}
+	return json.Marshal(items)
+}
+
+func decodeCommunityJSON[T any](raw sql.NullString) ([]T, error) {
+	if !raw.Valid || raw.String == "" || raw.String == "null" {
+		return nil, nil
+	}
+	var items []T
+	if err := json.Unmarshal([]byte(raw.String), &items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 func (s *communityStatsStore) UpsertCommunityDailyStats(ctx context.Context, totals store.CommunityDailyTotals) error {
-	costJSON, err := json.Marshal(totals.Costs)
+	costJSON, err := marshalCommunityJSON(totals.Costs)
 	if err != nil {
 		return fmt.Errorf("marshal community costs %s: %w", totals.MetricDate, err)
 	}
-	if totals.Costs == nil {
-		costJSON = []byte("[]")
+	modelJSON, err := marshalCommunityJSON(totals.ModelShares)
+	if err != nil {
+		return fmt.Errorf("marshal community model shares %s: %w", totals.MetricDate, err)
+	}
+	skillJSON, err := marshalCommunityJSON(totals.SkillShares)
+	if err != nil {
+		return fmt.Errorf("marshal community skill shares %s: %w", totals.MetricDate, err)
 	}
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO community_daily_stats (
 			metric_date, tokens_total, developers, code_lines, interactions,
-			cost_amount, cost_amounts, is_final, computed_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			cost_amount, cost_amounts, model_shares, skill_shares, is_final, computed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			tokens_total = VALUES(tokens_total),
 			developers = VALUES(developers),
@@ -162,10 +185,12 @@ func (s *communityStatsStore) UpsertCommunityDailyStats(ctx context.Context, tot
 			interactions = VALUES(interactions),
 			cost_amount = VALUES(cost_amount),
 			cost_amounts = VALUES(cost_amounts),
+			model_shares = VALUES(model_shares),
+			skill_shares = VALUES(skill_shares),
 			is_final = VALUES(is_final),
 			computed_at = VALUES(computed_at)`,
 		totals.MetricDate, totals.TokensTotal, totals.Developers, totals.CodeLines,
-		totals.Interactions, totals.CostAmount, costJSON, totals.IsFinal, totals.ComputedAt,
+		totals.Interactions, totals.CostAmount, costJSON, modelJSON, skillJSON, totals.IsFinal, totals.ComputedAt,
 	); err != nil {
 		return fmt.Errorf("upsert community daily stats %s: %w", totals.MetricDate, err)
 	}
@@ -175,10 +200,10 @@ func (s *communityStatsStore) UpsertCommunityDailyStats(ctx context.Context, tot
 func (s *communityStatsStore) GetCommunityDailyStats(ctx context.Context, date string) (*store.CommunityDailyTotals, error) {
 	var totals store.CommunityDailyTotals
 	var isFinal bool
-	var costJSON sql.NullString
+	var costJSON, modelJSON, skillJSON sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT metric_date, tokens_total, developers, code_lines, interactions,
-		       cost_amount, cost_amounts, is_final, computed_at
+		       cost_amount, cost_amounts, model_shares, skill_shares, is_final, computed_at
 		FROM community_daily_stats
 		WHERE metric_date = ?`, date).Scan(
 		&totals.MetricDate,
@@ -188,6 +213,8 @@ func (s *communityStatsStore) GetCommunityDailyStats(ctx context.Context, date s
 		&totals.Interactions,
 		&totals.CostAmount,
 		&costJSON,
+		&modelJSON,
+		&skillJSON,
 		&isFinal,
 		&totals.ComputedAt,
 	)
@@ -198,10 +225,14 @@ func (s *communityStatsStore) GetCommunityDailyStats(ctx context.Context, date s
 		return nil, fmt.Errorf("get community daily stats %s: %w", date, err)
 	}
 	totals.IsFinal = isFinal
-	if costJSON.Valid && costJSON.String != "" && costJSON.String != "null" {
-		if err := json.Unmarshal([]byte(costJSON.String), &totals.Costs); err != nil {
-			return nil, fmt.Errorf("decode community costs %s: %w", date, err)
-		}
+	if totals.Costs, err = decodeCommunityJSON[store.CommunityCost](costJSON); err != nil {
+		return nil, fmt.Errorf("decode community costs %s: %w", date, err)
+	}
+	if totals.ModelShares, err = decodeCommunityJSON[store.CommunityModelShare](modelJSON); err != nil {
+		return nil, fmt.Errorf("decode community model shares %s: %w", date, err)
+	}
+	if totals.SkillShares, err = decodeCommunityJSON[store.CommunitySkillShare](skillJSON); err != nil {
+		return nil, fmt.Errorf("decode community skill shares %s: %w", date, err)
 	}
 	return &totals, nil
 }
@@ -209,7 +240,7 @@ func (s *communityStatsStore) GetCommunityDailyStats(ctx context.Context, date s
 func (s *communityStatsStore) ListCommunityDailyStats(ctx context.Context, fromDate, toDate string) ([]store.CommunityDailyTotals, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT metric_date, tokens_total, developers, code_lines, interactions,
-		       cost_amount, cost_amounts, is_final, computed_at
+		       cost_amount, cost_amounts, model_shares, skill_shares, is_final, computed_at
 		FROM community_daily_stats
 		WHERE metric_date >= ? AND metric_date <= ?
 		ORDER BY metric_date`, fromDate, toDate)
@@ -220,15 +251,19 @@ func (s *communityStatsStore) ListCommunityDailyStats(ctx context.Context, fromD
 	var result []store.CommunityDailyTotals
 	for rows.Next() {
 		var item store.CommunityDailyTotals
-		var costJSON sql.NullString
+		var costJSON, modelJSON, skillJSON sql.NullString
 		if err := rows.Scan(&item.MetricDate, &item.TokensTotal, &item.Developers, &item.CodeLines,
-			&item.Interactions, &item.CostAmount, &costJSON, &item.IsFinal, &item.ComputedAt); err != nil {
+			&item.Interactions, &item.CostAmount, &costJSON, &modelJSON, &skillJSON, &item.IsFinal, &item.ComputedAt); err != nil {
 			return nil, fmt.Errorf("scan community daily stats: %w", err)
 		}
-		if costJSON.Valid && costJSON.String != "" && costJSON.String != "null" {
-			if err := json.Unmarshal([]byte(costJSON.String), &item.Costs); err != nil {
-				return nil, fmt.Errorf("decode community costs %s: %w", item.MetricDate, err)
-			}
+		if item.Costs, err = decodeCommunityJSON[store.CommunityCost](costJSON); err != nil {
+			return nil, fmt.Errorf("decode community costs %s: %w", item.MetricDate, err)
+		}
+		if item.ModelShares, err = decodeCommunityJSON[store.CommunityModelShare](modelJSON); err != nil {
+			return nil, fmt.Errorf("decode community model shares %s: %w", item.MetricDate, err)
+		}
+		if item.SkillShares, err = decodeCommunityJSON[store.CommunitySkillShare](skillJSON); err != nil {
+			return nil, fmt.Errorf("decode community skill shares %s: %w", item.MetricDate, err)
 		}
 		result = append(result, item)
 	}
@@ -265,6 +300,69 @@ func (s *communityStatsStore) ReplaceCommunityAgentDay(ctx context.Context, date
 		}
 	}
 	return nil
+}
+
+const communitySharePersistLimit = 50
+
+func (s *communityStatsStore) SumCommunityModelShares(ctx context.Context, date string) ([]store.CommunityModelShare, error) {
+	bucketStart, err := domain.DayBucketStartMs(date)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT tm.model_id, CAST(COALESCE(SUM(m.exact_token_total + m.derived_token_total), 0) AS UNSIGNED)
+		FROM bound_telemetry_model_metrics m
+		JOIN telemetry_models tm ON tm.id = m.model_key
+		WHERE m.grain = 'day' AND m.delete_at IS NULL AND m.bucket_start = ?
+		  AND (tm.delete_at IS NULL)
+		GROUP BY tm.model_id
+		ORDER BY SUM(m.exact_token_total + m.derived_token_total) DESC, tm.model_id ASC
+		LIMIT ?`, bucketStart, communitySharePersistLimit)
+	if err != nil {
+		return nil, fmt.Errorf("sum community model shares %s: %w", date, err)
+	}
+	defer rows.Close()
+	var shares []store.CommunityModelShare
+	for rows.Next() {
+		var item store.CommunityModelShare
+		if err := rows.Scan(&item.ModelID, &item.Tokens); err != nil {
+			return nil, fmt.Errorf("scan community model share %s: %w", date, err)
+		}
+		item.Label = item.ModelID
+		shares = append(shares, item)
+	}
+	return shares, rows.Err()
+}
+
+func (s *communityStatsStore) SumCommunitySkillShares(ctx context.Context, date string) ([]store.CommunitySkillShare, error) {
+	bucketStart, err := domain.DayBucketStartMs(date)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT s.public_name, CAST(COALESCE(SUM(m.use_count), 0) AS UNSIGNED)
+		FROM bound_telemetry_skill_metrics m
+		JOIN telemetry_skills s ON s.id = m.skill_id
+		WHERE m.grain = 'day' AND m.delete_at IS NULL AND m.bucket_start = ?
+		  AND s.delete_at IS NULL
+		  AND s.public_name IS NOT NULL AND CHAR_LENGTH(s.public_name) > 0
+		GROUP BY s.public_name
+		ORDER BY SUM(m.use_count) DESC, s.public_name ASC
+		LIMIT ?`, bucketStart, communitySharePersistLimit)
+	if err != nil {
+		return nil, fmt.Errorf("sum community skill shares %s: %w", date, err)
+	}
+	defer rows.Close()
+	var shares []store.CommunitySkillShare
+	for rows.Next() {
+		var item store.CommunitySkillShare
+		if err := rows.Scan(&item.Label, &item.Uses); err != nil {
+			return nil, fmt.Errorf("scan community skill share %s: %w", date, err)
+		}
+		item.SkillID = item.Label
+		shares = append(shares, item)
+	}
+	return shares, rows.Err()
 }
 
 func (s *communityStatsStore) GetCommunityHarnessShares(ctx context.Context, date string, limit int) ([]store.CommunityHarness, error) {

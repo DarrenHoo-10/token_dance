@@ -1,12 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
 import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
 import { LocaleProvider } from '@/context/LocaleContext';
-import { api, ApiError } from '@/api/client';
-import { teamsApi, type MySharingResponse } from '@/api/teams';
 import { TeamSharingCard } from '@/pages/teams/TeamSharingCard';
-import { renderTeams, sampleScope, signedInUser } from './teams-test-helpers';
 
 afterEach(() => vi.restoreAllMocks());
 describe('Sky analytics interactions', () => {
@@ -40,34 +37,9 @@ describe('Sky analytics interactions', () => {
 });
 
 describe('Team sharing persistence', () => {
-  const initial: MySharingResponse = {membershipId:'tmb_0123456789abcdefghijklmnop',sharingVersion:'1',authRevision:'1',sharing:{base:true,named:true,classification:true,cost:true}};
-  function setup() {
-    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
-    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
-    vi.spyOn(teamsApi, 'getMySharing').mockResolvedValue(initial);
-    return renderTeams(<TeamSharingCard />);
-  }
-  it('turns off dependent sharing flags and uses the returned version on the next save', async () => {
-    const patch = vi.spyOn(teamsApi, 'updateMySharing').mockImplementation(async (_id, body) => ({...initial,sharing:body.sharing,sharingVersion:String(Number(body.expectedSharingVersion)+1),authRevision:'2'}));
-    setup();
-    const switches = await screen.findAllByRole('checkbox');
-    fireEvent.click(switches[0]);
-    await waitFor(() => expect(switches[0]).not.toBeChecked());
-    expect(patch).toHaveBeenLastCalledWith(sampleScope().team.id, {expectedSharingVersion:'1',sharing:{base:false,named:false,classification:false,cost:false}}, expect.objectContaining({signal:expect.any(AbortSignal)}));
-    expect(switches[1]).toBeDisabled();
-    fireEvent.click(switches[0]);
-    await waitFor(() => expect(switches[0]).toBeChecked());
-    expect(patch).toHaveBeenLastCalledWith(sampleScope().team.id, {expectedSharingVersion:'2',sharing:{base:true,named:true,classification:false,cost:false}}, expect.anything());
-  });
-  it('keeps the confirmed values when saving fails and reloads before retrying', async () => {
-    const patch = vi.spyOn(teamsApi, 'updateMySharing').mockRejectedValue(new ApiError(409,{code:'CONFLICT',messageKey:'errors.unknown'}));
-    setup();
-    const switches = await screen.findAllByRole('checkbox');
-    fireEvent.click(switches[0]);
-    expect(await screen.findByRole('alert')).toBeInTheDocument();
-    expect(switches[0]).toBeChecked();
-    fireEvent.click(screen.getByRole('button', {name:'重试'}));
-    await waitFor(() => expect(teamsApi.getMySharing).toHaveBeenCalledTimes(2));
-    expect(patch).toHaveBeenCalledTimes(1);
+  it('explains that joining a team always shares usage', () => {
+    render(<LocaleProvider><TeamSharingCard /></LocaleProvider>);
+    expect(screen.getByText('加入团队后，用量会自动计入团队统计。')).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
   });
 });

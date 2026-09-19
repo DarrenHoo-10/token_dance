@@ -44,8 +44,8 @@ describe('Navigation & Locale Switching Tests', () => {
     expect(screen.queryByText('发现')).not.toBeInTheDocument();
     expect(screen.queryByRole('search')).not.toBeInTheDocument();
 
-    const enBtn = screen.getByText('EN');
-    fireEvent.click(enBtn);
+    fireEvent.click(screen.getByRole('button', { name: '语言选择' }));
+    fireEvent.click(screen.getByRole('option', { name: 'English' }));
 
     expect(screen.queryByRole('link', { name: 'Community' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Teams' })).toHaveAttribute('href', '/teams');
@@ -53,8 +53,8 @@ describe('Navigation & Locale Switching Tests', () => {
     expect(screen.getByRole('link', { name: 'Download' })).toHaveAttribute('href', '/download');
     expect(screen.getByRole('link', { name: 'Docs' })).toHaveAttribute('href', '/docs');
 
-    const zhBtn = screen.getByText('中文');
-    fireEvent.click(zhBtn);
+    fireEvent.click(screen.getByRole('button', { name: 'Language selector' }));
+    fireEvent.click(screen.getByRole('option', { name: '中文' }));
     expect(screen.queryByRole('link', { name: '社区' })).not.toBeInTheDocument();
   });
 
@@ -144,10 +144,7 @@ describe('Navigation & Locale Switching Tests', () => {
 
     expect(menuTrigger).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByRole('menu')).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Personal Data' })).toHaveAttribute(
-      'href',
-      '/me'
-    );
+    expect(screen.getByRole('menuitem', { name: 'My analytics' })).not.toHaveAttribute('href');
     expect(screen.getByRole('menuitem', { name: 'Settings' })).toHaveAttribute(
       'href',
       '/settings/privacy'
