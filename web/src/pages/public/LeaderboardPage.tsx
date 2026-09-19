@@ -117,8 +117,13 @@ export const LeaderboardPage: React.FC = () => {
   const entries = boardSummary.entries ?? [];
   const loading = board.data === null && !board.failed;
   const loadError = board.failed;
-  const loadCommunity = useCallback(() => api.getCommunityStats(windowByRange[range]), [range]);
-  const communityResource = usePublicHomeResource(`community:${windowByRange[range]}`, readHomeCommunity, writeHomeCommunity, loadCommunity, refreshTick);
+  const selectedCommunityWindow = windowByRange[range];
+  const loadCommunity = useCallback(async () => {
+    const stats = await api.getCommunityStats(selectedCommunityWindow);
+    if (stats.window !== selectedCommunityWindow) throw new Error('Community statistics window does not match the selected period');
+    return stats;
+  }, [selectedCommunityWindow]);
+  const communityResource = usePublicHomeResource(`community:${selectedCommunityWindow}`, readHomeCommunity, writeHomeCommunity, loadCommunity, refreshTick);
   const community: CommunityStatsResponse | null = communityResource.data;
 
   const loadPersonal = useCallback(() => {
