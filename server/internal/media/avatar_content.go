@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"image"
 	"io"
 
 	"tokendance/internal/crypto"
@@ -44,6 +45,24 @@ func (s *Service) ReadAvatar(ctx context.Context, objectID, viewerID string) ([]
 	if obj.ContentType == nil {
 		return nil, "", avatarContentError(domain.ErrNotFound)
 	}
+	lock := s.avatars.loadLock(obj.ObjectKey)
+	lock.Lock()
+	defer lock.Unlock()
+	if cached, ok := s.avatars.get(obj.ObjectKey); ok {
+		return cached.data, cached.contentType, nil
+	}
+	// New uploads already have a persistent thumbnail. Older uploads are
+	// converted on first read, so existing users do not need to upload again.
+	if rc, err := s.storage.OpenObject(ctx, avatarThumbnailKey(obj.ObjectKey)); err == nil {
+		data, readErr := io.ReadAll(io.LimitReader(rc, int64(s.cfg.MediaAvatarMaxBytes)+1))
+		_ = rc.Close()
+		cfg, _, decodeErr := image.DecodeConfig(bytes.NewReader(data))
+		ct := detectImageMagicBytes(data)
+		if readErr == nil && decodeErr == nil && ct != "" && int64(len(data)) <= s.cfg.MediaAvatarMaxBytes && cfg.Width > 0 && cfg.Height > 0 && cfg.Width <= avatarEdge && cfg.Height <= avatarEdge {
+			s.avatars.put(avatarImage{key: obj.ObjectKey, data: data, contentType: ct})
+			return data, ct, nil
+		}
+	}
 	reader, err := s.storage.OpenObject(ctx, obj.ObjectKey)
 	if err != nil {
 		return nil, "", avatarContentError(domain.ErrNotFound)
@@ -53,7 +72,14 @@ func (s *Service) ReadAvatar(ctx context.Context, objectID, viewerID string) ([]
 	if err != nil || int64(len(data)) > s.cfg.MediaAvatarMaxBytes {
 		return nil, "", domain.ErrInternal
 	}
-	return data, *obj.ContentType, nil
+	data, contentType, err := thumbnail(data, s.cfg.MediaAvatarMaxPixels)
+	if err != nil {
+		return nil, "", domain.ErrInternal
+	}
+	s.avatars.put(avatarImage{key: obj.ObjectKey, data: data, contentType: contentType})
+	// Old uploads are compressed in memory. Do not create persistent objects on
+	// a read path that might race account deletion.
+	return data, contentType, nil
 }
 
 func avatarContentError(err error) error {

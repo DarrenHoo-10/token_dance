@@ -13,7 +13,7 @@ export function LeaderboardTable({ entries, ownEntry }: { entries: LeaderboardEn
     <tbody>{rows.map(entry => <tr key={entry.handle} className={entry === ownEntry ? 'leaderboard-own-row' : undefined} aria-label={entry === ownEntry ? (zh ? '我的排名' : 'My rank') : undefined}>
       <td><span className={`list-rank rank-${entry.rankNo}`}>{entry.rankNo}</span></td>
       <td><Link className="leaderboard-person" to={`/u/${encodeURIComponent(entry.handle)}`}>
-        <UserAvatar url={entry.avatarUrl} name={publicLeaderboardName(entry)} fallbackClassName="list-avatar" />
+        <UserAvatar url={entry.avatarUrl} name={publicLeaderboardName(entry)} fallbackClassName="list-avatar" loading={entry.rankNo <= 3 ? 'eager' : 'lazy'} />
         <span className="leaderboard-person-name"><strong>{publicLeaderboardName(entry)}{entry === ownEntry && <span className="leaderboard-me-badge">{zh ? '我' : 'You'}</span>}</strong></span>
       </Link></td>
       <td className="mono-num" title={Number(entry.metricValue).toLocaleString()}>{new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(Number(entry.metricValue))}</td>

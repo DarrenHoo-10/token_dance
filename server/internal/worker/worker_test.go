@@ -16,6 +16,7 @@ import (
 	"tokendance/internal/crypto"
 	"tokendance/internal/domain"
 	"tokendance/internal/email"
+	"tokendance/internal/media"
 	"tokendance/internal/migrate"
 	"tokendance/internal/provider"
 	"tokendance/internal/store"
@@ -368,6 +369,8 @@ func TestUSR104_DeletionTombstoneAndPIIScrubbingMySQL(t *testing.T) {
 	// Seed upload avatar object in storage and DB
 	avatarKey := fmt.Sprintf("users/%s/avatars/uob_del_01", uID)
 	_ = storage.PutObject(ctx, avatarKey, bytes.NewReader([]byte("avatar-bytes")), 12, "image/png")
+	thumbnailKey := avatarKey + media.AvatarThumbnailSuffix
+	_ = storage.PutObject(ctx, thumbnailKey, bytes.NewReader([]byte("thumb")), 5, "image/png")
 	_, _ = db.ExecContext(ctx, `INSERT INTO user_upload_objects (object_id, user_id, object_type, object_key, content_type, byte_size, content_sha256, image_width, image_height, upload_status, ready_at, expires_at, created_at, updated_at) VALUES ('uob_del_01', ?, 'avatar', ?, 'image/png', 12, UNHEX(SHA2('av', 256)), 100, 100, 'ready', ?, ?, ?, ?)`, uID, avatarKey, now, now.Add(24*time.Hour), now, now)
 
 	// Seed export job in storage and DB
@@ -398,6 +401,9 @@ func TestUSR104_DeletionTombstoneAndPIIScrubbingMySQL(t *testing.T) {
 	}
 	if processed != 1 {
 		t.Fatalf("expected 1 deletion request processed, got %d", processed)
+	}
+	if storage.HasObject(thumbnailKey) {
+		t.Fatal("avatar thumbnail survived account deletion")
 	}
 
 	// 1. Verify Deletion Request is completed with audit_reference and active_account_key is NULL
