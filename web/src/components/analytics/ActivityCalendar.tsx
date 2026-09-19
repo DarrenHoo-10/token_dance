@@ -25,6 +25,7 @@ export const ActivityCalendar: React.FC<ActivityCalendarProps> = ({ days, streak
   const monthRecords = records.filter(day => day.date.startsWith(month));
   const activeDays = monthRecords.filter(day => Number(day.tokenTotal) > 0).length;
   const compact = (value: number) => new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 2 }).format(value);
+  const shanghaiToday = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date());
   const changeMonth = (direction: number) => { setMonth(new Date(Date.UTC(year, monthNumber - 1 + direction, 1)).toISOString().slice(0, 7)); setSelected(null); };
   return <div className="activity-month-calendar">
     <div className="calendar-title-row"><span><CalendarDays size={16} />{zh ? '创作日历' : 'Activity calendar'}</span>{streakDays > 0 && <span className="streak-badge"><Flame size={13} />{zh ? `连续 ${streakDays} 天` : `${streakDays}-day streak`}</span>}</div>
@@ -35,11 +36,11 @@ export const ActivityCalendar: React.FC<ActivityCalendarProps> = ({ days, streak
         const day = week * 7 + weekday - leading + 1;
         if (day < 1 || day > length) return <div role="gridcell" key={weekday} />;
         const date = `${month}-${String(day).padStart(2, '0')}`, record = byDate.get(date);
-        return <div role="gridcell" key={date} aria-selected={date === selectedDate}><button type="button" disabled={!record} className={`calendar-day level-${Math.max(0, Math.min(5, record?.level ?? 0))} ${date === selectedDate ? 'selected' : ''}`} aria-label={record ? t('dashboard.activityCellLabel', { date, tokens: record.tokenTotal }) : `${date} · ${zh ? '暂无记录' : 'No record'}`} onClick={() => setSelected(date)}>{day}{record && Number(record.tokenTotal) > 0 && <i />}</button></div>;
+        return <div role="gridcell" key={date} aria-selected={date === selectedDate}><button type="button" disabled={!record} className={`calendar-day level-${Math.max(0, Math.min(5, record?.level ?? 0))} ${date === selectedDate ? 'selected' : ''} ${date === shanghaiToday ? 'is-today' : ''}`} data-intensity={record?.level ?? 0} aria-pressed={date === selectedDate} aria-label={record ? t('dashboard.activityCellLabel', { date, tokens: record.tokenTotal }) : `${date} · ${zh ? '暂无记录' : 'No record'}`} onClick={() => setSelected(date)}>{day}{record && Number(record.tokenTotal) > 0 && <i />}</button></div>;
       })}</div>)}
     </div>
     <div className="calendar-legend"><span>{t('dashboard.lessActivity')}</span>{[0, 1, 2, 3, 4].map(level => <i key={level} className={`level-${level}`} />)}<span>{t('dashboard.moreActivity')}</span><span>{zh ? '按 Token 用量' : 'By token usage'}</span></div>
-    <div className="calendar-day-summary" aria-live="polite"><div><span>{detail?.date ?? (zh ? '暂无记录' : 'No records')}</span><small><Sparkles size={12} />{zh ? (Number(detail?.tokenTotal) > 0 ? '又一个想法，正在成为现实' : '留一点空白，等待新灵感') : (Number(detail?.tokenTotal) > 0 ? 'Another idea taking shape' : 'A little space for the next idea')}</small></div><strong title={detail?.tokenTotal}><span aria-hidden="true">{detail ? compact(Number(detail.tokenTotal)) : '—'}<small>Token</small></span>{detail && <span className="sr-only">{Number(detail.tokenTotal).toLocaleString(locale)} Token</span>}</strong></div>
-    <div className="calendar-month-summary"><span>{zh ? '本月已记录' : 'Recorded this month'} <b>{monthRecords.length ? compact(monthRecords.reduce((sum, day) => sum + Number(day.tokenTotal || 0), 0)) : '—'}</b></span><span>{zh ? '统计日' : 'Calendar day'} UTC+8</span></div>
+    <div className="calendar-day-summary" aria-live="polite"><div><span>{selectedDate === shanghaiToday ? (zh ? '今天' : 'Today') : (detail?.date ?? (zh ? '暂无记录' : 'No records'))}</span><small><Sparkles size={12} />{zh ? (Number(detail?.tokenTotal) > 0 ? '又一个想法，正在成为现实' : '留一点空白，等待新灵感') : (Number(detail?.tokenTotal) > 0 ? 'Another idea taking shape' : 'A little space for the next idea')}</small></div><strong title={detail?.tokenTotal}><span aria-hidden="true">{detail ? compact(Number(detail.tokenTotal)) : '—'}<small>Token</small></span>{detail && <span className="sr-only">{Number(detail.tokenTotal).toLocaleString(locale)} Token</span>}</strong></div>
+    <div className="calendar-month-summary"><span>{zh ? '本月累计' : 'Month total'} <b>{monthRecords.length ? compact(monthRecords.reduce((sum, day) => sum + Number(day.tokenTotal || 0), 0)) : '—'}</b></span><span>{zh ? '统计日' : 'Calendar day'} UTC+8</span></div>
   </div>;
 };

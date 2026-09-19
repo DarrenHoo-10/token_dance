@@ -12,7 +12,8 @@ import { CommunityPage } from '@/pages/public/CommunityPage';
 import { TeamProvider } from '@/context/TeamContext';
 import { TeamDashboardPage } from '@/pages/teams/TeamDashboardPage';
 import { ActivityPage } from '@/pages/me/ActivityPage';
-import { PersonalDashboardPage } from '@/pages/me/PersonalDashboardPage';
+import { PersonalAnalytics } from '@/pages/me/PersonalAnalytics';
+import { PersonalAnalyticsProvider } from '@/context/PersonalAnalyticsContext';
 import { PrivacySettingsPage } from '@/pages/settings/PrivacySettingsPage';
 import { DevicesSettingsPage } from '@/pages/settings/DevicesSettingsPage';
 import { ExportsSettingsPage } from '@/pages/settings/ExportsSettingsPage';
@@ -231,8 +232,40 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         code: 'PUBLIC_PROFILE_NOT_FOUND', messageKey: 'errors.PUBLIC_PROFILE_NOT_FOUND',
       }));
       const privacySpy = vi.spyOn(api, 'updatePrivacy');
-      renderWithProviders(<Routes><Route path="/u/:handle" element={<PublicProfilePage />} /><Route path="/me" element={<h1>自己的数据</h1>} /></Routes>, '/u/TestUser');
-      expect(await screen.findByRole('heading', { name: '自己的数据' })).toBeInTheDocument();
+      vi.spyOn(api, 'getPersonalSummary').mockResolvedValue({
+        range: { key: 'today', from: '2026-09-19', to: '2026-09-19', timezone: 'Asia/Shanghai' },
+        metrics: {
+          estimatedCost: { amount: '1', currency: 'USD', supported: true },
+          totalTokens: { value: '1000', supported: true },
+          generatedCodeLines: { value: '10', supported: true },
+          tokensPerCodeLine: { value: '100', supported: true },
+          inputContextTokens: { value: '600', supported: true },
+          outputTokens: { value: '400', supported: true },
+          cacheHitRate: { value: '0.1', supported: true },
+          activeDurationMs: { value: '1000', supported: true },
+          messageCount: { value: '5', supported: true },
+          userMessageCount: { value: '2', supported: true },
+        },
+        ranking: { rank: 1, percentile: 99 },
+        sync: { lastCommittedAt: '2026-09-19T00:00:00Z', pendingLocalCount: 0 },
+        aggregationVersion: 2,
+      });
+      vi.spyOn(api, 'getTokenTrends').mockResolvedValue({ points: [] });
+      vi.spyOn(api, 'getAgentBreakdowns').mockResolvedValue({ items: [], aggregationVersion: 1 });
+      vi.spyOn(api, 'getPersonalSkills').mockResolvedValue({ skills: [], aggregationVersion: 1 });
+      vi.spyOn(api, 'getActivityCalendar').mockResolvedValue({ days: [], currentStreak: 0, longestStreak: 0, totalActiveDays: 0, aggregationVersion: 1 });
+      vi.spyOn(api, 'getFilterOptions').mockResolvedValue({ agents: [], providers: [], models: [] });
+      renderWithProviders(
+        <PersonalAnalyticsProvider>
+          <Routes>
+            <Route path="/u/:handle" element={<PublicProfilePage />} />
+            <Route path="/leaderboard" element={<h1>平台排行榜</h1>} />
+          </Routes>
+        </PersonalAnalyticsProvider>,
+        '/u/TestUser',
+      );
+      expect(await screen.findByRole('dialog', { name: /你的创造正在发生/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: '关闭' })).toBeInTheDocument();
       expect(profileSpy).not.toHaveBeenCalled();
       expect(privacySpy).not.toHaveBeenCalled();
     });
@@ -621,7 +654,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         models: ['claude-3-7-sonnet', 'gpt-4o'],
       });
 
-      renderWithProviders(<PersonalDashboardPage />, '/me');
+      renderWithProviders(<PersonalAnalytics />, '/leaderboard');
 
       await waitFor(() => {
         expect(screen.getByRole('heading', { name: 'Test Dev，你的创造正在发生。' })).toBeInTheDocument();
@@ -658,7 +691,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       vi.spyOn(api, 'getActivityCalendar').mockResolvedValue({ days: [], currentStreak: 0, longestStreak: 0, totalActiveDays: 0, aggregationVersion: 1 });
       vi.spyOn(api, 'getFilterOptions').mockResolvedValue({ agents: [], providers: [], models: [] });
 
-      renderWithProviders(<PersonalDashboardPage />, '/me');
+      renderWithProviders(<PersonalAnalytics />, '/leaderboard');
 
       await waitFor(() => {
         expect(screen.getByText('数据加载失败')).toBeInTheDocument();

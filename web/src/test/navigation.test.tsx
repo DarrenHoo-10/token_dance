@@ -6,6 +6,7 @@ import { LocaleProvider, useLocale } from '@/context/LocaleContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { AuthProvider } from '@/context/AuthContext';
 import { Navbar } from '@/components/layout/Navbar';
+import { PersonalAnalyticsProvider } from '@/context/PersonalAnalyticsContext';
 import { RootRedirect } from '@/App';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
 import { api } from '@/api/client';
@@ -144,10 +145,7 @@ describe('Navigation & Locale Switching Tests', () => {
 
     expect(menuTrigger).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByRole('menu')).toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Personal Data' })).toHaveAttribute(
-      'href',
-      '/me'
-    );
+    expect(screen.getByRole('menuitem', { name: 'Personal Data' })).not.toHaveAttribute('href');
     expect(screen.getByRole('menuitem', { name: 'Settings' })).toHaveAttribute(
       'href',
       '/settings/privacy'

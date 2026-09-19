@@ -4,6 +4,7 @@ import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { ChevronDown, Database, BarChart3, LogOut, Menu, Search, Settings, UserRound, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
+import { usePersonalAnalytics } from '@/context/PersonalAnalyticsContext';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
 import { Button } from '@/components/common/Button';
 
@@ -13,6 +14,7 @@ export const Navbar: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const home = location.pathname === '/leaderboard';
+  const personalAnalytics = usePersonalAnalytics();
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -98,7 +100,8 @@ export const Navbar: React.FC = () => {
               const input = document.querySelector<HTMLInputElement>('.sky-board-search input');
               input?.scrollIntoView({ block: 'center', behavior: 'smooth' });
               input?.focus({ preventScroll: true });
-            } else navigate(authenticated ? '/me' : '/login?return_to=%2Fme');
+            } else if (authenticated) personalAnalytics.show();
+            else navigate('/login?return_to=%2Fleaderboard');
           }}
           aria-label={home ? (locale === 'zh-CN' ? '搜索开发者' : 'Find a developer') : t('publicProfile.headline')}
         >
@@ -143,14 +146,15 @@ export const Navbar: React.FC = () => {
                   </div>
                 </div>
 
-                <NavLink
-                  to="/me"
+                <button
+                  type="button"
                   className="user-menu-item"
                   role="menuitem"
+                  onClick={() => { setDropdownOpen(false); personalAnalytics.show(); }}
                 >
                   <UserRound size={16} aria-hidden="true" />
                   {t('publicProfile.headline')}
-                </NavLink>
+                </button>
 
                 <NavLink
                   to="/settings/privacy"
