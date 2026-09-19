@@ -202,7 +202,7 @@ describe('Downloads and docs', () => {
     expect(screen.getByRole('heading', { name: '数据与隐私' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'EN' }));
     expect(screen.getByRole('heading', { name: 'Data & privacy' })).toBeInTheDocument();
-    expect(screen.getByText(/remain on the leaderboard/)).toBeInTheDocument();
+    expect(screen.getByText(/Usage trends, your detailed profile, and the leaderboard stay public/)).toBeInTheDocument();
   });
   it('opens an FAQ from a table-of-contents link and treats unknown docs as 404', async () => {
     const result = page('/docs/faq');
