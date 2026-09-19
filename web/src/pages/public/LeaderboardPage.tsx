@@ -360,9 +360,7 @@ export const LeaderboardPage: React.FC = () => {
                     <small>Token</small>
                     <DeltaChip value={trendChange} />
                   </strong>
-                  {viewingSelf ? (
-                    <button type="button" className="sky-text-link" onClick={personalAnalytics.show}>{zh ? '个人数据' : 'My analytics'}<ArrowUpRight size={16} /></button>
-                  ) : rhythmLink ? (
+                  {!viewingSelf && rhythmLink ? (
                     <Link to={rhythmLink.to} className="sky-text-link">{rhythmLink.label}<ArrowUpRight size={16} /></Link>
                   ) : null}
                 </div>
@@ -462,6 +460,7 @@ export const LeaderboardPage: React.FC = () => {
               }))}
             />
             <CommunityShareBoard
+              layout="wide"
               title={zh ? '社区 Skill 排行榜' : 'Community skills'}
               helpTo="/docs/sources"
               helpLabel={zh ? 'Skill 用量说明' : 'Skill usage'}

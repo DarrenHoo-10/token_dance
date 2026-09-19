@@ -18,6 +18,7 @@ export function CommunityShareBoard({
   items,
   empty,
   caption,
+  layout = 'standard',
 }: {
   title: string;
   helpTo: string;
@@ -25,9 +26,10 @@ export function CommunityShareBoard({
   items: CommunityShareItem[];
   empty: string;
   caption: string;
+  layout?: 'standard' | 'wide';
 }) {
   return (
-    <section className="panel sky-harnesses sky-share-board">
+    <section className={`panel sky-harnesses sky-share-board ${layout === 'wide' ? 'sky-share-board-wide' : ''}`}>
       <div className="panel-header">
         <h2>{title}</h2>
         <Link className="sky-text-link" to={helpTo}>

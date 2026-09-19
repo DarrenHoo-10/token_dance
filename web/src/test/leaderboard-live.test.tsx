@@ -33,6 +33,20 @@ describe('Live leaderboard', () => {
     expect(screen.queryByRole('button',{name:'管理公开设置'})).not.toBeInTheDocument();
     expect(update).not.toHaveBeenCalled();
   });
+  it('does not show a redundant personal analytics action on the owner trend card', async () => {
+    vi.mocked(api.getLeaderboard).mockResolvedValue({
+      ...board,
+      entries: [{ rankNo: 1, handle: 'owner', displayName: 'Owner', avatarUrl: null, metricValue: '100', rankDelta: 0 }],
+    });
+    vi.mocked(api.getPublicTokenTrends).mockResolvedValue({
+      visible: true,
+      points: [{ date: '2026-09-19', tokenTotal: '100' }],
+    });
+    showPage();
+    expect(await screen.findByRole('heading', { name: 'Owner的创作轨迹' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '个人数据' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: '个人数据' })).not.toBeInTheDocument();
+  });
   it('ignores a late response from the previously selected period', async () => {
     const ranked = (window: LeaderboardResponse['window'], metricValue: string): LeaderboardResponse => ({
       ...board,
@@ -84,6 +98,7 @@ describe('Live leaderboard', () => {
     expect(screen.getByText('暂无社区模型用量数据。')).toBeInTheDocument();
     expect(screen.getByText('暂无社区 Skill 用量数据。')).toBeInTheDocument();
     expect(document.querySelector('.sky-share-grid')?.querySelectorAll('.sky-share-board')).toHaveLength(3);
+    expect(document.querySelector('.sky-share-grid')?.lastElementChild).toHaveClass('sky-share-board-wide');
     expect(document.querySelector('.sky-side')?.querySelector('.sky-share-board')).toBeNull();
     expect(screen.getByRole('heading', { name: '正在创造的他们' })).toBeInTheDocument();
   });
