@@ -11,6 +11,7 @@
 - 浏览器图片缓存使用 `private, no-cache` + ETag：允许存储内容，每次复用前校验，未变化返回 304；删除/停用后返回 404。这里的 `no-cache` 表示必须校验，和禁止存储的 `no-store` 不同。
 - Nginx 对上述公共接口保留应用缓存策略，其余 API 继续 `no-store`。内置头像缓存一天，带 hash 的 JS/CSS 继续缓存一年。
 - 前三名头像高优先级，列表非前三名懒加载。
+- 内置四张默认头像使用 256px JPEG 派生资源，兼容已有资料里的 PNG URL。原图保留；可在 `server/` 下运行 `go run ../tools/images/compress-default-avatars.go` 重新生成。
 
 ## 复核与验证
 
