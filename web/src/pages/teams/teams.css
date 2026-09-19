@@ -1,5 +1,6 @@
 .team-page { width: min(1360px, 100%); margin: 0 auto; color: #111512; }
-.team-page h1 { letter-spacing: -0.04em; }
+.team-page:not(.tw-workspace) h1 { letter-spacing: -0.04em; }
+.team-page.tw-workspace { width: min(1440px, 100%); color: #202a1b; }
 .team-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 24px; }
 .team-tabs a {
   display: inline-flex; align-items: center; justify-content: center;

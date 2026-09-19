@@ -189,6 +189,7 @@ export const InviteDialog: React.FC<InviteDialogProps> = ({ isOpen, onClose, tea
           </form>
         )}
         {error && <p role="alert" className="tw-form-hint">{error}</p>}
+        <p className="tw-preview-hint">{t('teams.invite.previewHint')}</p>
       </div>
     </dialog>
   );

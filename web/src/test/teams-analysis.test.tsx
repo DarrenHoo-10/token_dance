@@ -623,7 +623,7 @@ describe('Team page tabs', () => {
     expect(screen.queryByRole('link', { name: '总览' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '用量分析' })).not.toBeInTheDocument();
     expect(await screen.findByRole('tab', { name: '近 7 天' })).toHaveAttribute('aria-selected', 'true');
-    const heading = document.querySelector('.product-page-heading');
+    const heading = document.querySelector('.tw-banner');
     const toolbar = document.querySelector('.team-filter-toolbar');
     expect(heading?.contains(screen.getByRole('tab', { name: '近 7 天' }))).toBe(false);
     expect(heading?.contains(screen.getByRole('button', { name: '邀请伙伴' }))).toBe(true);

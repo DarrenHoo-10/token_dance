@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import type { AnalysisTrendPoint, TeamAnalysisReady } from '@/api/teams';
 import { useLocale } from '@/context/LocaleContext';
 import { MemberAvatar, TeamRankPager } from './TeamShared';
+import { SkyTeamTrend } from './SkyTeamTrend';
 import { formatTokenCompact, formatTokenExact, rankPageSlice, TEAM_RANK_PAGE_SIZE } from './teamUtils';
 import { usageColor } from '@/utils/usageColors';
 
@@ -155,7 +156,7 @@ const MultiTrendChart: React.FC<{
 };
 
 export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ analysis }) => {
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const navigate = useNavigate();
   const hourly = analysis.trendGrain === 'hour';
   const timezone = analysis.range.timezone;
@@ -233,19 +234,38 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
               <button type="button" aria-pressed={chartMode === 'efficiency'} onClick={() => setChartMode('efficiency')}>{t('teams.metrics.tokensPerLine')}</button>
             </div>
           </div>
-          <div className="tw-trend">
-          <MultiTrendChart
-            dates={chartMode === 'tokens' ? usageDates : efficiencyDates}
-            series={chartMode === 'tokens' ? usageSeries : efficiencySeries}
-            empty={t('teams.overview.emptyRange')}
-            noneSelected={t('teams.insights.selectSeries')}
-            ariaLabel={t('teams.overview.trendTitle')}
-            skipEmpty={chartMode === 'efficiency'}
-            missingHint={chartMode === 'efficiency' ? t('teams.insights.efficiencyMissingHint') : undefined}
-            hourly={hourly}
-            timezone={timezone}
-          />
-          </div>
+          {chartMode === 'tokens' ? (
+            <SkyTeamTrend
+              dates={usageDates}
+              series={usageSeries.map((item) => ({
+                id: item.id,
+                name: item.label,
+                color: item.color,
+                values: usageDates.map((date) => {
+                  const point = (item.trend || []).find((entry) => entry.date === date);
+                  return Number(integer(point?.tokens.value));
+                }),
+              }))}
+              en={locale !== 'zh-CN'}
+              empty={t('teams.overview.emptyRange')}
+              hourly={hourly}
+              timezone={timezone}
+            />
+          ) : (
+            <div className="tw-trend">
+              <MultiTrendChart
+                dates={efficiencyDates}
+                series={efficiencySeries}
+                empty={t('teams.overview.emptyRange')}
+                noneSelected={t('teams.insights.selectSeries')}
+                ariaLabel={t('teams.overview.trendTitle')}
+                skipEmpty
+                missingHint={t('teams.insights.efficiencyMissingHint')}
+                hourly={hourly}
+                timezone={timezone}
+              />
+            </div>
+          )}
           {hourly && analysis.hourlyTrendPartial && chartMode === 'tokens' && <p className="team-trend-hint">{t('teams.insights.hourlyPartialHint')}</p>}
           <div className="tw-compare">
             <span>{t('teams.overview.compareMembers')}</span>

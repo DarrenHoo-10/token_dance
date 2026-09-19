@@ -394,6 +394,7 @@ export const enUS = {
       teammateEmail: 'Teammate’s email',
       ready: 'Your invitation is ready',
       linkHint: 'People joining via link receive the Member role.',
+      previewHint: 'Invitations apply only to this team. Email delivery follows the send status.',
       expiresIn: 'Valid for',
       day1: '1 day',
       day7: '7 days',

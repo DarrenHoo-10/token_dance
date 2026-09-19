@@ -107,7 +107,7 @@ export const TeamOverviewBoard: React.FC<{
       </div>
       <div className="tw-token-breakdown">
         {details.map(([label, value]) => (
-          <div key={label}><span>{label}</span><strong className="mono-num">{value}</strong></div>
+          <div key={label}><span>{label}</span><strong>{value}</strong></div>
         ))}
       </div>
       {empty ? (

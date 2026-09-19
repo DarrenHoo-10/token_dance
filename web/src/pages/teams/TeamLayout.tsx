@@ -96,7 +96,7 @@ export const TeamLayout: React.FC = () => {
         <LockKeyhole size={12} />
         <span>{t('teams.privateNote')}</span>
       </div>
-      <section className="tw-banner product-page-heading" aria-labelledby="team-title">
+      <section className="tw-banner" aria-labelledby="team-title">
         <div className="tw-banner-copy">
           <div className="tw-team-avatar">
             {avatarSrc ? <img src={avatarSrc} alt="" /> : <Layers3 size={34} strokeWidth={1.5} />}

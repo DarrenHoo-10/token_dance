@@ -23,7 +23,7 @@ export function TeamSharingCard() {
             <strong>{item.title}</strong>
             <p>{item.text}</p>
           </div>
-          <button type="button" className="tw-switch" role="switch" aria-label={item.title} aria-checked disabled>
+          <button type="button" className="tw-switch" role="switch" aria-label={item.title} aria-checked={true} disabled>
             <span />
           </button>
         </div>

@@ -394,6 +394,7 @@ export const zhCN = {
       teammateEmail: '伙伴的邮箱',
       ready: '邀请已就绪',
       linkHint: '通过链接加入的伙伴默认为成员。',
+      previewHint: '邀请只作用于当前团队。邮箱是否发出，以发送状态为准。',
       expiresIn: '有效期',
       day1: '1 天',
       day7: '7 天',
