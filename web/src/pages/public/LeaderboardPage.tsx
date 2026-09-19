@@ -2,7 +2,7 @@ import { LeaderboardTable } from '@/components/analytics/LeaderboardTable';
 import { publicLeaderboardName } from '@/components/analytics/leaderboardName';
 import { RankChange } from '@/components/analytics/RankChange';
 import { UserAvatar } from '@/components/common/UserAvatar';
-import React, { useCallback, useRef, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   BarChart3, ChevronLeft, ChevronRight, CircleHelp,
@@ -11,8 +11,10 @@ import {
 import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from '@/context/AuthContext';
 import { useVisibleRefresh } from '@/hooks/useVisibleRefresh';
+import { usePublicHomeResource } from '@/hooks/usePublicHomeResource';
+import { readHomeBoard, writeHomeBoard, readHomeCommunity, writeHomeCommunity } from '@/utils/publicHomeCache';
 import { api } from '@/api/client';
-import type { LeaderboardEntry, PersonalSummary, CalendarDay, CommunityStatsResponse } from '@/types/api';
+import type { LeaderboardEntry, PersonalSummary, CalendarDay } from '@/types/api';
 import { formatCommunityCost } from '@/utils/cost';
 
 type Range = 'Today' | '7 Days' | '30 Days' | 'All Time';
@@ -92,51 +94,22 @@ export const LeaderboardPage: React.FC = () => {
   const zh = locale === 'zh-CN';
   const accountKey = user?.userId ?? user?.handle ?? '';
   const [range, setRange] = useState<Range>('Today');
-  const requestId = useRef(0);
-  const hasSnapshotRef = useRef(false);
   const [sharing, setSharing] = useState<{ publicProfileEnabled: boolean; showTokenTotal: boolean } | null>(null);
-
-  const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
 
   const [summary, setSummary] = useState<PersonalSummary | null>(null);
   const [allTimeSummary, setAllTimeSummary] = useState<PersonalSummary | null>(null);
   const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
   const [streak, setStreak] = useState(0);
   const [refreshTick, setRefreshTick] = useState(0);
-  const [community, setCommunity] = useState<CommunityStatsResponse | null>(null);
-
-  const fetchLeaderboard = useCallback(async () => {
-    const id = ++requestId.current;
-    if (!hasSnapshotRef.current) setLoading(true);
-    try {
-      const res = await api.getLeaderboard({ window: windowByRange[range], limit: 100 });
-      if (id !== requestId.current) return;
-      hasSnapshotRef.current = true;
-      setEntries((res.entries || []).slice(0, 100));
-      setLoadError(false);
-    } catch {
-      if (id !== requestId.current) return;
-      setLoadError(true);
-    } finally {
-      if (id === requestId.current) setLoading(false);
-    }
-  }, [range]);
-
-  useEffect(() => {
-    void fetchLeaderboard();
-  }, [fetchLeaderboard, accountKey, refreshTick]);
-
-  const loadCommunity = useCallback(() => {
-    let cancelled = false;
-    api.getCommunityStats()
-      .then((res) => { if (!cancelled) setCommunity(res); })
-      .catch(() => { if (!cancelled) setCommunity(null); });
-    return () => { cancelled = true; };
-  }, []);
-
-  useEffect(() => loadCommunity(), [loadCommunity, refreshTick]);
+  const fetchLeaderboard = useCallback(async () =>
+    ((await api.getLeaderboard({ window: windowByRange[range], limit: 100 })).entries || []).slice(0, 100), [range]);
+  const board = usePublicHomeResource(`board:${windowByRange[range]}`, readHomeBoard, writeHomeBoard, fetchLeaderboard, refreshTick);
+  const loadCommunity = useCallback(() => api.getCommunityStats(), []);
+  const communityResource = usePublicHomeResource('community', readHomeCommunity, writeHomeCommunity, loadCommunity, refreshTick);
+  const entries = board.data ?? [];
+  const loading = board.data === null && !board.failed;
+  const loadError = board.failed;
+  const community = communityResource.data;
 
   const loadPersonal = useCallback(() => {
     if (!authenticated) {

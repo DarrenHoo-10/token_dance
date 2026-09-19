@@ -5,6 +5,7 @@ import { LocaleProvider } from '@/context/LocaleContext';
 import { LeaderboardPage } from '@/pages/public/LeaderboardPage';
 import { api } from '@/api/client';
 import type { LeaderboardResponse, PrivacySettings } from '@/types/api';
+import { publicHomeDay, writeHomeBoard, writeHomeCommunity } from '@/utils/publicHomeCache';
 
 vi.mock('@/context/AuthContext', () => ({ useAuth: () => ({ authenticated: true, user: { userId: 'owner', handle: 'owner' } }) }));
 const privacy: PrivacySettings = { publicProfileEnabled: false, leaderboardVisibility: 'private', showTokenTotal: true, showBio:false,showTrends:false,showActivityCalendar:false,showAgentBreakdown:false,showSkillRanking:false,showAchievements:false,privacyVersion:1 };
@@ -24,6 +25,65 @@ beforeEach(() => {
   vi.spyOn(api,'getCommunityStats').mockResolvedValue({ metricDate:'2026-09-09', timezone:'UTC' });
 });
 describe('Live leaderboard', () => {
+  it('shows saved rows and community immediately, then replaces them in the background', async () => {
+    writeHomeBoard('board:today', [{rankNo:1, handle:'saved', displayName:'Saved user', avatarUrl:null, metricValue:'123'}]);
+    writeHomeCommunity('community', {metricDate:publicHomeDay(), timezone:'UTC+8', tokens:'123000000'});
+    let resolveBoard!: (value: LeaderboardResponse) => void;
+    vi.mocked(api.getLeaderboard).mockReturnValue(new Promise(resolve => { resolveBoard = resolve; }));
+    let resolveStats!: (value: Awaited<ReturnType<typeof api.getCommunityStats>>) => void;
+    vi.mocked(api.getCommunityStats).mockReturnValue(new Promise(resolve => { resolveStats = resolve; }));
+    showPage();
+    expect(screen.getAllByText('Saved user')).toHaveLength(2);
+    expect(screen.getByText('123.0M')).toBeInTheDocument();
+    expect(screen.queryByText('加载中…')).not.toBeInTheDocument();
+    await act(async () => {
+      resolveBoard({...board, entries:[{rankNo:1, handle:'fresh', displayName:'Fresh user', avatarUrl:null, metricValue:'456'}]});
+      resolveStats({metricDate:publicHomeDay(), timezone:'UTC+8', tokens:'456000000'});
+    });
+    expect(screen.getAllByText('Fresh user')).toHaveLength(2);
+    expect(screen.queryByText('Saved user')).not.toBeInTheDocument();
+    expect(screen.getByText('456.0M')).toBeInTheDocument();
+  });
+  it('retains saved content on refresh failure and restores it after remounting', async () => {
+    vi.mocked(api.getLeaderboard).mockResolvedValue({...board, entries:[{rankNo:1,handle:'saved',displayName:'Saved user',avatarUrl:null,metricValue:'123'}]});
+    vi.mocked(api.getCommunityStats).mockResolvedValue({metricDate:publicHomeDay(),timezone:'UTC+8',tokens:'123000000'});
+    const page = showPage();
+    expect(await screen.findAllByText('Saved user')).toHaveLength(2);
+    page.unmount();
+    vi.mocked(api.getLeaderboard).mockRejectedValue(new Error('offline'));
+    vi.mocked(api.getCommunityStats).mockRejectedValue(new Error('offline'));
+    showPage();
+    expect(screen.getAllByText('Saved user')).toHaveLength(2);
+    expect(await screen.findByRole('alert')).toHaveTextContent('连接异常');
+    expect(screen.getByText('123.0M')).toBeInTheDocument();
+  });
+  it('switches to the selected period cache without showing the previous period', async () => {
+    writeHomeBoard('board:today', [{rankNo:1,handle:'today',displayName:'Today cached',avatarUrl:null,metricValue:'1'}]);
+    writeHomeBoard('board:7d', [{rankNo:1,handle:'week',displayName:'Week cached',avatarUrl:null,metricValue:'2'}]);
+    vi.mocked(api.getLeaderboard).mockReturnValue(new Promise(() => {}));
+    showPage();
+    expect(screen.getAllByText('Today cached')).toHaveLength(2);
+    fireEvent.click(screen.getByRole('tab', {name:'近 7 天'}));
+    expect(screen.getAllByText('Week cached')).toHaveLength(2);
+    expect(screen.queryByText('Today cached')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', {name:'近 30 天'}));
+    expect(screen.queryByText('Week cached')).not.toBeInTheDocument();
+    expect(screen.getByText('加载中…')).toBeInTheDocument();
+    await act(async () => {});
+  });
+  it('drops yesterday snapshots on a visible refresh across Beijing midnight', async () => {
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-19T15:59:59Z'));
+    writeHomeBoard('board:today', [{rankNo:1,handle:'old',displayName:'Yesterday',avatarUrl:null,metricValue:'1'}]);
+    writeHomeCommunity('community', {metricDate:publicHomeDay(),timezone:'UTC+8',tokens:'123000000'});
+    vi.mocked(api.getLeaderboard).mockReturnValue(new Promise(() => {}));
+    vi.mocked(api.getCommunityStats).mockReturnValue(new Promise(() => {}));
+    showPage();
+    expect(screen.getAllByText('Yesterday')).toHaveLength(2);
+    clock.mockReturnValue(Date.parse('2026-09-19T16:00:00Z'));
+    await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+    expect(screen.queryByText('Yesterday')).not.toBeInTheDocument();
+    expect(screen.queryByText('123.0M')).not.toBeInTheDocument();
+  });
   it('requests a cacheable public top 100 and caps the rendered rows', async () => {
     vi.mocked(api.getLeaderboard).mockResolvedValue({...board, entries: Array.from({length: 101}, (_, i) => ({rankNo: i + 1, handle: `user-${i + 1}`, displayName: `User ${i + 1}`, avatarUrl: `/api/v1/public/avatars/${i + 1}`, metricValue: '1'}))});
     showPage();

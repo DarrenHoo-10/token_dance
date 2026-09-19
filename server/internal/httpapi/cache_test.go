@@ -62,7 +62,7 @@ func TestAvatarRevalidationChecksRemoval(t *testing.T) {
 	path := "/api/v1/public/avatars/" + intent.ObjectID
 	first := httptest.NewRecorder()
 	router.ServeHTTP(first, httptest.NewRequest("GET", path, nil))
-	if first.Code != 200 || first.Header().Get("Cache-Control") != "private, no-cache" {
+	if first.Code != 200 || first.Header().Get("Cache-Control") != "private, max-age=604800, immutable" {
 		t.Fatalf("avatar response %d %v", first.Code, first.Header())
 	}
 	cfg, _, err := image.DecodeConfig(bytes.NewReader(first.Body.Bytes()))

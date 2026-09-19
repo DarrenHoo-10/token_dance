@@ -36,6 +36,7 @@ function renderWithProviders(ui: React.ReactElement, initialRoute = '/') {
 describe('Shipped Pages & Failed API Paths Tests', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    localStorage.clear();
   });
 
   describe('LeaderboardPage', () => {
