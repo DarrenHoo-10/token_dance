@@ -70,7 +70,7 @@ export function LeaderboardListPage() {
       </div>
       {loading && !data ? <p className="leaderboard-empty" role="status">{zh ? '加载中…' : 'Loading…'}</p> : !data && failed ? connectionError : data ? <>
         {failed && connectionError}
-        {data.entries.length ? <LeaderboardTable entries={data.entries} ownEntry={authenticated ? data.ownEntry : null} /> : <p className="leaderboard-empty">{zh ? '暂无账号' : 'No accounts yet'}</p>}
+        {data.entries.length ? <LeaderboardTable entries={data.entries} ownEntry={authenticated ? data.ownEntry : null} window={window} /> : <p className="leaderboard-empty">{zh ? '暂无账号' : 'No accounts yet'}</p>}
         <div className="leaderboard-pagination"><span>{zh ? `第 ${Math.floor(Number(cursor || 0) / 20) + 1} / ${Math.max(1, Math.ceil(Math.min(1000, data.totalEntries ?? 0) / 20))} 页` : `Page ${Math.floor(Number(cursor || 0) / 20) + 1} / ${Math.max(1, Math.ceil(Math.min(1000, data.totalEntries ?? 0) / 20))}`}</span><div>
           <button className="btn btn-outline" disabled={!cursor} onClick={() => setParams({ window, ...(Number(cursor) > 20 ? { cursor: String(Number(cursor) - 20) } : {}) })}>{zh ? '上一页' : 'Previous'}</button>
           <button className="btn btn-outline" disabled={!data.nextCursor || Number(data.nextCursor) >= 1000} onClick={() => data.nextCursor && Number(data.nextCursor) < 1000 && setParams({ window, cursor: data.nextCursor })}>{zh ? '下一页' : 'Next'}</button>
