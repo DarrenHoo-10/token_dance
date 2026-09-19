@@ -173,6 +173,7 @@ export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) =
           { key: 'today', label: t('common.today') },
           { key: '7d', label: t('common.days7') },
           { key: '30d', label: t('common.days30') },
+          { key: 'custom', label: t('common.custom') },
         ].map((item) => (
           <button
             key={item.key}
@@ -186,7 +187,7 @@ export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) =
           </button>
         ))}
       </div>
-      <div className="team-date-custom">
+      {range === 'custom' ? <div className="team-date-custom">
         <div className="team-date-fields">
           <TeamDateField
             value={displayedFrom}
@@ -212,7 +213,7 @@ export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) =
         {spanError && (
           <p className="team-date-hint is-error" role="alert">{t('teams.range.tooLong')}</p>
         )}
-      </div>
+      </div> : <span className="team-date-summary">{displayedFrom} — {displayedTo}</span>}
     </div>
   );
 };

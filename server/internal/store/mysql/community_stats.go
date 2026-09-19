@@ -206,6 +206,47 @@ func (s *communityStatsStore) GetCommunityDailyStats(ctx context.Context, date s
 	return &totals, nil
 }
 
+func (s *communityStatsStore) ListCommunityDailyStats(ctx context.Context, fromDate, toDate string) ([]store.CommunityDailyTotals, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT metric_date, tokens_total, developers, code_lines, interactions,
+		       cost_amount, cost_amounts, is_final, computed_at
+		FROM community_daily_stats
+		WHERE metric_date >= ? AND metric_date <= ?
+		ORDER BY metric_date`, fromDate, toDate)
+	if err != nil {
+		return nil, fmt.Errorf("list community daily stats %s..%s: %w", fromDate, toDate, err)
+	}
+	defer rows.Close()
+	var result []store.CommunityDailyTotals
+	for rows.Next() {
+		var item store.CommunityDailyTotals
+		var costJSON sql.NullString
+		if err := rows.Scan(&item.MetricDate, &item.TokensTotal, &item.Developers, &item.CodeLines,
+			&item.Interactions, &item.CostAmount, &costJSON, &item.IsFinal, &item.ComputedAt); err != nil {
+			return nil, fmt.Errorf("scan community daily stats: %w", err)
+		}
+		if costJSON.Valid && costJSON.String != "" && costJSON.String != "null" {
+			if err := json.Unmarshal([]byte(costJSON.String), &item.Costs); err != nil {
+				return nil, fmt.Errorf("decode community costs %s: %w", item.MetricDate, err)
+			}
+		}
+		result = append(result, item)
+	}
+	return result, rows.Err()
+}
+
+func (s *communityStatsStore) GetCommunityActiveDevelopers(ctx context.Context, window, generation, _, _ string) (uint64, error) {
+	var count uint64
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM user_window_scores
+		WHERE window_key = ? AND generation = ? AND eligible = TRUE AND token_total > 0`,
+		window, generation).Scan(&count); err != nil {
+		return 0, fmt.Errorf("count active community developers %s: %w", window, err)
+	}
+	return count, nil
+}
+
 // ReplaceCommunityAgentDay swaps the day's per-harness totals in one go; the
 // delete-then-insert keeps agents that dropped to zero from lingering.
 func (s *communityStatsStore) ReplaceCommunityAgentDay(ctx context.Context, date string, rows []store.CommunityAgentTokens) error {
@@ -227,24 +268,29 @@ func (s *communityStatsStore) ReplaceCommunityAgentDay(ctx context.Context, date
 }
 
 func (s *communityStatsStore) GetCommunityHarnessShares(ctx context.Context, date string, limit int) ([]store.CommunityHarness, error) {
+	return s.GetCommunityHarnessSharesRange(ctx, date, date, limit)
+}
+
+func (s *communityStatsStore) GetCommunityHarnessSharesRange(ctx context.Context, fromDate, toDate string, limit int) ([]store.CommunityHarness, error) {
 	if limit <= 0 {
 		limit = 5
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT agent_id, tokens_total
+		SELECT agent_id, CAST(SUM(tokens_total) AS UNSIGNED)
 		FROM community_agent_daily_stats
-		WHERE metric_date = ?
-		ORDER BY tokens_total DESC, agent_id ASC
-		LIMIT ?`, date, limit)
+		WHERE metric_date >= ? AND metric_date <= ?
+		GROUP BY agent_id
+		ORDER BY SUM(tokens_total) DESC, agent_id ASC
+		LIMIT ?`, fromDate, toDate, limit)
 	if err != nil {
-		return nil, fmt.Errorf("list community harness shares %s: %w", date, err)
+		return nil, fmt.Errorf("list community harness shares %s..%s: %w", fromDate, toDate, err)
 	}
 	defer rows.Close()
 	var harnesses []store.CommunityHarness
 	for rows.Next() {
 		var item store.CommunityHarness
 		if err := rows.Scan(&item.AgentID, &item.TokensTotal); err != nil {
-			return nil, fmt.Errorf("scan community harness share %s: %w", date, err)
+			return nil, fmt.Errorf("scan community harness share %s..%s: %w", fromDate, toDate, err)
 		}
 		item.Label = agentDisplayName(item.AgentID)
 		harnesses = append(harnesses, item)

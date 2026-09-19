@@ -1,4 +1,5 @@
-import { ArrowDownToLine, ArrowUpRight } from 'lucide-react';
+import { useState } from 'react';
+import { ArrowDownToLine, ArrowLeft, ArrowUpRight, BookOpen } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useLocale } from '@/context/LocaleContext';
 import { useWindowsRelease, type WindowsRelease } from './windowsRelease';
@@ -57,25 +58,36 @@ export function DownloadPage() {
     { id: 'mac-intel', platform: 'mac', name: 'macOS', architecture: 'Intel', requirement: `macOS ${mac.x64.release?.minimumSystemVersion ?? '13.0'}+ · ${t('Intel 芯片', 'Intel chips')}`, format: 'DMG', label: t('下载 Intel DMG', 'Download Intel DMG'), url: mac.x64.release?.dmgUrl, ...mac.x64, retry: mac.retry },
   ];
   const unsigned = [mac.arm64, mac.x64].some(({ release }) => release && !release.notarized);
-  return <div className="desktop-resources download-page">
-    <header className="download-page-heading">
-      <h1>{t('下载 TokenDance', 'Download TokenDance')}</h1>
-      <p>{t('在桌面上，轻松查看你的 AI 工具用量。', 'Your AI tool usage, right on your desktop.')}</p>
-    </header>
-    <section className="download-packages" aria-label={t('选择你的平台', 'Choose your platform')}>
-      {packages.map(item => <PackageCard key={item.id} item={item} zh={zh} />)}
+  const [platform, setPlatform] = useState('windows');
+  const selected = packages.find(item => item.id === platform) || packages[0];
+  return <div className="resource-stage resource-download-stage">
+    <section className="resource-dialog resource-download-dialog" aria-labelledby="download-heading">
+      <Link className="resource-dialog-close" to="/leaderboard" aria-label={t('返回 TokenBoard', 'Back to TokenBoard')}>×</Link>
+      <div className="resource-dialog-kicker"><ArrowDownToLine size={18} />{t('客户端下载', 'Desktop app')}</div>
+      <h1 id="download-heading">{t('让每一次创造，都被看见。', 'Make every day of creating visible.')}</h1>
+      <p className="resource-dialog-lead">{t('轻驻桌面，自动记录。用一个客户端，连接你的 AI 编程工具。', 'One small desktop companion for your AI coding tools.')}</p>
+
+      <div className="resource-app-preview">
+        <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" />
+        <strong>TokenDance</strong><span>{t('今日 Token', 'Today’s tokens')}</span><b>1.12<small>M</small></b>
+        <div><span>Codex</span><span>Claude Code</span><span>Cursor</span></div>
+      </div>
+
+      <div className="resource-platform-tabs" role="tablist" aria-label={t('选择你的平台', 'Choose your platform')}>
+        {packages.map(item => <button key={item.id} type="button" role="tab" aria-selected={platform === item.id} onClick={() => setPlatform(item.id)}><PlatformIcon platform={item.platform} /><span>{item.id === 'windows' ? 'Windows' : item.id === 'mac-arm64' ? 'Apple Silicon' : 'Intel Mac'}</span></button>)}
+      </div>
+      <div className="resource-selected-package"><PackageCard item={selected} zh={zh} /></div>
+
+      <div className="download-install-note">
+        <p>{selected.platform === 'windows' ? t('运行后，在系统托盘打开用量面板。', 'Open the usage panel from your system tray.') : t('打开 DMG，将 TokenDance 拖入 Applications。', 'Open the DMG and drag TokenDance into Applications.')}</p>
+        {unsigned && <p>{t('Mac 未公证版本：首次打开若被阻止，请到「系统设置 → 隐私与安全」选择「仍要打开」。', 'Mac builds are not notarized. If blocked on first launch, choose Open Anyway in System Settings → Privacy & Security.')}</p>}
+      </div>
+      <Link className="resource-download-help" to="/docs/quickstart"><BookOpen size={15} />{t('第一次使用？查看快速开始', 'New here? Read the quick start')}</Link>
+      <footer className="download-page-footer">
+        <Link to="/docs/install"><ArrowLeft size={14} />{t('安装指南', 'Installation guide')}</Link>
+        <a href="https://github.com/DarrenHoo-10/token_dance/releases" target="_blank" rel="noopener noreferrer">{t('版本记录', 'Release history')}<ArrowUpRight size={14} /></a>
+        {packages.some(item => item.release) && <details className="download-checksums"><summary>{t('校验信息', 'Checksums')}</summary><div>{packages.filter(item => item.release).map(item => <p key={item.id}><strong>{item.name} · {item.architecture} · v{item.release!.version}</strong><code>SHA-256: {item.release!.sha256}</code>{item.platform === 'windows' && windows.release?.zipUrl && <a href={windows.release.zipUrl}>{t('下载 ZIP 压缩包', 'Download ZIP')}</a>}</p>)}</div></details>}
+      </footer>
     </section>
-    <div className="download-install-note">
-      <p>{t('Windows 下载后直接运行；Mac 打开 DMG，拖入 Applications。', 'Run the app on Windows. On Mac, open the DMG and drag TokenDance to Applications.')}</p>
-      {unsigned && <p>{t('Mac 未公证版本：首次打开若被阻止，请到「系统设置 → 隐私与安全」选择「仍要打开」。', 'Mac builds are not notarized. If blocked on first launch, choose Open Anyway in System Settings → Privacy & Security.')}</p>}
-    </div>
-    <footer className="download-page-footer">
-      <Link to="/docs/install">{t('安装指南', 'Installation guide')}<ArrowUpRight size={14} aria-hidden="true" /></Link>
-      <a href="https://github.com/DarrenHoo-10/token_dance/releases" target="_blank" rel="noopener noreferrer">{t('版本记录', 'Release history')}<ArrowUpRight size={14} aria-hidden="true" /></a>
-      {packages.some(item => item.release) && <details className="download-checksums">
-        <summary>{t('校验信息', 'Checksums')}</summary>
-        <div>{packages.filter(item => item.release).map(item => <p key={item.id}><strong>{item.name} · {item.architecture} · v{item.release!.version}</strong><code>SHA-256: {item.release!.sha256}</code>{item.platform === 'windows' && windows.release?.zipUrl && <a href={windows.release.zipUrl}>{t('下载 ZIP 压缩包', 'Download ZIP')}</a>}</p>)}</div>
-      </details>}
-    </footer>
   </div>;
 }

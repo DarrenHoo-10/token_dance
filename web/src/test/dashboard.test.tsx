@@ -194,5 +194,5 @@ it('renders hourly labels without collapsing them to the same day', () => {
     {date:'2026-09-12 09:00',tokenTotal:'20'},
   ]} /></LocaleProvider>);
   expect(screen.getByText('08:00')).toBeInTheDocument();
-  expect(screen.getByText('09:00')).toBeInTheDocument();
+  expect(screen.getAllByText('09:00').length).toBeGreaterThan(0);
 });

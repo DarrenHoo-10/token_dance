@@ -1,7 +1,7 @@
 import { avatarUrl } from '@/utils/avatar';
 import React, { useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { ChevronDown, Database, BarChart3, LogOut, Settings, UserRound } from 'lucide-react';
+import { ChevronDown, Database, BarChart3, LogOut, Menu, Search, Settings, UserRound, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
@@ -12,21 +12,25 @@ export const Navbar: React.FC = () => {
   const { t, locale } = useLocale();
   const navigate = useNavigate();
   const location = useLocation();
+  const home = location.pathname === '/leaderboard';
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!dropdownOpen) return;
+    if (!dropdownOpen && !mobileOpen) return;
 
     const closeOnOutsideClick = (event: PointerEvent) => {
       if (!userMenuRef.current?.contains(event.target as Node)) {
         setDropdownOpen(false);
       }
+      if (!(event.target as Element).closest('.navbar')) setMobileOpen(false);
     };
 
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setDropdownOpen(false);
+        setMobileOpen(false);
       }
     };
 
@@ -37,10 +41,11 @@ export const Navbar: React.FC = () => {
       document.removeEventListener('pointerdown', closeOnOutsideClick);
       document.removeEventListener('keydown', closeOnEscape);
     };
-  }, [dropdownOpen]);
+  }, [dropdownOpen, mobileOpen]);
 
   useEffect(() => {
     setDropdownOpen(false);
+    setMobileOpen(false);
   }, [location.pathname]);
 
   const handleLogout = async () => {
@@ -64,7 +69,7 @@ export const Navbar: React.FC = () => {
         <span>TokenDance</span>
       </NavLink>
 
-      <nav className="nav-links" aria-label={t('common.mainNavigation')}>
+      <nav id="primary-navigation" className={`nav-links ${mobileOpen ? 'is-open' : ''}`} aria-label={t('common.mainNavigation')}>
         <NavLink
           to="/leaderboard"
           className={({ isActive }) =>
@@ -88,13 +93,19 @@ export const Navbar: React.FC = () => {
         <button
           type="button"
           className="nav-document"
-          onClick={() => navigate(authenticated ? '/me' : '/login?return_to=%2Fme')}
-          aria-label={t('publicProfile.headline')}
+          onClick={() => {
+            if (home) {
+              const input = document.querySelector<HTMLInputElement>('.sky-board-search input');
+              input?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+              input?.focus({ preventScroll: true });
+            } else navigate(authenticated ? '/me' : '/login?return_to=%2Fme');
+          }}
+          aria-label={home ? (locale === 'zh-CN' ? '搜索开发者' : 'Find a developer') : t('publicProfile.headline')}
         >
-          <BarChart3 size={22} aria-hidden="true" />
+          {home ? <Search size={21} aria-hidden="true" /> : <BarChart3 size={22} aria-hidden="true" />}
         </button>
 
-        <LocaleSwitcher />
+        <LocaleSwitcher compact={home} />
 
         {authenticated && user ? (
           <div className="user-menu" ref={userMenuRef}>
@@ -114,6 +125,7 @@ export const Navbar: React.FC = () => {
                   <span>{initials}</span>
                 )}
               </span>
+              <span className="sky-account-name">{user.displayName || user.handle}</span>
               <ChevronDown size={16} aria-hidden="true" />
             </button>
 
@@ -190,6 +202,7 @@ export const Navbar: React.FC = () => {
             </Button>
           </div>
         )}
+        <button type="button" className="sky-mobile-toggle" aria-label={locale === 'zh-CN' ? '打开导航' : 'Open navigation'} aria-expanded={mobileOpen} aria-controls="primary-navigation" onClick={() => setMobileOpen(open => !open)}>{mobileOpen ? <X size={21} /> : <Menu size={21} />}</button>
       </div>
     </header>
   );

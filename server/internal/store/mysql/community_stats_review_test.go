@@ -59,7 +59,7 @@ func TestReview2CommunityMultiCurrencyCostsNotMergedAsUSD(t *testing.T) {
 		t.Fatalf("persisted mixed costs: %+v", got)
 	}
 
-	res, err := leaderboard.NewService(st).GetCommunityStats(ctx, now)
+	res, err := leaderboard.NewService(st).GetCommunityStats(ctx, now, "today")
 	if err != nil {
 		t.Fatal(err)
 	}

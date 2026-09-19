@@ -51,25 +51,33 @@ describe('macOS DMG releases', () => {
     vi.stubGlobal('fetch', vi.fn((url) => respond(url === macosReleasesApi
       ? manifest([makeMacRelease('0.3.0'), makeMacRelease('0.2.0','x64')]) : manifest([makeRelease('0.1.0')]))));
     page();
+    fireEvent.click(await screen.findByRole('tab', { name: 'Apple Silicon' }));
     expect(await screen.findByRole('link', {name:'下载 Apple Silicon DMG'})).toHaveAttribute('href', `${downloadBase}/0.3.0/TokenDance-arm64.dmg`);
-    expect(screen.getByRole('link', {name:'下载 Intel DMG'})).toHaveAttribute('href', `${downloadBase}/0.2.0/TokenDance-x64.dmg`);
     expect(within(screen.getByRole('article', {name:'macOS Apple Silicon'})).getByText(/^v0.3.0/)).toBeInTheDocument();
     expect(screen.getByText('macOS 13.0+ · M 系列芯片')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Intel Mac' }));
+    expect(screen.getByRole('link', {name:'下载 Intel DMG'})).toHaveAttribute('href', `${downloadBase}/0.2.0/TokenDance-x64.dmg`);
     fireEvent.click(screen.getByRole('button', {name:'EN'}));
-    expect(screen.getByRole('link', {name:'Download Apple Silicon DMG'})).toBeInTheDocument();
+    expect(screen.getByRole('link', {name:'Download Intel DMG'})).toBeInTheDocument();
   });
   it('does not invent Mac download links before a package is published', async () => {
     vi.stubGlobal('fetch', vi.fn(url => url === macosReleasesApi ? Promise.resolve(new Response('', {status:404})) : respond(manifest([makeRelease('0.1.0')]))));
     page();
-    expect(await screen.findAllByText('安装包准备中')).toHaveLength(2);
+    fireEvent.click(await screen.findByRole('tab', { name: 'Apple Silicon' }));
+    expect(screen.getByText('安装包准备中')).toBeInTheDocument();
     expect(screen.queryByRole('link', {name:'下载 Apple Silicon DMG'})).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Intel Mac' }));
+    expect(screen.getByText('安装包准备中')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Windows' }));
     expect(screen.getAllByRole('link', {name:'下载 Windows 版'})).toHaveLength(1);
   });
   it('one invalid Mac architecture does not hide the valid one', async () => {
     vi.stubGlobal('fetch', vi.fn(url => respond(url === macosReleasesApi
       ? manifest([makeMacRelease('0.3.0'), makeMacRelease('0.3.0','x64',{dmg:null})]) : manifest([]))));
     page();
+    fireEvent.click(await screen.findByRole('tab', { name: 'Apple Silicon' }));
     expect(await screen.findByRole('link', {name:'下载 Apple Silicon DMG'})).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Intel Mac' }));
     expect(screen.queryByRole('link', {name:'下载 Intel DMG'})).not.toBeInTheDocument();
     expect(screen.getByRole('button', {name:'重新获取 macOS Intel'})).toBeInTheDocument();
   });
@@ -123,12 +131,13 @@ function page(path = '/download', basename?: string) {
 }
 
 describe('Downloads and docs', () => {
-  it('keeps the main page to three packages with verification details collapsed', async () => {
+  it('switches between three platform packages with verification details collapsed', async () => {
     vi.stubGlobal('fetch', vi.fn(url => respond(url === macosReleasesApi
       ? manifest([makeMacRelease('0.3.0'), makeMacRelease('0.3.0', 'x64')]) : manifest([makeRelease('0.2.0')]))));
     page();
     await screen.findByRole('link', { name: '下载 Windows 版' });
-    expect(screen.getAllByRole('article')).toHaveLength(3);
+    expect(screen.getAllByRole('tab')).toHaveLength(3);
+    expect(screen.getAllByRole('article')).toHaveLength(1);
     expect(screen.queryByRole('figure')).not.toBeInTheDocument();
     const checksums = screen.getByText('校验信息').closest('details');
     expect(checksums).not.toHaveAttribute('open');
@@ -145,11 +154,11 @@ describe('Downloads and docs', () => {
     expect(links).toHaveLength(1);
     for (const link of links) expect(link).toHaveAttribute('href', `${downloadBase}/0.1.10/TokenDance.exe`);
     expect(within(screen.getByRole('article', {name:'Windows x64'})).getByText(/^v0.1.10/)).toBeInTheDocument();
-    expect(screen.getAllByRole('heading', { name: 'macOS' })).toHaveLength(2);
+    expect(screen.getAllByRole('tab')).toHaveLength(3);
     expect(fetchMock).toHaveBeenCalledWith(releasesApi, expect.objectContaining({ credentials: 'omit' }));
     fireEvent.click(screen.getByRole('button', { name: 'EN' }));
     expect(screen.getAllByRole('link', { name: 'Download for Windows' })).toHaveLength(1);
-    expect(screen.getByText(/Your AI tool usage, right on your desktop/)).toBeInTheDocument();
+    expect(screen.getByText(/One small desktop companion/)).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
   it('shows retry on a failed manifest request, then recovers without exposing unverified package links', async () => {
@@ -173,7 +182,9 @@ describe('Downloads and docs', () => {
   it('rejects oversized metadata and times out stalled requests', async () => {
     vi.stubGlobal('fetch', vi.fn(() => respond({ padding: 'x'.repeat(2 * 1024 * 1024) })));
     const mounted = page();
-    expect(await screen.findAllByRole('alert')).toHaveLength(3);
+    expect(await screen.findAllByRole('alert')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('tab', { name: 'Apple Silicon' }));
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
     mounted.unmount();
     vi.useFakeTimers();
     vi.stubGlobal('fetch', vi.fn((_url, options) => new Promise((_resolve, reject) => {
@@ -181,11 +192,11 @@ describe('Downloads and docs', () => {
     })));
     page();
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-    expect(screen.getAllByRole('alert')).toHaveLength(3);
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
   });
   it('keeps docs and download navigation under the deployment subpath and supports language switching', async () => {
     page('/token-dance/docs/quickstart', '/token-dance');
-    expect(screen.getByRole('link', { name: '前往客户端下载' })).toHaveAttribute('href', '/token-dance/download');
+    expect(screen.getAllByRole('link', { name: '前往客户端下载' })[0]).toHaveAttribute('href', '/token-dance/download');
     const menu = screen.getByRole('navigation', { name: '文档导航' });
     fireEvent.click(within(menu).getByRole('link', { name: '数据与隐私' }));
     expect(screen.getByRole('heading', { name: '数据与隐私' })).toBeInTheDocument();

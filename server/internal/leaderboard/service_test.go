@@ -2,6 +2,7 @@ package leaderboard
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -104,7 +105,7 @@ func TestGetCommunityStatsServesPrecomputedRowsWithDeltas(t *testing.T) {
 		t.Fatalf("seed today: %v", err)
 	}
 
-	res, err := svc.GetCommunityStats(ctx, now)
+	res, err := svc.GetCommunityStats(ctx, now, "today")
 	if err != nil {
 		t.Fatalf("community stats: %v", err)
 	}
@@ -141,7 +142,7 @@ func TestGetCommunityStatsOmitsMixedCurrencyScalar(t *testing.T) {
 		t.Fatalf("seed today: %v", err)
 	}
 
-	res, err := svc.GetCommunityStats(ctx, now)
+	res, err := svc.GetCommunityStats(ctx, now, "today")
 	if err != nil {
 		t.Fatalf("community stats: %v", err)
 	}
@@ -159,7 +160,7 @@ func TestGetCommunityStatsOmitsMixedCurrencyScalar(t *testing.T) {
 func TestGetCommunityStatsWithoutPrecomputedRowsStaysEmpty(t *testing.T) {
 	st := memory.NewMemoryStore()
 	svc := NewService(st)
-	res, err := svc.GetCommunityStats(context.Background(), time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC))
+	res, err := svc.GetCommunityStats(context.Background(), time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC), "today")
 	if err != nil {
 		t.Fatalf("community stats: %v", err)
 	}
@@ -168,5 +169,61 @@ func TestGetCommunityStatsWithoutPrecomputedRowsStaysEmpty(t *testing.T) {
 	}
 	if res.MetricDate != "2026-09-09" || res.Timezone != domain.DayTZName {
 		t.Fatalf("unexpected envelope: %+v", res)
+	}
+}
+
+func TestGetCommunityStatsRejectsUnknownWindow(t *testing.T) {
+	st := memory.NewMemoryStore()
+	_, err := NewService(st).GetCommunityStats(context.Background(), time.Now(), "quarter")
+	var appErr *domain.AppError
+	if !errors.As(err, &appErr) || appErr.HTTPStatus != 400 {
+		t.Fatalf("expected invalid-window 400, got %v", err)
+	}
+}
+
+func TestGetCommunityStatsAggregatesSelectedWindowAndPreviousPeriod(t *testing.T) {
+	ctx := context.Background()
+	st := memory.NewMemoryStore()
+	svc := NewService(st)
+	now := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	rows := []store.CommunityDailyTotals{
+		{MetricDate: "2026-08-28", TokensTotal: 40, Developers: 2, CodeLines: 10, Interactions: 4, Costs: []store.CommunityCost{{Currency: "USD", Amount: 1}}},
+		{MetricDate: "2026-09-02", TokensTotal: 60, Developers: 3, CodeLines: 20, Interactions: 6, Costs: []store.CommunityCost{{Currency: "USD", Amount: 2}}},
+		{MetricDate: "2026-09-03", TokensTotal: 80, Developers: 4, CodeLines: 30, Interactions: 8, Costs: []store.CommunityCost{{Currency: "USD", Amount: 3}}},
+		{MetricDate: "2026-09-09", TokensTotal: 120, Developers: 5, CodeLines: 70, Interactions: 12, Costs: []store.CommunityCost{{Currency: "USD", Amount: 6}}},
+	}
+	for _, row := range rows {
+		if err := st.CommunityStats().UpsertCommunityDailyStats(ctx, row); err != nil {
+			t.Fatalf("seed community row: %v", err)
+		}
+	}
+	if err := st.CommunityStats().ReplaceCommunityAgentDay(ctx, "2026-09-03", []store.CommunityAgentTokens{{AgentID: "codex", TokensTotal: 50}}); err != nil {
+		t.Fatalf("seed harness: %v", err)
+	}
+	if err := st.CommunityStats().ReplaceCommunityAgentDay(ctx, "2026-09-09", []store.CommunityAgentTokens{{AgentID: "codex", TokensTotal: 70}, {AgentID: "cursor", TokensTotal: 30}}); err != nil {
+		t.Fatalf("seed harness: %v", err)
+	}
+
+	res, err := svc.GetCommunityStats(ctx, now, "7d")
+	if err != nil {
+		t.Fatalf("community stats: %v", err)
+	}
+	if res.Window != "7d" || res.FromDate != "2026-09-03" || res.ToDate != "2026-09-09" {
+		t.Fatalf("unexpected range: %+v", res)
+	}
+	if res.Tokens == nil || *res.Tokens != "200" || res.Developers == nil || *res.Developers != 5 {
+		t.Fatalf("window totals missing: %+v", res)
+	}
+	if res.CodeLines == nil || *res.CodeLines != "100" || res.Interactions == nil || *res.Interactions != "20" {
+		t.Fatalf("window activity missing: %+v", res)
+	}
+	if res.CostAmount == nil || *res.CostAmount != 9 {
+		t.Fatalf("window cost missing: %+v", res)
+	}
+	if res.Deltas == nil || res.Deltas.Tokens == nil || *res.Deltas.Tokens != 100 || res.Deltas.Developers != nil {
+		t.Fatalf("unexpected period deltas: %+v", res.Deltas)
+	}
+	if len(res.Harnesses) != 2 || res.Harnesses[0].AgentID != "codex" || res.Harnesses[0].Tokens == nil || *res.Harnesses[0].Tokens != "120" {
+		t.Fatalf("unexpected range harnesses: %+v", res.Harnesses)
 	}
 }

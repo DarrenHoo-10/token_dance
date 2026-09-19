@@ -1639,7 +1639,11 @@ func (h *Handlers) GetLeaderboards(w http.ResponseWriter, r *http.Request) {
 // aggregation, so a cold day yields omitted fields.
 func (h *Handlers) GetLeaderboardsStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
-	res, err := h.leaderboard.GetCommunityStats(r.Context(), time.Now())
+	window := r.URL.Query().Get("window")
+	if window == "" {
+		window = "today"
+	}
+	res, err := h.leaderboard.GetCommunityStats(r.Context(), time.Now(), window)
 	if err != nil {
 		WriteError(w, r, err)
 		return

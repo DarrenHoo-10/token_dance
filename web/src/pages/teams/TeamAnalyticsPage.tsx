@@ -60,6 +60,7 @@ export const TeamAnalyticsPage: React.FC = () => {
 
   const filterBar = (
     <div className="team-filter-toolbar">
+      <TeamDateRangeBar timezone={scope.team.timezone} />
       <div className="team-filter-selects">
         <select className="form-input" aria-label={t('dashboard.agentFilter')} value={agent || 'all'} onChange={(e) => setFilter('agent', e.target.value)}>
           <option value="all">{t('dashboard.allAgents')}</option>
@@ -70,7 +71,6 @@ export const TeamAnalyticsPage: React.FC = () => {
           {filters.models.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
         </select>
       </div>
-      <TeamDateRangeBar timezone={scope.team.timezone} />
     </div>
   );
 

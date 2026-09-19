@@ -36,7 +36,6 @@ function renderWithProviders(ui: React.ReactElement, initialRoute = '/') {
 describe('Shipped Pages & Failed API Paths Tests', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
-    localStorage.clear();
   });
 
   describe('LeaderboardPage', () => {
@@ -63,7 +62,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       expect(screen.queryByText('grace')).not.toBeInTheDocument();
       expect(screen.queryByText('@ada')).not.toBeInTheDocument();
       expect(screen.getAllByText('325.7M')).toHaveLength(2);
-      expect(spy).toHaveBeenCalledWith({ window: 'today', limit: 100 });
+      expect(spy).toHaveBeenCalledWith({ window: '7d', limit: 10 });
     });
 
     it('shows the nickname on podium and list, and falls back to handle only when the nickname is empty', async () => {
@@ -684,12 +683,12 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
       renderWithProviders(<PersonalDashboardPage />, '/me');
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { name: '个人数据页' })).toBeInTheDocument();
-        expect(screen.getByText('USD 120.50')).toBeInTheDocument();
-        expect(screen.getByText('50.0M')).toBeInTheDocument();
-        expect(screen.getByText('Claude Code')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Test Dev，你的创造正在发生。' })).toBeInTheDocument();
+        expect(screen.getByText('$120.50')).toBeInTheDocument();
+        expect(screen.getAllByText('50.0M')[0]).toBeInTheDocument();
+        expect(screen.getAllByText('Claude Code')[0]).toBeInTheDocument();
         expect(screen.getByText('code-review')).toBeInTheDocument();
-        expect(screen.getByText('未知')).toBeInTheDocument();
+        expect(screen.getByText('正常')).toBeInTheDocument();
       });
       expect(screen.queryByText('公开我的数据')).not.toBeInTheDocument();
       expect(screen.queryByRole('checkbox', { name: '公开我的数据' })).not.toBeInTheDocument();

@@ -2286,6 +2286,33 @@ func (m *MemoryStore) GetCommunityDailyStats(ctx context.Context, date string) (
 	return nil, nil
 }
 
+func (m *MemoryStore) ListCommunityDailyStats(ctx context.Context, fromDate, toDate string) ([]store.CommunityDailyTotals, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var result []store.CommunityDailyTotals
+	for date, totals := range m.communityDailyStats {
+		if date >= fromDate && date <= toDate {
+			result = append(result, totals)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].MetricDate < result[j].MetricDate })
+	return result, nil
+}
+
+// The in-memory store has daily counts rather than user identities. Its peak
+// daily count is a deterministic approximation for service tests; MySQL reads
+// the exact precomputed window score population.
+func (m *MemoryStore) GetCommunityActiveDevelopers(ctx context.Context, _, _, fromDate, toDate string) (uint64, error) {
+	rows, _ := m.ListCommunityDailyStats(ctx, fromDate, toDate)
+	var maximum uint64
+	for _, row := range rows {
+		if row.Developers > maximum {
+			maximum = row.Developers
+		}
+	}
+	return maximum, nil
+}
+
 func (m *MemoryStore) ReplaceCommunityAgentDay(ctx context.Context, date string, rows []store.CommunityAgentTokens) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -2301,13 +2328,21 @@ func (m *MemoryStore) ReplaceCommunityAgentDay(ctx context.Context, date string,
 }
 
 func (m *MemoryStore) GetCommunityHarnessShares(ctx context.Context, date string, limit int) ([]store.CommunityHarness, error) {
+	return m.GetCommunityHarnessSharesRange(ctx, date, date, limit)
+}
+
+func (m *MemoryStore) GetCommunityHarnessSharesRange(ctx context.Context, fromDate, toDate string, limit int) ([]store.CommunityHarness, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	var rows []store.CommunityAgentTokens
+	byAgent := make(map[string]uint64)
 	for key, row := range m.communityAgentDailyStats {
-		if key.date == date {
-			rows = append(rows, store.CommunityAgentTokens{AgentID: key.agentID, TokensTotal: row.TokensTotal})
+		if key.date >= fromDate && key.date <= toDate {
+			byAgent[key.agentID] += row.TokensTotal
 		}
+	}
+	rows := make([]store.CommunityAgentTokens, 0, len(byAgent))
+	for agentID, tokens := range byAgent {
+		rows = append(rows, store.CommunityAgentTokens{AgentID: agentID, TokensTotal: tokens})
 	}
 	sort.Slice(rows, func(i, j int) bool {
 		if rows[i].TokensTotal != rows[j].TokensTotal {

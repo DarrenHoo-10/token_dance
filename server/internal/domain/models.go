@@ -703,6 +703,9 @@ type CommunityCostDTO struct {
 type CommunityStatsResponse struct {
 	MetricDate   string                  `json:"metricDate"`
 	Timezone     string                  `json:"timezone"`
+	Window       string                  `json:"window"`
+	FromDate     string                  `json:"fromDate"`
+	ToDate       string                  `json:"toDate"`
 	Tokens       *string                 `json:"tokens,omitempty"`
 	Developers   *uint64                 `json:"developers,omitempty"`
 	CodeLines    *string                 `json:"codeLines,omitempty"`

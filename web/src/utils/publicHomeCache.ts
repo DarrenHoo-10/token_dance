@@ -1,6 +1,6 @@
 import type { CommunityStatsResponse, LeaderboardEntry } from '@/types/api';
 
-// Five bounded public snapshots (four periods + community). Never store /me data.
+// Bounded public snapshots for each board and community period. Never store /me data.
 const prefix = `tokendance:public-home:v1:${import.meta.env.BASE_URL}:`;
 const maxBytes = 512 * 1024;
 export const publicHomeDay = () => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);

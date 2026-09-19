@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { BarChart3, Download, Flame, RefreshCw, ShieldCheck, Sparkles, Trophy } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { useNotification } from '@/context/NotificationContext';
@@ -13,7 +14,7 @@ import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
 import { SkillRanking } from '@/components/analytics/SkillRanking';
 import { SyncStatusCard } from '@/components/analytics/SyncStatusCard';
 import { Button } from '@/components/common/Button';
-import { Badge } from '@/components/common/Badge';
+import { UserAvatar } from '@/components/common/UserAvatar';
 import { api, ApiError } from '@/api/client';
 import type {
   PersonalSummary,
@@ -26,7 +27,7 @@ import type {
 
 export const PersonalDashboardPage: React.FC = () => {
   const { user, authenticated, loading: authLoading } = useAuth();
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const { showToast } = useNotification();
   const navigate = useNavigate();
 
@@ -126,189 +127,80 @@ export const PersonalDashboardPage: React.FC = () => {
   const displayFilters: FilterOptionsResponse = filterOptions;
   const syncStatus = displaySummary.sync.status || (displaySummary.sync.lastCommittedAt ? 'healthy' : 'unknown');
 
+  const zh = locale === 'zh-CN';
+  const name = user?.displayName || user?.handle || (zh ? '开发者' : 'Builder');
+
   return (
-    <div className="personal-dashboard">
-      {/* Header */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-end',
-          marginBottom: 24,
-          flexWrap: 'wrap',
-          gap: 16,
-        }}
-      >
-        <div>
-          <p className="eyebrow">{t('nav.tokenBoard')}</p>
-          <h1>{t('publicProfile.headline')}</h1>
+    <div className="personal-dashboard personal-analytics-page">
+      <section className="personal-analytics-shell">
+        <div className="personal-kicker"><BarChart3 size={18} />{zh ? '个人数据' : 'My analytics'}</div>
+        <div className="personal-analytics-heading">
+          <div>
+            <h1>{zh ? `${name}，你的创造正在发生。` : `${name}, your ideas are taking shape.`}</h1>
+            <p>{zh ? '从每一次协作，看见你的投入与创造。' : 'See the effort and creativity behind every collaboration.'}</p>
+          </div>
+          <UserAvatar url={user?.avatarUrl} name={name} alt={name} />
         </div>
 
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          {/* Time range segmented control */}
+        <div className="personal-analytics-toolbar">
           <div className="segmented-control" role="tablist" aria-label={t('dashboard.timeRangeSelector')}>
             {[
               { key: 'today', label: t('common.today') },
               { key: '7d', label: t('common.days7') },
               { key: '30d', label: t('common.days30') },
               { key: 'all', label: t('common.allTime') },
-            ].map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                role="tab"
-                aria-selected={range === item.key}
-                className={`segmented-item ${range === item.key ? 'active' : ''}`}
-                onClick={() => setRange(item.key)}
-              >
-                {item.label}
-              </button>
-            ))}
+            ].map((item) => <button key={item.key} type="button" role="tab" aria-selected={range === item.key} className={`segmented-item ${range === item.key ? 'active' : ''}`} onClick={() => setRange(item.key)}>{item.label}</button>)}
           </div>
-
-          <Button
-            variant="outline"
-            onClick={() => {
-              navigate('/settings/exports');
-              showToast(t('settings.exportTitle'), 'info');
-            }}
-          >
-            {t('dashboard.exportAction')}
-          </Button>
+          <Button variant="outline" onClick={() => { navigate('/settings/exports'); showToast(t('settings.exportTitle'), 'info'); }}><Download size={15} />{t('dashboard.exportAction')}</Button>
         </div>
-      </div>
 
-      {/* Ten Core Metrics Grid */}
-      <MetricGrid metrics={displaySummary.metrics} />
+        <MetricGrid metrics={displaySummary.metrics} />
 
-      {/* Middle Grid: Token Trend + Agent Breakdown */}
-      <div className="grid-2" style={{ marginBottom: 20 }}>
-        {/* Token Trend Chart Panel */}
-        <div className="panel">
-          <div className="panel-header">
-            <div>
-              <h2>{t('dashboard.tokenTrends')}</h2>
-            </div>
+        <div className="personal-analytics-context">
+          <span><Trophy size={14} />{zh ? '今日排名' : 'Today’s rank'} <b>{displaySummary.ranking.rank ? `#${displaySummary.ranking.rank}` : '—'}</b>{displaySummary.ranking.delta != null && displaySummary.ranking.delta !== 0 && <em>{displaySummary.ranking.delta > 0 ? '↗' : '↘'} {Math.abs(displaySummary.ranking.delta)}</em>}</span>
+          <span><Flame size={14} />{zh ? '连续活跃' : 'Day streak'} <b>{displayStreak} {zh ? '天' : 'days'}</b></span>
+          <span><ShieldCheck size={14} />{displaySummary.sync.lastCommittedAt ? (zh ? '已同步至网站' : 'Synced to website') : (zh ? '等待首次同步' : 'Waiting for first sync')}</span>
+          <span className="personal-context-time">{displaySummary.range.to || '—'} · UTC+8</span>
+        </div>
 
-            <div style={{ display: 'flex', gap: 8 }}>
-              {/* Agent Filter */}
-              <select
-                aria-label={t('dashboard.agentFilter')}
-                value={selectedAgent}
-                onChange={(e) => setSelectedAgent(e.target.value)}
-                className="form-input"
-                style={{ height: 32, fontSize: 11, padding: '0 8px', cursor: 'pointer' }}
-              >
+        <div className="personal-analytics-middle">
+          <section className="personal-analytics-section personal-trend-section">
+            <div className="personal-section-heading"><div><h2>{zh ? 'Token 用量趋势' : 'Token usage trend'}</h2><p>{zh ? '所选周期内的创作节奏' : 'Your creative rhythm in this period'}</p></div><span><i />{zh ? '已同步用量' : 'Synced usage'}</span></div>
+            <div className="personal-filter-row">
+              <select aria-label={t('dashboard.agentFilter')} value={selectedAgent} onChange={(e) => setSelectedAgent(e.target.value)} className="form-input">
                 <option value="all">{t('dashboard.allAgents')}</option>
-                {displayFilters.agents.map((a) => {
-                  const key = typeof a === 'string' ? a : a.id;
-                  const label = typeof a === 'string' ? a : a.name;
-                  return (
-                    <option key={key} value={key}>
-                      {label}
-                    </option>
-                  );
-                })}
+                {displayFilters.agents.map((a) => { const key = typeof a === 'string' ? a : a.id; const label = typeof a === 'string' ? a : a.name; return <option key={key} value={key}>{label}</option>; })}
               </select>
-
-              {/* Model Filter */}
-              <select
-                aria-label={t('dashboard.modelFilter')}
-                value={selectedModel}
-                onChange={(e) => setSelectedModel(e.target.value)}
-                className="form-input"
-                style={{ height: 32, fontSize: 11, padding: '0 8px', cursor: 'pointer' }}
-              >
+              <select aria-label={t('dashboard.modelFilter')} value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className="form-input">
                 <option value="all">{t('dashboard.allModels')}</option>
-                {displayFilters.models.map((m) => {
-                  const key = typeof m === 'string' ? m : m.id;
-                  const label = typeof m === 'string' ? m : m.name;
-                  return (
-                    <option key={key} value={key}>
-                      {label}
-                    </option>
-                  );
-                })}
+                {displayFilters.models.map((m) => { const key = typeof m === 'string' ? m : m.id; const label = typeof m === 'string' ? m : m.name; return <option key={key} value={key}>{label}</option>; })}
               </select>
+              <small>{zh ? '仅筛选趋势图' : 'Chart filters only'}</small>
             </div>
-          </div>
+            <TokenTrendChart trends={displayTrends} />
+          </section>
 
-          <TokenTrendChart trends={displayTrends} />
+          <section className="personal-analytics-section personal-agent-section">
+            <div className="personal-section-heading"><div><h2>{t('dashboard.agentBreakdown')}</h2><p>{t('dashboard.agentBreakdownSub')}</p></div><span className="personal-source-count">{displayAgents.length} {t('dashboard.sourcesCount')}</span></div>
+            <AgentBreakdown items={displayAgents} variant="donut" />
+          </section>
         </div>
 
-        {/* Agent Breakdown Panel */}
-        <div className="panel">
-          <div className="panel-header">
-            <div>
-              <h2>{t('dashboard.agentBreakdown')}</h2>
-              <p className="text-muted" style={{ fontSize: 12 }}>
-                {t('dashboard.agentBreakdownSub')}
-              </p>
-            </div>
-            <Badge variant="lime">
-              {displayAgents.length} {t('dashboard.sourcesCount')}
-            </Badge>
+        <div className="personal-analytics-lower">
+          <section className="personal-analytics-section personal-calendar-section"><ActivityCalendar days={displayCalendar} streakDays={displayStreak} /></section>
+          <div className="personal-lower-stack">
+            <section className="personal-analytics-section personal-skills-section">
+              <div className="personal-section-heading"><div><h2><Sparkles size={17} />{t('dashboard.skillRanking')}</h2><p>{zh ? '你常用的创作能力' : 'Skills behind your work'}</p></div><span className="personal-source-count">{t('dashboard.topSkills')}</span></div>
+              <SkillRanking skills={displaySkills} />
+            </section>
+            <section className="personal-analytics-section personal-sync-section">
+              <div className="personal-section-heading"><h2><RefreshCw size={16} />{t('dashboard.syncStatus')}</h2><Button variant="ghost" size="sm" onClick={() => navigate('/settings/devices')}>{t('common.manage')} →</Button></div>
+              <SyncStatusCard lastCommittedAt={displaySummary.sync.lastCommittedAt} status={syncStatus} />
+            </section>
           </div>
-
-          <AgentBreakdown items={displayAgents} />
         </div>
-      </div>
-
-      {/* Lower Grid: Heatmap + Skill Ranking + Sync Status */}
-      <div className="grid-3">
-        {/* Activity Heatmap Calendar */}
-        <div className="panel">
-          <div className="panel-header">
-            <div>
-              <h2>{t('dashboard.activityCalendar')}</h2>
-              <p className="text-muted" style={{ fontSize: 12 }}>
-                {t('dashboard.activityCalendarSub')}
-              </p>
-            </div>
-            {displayStreak > 0 && (
-              <Badge variant="good">
-                ● {displayStreak} {t('dashboard.streakLabel')}
-              </Badge>
-            )}
-          </div>
-
-          <ActivityCalendar days={displayCalendar} streakDays={displayStreak} />
-        </div>
-
-        {/* Skill Ranking */}
-        <div className="panel">
-          <div className="panel-header">
-            <div>
-              <h2>{t('dashboard.skillRanking')}</h2>
-            </div>
-            <Badge variant="lime">{t('dashboard.topSkills')}</Badge>
-          </div>
-
-          <SkillRanking skills={displaySkills} />
-        </div>
-
-        {/* Sync Status */}
-        <div className="panel">
-          <div className="panel-header">
-            <div>
-              <h2>{t('dashboard.syncStatus')}</h2>
-            </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => navigate('/settings/devices')}
-              style={{ fontSize: 11 }}
-            >
-              {t('common.manage')} →
-            </Button>
-          </div>
-
-          <SyncStatusCard
-            lastCommittedAt={displaySummary.sync.lastCommittedAt}
-            status={syncStatus}
-          />
-        </div>
-      </div>
+        <div className="personal-analytics-foot"><span>{zh ? '未知或不支持的指标不会按 0 计入。' : 'Unknown metrics are not counted as zero.'}</span><button type="button" onClick={() => navigate('/settings/privacy')}>{zh ? '管理公开设置 ↗' : 'Manage sharing ↗'}</button></div>
+      </section>
     </div>
   );
 };

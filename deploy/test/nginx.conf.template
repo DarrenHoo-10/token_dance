@@ -44,7 +44,14 @@ server {
         add_header Cache-Control "no-store" always;
     }
     location = /token-dance-test/releases/stable.json {
-        return 302 https://www.nexorai.com.cn/token-dance/releases/stable.json;
+        alias /var/www/token-dance-releases/stable.json;
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+    }
+    location = /token-dance-test/releases/macos.json {
+        alias /var/www/token-dance-releases/macos.json;
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
     }
     location ^~ /token-dance-test/assets/ {
         root /var/www;

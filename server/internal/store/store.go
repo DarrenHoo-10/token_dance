@@ -157,8 +157,11 @@ type CommunityStatsStore interface {
 	SumCommunityDay(ctx context.Context, date string) (CommunityDailyTotals, error)
 	UpsertCommunityDailyStats(ctx context.Context, totals CommunityDailyTotals) error
 	GetCommunityDailyStats(ctx context.Context, date string) (*CommunityDailyTotals, error)
+	ListCommunityDailyStats(ctx context.Context, fromDate, toDate string) ([]CommunityDailyTotals, error)
+	GetCommunityActiveDevelopers(ctx context.Context, window, generation, fromDate, toDate string) (uint64, error)
 	ReplaceCommunityAgentDay(ctx context.Context, date string, rows []CommunityAgentTokens) error
 	GetCommunityHarnessShares(ctx context.Context, date string, limit int) ([]CommunityHarness, error)
+	GetCommunityHarnessSharesRange(ctx context.Context, fromDate, toDate string, limit int) ([]CommunityHarness, error)
 }
 
 // CommunityAgentTokens is one harness's token total inside a metric day.

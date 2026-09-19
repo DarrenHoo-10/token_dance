@@ -1,28 +1,39 @@
-import { LeaderboardTable } from '@/components/analytics/LeaderboardTable';
+import { HomeLeaderboard } from '@/components/analytics/HomeLeaderboard';
 import { publicLeaderboardName } from '@/components/analytics/leaderboardName';
-import { RankChange } from '@/components/analytics/RankChange';
 import { HarnessMark } from '@/components/common/HarnessMark';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { resolveHarnessBrand } from '@/components/common/harnessBrand';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  BarChart3, ChevronLeft, ChevronRight, CircleHelp,
-  Flame, TrendingDown, TrendingUp,
+  ArrowRight, ArrowUpRight, BarChart3, Code2, Crown, Download, Monitor, UsersRound, Wallet, Zap,
+  Flame, HelpCircle, ShieldCheck, TrendingDown, TrendingUp,
 } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from '@/context/AuthContext';
-import { useVisibleRefresh } from '@/hooks/useVisibleRefresh';
 import { usePublicHomeResource } from '@/hooks/usePublicHomeResource';
-import { readHomeBoard, writeHomeBoard, readHomeCommunity, writeHomeCommunity } from '@/utils/publicHomeCache';
+import { useVisibleRefresh } from '@/hooks/useVisibleRefresh';
+import { readHomeBoard, readHomeCommunity, writeHomeBoard, writeHomeCommunity } from '@/utils/publicHomeCache';
 import { api } from '@/api/client';
-import type { LeaderboardEntry, PersonalSummary, CalendarDay } from '@/types/api';
+import type { LeaderboardEntry, LeaderboardResponse, PersonalSummary, CalendarDay, CommunityStatsResponse } from '@/types/api';
 import { formatCommunityCost } from '@/utils/cost';
+import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
+import { calendarPeriodChange } from '@/components/analytics/calendarPeriodChange';
+import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
 
 type Range = 'Today' | '7 Days' | '30 Days' | 'All Time';
 
 const ranges: Range[] = ['Today', '7 Days', '30 Days', 'All Time'];
-const windowByRange: Record<Range, string> = { Today: 'today', '7 Days': '7d', '30 Days': '30d', 'All Time': 'all' };
+const windowByRange: Record<Range, 'today' | '7d' | '30d' | 'all'> = { Today: 'today', '7 Days': '7d', '30 Days': '30d', 'All Time': 'all' };
+
+function readHomeBoardView(key: string): Partial<LeaderboardResponse> | null {
+  const entries = readHomeBoard(key);
+  return entries ? { entries, totalParticipants: entries.length } : null;
+}
+
+function writeHomeBoardView(key: string, board: Partial<LeaderboardResponse>) {
+  writeHomeBoard(key, board.entries ?? []);
+}
 
 function formatTokens(raw: string | null | undefined): string {
   if (raw == null || raw === '') return '—';
@@ -35,11 +46,6 @@ function formatTokens(raw: string | null | undefined): string {
   return String(Math.round(value));
 }
 
-function beijingWeekdayMonday0(date: string): number {
-  const [year, month, day] = date.split('-').map(Number);
-  return (new Date(Date.UTC(year, month - 1, day)).getUTCDay() + 6) % 7;
-}
-
 function formatPercentile(value: number | string): string {
   const n = Number(value);
   if (!Number.isFinite(n)) return '—';
@@ -47,21 +53,19 @@ function formatPercentile(value: number | string): string {
 }
 
 function DeltaChip({ value, suffix }: { value?: number | null; suffix?: string }) {
-  if (value == null) return null;
+  if (value == null || !Number.isFinite(value)) return null;
   const positive = value >= 0;
   return (
-    <span className={`hero-delta ${positive ? 'up' : 'down'}`}>
-      {positive ? '↑' : '↓'} {positive ? '+' : '−'}{Math.abs(value).toFixed(1)}%{suffix ? ` ${suffix}` : ''}
+    <span className={`hero-delta ${value === 0 ? 'flat' : positive ? 'up' : 'down'}`}>
+      {positive ? '↑' : '↓'} {positive ? '+' : '−'}{Math.abs(value).toFixed(1)}%{suffix && <span className="sky-delta-suffix"> {suffix}</span>}
     </span>
   );
 }
 
-function HeroMiniCard({ label, value, delta }: { label: string; value: string; delta?: number | null }) {
+function HeroMiniCard({ label, value, delta, icon }: { label: string; value: string; delta?: number | null; icon: React.ReactNode }) {
   return (
     <div className="hero-mini-card">
-      <span className="hero-mini-label">{label}</span>
-      <strong className="hero-mini-value">{value ?? '—'}</strong>
-      <DeltaChip value={delta} />
+      <span className="sky-metric-icon" aria-hidden="true">{icon}</span><div><span className="hero-mini-label">{label}</span><div className="sky-metric-value"><strong className="hero-mini-value">{value ?? '—'}</strong><DeltaChip value={delta} /></div></div>
     </div>
   );
 }
@@ -79,14 +83,14 @@ function PersonAvatar({ entry, className = '' }: { entry: LeaderboardEntry; clas
 
 function PodiumCard({ entry }: { entry: LeaderboardEntry }) {
   const winner = entry.rankNo === 1;
-  return <article className={`podium-card ${winner ? 'winner' : ''}`}>
+  return <Link to={`/u/${encodeURIComponent(entry.handle)}`} className={`podium-card ${winner ? 'winner' : ''}`}>
     <div className={`rank-medal rank-${entry.rankNo}`}>{entry.rankNo}</div>
-    <div className="podium-avatar-wrap"><PersonAvatar entry={entry} className="podium-avatar" />{winner && <span className="crown">♛</span>}</div>
+    <div className="podium-avatar-wrap"><PersonAvatar entry={entry} className="podium-avatar" />{winner && <Crown className="crown" size={28} aria-hidden="true" />}</div>
     <div className="podium-id">
       <strong>{publicLeaderboardName(entry)}</strong>
     </div>
-    <div className="podium-score-row"><span>{formatTokens(entry.metricValue)}</span><small><RankChange value={entry.rankDelta} isNew={entry.isNew} /></small></div>
-  </article>;
+    <div className="podium-score-row"><span>{formatTokens(entry.metricValue)}</span></div><small className="sky-podium-unit">Token</small>
+  </Link>;
 }
 
 export const LeaderboardPage: React.FC = () => {
@@ -95,23 +99,27 @@ export const LeaderboardPage: React.FC = () => {
   const { user, authenticated } = useAuth();
   const zh = locale === 'zh-CN';
   const accountKey = user?.userId ?? user?.handle ?? '';
-  const [range, setRange] = useState<Range>('Today');
+  const [range, setRange] = useState<Range>('7 Days');
   const [sharing, setSharing] = useState<{ publicProfileEnabled: boolean; showTokenTotal: boolean } | null>(null);
 
   const [summary, setSummary] = useState<PersonalSummary | null>(null);
   const [allTimeSummary, setAllTimeSummary] = useState<PersonalSummary | null>(null);
   const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
   const [streak, setStreak] = useState(0);
+  const [trendRange, setTrendRange] = useState('30d');
   const [refreshTick, setRefreshTick] = useState(0);
-  const fetchLeaderboard = useCallback(async () =>
-    ((await api.getLeaderboard({ window: windowByRange[range], limit: 100 })).entries || []).slice(0, 100), [range]);
-  const board = usePublicHomeResource(`board:${windowByRange[range]}`, readHomeBoard, writeHomeBoard, fetchLeaderboard, refreshTick);
-  const loadCommunity = useCallback(() => api.getCommunityStats(), []);
-  const communityResource = usePublicHomeResource('community', readHomeCommunity, writeHomeCommunity, loadCommunity, refreshTick);
-  const entries = board.data ?? [];
+  const fetchLeaderboard = useCallback(
+    () => api.getLeaderboardView(authenticated, { window: windowByRange[range], limit: 10 }),
+    [accountKey, authenticated, range],
+  );
+  const board = usePublicHomeResource(`board:${windowByRange[range]}`, readHomeBoardView, writeHomeBoardView, fetchLeaderboard, refreshTick);
+  const boardSummary = board.data ?? {};
+  const entries = boardSummary.entries ?? [];
   const loading = board.data === null && !board.failed;
   const loadError = board.failed;
-  const community = communityResource.data;
+  const loadCommunity = useCallback(() => api.getCommunityStats(windowByRange[range]), [range]);
+  const communityResource = usePublicHomeResource(`community:${windowByRange[range]}`, readHomeCommunity, writeHomeCommunity, loadCommunity, refreshTick);
+  const community: CommunityStatsResponse | null = communityResource.data;
 
   const loadPersonal = useCallback(() => {
     if (!authenticated) {
@@ -152,94 +160,31 @@ export const LeaderboardPage: React.FC = () => {
   const todayTokens = summary?.ranking?.entry?.metricValue ?? summary?.metrics?.totalTokens?.value ?? null;
   const allTimeTokens = allTimeSummary?.metrics.totalTokens.supported
     ? allTimeSummary.metrics.totalTokens.value : null;
-  const monthLabel = calendarDays.length
-    ? new Date(`${calendarDays[calendarDays.length - 1].date}T00:00:00+08:00`).toLocaleDateString(zh ? 'zh-CN' : 'en-US', { month: 'short', year: 'numeric', timeZone: 'Asia/Shanghai' })
-    : '';
-  const heatmapLead = calendarDays.length ? beijingWeekdayMonday0(calendarDays[0].date) : 0;
+  const orderedDays = [...calendarDays].sort((a, b) => a.date.localeCompare(b.date));
+  const trendDays = orderedDays.slice(trendRange === '7d' ? -7 : -30);
+  const trendChange = calendarPeriodChange(orderedDays, trendRange === '7d' ? 7 : 30);
+	const rangeLabel = zh ? ({ Today: '今天', '7 Days': '近 7 天', '30 Days': '近 30 天', 'All Time': '全部时间' }[range]) : range;
+	const heroTokenLabel = zh ? ({ Today: '今日 Token', '7 Days': '近 7 天 Token', '30 Days': '近 30 天 Token', 'All Time': '累计 Token' }[range]) : ({ Today: 'Today’s tokens', '7 Days': 'Tokens · 7 days', '30 Days': 'Tokens · 30 days', 'All Time': 'All-time tokens' }[range]);
+	const comparisonLabel = zh ? ({ Today: '较昨日', '7 Days': '较上 7 天', '30 Days': '较上 30 天', 'All Time': undefined }[range]) : ({ Today: 'vs yesterday', '7 Days': 'vs prior 7 days', '30 Days': 'vs prior 30 days', 'All Time': undefined }[range]);
+  const connectionError = <div className={entries.length ? 'leaderboard-refresh-status' : 'leaderboard-empty'} role="alert"><p>{zh ? '连接异常' : 'Connection error'}</p><button className="btn btn-outline" type="button" onClick={() => setRefreshTick(tick => tick + 1)}>{zh ? '重试' : 'Retry'}</button></div>;
+  const emptyBoard = loading && !entries.length && !loadError ? <p className="leaderboard-empty">{zh ? '加载中…' : 'Loading…'}</p> : loadError ? connectionError : !entries.length ? <p className="leaderboard-empty">{zh ? '暂无账号' : 'No accounts yet'}</p> : null;
 
-  const connectionError = (
-    <div className={entries.length ? 'leaderboard-refresh-status' : 'leaderboard-empty'} role="alert">
-      <p>{zh ? '连接异常' : 'Connection error'}</p>
-      <button className="btn btn-outline" type="button" onClick={() => setRefreshTick((tick) => tick + 1)}>{zh ? '重试' : 'Retry'}</button>
-    </div>
-  );
-
-  const renderLeaderboardBody = () => {
-    if (loading && entries.length === 0 && !loadError) {
-      return <p className="leaderboard-empty">{zh ? '加载中…' : 'Loading…'}</p>;
-    }
-    if (loadError && entries.length === 0) return connectionError;
-    if (entries.length === 0) {
-      return <p className="leaderboard-empty">{zh ? '暂无账号' : 'No accounts yet'}</p>;
-    }
-    return <>
-      {loadError && connectionError}
-      {podium.length > 0 && <div className="podium-grid">{podium.map((entry) => <PodiumCard key={entry.rankNo} entry={entry} />)}</div>}
-      <div className="leaderboard-list-heading"><h2>{zh ? '排行榜' : 'Rankings'}</h2><Link to={`/leaderboard/list?window=${windowByRange[range]}`}>{zh ? '查看完整列表' : 'View full list'} →</Link></div>
-      <LeaderboardTable entries={entries} />
-    </>;
-  };
-
-  return <div className="token-home"><div className="home-dashboard">
-    <section className="main-column" aria-label={zh ? 'Token 排行榜' : 'Token leaderboard'}>
-      <section className="hero-block">
-        <div className="hero-copy">
-          <div className="hero-title-row">
-            <h1>Let Token Dance</h1>
-            <span className="hero-live"><i aria-hidden="true" />LIVE · {zh ? '实时更新' : 'Live'}</span>
-          </div>
-          <div className="hero-today">
-            <div className="hero-today-main">
-              <span className="hero-today-label">{zh ? '今日 Token' : 'Today’s tokens'}</span>
-              <strong className="hero-today-value">{community?.tokens != null ? formatTokens(community.tokens) : '—'}</strong>
-              <DeltaChip value={community?.deltas?.tokens} suffix={zh ? 'vs 昨日' : 'vs yesterday'} />
-            </div>
-            <div className="hero-mini-grid">
-              <HeroMiniCard label={zh ? '活跃开发者' : 'Active devs'} value={community?.developers != null ? community.developers.toLocaleString('en-US') : '—'} delta={community?.deltas?.developers} />
-              <HeroMiniCard label={zh ? '生成代码行' : 'Code lines'} value={formatTokens(community?.codeLines)} delta={community?.deltas?.codeLines} />
-              <HeroMiniCard label={zh ? 'AI 交互' : 'AI turns'} value={formatTokens(community?.interactions)} delta={community?.deltas?.interactions} />
-              <HeroMiniCard label={zh ? '预估费用' : 'Est. cost'} value={formatCommunityCost(community ?? {})} delta={community?.deltas?.costAmount} />
-            </div>
-          </div>
-        </div>
-        <div className="hero-landscape" aria-hidden="true"><span className="line-dot dot-a" /><span className="line-dot dot-b" /><span className="line-dot dot-c" /><div className="line-segment segment-a" /><div className="line-segment segment-b" /><div className="line-segment segment-c" /><div className="peak peak-a" /><div className="peak peak-b" /><div className="peak peak-c" /><div className="bar bar-a" /><div className="bar bar-b" /><div className="bar bar-c" /></div>
-      </section>
-
-      {authenticated && sharing && !sharing.publicProfileEnabled && <div className="panel" role="status" style={{ marginBottom: 16 }}>
-        <p style={{ margin: '0 0 8px' }}>{zh
-          ? '公开开关只控制详细资料页。排行榜仍显示头像、昵称、Token 和排名。'
-          : 'The public switch only controls your detailed profile. Your avatar, nickname, tokens, and rank stay on the leaderboard.'}</p>
-        <button className="btn btn-outline" onClick={() => navigate('/me')}>{zh ? '管理公开设置' : 'Manage sharing'}</button>
-      </div>}
-      <section className="leaderboard-panel" id="leaderboard">
-        <div className="range-tabs" role="tablist" aria-label={zh ? '排行榜周期' : 'Leaderboard period'}>
-          {ranges.map((item) => <button key={item} type="button" role="tab" aria-selected={range === item} className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{zh ? ({ Today: '今天', '7 Days': '近 7 天', '30 Days': '近 30 天', 'All Time': '全部时间' }[item]) : item}{item === 'Today' && <span className="live-dot" />}</button>)}
-        </div>
-        {renderLeaderboardBody()}
-      </section>
+  return <div className="token-home sky-home">
+    <section className="sky-hero" aria-labelledby="sky-hero-title">
+      <div className="sky-hero-copy"><p className="eyebrow">DEVELOPER TOKEN OBSERVATORY</p><h1 id="sky-hero-title">Let Token <span>Dance</span></h1><p>{zh ? '看见你与 AI 一起创造的每一天。' : 'Every day you create with AI, made visible.'}</p><Link className="sky-text-link" to={authenticated ? '/me' : '/download'}>{zh ? (authenticated ? '查看我的创作足迹' : '开始记录你的创造') : (authenticated ? 'Explore my activity' : 'Start your journey')}<ArrowUpRight size={17} /></Link></div>
+      <div className="sky-orb"><span>{heroTokenLabel}</span><strong>{community?.tokens != null ? formatTokens(community.tokens) : '—'}</strong><i aria-hidden="true" /><DeltaChip value={community?.deltas?.tokens} suffix={comparisonLabel} /><small>SMALL TOKENS<br />BIG CHANGES</small></div>
+      <div className="sky-hero-bottom-note"><span />{zh ? '每一个 Token，都有创造的意义' : 'Every token is a little possibility'}</div><span className="sky-hero-note" aria-hidden="true">More builders.<br />A brighter tomorrow.</span>
+      <div className="sky-metrics"><HeroMiniCard icon={<UsersRound />} label={zh ? '活跃开发者' : 'Active devs'} value={community?.developers != null ? formatTokens(String(community.developers)).replace('.0K', 'K') : '—'} delta={community?.deltas?.developers} /><HeroMiniCard icon={<Code2 />} label={zh ? '生成代码行' : 'Code lines'} value={formatTokens(community?.codeLines)} delta={community?.deltas?.codeLines} /><HeroMiniCard icon={<Zap />} label={zh ? 'AI 交互' : 'AI turns'} value={formatTokens(community?.interactions)} delta={community?.deltas?.interactions} /><HeroMiniCard icon={<Wallet />} label={zh ? '预估费用' : 'Est. cost'} value={formatCommunityCost(community ?? {})} delta={community?.deltas?.costAmount} /></div>
     </section>
-
-    <aside className="side-column">
-      <section className="side-card stats-card"><div className="card-heading"><h2>{zh ? '你的数据' : 'Your Stats'}</h2><button type="button" onClick={() => navigate('/me')} aria-label={zh ? '打开个人数据' : 'Open analytics'}><BarChart3 /></button></div>
-        {authenticated ? <>
-          <div className="stat-block"><span>{zh ? '今日排名' : 'Today’s rank'}</span><div className="stat-line"><strong>{rankValue ?? '—'}</strong><TrendBadge value={summary?.ranking?.delta ?? null} />{summary?.ranking?.percentile != null && <em>{zh ? `前 ${formatPercentile(summary.ranking.percentile)}%` : `Top ${formatPercentile(summary.ranking.percentile)}%`}</em>}</div></div>
-          <div className="stat-block"><span>{zh ? '今日 Token' : 'Today’s Tokens'}</span><div className="stat-line"><strong>{formatTokens(todayTokens)}</strong></div></div>
-          <div className="stat-block"><span>{zh ? '累计 Token' : 'All time Tokens'}</span><div className="stat-line"><strong>{allTimeTokens === '0' ? '0' : formatTokens(allTimeTokens)}</strong></div></div>
-          <div className="streak-line"><span>{zh ? '连续活跃' : 'Streak'}</span><div><Flame /><strong>{streak || 0}</strong>{zh ? '天' : 'days'}</div></div>
-        </> : <p className="side-card-empty">{zh ? '登录后查看你的排名与统计。' : 'Sign in to see your rank and stats.'}</p>}
-      </section>
-      <section className="side-card activity-card"><div className="card-heading"><h2>{zh ? 'Token 活跃度' : 'Token Activity'}</h2><CircleHelp /></div>
-        {authenticated ? <>
-          <div className="month-row"><span>{monthLabel || (zh ? '暂无数据' : 'No data')}</span><div><button type="button" aria-label="Previous month"><ChevronLeft /></button><button type="button" aria-label="Next month"><ChevronRight /></button></div></div>
-          <div className="week-labels">{['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((day, index) => <span key={`${day}-${index}`}>{day}</span>)}</div>
-          <div className="home-heatmap">{Array.from({ length: heatmapLead }, (_, index) => <span key={`pad-${index}`} data-level={0} />)}{calendarDays.map((day) => <span key={day.date} data-level={day.level} title={day.date} />)}</div>
-          <div className="heat-legend"><span>{zh ? '少' : 'Less'}</span>{[0, 1, 2, 3, 4, 5].map((level) => <i key={level} data-level={level} />)}<span>{zh ? '多' : 'More'}</span></div>
-        </> : <p className="side-card-empty">{zh ? '登录后查看你的活跃度热力图。' : 'Sign in to see your activity heatmap.'}</p>}
-      </section>
-      <section className="side-card tools-card"><div className="card-heading"><h2>{zh ? '常用 harness' : 'Top harnesses'}</h2><button type="button" className="view-all">{zh ? '全部' : 'View all'}</button></div>
-        {(community?.harnesses?.length ?? 0) > 0 ? <div className="tool-list">{community?.harnesses?.map((harness) => { const brand = resolveHarnessBrand(harness.agentId, harness.label); const share = Math.round(harness.sharePct ?? 0); return <div className="tool-row" key={harness.agentId}><HarnessMark agentId={harness.agentId} label={harness.label} /><strong>{harness.label}</strong><div className="tool-track"><i style={{ width: `${share}%`, background: brand.color }} /></div><span>{share}%</span></div>; })}</div>
-          : <p className="side-card-empty">{zh ? '暂无社区 harness 用量数据。' : 'No harness usage recorded yet.'}</p>}
-      </section>
-    </aside>
-  </div></div>;
+    <div className="sky-home-content">
+      <div className="sky-feature-grid">
+        <section className="panel sky-podium-panel" id="leaderboard"><div className="panel-header"><div><h2><Crown size={25} />{zh ? '平台排行榜' : 'TokenBoard'}</h2><p>{zh ? '每一份创造，都值得被看见。' : 'A little recognition for every creator.'}</p></div><Link className="sky-text-link" to={`/leaderboard/list?window=${windowByRange[range]}`}>{zh ? '完整榜单' : 'Full board'}<ArrowRight size={15} /></Link></div><div className="range-tabs" role="tablist" aria-label={zh ? '首页统计周期' : 'Homepage statistics period'}>{ranges.map(item => <button key={item} type="button" role="tab" aria-selected={range === item} className={range === item ? 'active' : ''} onClick={() => setRange(item)}>{zh ? ({ Today: '今天', '7 Days': '近 7 天', '30 Days': '近 30 天', 'All Time': '全部时间' }[item]) : item}</button>)}</div>{emptyBoard}{podium.length > 0 && <div className="podium-grid">{podium.map(entry => <PodiumCard key={entry.rankNo} entry={entry} />)}</div>}<div className="sky-panel-foot"><UsersRound size={14} />{zh ? `${boardSummary.totalParticipants ?? entries.length} 位开发者正在创造` : `${boardSummary.totalParticipants ?? entries.length} developers creating`}<span>{rangeLabel} · UTC+8</span></div></section>
+        <section className="panel sky-rhythm"><div className="panel-header"><div><h2><BarChart3 size={24} />{zh ? '你的创作轨迹' : 'Your creative rhythm'}</h2><p>{zh ? '让每一次与 AI 的协作，留下足迹。' : 'Small steps. A story worth seeing.'}</p></div><select className="form-input" value={trendRange} onChange={e => setTrendRange(e.target.value)} aria-label={zh ? '用量趋势周期' : 'Trend period'}><option value="7d">{zh ? '近 7 天' : '7 days'}</option><option value="30d">{zh ? '近 30 天' : '30 days'}</option></select></div>{authenticated ? <><div className="sky-rhythm-total"><strong>{trendDays.length ? formatTokens(String(trendDays.reduce((total, day) => total + Number(day.tokenTotal || 0), 0))) : '—'}<small>Token</small><DeltaChip value={trendChange} /></strong><Link to="/me" className="sky-text-link">{zh ? '个人数据' : 'My analytics'}<ArrowUpRight size={16} /></Link></div><TokenTrendChart trends={trendDays} height={205} /><div className="sky-panel-foot sky-chart-footer"><span><i />{zh ? '已同步 Token' : 'Synced tokens'}</span><span><Flame size={14} />{zh ? `连续活跃 ${streak} 天` : `${streak}-day streak`}</span></div></> : <div className="sky-guest"><BarChart3 size={34} /><h3>{zh ? '你的下一次创造，从这里开始' : 'Your next creation starts here'}</h3><p>{zh ? '登录后查看用量趋势与活跃记录。' : 'Sign in to see your usage and activity.'}</p><Link className="btn btn-primary" to="/login?return_to=%2Fme">{zh ? '登录，留下你的足迹' : 'Sign in to see your story'}<ArrowRight size={16} /></Link></div>}</section>
+      </div>
+      <div className="sky-detail-grid"><section className="panel sky-ranking">{entries.length > 0 && <HomeLeaderboard key={range} entries={entries} ownEntry={authenticated ? boardSummary.ownEntry : null} window={windowByRange[range]} />}{authenticated && sharing && !sharing.publicProfileEnabled && <div className="sky-privacy-note" role="status"><p>{zh ? '公开开关只控制详细资料页。排行榜仍显示头像、昵称、Token 和排名。' : 'The public switch only controls your detailed profile. Your avatar, nickname, tokens, and rank stay on the leaderboard.'}</p><button className="btn btn-outline" onClick={() => navigate('/me')}>{zh ? '管理公开设置' : 'Manage sharing'}</button></div>}</section>
+        <aside className="sky-side"><section className="panel sky-personal"><div className="panel-header"><h2>{zh ? '我的今日' : 'My day'}</h2><button className="sky-icon-button" type="button" onClick={() => navigate('/me')} aria-label={zh ? '打开个人数据' : 'Open analytics'}><ArrowUpRight size={19} /></button></div>{authenticated ? <><div className="sky-personal-id"><UserAvatar url={user?.avatarUrl} name={user?.displayName || user?.handle || ''} alt="" /><div><strong>{user?.displayName || user?.handle}</strong><p>{zh ? '保持好奇，继续创造。' : 'Stay curious. Keep building.'}</p></div></div><div className="sky-personal-stats"><div className="stat-block"><span>{zh ? '今日排名' : 'Today’s rank'}</span><div className="stat-line"><strong>{rankValue ?? '—'}</strong><TrendBadge value={summary?.ranking?.delta} />{summary?.ranking?.percentile != null && <em>{zh ? `前 ${formatPercentile(summary.ranking.percentile)}%` : `Top ${formatPercentile(summary.ranking.percentile)}%`}</em>}</div></div><div className="stat-block"><span>{zh ? '今日 Token' : 'Today’s Tokens'}</span><div className="stat-line"><strong>{formatTokens(todayTokens)}</strong></div></div><div className="stat-block"><span>{zh ? '累计 Token' : 'All time Tokens'}</span><div className="stat-line"><strong>{formatTokens(allTimeTokens)}</strong></div></div></div><ActivityCalendar days={calendarDays} streakDays={streak} /></> : <p className="side-card-empty">{zh ? '登录后查看你的排名与统计。' : 'Sign in to see your rank and stats.'}</p>}</section>
+        <section className="panel sky-harnesses"><div className="panel-header"><h2>{zh ? '常用 harness' : 'Top harnesses'}</h2><Link className="sky-text-link" to="/docs/sources"><HelpCircle size={18} /><span className="sr-only">{zh ? '支持的工具' : 'Supported tools'}</span></Link></div>{community?.harnesses?.length ? <div className="tool-list">{community.harnesses.map((harness) => { const brand = resolveHarnessBrand(harness.agentId, harness.label); const share = Math.round(harness.sharePct ?? 0); return <div className="tool-row" key={harness.agentId}><HarnessMark agentId={harness.agentId} label={harness.label} /><strong>{harness.label}</strong><div className="tool-track"><i style={{ width: `${Math.max(0, Math.min(100, share))}%`, background: brand.color }} /></div><span>{share}%</span></div>; })}</div> : <p className="side-card-empty">{zh ? '暂无社区 harness 用量数据。' : 'No harness usage recorded yet.'}</p>}<p className="sky-harness-caption">{zh ? `社区${rangeLabel} Token 占比 · 按 harness` : `Community token share · ${rangeLabel} · by harness`}</p></section></aside></div>
+      <section className="sky-download-strip"><Monitor size={35} /><div><h2>{zh ? '让创造，常驻桌面。' : 'Keep your creativity close.'}</h2><p>{zh ? '连接你的 AI 工具，自动记录每一天的用量。' : 'Connect your AI tools. Make every day count.'}</p></div><Link className="btn btn-primary" to="/download"><Download size={17} />{zh ? '下载 TokenDance' : 'Get TokenDance'}</Link></section><footer className="sky-home-footer"><Link to="/leaderboard"><img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" />TokenDance</Link><span>{zh ? '每一个 Token，都是更好明天的开始。' : 'Small tokens. A brighter tomorrow.'}</span><Link to="/docs/privacy"><ShieldCheck size={14} />{zh ? '数据与隐私' : 'Data & privacy'}</Link></footer>
+    </div>
+  </div>;
 };
