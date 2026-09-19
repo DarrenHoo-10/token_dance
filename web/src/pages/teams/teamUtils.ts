@@ -276,6 +276,29 @@ export function inclusiveDaySpan(from: string, to: string): number {
   return Math.floor((end - start) / 86400000) + 1;
 }
 
+export function formatDotDate(iso?: string | null): string {
+  return iso ? iso.slice(0, 10).replaceAll('-', '.') : '';
+}
+
+export function formatSkyClock(iso: string, timeZone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(iso));
+  } catch {
+    return '';
+  }
+}
+
+export function formatUtcOffset(timeZone: string): string {
+  try {
+    const name = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset' })
+      .formatToParts(new Date())
+      .find((part) => part.type === 'timeZoneName')?.value || timeZone;
+    return name.replace('GMT', 'UTC');
+  } catch {
+    return timeZone;
+  }
+}
+
 export function formatInTimezone(iso: string, timeZone: string, locale: string): string {
   try {
     return new Intl.DateTimeFormat(locale === 'zh-CN' ? 'zh-CN' : 'en-US', {

@@ -73,9 +73,8 @@ describe('Team cost card', () => {
     result.costs.estimatedUncovered = [{ currency: 'USD', amount: '1.25900000' }];
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    const label = await screen.findByText('预估费用');
-    expect(label.closest('.team-kpi')).toHaveTextContent('$1.25');
-    expect(label.closest('.team-kpi')).not.toHaveTextContent('$0');
+    const label = await screen.findByText(/未覆盖用量预估/);
+    expect(label.closest('.tw-kpi')).toHaveTextContent('$1.25');
   });
 });
 
@@ -112,7 +111,7 @@ describe('Team analysis updating state', () => {
     await waitFor(() => expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument());
     expect(screen.queryByText('选齐日期后自动更新')).not.toBeInTheDocument();
     expect(screen.queryByTestId('analysis-skeleton')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('tab', { name: '7 天' }));
+    fireEvent.click(screen.getByRole('tab', { name: '近 7 天' }));
     await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: '7d' }), expect.any(AbortSignal)));
   });
 
@@ -128,7 +127,7 @@ describe('Team analysis updating state', () => {
     result.quality.hasLegacyAggregates = true;
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeamWorkspace(`/teams/tem_0123456789abcdefghijklmnop${suffix}?range=7d`);
-    expect(await screen.findByRole('tab', { name: '7 天' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByRole('tab', { name: '近 7 天' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.queryByText(/包含历史日汇总/)).not.toBeInTheDocument();
     expect(screen.queryByText(/团队时区/)).not.toBeInTheDocument();
   });
@@ -139,7 +138,7 @@ describe('Team analysis updating state', () => {
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
     renderTeams(<TeamMembersPage />, '/teams/tem_0123456789abcdefghijklmnop/members?range=7d');
     expect(await screen.findByText(/已加入/)).toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: '7 天' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: '近 7 天' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('开始日期')).not.toBeInTheDocument();
     expect(screen.queryByText(/包含历史日汇总/)).not.toBeInTheDocument();
   });
@@ -149,11 +148,11 @@ describe('Team analysis updating state', () => {
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     const query = vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
     renderTeamWorkspace('/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    const chart = await screen.findByRole('heading', { name: '团队用量趋势' });
+    const chart = await screen.findByRole('heading', { name: '一起创造的轨迹' });
     fireEvent.click(screen.getByRole('tab', { name: '自定义' }));
     const from = screen.getByLabelText('开始日期');
     expect(from.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByRole('heading', { name: '团队用量趋势' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '一起创造的轨迹' })).toBeInTheDocument();
     expect(screen.getAllByText('120.0K')[0]).toBeInTheDocument();
     pickIsoDate('开始日期', '2026-09-01');
     await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: 'custom', from: '2026-09-01', to: shanghaiToday() }), expect.any(AbortSignal)));
@@ -187,8 +186,8 @@ describe('Team analysis updating state', () => {
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
     expect(await screen.findAllByText('Ada').then(items => items[0])).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '成员数据' })).toBeInTheDocument();
-    expect(screen.getByRole('columnheader', { name: 'Token 效率' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '成员贡献' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '单行 Token' })).toBeInTheDocument();
     expect(screen.queryByText(/仅显示主动授权/)).not.toBeInTheDocument();
     expect(screen.queryByText(/团队时区/)).not.toBeInTheDocument();
   });
@@ -198,14 +197,11 @@ describe('Team analysis updating state', () => {
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    await screen.findByRole('heading', { name: '团队用量趋势' });
+    await screen.findByRole('heading', { name: '一起创造的轨迹' });
     expect(screen.queryByRole('heading', { name: '团队 Token 趋势' })).not.toBeInTheDocument();
-    expect(screen.queryByText('私密团队')).not.toBeInTheDocument();
     expect(screen.queryByText('成员表现')).not.toBeInTheDocument();
-    expect(screen.queryByText('我的共享')).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '用量构成' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '团队 Token 数据' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '成员数据' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '团队的创作工具箱' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '成员贡献' })).toBeInTheDocument();
     expect(screen.queryByText('Harness、模型与 Skill 的成员分布')).not.toBeInTheDocument();
     expect(screen.queryByText('查看每日明细')).not.toBeInTheDocument();
     expect(screen.queryByText('查看成员明细 ↓')).not.toBeInTheDocument();
@@ -217,8 +213,8 @@ describe('Team analysis updating state', () => {
     expect(document.querySelector('.team-cache-track')).toBeNull();
     expect(screen.queryByText('谁贡献了用量，以及每个人的使用变化')).not.toBeInTheDocument();
     expect(screen.queryByText('各成员用量与 Token 效率')).not.toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Harness' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Skill' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Agent' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Skill' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Skill 使用' })).not.toBeInTheDocument();
   });
 
@@ -272,14 +268,14 @@ describe('Team analysis updating state', () => {
     };
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    expect(await screen.findByRole('heading', { name: '用量构成' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '团队的创作工具箱' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /codex/ })).toBeInTheDocument();
     expect(screen.getByText('Ada')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('tab', { name: '模型' }));
+    fireEvent.click(screen.getByRole('button', { name: '模型' }));
     expect(screen.getAllByRole('button', { name: /gpt-test/ }).length).toBe(2);
     expect(screen.queryByRole('button', { name: /^codex$/i })).not.toBeInTheDocument();
     expect(screen.getByText('Bo')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('tab', { name: 'Skill' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Skill' }));
     expect(screen.queryByRole('button', { name: /gpt-test/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /frontend-design/ }));
     expect(screen.getAllByText('frontend-design').length).toBeGreaterThan(0);
@@ -297,7 +293,7 @@ describe('Team analysis updating state', () => {
     empty.quality.includesHistoricalUsers = true;
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(empty);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    expect((await screen.findAllByText('此范围没有数据。')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('这个范围里，还没有创作记录')).length).toBeGreaterThan(0);
     expect(screen.getByText(/合计含已退出成员的历史用量/)).toBeInTheDocument();
   });
 
@@ -317,7 +313,7 @@ describe('Team analysis updating state', () => {
     expect(await screen.findByTestId('analysis-skeleton')).toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '今天' })).toHaveAttribute('aria-selected', 'true');
     expect(teamsApi.getAnalysis).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ range: 'today' }), expect.any(AbortSignal));
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['今天', '7 天', '30 天', '自定义']);
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['今天', '近 7 天', '近 30 天', '自定义']);
     expect(screen.queryByLabelText('开始日期')).not.toBeInTheDocument();
     expect(screen.getByText('正在汇总团队数据，请稍候…')).toBeInTheDocument();
     expect(screen.queryByText('0')).not.toBeInTheDocument();
@@ -397,7 +393,7 @@ describe('Team analysis updating state', () => {
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
     vi.spyOn(teamsApi, 'getFilterOptions').mockResolvedValue({ agents: [], providers: [], models: [] });
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    expect(await screen.findByRole('heading', { name: '团队用量趋势' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '一起创造的轨迹' })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: '导出当前快照' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '每日' })).not.toBeInTheDocument();
   });
@@ -412,11 +408,10 @@ describe('Team analysis updating state', () => {
     Reflect.deleteProperty(empty, 'trend');
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(empty);
     renderTeamWorkspace('/teams/tem_0123456789abcdefghijklmnop');
-    expect(await screen.findByText('团队总 Token')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '团队 Token 数据' })).toBeInTheDocument();
+    expect(await screen.findByText('团队 Token')).toBeInTheDocument();
     expect(screen.getByText('人均 Token')).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '用量构成' })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: 'Skill' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '这个范围里，还没有创作记录' })).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: '团队的创作工具箱' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Token 使用效率' })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: '自定义' })).toBeInTheDocument();
     expect(screen.queryByLabelText('开始日期')).not.toBeInTheDocument();
@@ -430,7 +425,7 @@ describe('Team member insights', () => {
     expect(memberPercent('900719925474099300', '1801439850948198600')).toBe(50);
     expect(memberPercent('1', '0')).toBe(0);
   });
-  it('defaults usage and efficiency trends to the team series plus the top 3 members', async () => {
+  it('starts the shared trend with the team series and compares members on demand', async () => {
     vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     const result = readyAnalysis('1', '1000');
@@ -444,31 +439,16 @@ describe('Team member insights', () => {
     })) };
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    const usagePicker = await screen.findByRole('button', { name: '选择用量趋势' });
-    const efficiencyPicker = screen.getByRole('button', { name: '选择效率趋势' });
-    expect(screen.getByRole('heading', { name: '团队用量趋势' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: '团队效率趋势' })).toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: 'Token 效率排行' })).toBeInTheDocument();
-    expect(usagePicker).toHaveTextContent('对比曲线4');
-    expect(efficiencyPicker).toHaveTextContent('对比曲线4');
-    expect(usagePicker).not.toHaveTextContent('Person 0');
-    expect(document.querySelectorAll('.team-member-trend .team-multiline-chart circle')).toHaveLength(4);
-    expect(document.querySelectorAll('.team-efficiency-trend .team-multiline-chart circle')).toHaveLength(4);
+    expect(await screen.findByRole('heading', { name: '一起创造的轨迹' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: '成员贡献' })).toBeInTheDocument();
+    expect(document.querySelectorAll('.team-member-trend .team-multiline-chart circle')).toHaveLength(1);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Person 3' }).find((el) => el.closest('.tw-compare'))!);
+    expect(document.querySelectorAll('.team-member-trend .team-multiline-chart circle')).toHaveLength(2);
+    expect(screen.getAllByText(/10\.0%/).length).toBeGreaterThan(0);
     expect(screen.queryByText('Token / 天')).not.toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: '成员用量趋势' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('heading', { name: '团队 Token 趋势' })).not.toBeInTheDocument();
-    expect(screen.getAllByText(/10\.0%/)).toHaveLength(11);
-    expect(screen.getByText('50.0%')).toBeInTheDocument();
-    fireEvent.click(usagePicker);
-    expect(screen.getByRole('option', { name: '团队' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('option', { name: 'Person 2' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('option', { name: 'Person 3' })).toHaveAttribute('aria-selected', 'false');
-    fireEvent.click(screen.getByRole('option', { name: 'Person 3' }));
-    expect(usagePicker).toHaveTextContent('对比曲线5');
-    expect(document.querySelectorAll('.team-member-trend .team-multiline-chart circle')).toHaveLength(5);
   });
 
-  it('paginates member details, efficiency ranking, and mix lists by 10', async () => {
+  it('paginates member details by 10 and lists the full toolkit', async () => {
     vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
     vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
     const result = readyAnalysis('1', '1200');
@@ -497,31 +477,17 @@ describe('Team member insights', () => {
     };
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    expect(await screen.findByRole('heading', { name: '成员明细' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '成员贡献' })).toBeInTheDocument();
     const details = screen.getByRole('navigation', { name: '成员明细分页' });
     expect(within(details).getByText('第 1 / 2 页')).toBeInTheDocument();
     expect(screen.getAllByText('Person 0').length).toBeGreaterThan(0);
-    expect(screen.queryByRole('cell', { name: /Person 10/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('cell', { name: /Person 8/ })).not.toBeInTheDocument();
     fireEvent.click(within(details).getByRole('button', { name: '下一页' }));
-    expect(await screen.findByRole('cell', { name: /Person 10/ })).toBeInTheDocument();
+    expect(await screen.findByRole('cell', { name: /Person 8/ })).toBeInTheDocument();
     expect(screen.queryByRole('cell', { name: /Person 0/ })).not.toBeInTheDocument();
-
-    const efficiency = screen.getByRole('navigation', { name: 'Token 效率排行分页' });
-    expect(within(efficiency).getByText('第 1 / 2 页')).toBeInTheDocument();
-    fireEvent.click(within(efficiency).getByRole('button', { name: '下一页' }));
-    expect(within(efficiency).getByText('第 2 / 2 页')).toBeInTheDocument();
-
-    const mix = screen.getByRole('navigation', { name: '用量构成分页' });
     expect(screen.getByRole('button', { name: /Agent 0/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Agent 10/ })).not.toBeInTheDocument();
-    fireEvent.click(within(mix).getByRole('button', { name: '下一页' }));
     expect(screen.getByRole('button', { name: /Agent 10/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Agent 0/ })).not.toBeInTheDocument();
-
-    const dist = screen.getByRole('navigation', { name: '成员分布分页' });
     expect(screen.getByText('Dist 0')).toBeInTheDocument();
-    expect(screen.queryByText('Dist 10')).not.toBeInTheDocument();
-    fireEvent.click(within(dist).getByRole('button', { name: '下一页' }));
     expect(screen.getByText('Dist 10')).toBeInTheDocument();
   });
 
@@ -541,9 +507,9 @@ describe('Team member insights', () => {
     };
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    expect(await screen.findByRole('heading', { name: '成员数据' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '成员贡献' })).toBeInTheDocument();
     expect(screen.getAllByText('250').length).toBeGreaterThan(0);
-    expect(screen.getByRole('columnheader', { name: 'Token 效率' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: '单行 Token' })).toBeInTheDocument();
   });
 
   it('plots team efficiency by day', async () => {
@@ -557,8 +523,8 @@ describe('Team member insights', () => {
     ];
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
-    expect(await screen.findByRole('heading', { name: '团队效率趋势' })).toBeInTheDocument();
-    expect(screen.getByRole('img', { name: '团队效率趋势' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '一起创造的轨迹' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '单行 Token' }));
     expect(document.querySelectorAll('.team-efficiency-trend .team-trend-dates span')).toHaveLength(3);
     expect([...document.querySelectorAll('.team-efficiency-trend .team-trend-dates span')].map((tick) => tick.textContent)).toEqual(['09/05', '09/06', '09/07']);
     expect(document.querySelectorAll('.team-efficiency-trend .team-multiline-chart polyline')).toHaveLength(0);
@@ -586,8 +552,9 @@ describe('Team member insights', () => {
     }];
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=today');
-    expect(await screen.findByRole('heading', { name: '团队效率趋势' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '一起创造的轨迹' })).toBeInTheDocument();
     expect([...document.querySelectorAll('.team-member-trend .team-trend-dates span')].map((tick) => tick.textContent)).toEqual(['00:00', '01:00']);
+    fireEvent.click(screen.getByRole('button', { name: '单行 Token' }));
     expect([...document.querySelectorAll('.team-efficiency-trend .team-trend-dates span')].map((tick) => tick.textContent)).toEqual(['00:00', '01:00']);
     expect(screen.getByRole('row', { name: /Ada/ })).toHaveTextContent('1');
   });
@@ -601,7 +568,8 @@ describe('Team member insights', () => {
     result.efficiencyTrend = [{ date: '2026-09-06T16:00:00Z', tokens: { value: null, state: 'empty' } }];
     vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=today');
-    expect(await screen.findByRole('heading', { name: '团队效率趋势' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '一起创造的轨迹' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '单行 Token' }));
     expect(document.querySelector('.team-efficiency-trend .team-trend-dates')).toHaveTextContent('00:00');
   });
 });
@@ -646,31 +614,31 @@ describe('Team page tabs', () => {
       </LocaleProvider>
     );
 
-    const nav = await screen.findByRole('navigation', { name: '团队页面' });
+    const nav = await screen.findByRole('navigation', { name: '团队导航' });
     const links = within(nav).getAllByRole('link');
-    expect(links.map((link) => link.textContent)).toEqual(['数据面板', '成员', '设置']);
+    expect(links.map((link) => link.textContent)).toEqual(['团队面板', '成员', '设置']);
     expect(links[0]).toHaveAttribute('href', '/teams/tem_0123456789abcdefghijklmnop?range=7d');
     expect(links[1]).toHaveAttribute('href', '/teams/tem_0123456789abcdefghijklmnop/members?range=7d');
     expect(links[2]).toHaveAttribute('href', '/teams/tem_0123456789abcdefghijklmnop/settings?range=7d');
     expect(screen.queryByRole('link', { name: '总览' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '用量分析' })).not.toBeInTheDocument();
-    expect(await screen.findByRole('tab', { name: '7 天' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByRole('tab', { name: '近 7 天' })).toHaveAttribute('aria-selected', 'true');
     const heading = document.querySelector('.product-page-heading');
     const toolbar = document.querySelector('.team-filter-toolbar');
-    expect(heading?.contains(screen.getByRole('tab', { name: '7 天' }))).toBe(false);
-    expect(heading?.contains(screen.getByRole('button', { name: '邀请成员' }))).toBe(true);
-    expect(toolbar?.contains(screen.getByRole('tab', { name: '7 天' }))).toBe(true);
+    expect(heading?.contains(screen.getByRole('tab', { name: '近 7 天' }))).toBe(false);
+    expect(heading?.contains(screen.getByRole('button', { name: '邀请伙伴' }))).toBe(true);
+    expect(toolbar?.contains(screen.getByRole('tab', { name: '近 7 天' }))).toBe(true);
     expect(toolbar?.contains(screen.getByLabelText('Agent 筛选'))).toBe(true);
-    expect(nav.contains(screen.getByRole('tab', { name: '7 天' }))).toBe(false);
+    expect(nav.contains(screen.getByRole('tab', { name: '近 7 天' }))).toBe(false);
 
     fireEvent.click(screen.getByRole('link', { name: '成员' }));
     expect(await screen.findByText(/已加入/)).toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: '7 天' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: '近 7 天' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('开始日期')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('link', { name: '设置' }));
     expect(await screen.findByText('settings-tab')).toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: '7 天' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: '近 7 天' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('开始日期')).not.toBeInTheDocument();
   });
 
@@ -703,8 +671,8 @@ describe('Team page tabs', () => {
       </LocaleProvider>
     );
 
-    expect(await screen.findByRole('tab', { name: '7 天' })).toHaveAttribute('aria-selected', 'true');
-    expect(screen.getByRole('navigation', { name: '团队页面' }).querySelector('a.active')).toHaveTextContent('数据面板');
+    expect(await screen.findByRole('tab', { name: '近 7 天' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('navigation', { name: '团队导航' }).querySelector('a.active')).toHaveTextContent('团队面板');
     expect(screen.queryByRole('link', { name: '用量分析' })).not.toBeInTheDocument();
   });
 });

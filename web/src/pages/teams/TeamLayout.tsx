@@ -2,20 +2,26 @@ import React, { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ApiError } from '@/api/client';
 import { teamsApi } from '@/api/teams';
-import { Button } from '@/components/common/Button';
 import { ErrorState } from '@/components/states/ErrorState';
 import { LoadingState } from '@/components/states/LoadingState';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { useTeam } from '@/context/TeamContext';
 import { InviteDialog } from './InviteDialog';
-import { MemberAvatar, TeamAvatar, teamErrorMessage } from './TeamShared';
-import { BarChart3, Globe2, LockKeyhole, Plus, Settings2, UsersRound } from 'lucide-react';
+import { MemberAvatar, teamErrorMessage } from './TeamShared';
+import { avatarUrl } from '@/utils/avatar';
+import { formatDotDate, formatUtcOffset } from './teamUtils';
+import { BarChart3, Globe2, Layers3, LockKeyhole, Plus, Settings2, UsersRound } from 'lucide-react';
 import type { TeamMember } from '@/api/teams';
+
+export type TeamOutletContext = {
+  openInvite: () => void;
+  setUpdatedAt: (value: string | null) => void;
+};
 
 export const TeamLayout: React.FC = () => {
   const { teamId } = useParams<{ teamId: string }>();
-  const { t, locale } = useLocale();
+  const { t } = useLocale();
   const { authenticated, loading: authLoading } = useAuth();
   const { scope, loading, refresh, applyScope } = useTeam();
   const navigate = useNavigate();
@@ -23,6 +29,7 @@ export const TeamLayout: React.FC = () => {
   const [inviteOpen, setInviteOpen] = useState(Boolean((location.state as { openInvite?: boolean } | null)?.openInvite));
   const [pageError, setPageError] = useState<ApiError | null>(null);
   const [faces, setFaces] = useState<TeamMember[]>([]);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
 
   useEffect(() => {
     if (authLoading) return;
@@ -71,50 +78,100 @@ export const TeamLayout: React.FC = () => {
 
   const { team, permissions } = scope;
   const query = location.search;
+  const avatarSrc = team.avatarUrl
+    ? avatarUrl(team.avatarUrl.startsWith('/api/') ? team.avatarUrl : `/api/v1/teams/${team.id}/avatar/content`)
+    : '';
+  const memberCount = team.memberCount ?? faces.length;
+  const extraFaces = Math.max(0, faces.length - 5);
+  const outlet: TeamOutletContext = {
+    openInvite: () => setInviteOpen(true),
+    setUpdatedAt,
+  };
 
   return (
-    <section className="product-page-shell team-dashboard team-page">
-      <div className="sky-team-breadcrumb"><span>{t('teams.label')}</span><span>/</span><LockKeyhole size={13} />{locale === 'zh-CN' ? '仅团队成员可见' : 'Private to your team'}</div>
-      <div className="product-page-heading with-actions sky-team-banner">
-        <div className="team-identity">
-          <TeamAvatar team={team} />
+    <section className="product-page-shell team-dashboard team-page tw-workspace">
+      <div className="tw-breadcrumb">
+        <span>{t('teams.workspace')}</span>
+        <span>/</span>
+        <LockKeyhole size={12} />
+        <span>{t('teams.privateNote')}</span>
+      </div>
+      <section className="tw-banner product-page-heading" aria-labelledby="team-title">
+        <div className="tw-banner-copy">
+          <div className="tw-team-avatar">
+            {avatarSrc ? <img src={avatarSrc} alt="" /> : <Layers3 size={34} strokeWidth={1.5} />}
+          </div>
           <div>
-            <div className="sky-team-eyebrow">BUILD SOMETHING TOGETHER <span>{t(`teams.role.${scope.membership.role}`)}</span></div>
-            <h1>{team.name}</h1>
+            <div className="tw-team-eyebrow">
+              BUILD SOMETHING TOGETHER
+              <span className={`tw-role ${scope.membership.role}`}>{t(`teams.role.${scope.membership.role}`)}</span>
+            </div>
+            <h1 id="team-title">{team.name}<span className="tw-team-dot">.</span></h1>
             <p>{team.description || t('teams.overview.noDescription')}</p>
-            <div className="sky-team-meta">{team.memberCount != null && <span><UsersRound size={14} />{team.memberCount} {t('teams.nav.members')}</span>}<span><Globe2 size={13} />{team.timezone}</span>{team.createdAt && <span>{locale === 'zh-CN' ? '创建于' : 'Created'} {team.createdAt.slice(0, 10)}</span>}</div>
+            <div className="tw-team-meta">
+              <span><UsersRound size={14} />{memberCount} {t('teams.builders')}</span>
+              <span><Globe2 size={13} />{team.timezone}</span>
+              {team.createdAt && <span className="tw-created">{t('teams.since')} {formatDotDate(team.createdAt)}</span>}
+            </div>
           </div>
         </div>
-        <div className="team-heading-actions">
+        <div className="tw-banner-action">
           {faces.length > 0 && (
-            <div className="sky-team-faces" aria-hidden="true">
-              {faces.slice(0, 4).map((member) => (
+            <div className="tw-avatar-stack" aria-hidden="true">
+              {faces.slice(0, 5).map((member) => (
                 <MemberAvatar key={member.membershipId} name={member.displayName} url={member.avatarUrl} />
               ))}
-              {faces.length > 4 && <span className="sky-team-faces-more">+{faces.length - 4}</span>}
+              {extraFaces > 0 && <span>+{extraFaces}</span>}
             </div>
           )}
           {permissions.inviteMembers ? (
-            <Button variant="primary" onClick={() => setInviteOpen(true)}><Plus size={17} />{t('teams.invite.action')}</Button>
+            <button type="button" className="button primary" onClick={() => setInviteOpen(true)}>
+              <Plus size={17} />{t('teams.inviteTeammates')}
+            </button>
           ) : (
-            <Button variant="outline" onClick={() => navigate(`/teams/${team.id}/settings`)}>{t('teams.nav.settings')}</Button>
+            <button type="button" className="button secondary" onClick={() => navigate(`/teams/${team.id}/members`)}>
+              <UsersRound size={17} />{t('teams.viewMembers')}
+            </button>
           )}
         </div>
+      </section>
+
+      <div className="tw-tabbar">
+        <nav aria-label={t('teams.nav.tabs')}>
+          <NavLink to={`/teams/${team.id}${query}`} end className={({ isActive }) => (isActive ? 'active' : '')}>
+            <BarChart3 size={17} />{t('teams.nav.panel')}
+          </NavLink>
+          <NavLink to={`/teams/${team.id}/members${query}`} aria-label={t('teams.nav.members')} className={({ isActive }) => (isActive ? 'active' : '')}>
+            <UsersRound size={17} />{t('teams.nav.members')}{Number(memberCount) > 0 && <span>{memberCount}</span>}
+          </NavLink>
+          <NavLink to={`/teams/${team.id}/settings${query}`} className={({ isActive }) => (isActive ? 'active' : '')}>
+            <Settings2 size={17} />{t('teams.nav.settings')}
+          </NavLink>
+        </nav>
+        <span className="tw-sync">
+          <i />
+          {updatedAt
+            ? t('teams.overview.updatedAt', { time: `${updatedAt} · ${formatUtcOffset(team.timezone)}` })
+            : formatUtcOffset(team.timezone)}
+        </span>
       </div>
 
-      <nav className="team-tabs" aria-label={t('teams.nav.tabs')}>
-        <NavLink to={`/teams/${team.id}${query}`} end className={({ isActive }) => (isActive ? 'active' : '')}><BarChart3 size={17} />{t('teams.nav.panel')}</NavLink>
-        <NavLink to={`/teams/${team.id}/members${query}`} className={({ isActive }) => (isActive ? 'active' : '')}><UsersRound size={17} />{t('teams.nav.members')}</NavLink>
-        <NavLink to={`/teams/${team.id}/settings${query}`} className={({ isActive }) => (isActive ? 'active' : '')}><Settings2 size={17} />{t('teams.nav.settings')}</NavLink>
-      </nav>
+      <Outlet context={outlet} />
 
-      <Outlet context={{ openInvite: () => setInviteOpen(true) }} />
+      <div className="tw-footer">
+        <span>
+          <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" />
+          TokenDance <i>/</i> BETTER TOGETHER
+        </span>
+        <span>{t('teams.footerTag')}</span>
+      </div>
 
       {permissions.inviteMembers && (
         <InviteDialog
           isOpen={inviteOpen}
           onClose={() => setInviteOpen(false)}
           teamId={team.id}
+          teamName={team.name}
           permissions={permissions}
         />
       )}

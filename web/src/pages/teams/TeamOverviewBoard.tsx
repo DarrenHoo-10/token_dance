@@ -1,5 +1,7 @@
 import React from 'react';
-import { Code2, Layers3, UsersRound, Wallet } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowUpRight, BarChart3, Code2, Layers3, UsersRound, Wallet } from 'lucide-react';
+import { ChangeBadge } from '@/components/common/ChangeBadge';
 import { useLocale } from '@/context/LocaleContext';
 import type { MetricValue, TeamAnalysisReady } from '@/api/teams';
 import {
@@ -26,51 +28,111 @@ export const TeamOverviewBoard: React.FC<{
   authRevision: string | null;
 }> = ({ analysis, teamId, authRevision }) => {
   const { t, locale } = useLocale();
+  const navigate = useNavigate();
+  const [, setParams] = useSearchParams();
   const tokens = metricDisplay(analysis.summary.tokens);
   const estimated = analysis.costs.estimatedUncovered || [];
   const estimatedMetric = metricDisplay(metricOf(analysis, 'estimatedCosts'), (value) => formatDecimalAmount(value, 'USD'));
-  const costValue = estimated.length
+  const estimatedText = estimated.length
     ? estimated.map((item) => formatDecimalAmount(item.amount, item.currency)).join(' / ')
     : dash(estimatedMetric.available ? estimatedMetric.text : null);
   const namedTokens = analysis.summary.currentMemberTokens || analysis.summary.tokens.value || '0';
   const activeMembers = analysis.summary.activeMembers || '0';
+  const currentMembers = analysis.summary.currentMembers || '0';
   const avgTokens = analysis.summary.tokens.state === 'available' && BigInt(activeMembers) > 0n
     ? formatTokenCompact((BigInt(namedTokens || '0') / BigInt(activeMembers)).toString())
     : null;
   const code = metricDisplay(metricOf(analysis, 'generatedCodeLines'));
+  const perLine = metricDisplay(metricOf(analysis, 'tokensPerCodeLine'), (value) => formatTokenCompact(value));
   const input = metricDisplay(metricOf(analysis, 'inputContextTokens'));
   const output = metricDisplay(metricOf(analysis, 'outputTokens'));
   const cache = metricDisplay(metricOf(analysis, 'cacheHitRate'), (value) => formatRatePercent(value) || '—');
   const duration = metricDisplay(metricOf(analysis, 'activeDurationMs'), (value) => formatDurationHours(value) || '—');
   const messages = metricDisplay(metricOf(analysis, 'messageCount'));
   const userMessages = metricDisplay(metricOf(analysis, 'userMessageCount'));
-
   const change = analysis.summary.comparison?.tokensDeltaPct;
   const delta = change == null ? null : Number(change);
-  const reported = (analysis.costs.reported || []).map(item => formatDecimalAmount(item.amount, item.currency)).join(' / ') || '—';
+  const reported = (analysis.costs.reported || []).map((item) => formatDecimalAmount(item.amount, item.currency)).join(' / ') || '—';
+  const empty = analysis.summary.tokens.state === 'empty';
   const details = [
     [t('teams.metrics.avgTokens'), dash(avgTokens)],
-    [t('teams.metrics.input'), input.available ? input.text : '—'],
+    [t('teams.overview.inputTokens'), input.available ? input.text : '—'],
     [t('teams.metrics.output'), output.available ? output.text : '—'],
-    [t('teams.metrics.cache'), cache.available ? cache.text : '—'],
+    [t('teams.overview.cacheTokens'), cache.available ? cache.text : '—'],
     [t('teams.metrics.duration'), duration.available ? duration.text : '—'],
-    [
-      locale === 'zh-CN' ? '总消息 / 用户消息' : 'Messages / user messages',
-      `${messages.available ? messages.text : '—'} / ${userMessages.available ? userMessages.text : '—'}`,
-    ],
+    [t('teams.overview.messagesUser'), `${messages.available ? messages.text : '—'} / ${userMessages.available ? userMessages.text : '—'}`],
   ];
-  return <>
-    {analysis.summary.tokens.state === 'empty' && <div className="team-status-banner">{t('teams.overview.emptyRange')}</div>}
-    {analysis.quality?.includesHistoricalUsers && <p className="text-muted team-trend-hint">{t('teams.overview.historicalNote')}</p>}
-    <section className="team-kpis sky-team-kpis" aria-label={t('teams.insights.usageTitle')}>
-      <div className="team-kpi lead"><div className="label"><Layers3 size={17} />{t('teams.metrics.totalTokens')}</div><div className="sky-team-value"><strong className="value mono-num">{tokens.available ? tokens.text : '—'}</strong>{delta !== null && Number.isFinite(delta) && <span className={`sky-change ${delta < 0 ? 'down' : delta === 0 ? 'flat' : 'up'}`}>{delta < 0 ? '↘ −' : delta > 0 ? '↗ +' : ''}{Math.abs(delta).toFixed(1)}%</span>}</div><p className="sub">{t('teams.overview.selectedPeriod')}</p></div>
-      <div className="team-kpi"><div className="label"><Wallet size={17} />{t('teams.metrics.estimatedCost')}</div><div className="value mono-num">{costValue}</div><p className="sub">{locale === 'zh-CN' ? '未覆盖用量预估' : 'Uncovered usage estimate'}</p></div>
-      <div className="team-kpi"><div className="label"><UsersRound size={17} />{t('teams.metrics.activeMembers')}</div><div className="value mono-num">{analysis.summary.activeMembers} <small>/ {analysis.summary.currentMembers}</small></div><p className="sub">{analysis.summary.currentMembers} {locale === 'zh-CN' ? '人已加入团队' : 'joined the team'}</p></div>
-      <div className="team-kpi"><div className="label"><Code2 size={17} />{t('teams.metrics.codeLines')}</div><div className="value mono-num">{code.available ? code.text : '—'}</div><p className="sub">{t('teams.overview.selectedPeriod')}</p></div>
-    </section>
-    <div className="team-section-heading sky-detail-heading"><h2>{t('teams.overview.tokenData')}</h2><span className="text-muted">{locale === 'zh-CN' ? '已记录费用' : 'Reported cost'} · {reported}</span></div>
-    <section className="sky-team-details" aria-label={t('teams.overview.tokenData')}>{details.map(([label, value]) => <div key={label}><span>{label}</span><strong className="mono-num">{value}</strong></div>)}</section>
-    <TeamMemberInsights key={`${teamId}:${authRevision || ''}`} analysis={analysis} />
-    <TeamUsageMix analysis={analysis} />
-  </>;
+
+  return (
+    <>
+      {analysis.quality?.includesHistoricalUsers && <p className="tw-muted">{t('teams.overview.historicalNote')}</p>}
+      <div className="tw-kpi-grid">
+        <section className="tw-kpi tw-kpi-main">
+          <span><Layers3 size={16} />{t('teams.metrics.tokens')}</span>
+          <div>
+            <strong data-testid="team-total">{tokens.available ? tokens.text : '—'}</strong>
+            {tokens.available && delta !== null && Number.isFinite(delta) && <ChangeBadge value={Number(delta.toFixed(1))} en={locale !== 'zh-CN'} />}
+          </div>
+          <p>
+            {delta !== null ? t('teams.overview.selectedPeriod') : t('teams.overview.noCompare')}
+            <span className="tw-kpi-decoration" aria-hidden="true">↗</span>
+          </p>
+        </section>
+        <section className="tw-kpi">
+          <span><Wallet size={16} />{t('teams.metrics.recordedCost')}</span>
+          <div><strong>{reported === '—' ? '—' : reported.replace(/ USD$/, '')}</strong><small>USD</small></div>
+          <p>{t('teams.overview.uncoveredEstimate')} <b>{estimatedText}</b></p>
+        </section>
+        <section className="tw-kpi">
+          <span><UsersRound size={16} />{t('teams.metrics.activeMembers')}</span>
+          <div>
+            <strong>{activeMembers}<small> / {currentMembers}</small></strong>
+            <span className="tw-live-label"><i />{t('teams.overview.creating')}</span>
+          </div>
+          <p>
+            {currentMembers} {t('teams.overview.sharingBasic')}
+            <button type="button" className="tw-inline-arrow" onClick={() => navigate(`/teams/${teamId}/members`)} aria-label={t('teams.overview.manageMembers')}>
+              <ArrowUpRight size={15} />
+            </button>
+          </p>
+        </section>
+        <section className="tw-kpi">
+          <span><Code2 size={17} />{t('teams.metrics.codeLines')}</span>
+          <div>
+            <strong>{code.available ? code.text : '—'}</strong>
+            <small>{t('teams.overview.linesUnit')}</small>
+          </div>
+          <p>{t('teams.metrics.tokensPerLine')} <b>{perLine.available ? perLine.text : '—'}</b></p>
+        </section>
+      </div>
+      <div className="tw-token-breakdown">
+        {details.map(([label, value]) => (
+          <div key={label}><span>{label}</span><strong className="mono-num">{value}</strong></div>
+        ))}
+      </div>
+      {empty ? (
+        <section className="tw-card tw-no-data">
+          <BarChart3 size={36} />
+          <h2>{t('teams.overview.noActivity')}</h2>
+          <p>{t('teams.overview.tryOther')}</p>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => {
+              const next = new URLSearchParams();
+              next.set('range', '30d');
+              setParams(next, { replace: true });
+            }}
+          >
+            {t('teams.overview.showAll')}
+          </button>
+        </section>
+      ) : (
+        <>
+          <TeamMemberInsights key={`${teamId}:${authRevision || ''}`} analysis={analysis} />
+          <TeamUsageMix analysis={analysis} />
+        </>
+      )}
+    </>
+  );
 };
