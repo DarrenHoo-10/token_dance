@@ -2,9 +2,8 @@ import React, { useMemo, useState } from 'react';
 import type { SkillItem, TeamAnalysisReady } from '@/api/teams';
 import { Card } from '@/components/common/Card';
 import { useLocale } from '@/context/LocaleContext';
+import { usageColorAt } from '@/utils/usageColors';
 import { formatTokenCompact } from './teamUtils';
-
-const COLORS = ['#577d21', '#277d96', '#8668a6', '#bc7939', '#bb5275'];
 
 function harnessLabel(id?: string) {
   if (!id) return '';
@@ -107,15 +106,18 @@ export const TeamSkillUsage: React.FC<{ analysis: TeamAnalysisReady }> = ({ anal
           </div>
           {empty || !selected || !(selected.members || []).length ? (
             <p className="team-skill-empty">{t('teams.skills.emptyDetail')}</p>
-          ) : (selected.members || []).map((member, index) => (
+          ) : (selected.members || []).map((member, index) => {
+            const color = usageColorAt(index);
+            return (
             <div className="team-bar-item" key={member.membershipId}>
               <div className="team-bar-label">
-                <span><i className="team-dot" style={{ background: COLORS[index % COLORS.length] }} aria-hidden="true" />{member.displayName}</span>
+                <span><i className="team-dot" style={{ background: color }} aria-hidden="true" />{member.displayName}</span>
                 <span className="mono-num">{formatTokenCompact(member.useCount)}{member.share ? ` · ${member.share}%` : ''}</span>
               </div>
-              <div className="team-bar-track"><span style={{ width: `${Math.max(0, Number(member.share || '0'))}%`, background: COLORS[index % COLORS.length] }} /></div>
+              <div className="team-bar-track"><span style={{ width: `${Math.max(0, Number(member.share || '0'))}%`, background: color }} /></div>
             </div>
-          ))}
+            );
+          })}
           <div className="team-metric-foot">{t('teams.skills.historicalFoot')}</div>
         </Card>
       </div>

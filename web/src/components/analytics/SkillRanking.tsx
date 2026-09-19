@@ -1,6 +1,7 @@
 import React from 'react';
 import type { SkillItem } from '@/types/api';
 import { useLocale } from '@/context/LocaleContext';
+import { usageColorAt } from '@/utils/usageColors';
 
 export interface SkillRankingProps {
   skills: SkillItem[];
@@ -34,6 +35,7 @@ export const SkillRanking: React.FC<SkillRankingProps> = ({ skills }) => {
             <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>
               {skill.activeDays} {t('dashboard.daysUsed')}
             </div>
+            <i style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: usageColorAt(idx), marginTop: 6 }} aria-hidden="true" />
           </div>
           <div style={{ textAlign: 'right' }}>
             <strong className="mono-num" style={{ fontSize: 13 }}>

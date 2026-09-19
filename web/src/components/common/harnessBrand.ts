@@ -1,3 +1,5 @@
+import { usageColor } from '@/utils/usageColors';
+
 export interface HarnessBrand {
   id: string;
   known: boolean;
@@ -37,6 +39,11 @@ const ALIASES: Record<string, string> = {
   codex: 'codex',
   'codex-cli': 'codex',
   openai: 'codex',
+  'openai-codex': 'codex',
+  claude: 'claude-code',
+  anthropic: 'claude-code',
+  'cursor-cli': 'cursor',
+  'cursor-agent': 'cursor',
   'grok-build': 'grok-build',
   grok: 'grok-build',
   xai: 'grok-build',
@@ -50,8 +57,6 @@ const ALIASES: Record<string, string> = {
   'doubao-work': 'doubao-work',
   doubao: 'doubao-work',
 };
-
-const FALLBACK_COLORS = ['#3D7A2A', '#1B6B8A', '#6B4EA0', '#B86A2A', '#A8446A', '#2A6B6B'];
 
 export function normalizeHarnessKey(value?: string | null): string {
   return (value ?? '')
@@ -68,9 +73,7 @@ function firstLetter(value?: string | null): string {
 }
 
 function hashColor(key: string): string {
-  let hash = 0;
-  for (const ch of key) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  return FALLBACK_COLORS[hash % FALLBACK_COLORS.length];
+  return usageColor(key);
 }
 
 export function matchHarnessId(agentId?: string | null, label?: string | null): string | null {

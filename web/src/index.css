@@ -249,6 +249,65 @@ h3 { font-size: 15px; margin-bottom: 4px; }
   color: var(--text-inverse);
 }
 
+.sky-language { position: relative; }
+.sky-language-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 8px 0 6px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #151b13;
+  font-size: 13px;
+  cursor: pointer;
+}
+.sky-language-trigger:hover,
+.sky-language-trigger[aria-expanded='true'] {
+  background: #f4f7ef;
+}
+.sky-language-trigger svg:last-child {
+  color: #6d7a62;
+  transition: transform .16s ease;
+}
+.sky-language-trigger[aria-expanded='true'] svg:last-child {
+  transform: rotate(180deg);
+}
+.sky-language-trigger:focus-visible {
+  outline: 2px solid var(--lime);
+  outline-offset: 2px;
+}
+.sky-language-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 132px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid #e6ebe0;
+  border-radius: 12px;
+  box-shadow: 0 10px 28px rgb(17 21 18 / 10%);
+}
+.sky-language-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: 0;
+  background: transparent;
+  border-radius: 8px;
+  color: #2d3a27;
+  font-size: 13px;
+  cursor: pointer;
+}
+.sky-language-menu button[aria-selected='true'],
+.sky-language-menu button:hover {
+  background: #f3f8ea;
+  color: #3d5a24;
+}
+
 /* Minimal Editorial Cards & Panels */
 .panel {
   background-color: var(--bg-surface);
@@ -874,7 +933,7 @@ h3 { font-size: 15px; margin-bottom: 4px; }
   width: 23px;
   height: 23px;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 7px;
   flex: none;
   overflow: hidden;
   color: #fff;

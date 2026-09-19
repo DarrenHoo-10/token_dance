@@ -105,7 +105,7 @@ export const Navbar: React.FC = () => {
           {home ? <Search size={21} aria-hidden="true" /> : <BarChart3 size={22} aria-hidden="true" />}
         </button>
 
-        <LocaleSwitcher compact={home} />
+        <LocaleSwitcher compact />
 
         {authenticated && user ? (
           <div className="user-menu" ref={userMenuRef}>

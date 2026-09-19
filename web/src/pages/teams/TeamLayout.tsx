@@ -9,8 +9,9 @@ import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { useTeam } from '@/context/TeamContext';
 import { InviteDialog } from './InviteDialog';
-import { TeamAvatar, teamErrorMessage } from './TeamShared';
+import { MemberAvatar, TeamAvatar, teamErrorMessage } from './TeamShared';
 import { BarChart3, Globe2, LockKeyhole, Plus, Settings2, UsersRound } from 'lucide-react';
+import type { TeamMember } from '@/api/teams';
 
 export const TeamLayout: React.FC = () => {
   const { teamId } = useParams<{ teamId: string }>();
@@ -21,6 +22,7 @@ export const TeamLayout: React.FC = () => {
   const location = useLocation();
   const [inviteOpen, setInviteOpen] = useState(Boolean((location.state as { openInvite?: boolean } | null)?.openInvite));
   const [pageError, setPageError] = useState<ApiError | null>(null);
+  const [faces, setFaces] = useState<TeamMember[]>([]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -53,6 +55,15 @@ export const TeamLayout: React.FC = () => {
     return () => controller.abort();
   }, [applyScope, authenticated, navigate, refresh, scope?.team.id, teamId]);
 
+  useEffect(() => {
+    if (!authenticated || !teamId || !scope || scope.team.id !== teamId) return;
+    const controller = new AbortController();
+    teamsApi.getMembers(teamId, {}, controller.signal)
+      .then((res) => { if (!controller.signal.aborted) setFaces(res.members || []); })
+      .catch(() => { if (!controller.signal.aborted) setFaces([]); });
+    return () => controller.abort();
+  }, [authenticated, scope, teamId]);
+
   if (authLoading || (loading && !scope)) return <LoadingState />;
   if (!authenticated) return <LoadingState />;
   if (pageError) return <ErrorState error={pageError} description={teamErrorMessage(t, pageError)} onRetry={() => void refresh()} />;
@@ -74,8 +85,15 @@ export const TeamLayout: React.FC = () => {
             <div className="sky-team-meta">{team.memberCount != null && <span><UsersRound size={14} />{team.memberCount} {t('teams.nav.members')}</span>}<span><Globe2 size={13} />{team.timezone}</span>{team.createdAt && <span>{locale === 'zh-CN' ? '创建于' : 'Created'} {team.createdAt.slice(0, 10)}</span>}</div>
           </div>
         </div>
-        <div className="sky-team-art" aria-hidden="true"><i /><img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" /><span>SMALL IDEAS.<br />SHARED POSSIBILITIES.</span></div>
         <div className="team-heading-actions">
+          {faces.length > 0 && (
+            <div className="sky-team-faces" aria-hidden="true">
+              {faces.slice(0, 4).map((member) => (
+                <MemberAvatar key={member.membershipId} name={member.displayName} url={member.avatarUrl} />
+              ))}
+              {faces.length > 4 && <span className="sky-team-faces-more">+{faces.length - 4}</span>}
+            </div>
+          )}
           {permissions.inviteMembers ? (
             <Button variant="primary" onClick={() => setInviteOpen(true)}><Plus size={17} />{t('teams.invite.action')}</Button>
           ) : (

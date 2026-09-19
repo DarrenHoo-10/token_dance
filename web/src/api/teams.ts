@@ -29,8 +29,8 @@ export const EMPTY_SHARING: SharingFlags = {
 export const TEAM_JOIN_SHARING: SharingFlags = {
   base: true,
   named: true,
-  classification: false,
-  cost: false,
+  classification: true,
+  cost: true,
 };
 
 export interface TeamPermissions {
@@ -244,6 +244,7 @@ export interface ContributionItem {
   membershipId: string;
   displayName: string;
   handle: string | null;
+  avatarUrl?: string | null;
   rank: string;
   tokens: MetricValue;
   namedShare?: boolean;
@@ -259,6 +260,7 @@ export interface SkillMemberUse {
   membershipId: string;
   displayName: string;
   handle?: string | null;
+  avatarUrl?: string | null;
   useCount: string;
   share?: string | null;
 }
@@ -318,6 +320,7 @@ export interface TeamMember {
   userId: string;
   displayName: string;
   handle: string | null;
+  avatarUrl?: string | null;
   role: TeamRole;
   joinedAt: string;
   sharing: SharingFlags;
@@ -331,6 +334,7 @@ export interface MemberDetail {
   membershipId: string;
   displayName: string;
   handle: string | null;
+  avatarUrl?: string | null;
   role: TeamRole;
   joinedAt: string;
   range: AnalysisRange;

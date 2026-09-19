@@ -2,10 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { AnalysisTrendPoint, ContributionItem, TeamAnalysisReady } from '@/api/teams';
 import { Card } from '@/components/common/Card';
 import { useLocale } from '@/context/LocaleContext';
-import { TeamRankPager } from './TeamShared';
-import { firstGrapheme, formatTokenCompact, formatTokenExact, metricDisplay, rankPageCount, rankPageSlice, TEAM_RANK_PAGE_SIZE } from './teamUtils';
+import { MemberAvatar, TeamRankPager } from './TeamShared';
+import { formatTokenCompact, formatTokenExact, metricDisplay, rankPageCount, rankPageSlice, TEAM_RANK_PAGE_SIZE } from './teamUtils';
+import { usageColor } from '@/utils/usageColors';
 
-const COLORS = ['#577d21', '#277d96', '#8668a6', '#bc7939', '#bb5275'];
 const TEAM_SERIES_ID = '__team__';
 const TEAM_COLOR = '#2f3b24';
 const integer = (value?: string | null) => /^\d+$/.test(value || '') ? BigInt(value!) : 0n;
@@ -256,8 +256,7 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
   const [efficiencyPage, setEfficiencyPage] = useState(1);
   const colorFor = (id: string) => {
     if (id === TEAM_SERIES_ID) return TEAM_COLOR;
-    const index = members.findIndex((member) => member.membershipId === id);
-    return COLORS[(index < 0 ? 0 : index) % COLORS.length];
+    return usageColor(id);
   };
   const keepKnown = (ids: string[]) => ids.filter((id) => knownIds.has(id));
   const usageSelected = keepKnown(usageIds);
@@ -288,7 +287,7 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
     ...leaders.map((member, index) => {
       const start = leaders.slice(0, index).reduce((sum, item) => sum + memberPercent(item.tokens.value || '0', total), 0);
       const end = start + memberPercent(member.tokens.value || '0', total);
-      return `${COLORS[index]} ${start}% ${end}%`;
+      return `${colorFor(member.membershipId)} ${start}% ${end}%`;
     }),
     remainder > 0n ? `#d6ddd1 ${leaders.reduce((sum, item) => sum + memberPercent(item.tokens.value || '0', total), 0)}% 100%` : '',
   ].filter(Boolean).join(', ');
@@ -351,7 +350,7 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
             </div>
           </div>
           <div className="team-share-legend two-col">
-            {leaders.map((member, index) => <div key={member.membershipId}><i style={{ background: COLORS[index] }} aria-hidden="true" /><span>{member.displayName}</span><strong className="mono-num">{memberPercent(member.tokens.value || '0', total).toFixed(1)}%</strong></div>)}
+            {leaders.map((member) => <div key={member.membershipId}><i style={{ background: colorFor(member.membershipId) }} aria-hidden="true" /><span>{member.displayName}</span><strong className="mono-num">{memberPercent(member.tokens.value || '0', total).toFixed(1)}%</strong></div>)}
             {remainder > 0n && <div><i style={{ background: '#d6ddd1' }} aria-hidden="true" /><span>{t('teams.insights.others')}</span><strong>{memberPercent(remainder.toString(), total).toFixed(1)}%</strong></div>}
           </div>
         </> : <p className="team-chart-empty">{t('teams.overview.noContributions')}</p>}
@@ -396,7 +395,7 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
               return (
                 <div className="team-rank-row" key={member.membershipId}>
                   <span className="team-person-rank">{rank}</span>
-                  <span className="team-person-avatar" aria-hidden="true">{firstGrapheme(member.displayName)}</span>
+                  <MemberAvatar name={member.displayName} url={member.avatarUrl} />
                   <span className="team-rank-name">{member.displayName}</span>
                   <strong className="mono-num">{formatTokenCompact(member.tokensPerCodeLine || '0')}</strong>
                 </div>
@@ -419,7 +418,7 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
           const memberMax = (member.trend || []).reduce((value, point) => integer(point.tokens.value) > value ? integer(point.tokens.value) : value, 1n);
           const points = pointsFor(member.trend, rankingDates, memberMax, 100, 30);
           const efficiency = member.tokensPerCodeLine ? formatTokenCompact(member.tokensPerCodeLine) : '—';
-          return <tr key={member.membershipId}><td><div className="team-person-cell"><span className="team-person-rank">{member.rank}</span><span className="team-person-avatar" aria-hidden="true">{firstGrapheme(member.displayName)}</span><span><strong>{member.displayName}</strong><small>{member.handle ? `@${member.handle}` : ''}</small></span></div></td><td><span className="share-cell"><span className="mono-num">{member.tokens.state === 'available' ? formatTokenCompact(member.tokens.value || '0') : '—'}</span> <span className="text-muted"> · {integer(total) > 0n ? `${memberPercent(member.tokens.value || '0', total).toFixed(1)}%` : '—'}</span><span className="team-person-share"><div><i style={{ width: `${memberPercent(member.tokens.value || '0', total)}%`, background: colorFor(member.membershipId) }} /></div></span></span></td><td className="mono-num">{efficiency}</td><td>{member.activeDays ?? (member.trend ? member.trend.filter(point => integer(point.tokens.value) > 0n).length : '—')}</td><td>{member.trend && points.length ? <svg width="100" height="30" viewBox="0 0 100 30" aria-label={`${member.displayName} ${t('teams.insights.periodTrend')}`} role="img"><polyline points={points.map(point => `${point.x},${point.y}`).join(' ')} stroke={colorFor(member.membershipId)} strokeWidth="2" fill="none" />{points.length === 1 && <circle cx={points[0].x} cy={points[0].y} r="3" fill={colorFor(member.membershipId)} />}</svg> : '—'}</td></tr>;
+          return <tr key={member.membershipId}><td><div className="team-person-cell"><span className="team-person-rank">{member.rank}</span><MemberAvatar name={member.displayName} url={member.avatarUrl} /><span><strong>{member.displayName}</strong><small>{member.handle ? `@${member.handle}` : ''}</small></span></div></td><td><span className="share-cell"><span className="mono-num">{member.tokens.state === 'available' ? formatTokenCompact(member.tokens.value || '0') : '—'}</span> <span className="text-muted"> · {integer(total) > 0n ? `${memberPercent(member.tokens.value || '0', total).toFixed(1)}%` : '—'}</span><span className="team-person-share"><div><i style={{ width: `${memberPercent(member.tokens.value || '0', total)}%`, background: colorFor(member.membershipId) }} /></div></span></span></td><td className="mono-num">{efficiency}</td><td>{member.activeDays ?? (member.trend ? member.trend.filter(point => integer(point.tokens.value) > 0n).length : '—')}</td><td>{member.trend && points.length ? <svg width="100" height="30" viewBox="0 0 100 30" aria-label={`${member.displayName} ${t('teams.insights.periodTrend')}`} role="img"><polyline points={points.map(point => `${point.x},${point.y}`).join(' ')} stroke={colorFor(member.membershipId)} strokeWidth="2" fill="none" />{points.length === 1 && <circle cx={points[0].x} cy={points[0].y} r="3" fill={colorFor(member.membershipId)} />}</svg> : '—'}</td></tr>;
         })}</tbody></table></div>
         <TeamRankPager
           page={detailPage}

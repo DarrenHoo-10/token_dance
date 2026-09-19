@@ -8,6 +8,7 @@ import { Switch } from '@/components/common/Switch';
 import { useLocale } from '@/context/LocaleContext';
 import { TeamDateField } from './TeamDateField';
 import { getApiErrorMessage } from '@/i18n';
+import { UserAvatar } from '@/components/common/UserAvatar';
 import { avatarUrl } from '@/utils/avatar';
 import {
   TEAM_RANGE_MAX_DAYS,
@@ -50,6 +51,24 @@ export const TeamAvatar: React.FC<{ team: Pick<Team, 'id' | 'name' | 'avatarUrl'
     </span>
   );
 };
+
+export const MemberAvatar: React.FC<{ name: string; url?: string | null; size?: 'sm' | 'md' }> = ({
+  name,
+  url,
+  size = 'sm',
+}) => (
+  <UserAvatar
+    url={url}
+    name={name}
+    className={`team-member-avatar ${size}`}
+    fallbackClassName={`team-member-avatar ${size} is-fallback`}
+    alt=""
+  />
+);
+
+export function memberContributionState(_member?: { syncStatus?: string | null; lastReceivedAt?: string | null }): 'joined' | 'waiting' {
+  return 'joined';
+}
 
 export const RoleBadge: React.FC<{ role: TeamRole }> = ({ role }) => {
   const { t } = useLocale();

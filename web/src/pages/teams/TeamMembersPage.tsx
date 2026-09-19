@@ -20,7 +20,7 @@ import { useLocale } from '@/context/LocaleContext';
 import { useNotification } from '@/context/NotificationContext';
 import { useTeam } from '@/context/TeamContext';
 import { createIdempotencyKey, formatDecimalAmount, formatTokenCompact, metricDisplay } from './teamUtils';
-import { AnalysisSkeleton, RoleBadge, TeamAvatar, teamErrorMessage, useTeamSearchFilters } from './TeamShared';
+import { AnalysisSkeleton, MemberAvatar, RoleBadge, memberContributionState, teamErrorMessage, useTeamSearchFilters } from './TeamShared';
 import { useTeamAnalysis } from './useTeamAnalysis';
 
 type MemberTab = 'joined' | 'pending' | 'links';
@@ -144,7 +144,7 @@ export const TeamMembersPage: React.FC = () => {
                 <tr>
                   <th>{t('teams.members.person')}</th>
                   <th>{t('teams.members.role')}</th>
-                  <th>{locale === 'zh-CN' ? '共享状态' : 'Sharing status'}</th>
+                  <th>{t('teams.members.contribution')}</th>
                   <th>{locale === 'zh-CN' ? '加入日期' : 'Joined'}</th>
                   <th>{t('common.actions')}</th>
                 </tr>
@@ -166,9 +166,12 @@ export const TeamMembersPage: React.FC = () => {
             <div className="team-compact-cards">
               {members.map((member) => (
                 <Card key={`${member.membershipId}-card`}>
-                  <strong>{member.displayName}</strong>
+                  <div className="team-member-identity">
+                    <MemberAvatar name={member.displayName} url={member.avatarUrl} />
+                    <strong>{member.displayName}</strong>
+                  </div>
                   <div style={{ margin: '8px 0' }}><RoleBadge role={member.role} /></div>
-                  <p className="text-muted" style={{ fontSize: 12 }}>{t(`teams.members.share.${member.sharing.base ? 'on' : 'off'}`)}</p>
+                  <p className="text-muted" style={{ fontSize: 12 }}>{t(`teams.members.contributionState.${memberContributionState(member)}`)}</p>
                   {member.canOpenDetail && <Button size="sm" onClick={() => void openDetail(member)}>{t('teams.members.detail')}</Button>}
                 </Card>
               ))}
@@ -306,17 +309,20 @@ const MemberRow: React.FC<{
   onRole: () => void;
 }> = ({ member, canManage, assignAdmins, onOpen, onRemove, onRole }) => {
   const { t } = useLocale();
-  const syncStatus = member.syncStatus || (member.sharing.base ? 'waiting' : 'not_shared');
+  const contribution = memberContributionState(member);
   return (
     <tr>
       <td>
-        <button type="button" id={`member-${member.membershipId}`} className="btn btn-ghost" onClick={onOpen} disabled={!member.canOpenDetail} style={{ justifyContent: 'flex-start' }}>
-          <TeamAvatar team={{ id: member.membershipId, name: member.displayName, avatarUrl: null }} size="sm" />
-          <span style={{ marginLeft: 8 }}>{member.displayName}</span>
+        <button type="button" id={`member-${member.membershipId}`} className="btn btn-ghost team-member-identity" onClick={onOpen} disabled={!member.canOpenDetail}>
+          <MemberAvatar name={member.displayName} url={member.avatarUrl} />
+          <span>
+            <strong>{member.displayName}</strong>
+            {member.handle ? <small>@{member.handle}</small> : null}
+          </span>
         </button>
       </td>
       <td><RoleBadge role={member.role} /></td>
-      <td><span className={`team-sync-state ${syncStatus}`}>{t(`teams.members.syncState.${syncStatus}`)}</span></td>
+      <td><span className={`team-sync-state ${contribution}`}>{t(`teams.members.contributionState.${contribution}`)}</span></td>
       <td className="mono-num team-member-joined">{member.joinedAt?.slice(0, 10) || '—'}</td>
       <td>
         {canManage && member.role !== 'owner' && (

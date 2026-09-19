@@ -195,12 +195,11 @@
 .sky-team-eyebrow>span{font-size:10px;letter-spacing:0;padding:3px 7px;background:#eaf3dd;color:#617f40;border-radius:5px}
 .sky-team-meta{display:flex;align-items:center;gap:18px;margin-top:14px;font-size:10px;color:#7f9470}
 .sky-team-meta>span{display:flex;align-items:center;gap:6px}
-.product-sky .team-heading-actions{position:relative;z-index:1;flex-shrink:0}
-.sky-team-art{position:absolute;right:155px;top:-5px;width:240px;height:200px;opacity:.75;z-index:0;pointer-events:none}
-.sky-team-art>i{position:absolute;inset:5px 20px;border-radius:50%;background:radial-gradient(circle at 30% 20%,white,#e7f7cb66 55%,#cce99b65);box-shadow:inset 0 0 0 1px white}
-.sky-team-art>i:before{content:'';position:absolute;inset:37px -24px;border:1px solid #d4e8b5;border-radius:50%;transform:rotate(-30deg)}
-.sky-team-art>img{position:absolute;left:95px;top:63px;width:65px;height:65px;transform:rotate(-15deg);filter:drop-shadow(0 14px 10px #70984227)}
-.sky-team-art>span{position:absolute;right:0;top:70px;writing-mode:vertical-rl;font-size:7px;letter-spacing:1.8px;color:#8d9f77;line-height:1.9}
+.product-sky .team-heading-actions{position:relative;z-index:1;flex-shrink:0;display:flex;align-items:center;gap:16px}
+.sky-team-faces{display:flex;align-items:center}
+.sky-team-faces .team-member-avatar,.sky-team-faces-more{width:32px;height:32px;border:2px solid #fff;margin-left:-8px;box-shadow:0 2px 6px rgb(80 110 50 / 12%)}
+.sky-team-faces .team-member-avatar:first-child{margin-left:0}
+.sky-team-faces-more{display:grid;place-items:center;border-radius:50%;background:#eef6df;color:#5d7544;font-size:10px;font-weight:700}
 .product-sky .team-tabs{display:flex;gap:31px;border-bottom:1px solid #dfe8d5;margin:0 0 25px;border-radius:0;padding:0;background:transparent}
 .product-sky .team-tabs a{position:relative;padding:17px 3px;gap:9px;min-height:54px;border-radius:0;background:none;color:#7c8c6e;font-size:13px;font-weight:500}
 .product-sky .team-tabs a.active{color:#344e21;background:none;font-weight:650}
@@ -255,7 +254,6 @@
 .product-sky .team-mix-row{padding:15px;border-radius:12px;margin:4px 0;border:1px solid transparent}
 .product-sky .team-mix-row.is-active{background:#f4f9eb;border-color:#e2edcf}
 .product-sky .team-bar-track{height:5px;background:#edf2e4}
-.product-sky .team-bar-track>span{background:#a3cb72}
 .product-sky .team-bar-label{font-size:12px;color:#627e49}
 .product-sky .team-mix-value{font-size:13px;font-weight:600}
 .product-sky .sky-team-members{background:#ffffffef;border:1px solid #e6edde;border-radius:24px;padding:28px}
@@ -270,6 +268,7 @@
 .sky-team-member-search .form-input{border:0;background:transparent;box-shadow:none;padding-left:0;height:38px}
 .team-sync-state{display:inline-flex;align-items:center;gap:6px;color:#6f855d;font-size:12px}
 .team-sync-state:before{content:'';width:6px;height:6px;border-radius:50%;background:#91c957}
+.team-sync-state.joined:before{background:#91c957}
 .team-sync-state.waiting:before{background:#d8a54b}
 .team-sync-state.not_shared:before{background:#b7c0ae}
 .team-sync-state.delayed:before{background:#e98665}
@@ -324,7 +323,6 @@
 .sky-detail-grid{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr)}
 .sky-personal-stats{gap:10px}
 .sky-personal-stats .stat-line strong{font-size:24px}
-.sky-team-art{opacity:.4;right:150px}
 .product-sky .team-identity h1{font-size:31px}
 .product-sky .team-kpi{padding:21px 18px}
 .product-sky .team-kpi .value{font-size:28px}
@@ -372,7 +370,6 @@
 .product-sky .sky-team-kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:13px}
 .product-sky .team-identity{max-width:74%;gap:18px}
 .product-sky .sky-team-banner{padding:27px}
-.sky-team-art{display:none}
 .product-sky .team-letter-avatar{width:65px;height:65px;flex-basis:65px;border-radius:18px}
 .sky-team-eyebrow{font-size:8px;letter-spacing:1.2px}
 .product-sky .team-people-grid{grid-template-columns:1fr 1fr}
@@ -472,7 +469,6 @@
 .sky-team-meta{font-size:10px;gap:10px;flex-wrap:wrap;margin-top:11px}
 .product-sky .team-heading-actions{border-top:1px solid #e4edda;padding-top:16px;justify-content:flex-end}
 .product-sky .team-heading-actions .btn{font-size:11px;min-height:35px;padding:9px 15px}
-.sky-team-art{display:block;opacity:.15;right:-110px;top:0;transform:scale(.7)}
 .product-sky .team-tabs{gap:25px;margin-bottom:20px}
 .product-sky .team-tabs a{font-size:12px;gap:7px;padding:15px 2px;min-height:49px}
 .product-sky .team-tabs svg{width:15px}

@@ -1,6 +1,7 @@
 import React from 'react';
 import { HarnessMark } from '@/components/common/HarnessMark';
 import { resolveHarnessBrand } from '@/components/common/harnessBrand';
+import { usageColor } from '@/utils/usageColors';
 import { useLocale } from '@/context/LocaleContext';
 import type { AgentBreakdownItem } from '@/types/api';
 
@@ -17,8 +18,6 @@ function formatTokens(tokenTotal: string): string {
   return num.toLocaleString();
 }
 
-const colors = ['#82c436', '#b5cf85', '#dce9c8', '#91c7ba', '#a9a1d2'];
-
 export const AgentBreakdown: React.FC<AgentBreakdownProps> = ({ items, variant = 'bars' }) => {
   const { t } = useLocale();
 
@@ -33,12 +32,15 @@ export const AgentBreakdown: React.FC<AgentBreakdownProps> = ({ items, variant =
   if (variant === 'donut') {
     const normalized = items.map((agent, idx) => {
       const percentage = typeof agent.percentage === 'number' ? agent.percentage : parseFloat(agent.percentage) || 0;
+      const key = agent.key || agent.agentId || `agent-${idx}`;
+      const label = agent.displayName || agent.label || agent.key || agent.agentId || t('dashboard.unknownAgent');
+      const brand = resolveHarnessBrand(agent.agentId || agent.key, label);
       return {
-        key: agent.key || agent.agentId || `agent-${idx}`,
-        label: agent.displayName || agent.label || agent.key || agent.agentId || t('dashboard.unknownAgent'),
+        key,
+        label,
         percentage: Math.max(0, percentage),
         tokenTotal: agent.tokenTotal,
-        color: colors[idx % colors.length],
+        color: brand.known ? brand.color : usageColor(key),
       };
     });
     const totalPct = normalized.reduce((sum, item) => sum + item.percentage, 0) || 1;
@@ -78,7 +80,7 @@ export const AgentBreakdown: React.FC<AgentBreakdownProps> = ({ items, variant =
               <div className="progress-track">
                 <div
                   className="progress-fill"
-                  style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: brand.known ? brand.color : undefined }}
+                  style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: brand.known ? brand.color : usageColor(itemKey) }}
                 />
               </div>
             </div>

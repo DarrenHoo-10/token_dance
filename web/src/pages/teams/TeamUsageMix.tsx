@@ -3,11 +3,10 @@ import type { AnalysisBucketItem, SkillItem, SkillMemberUse, TeamAnalysisReady }
 import { Card } from '@/components/common/Card';
 import { HarnessMark } from '@/components/common/HarnessMark';
 import { resolveHarnessBrand } from '@/components/common/harnessBrand';
+import { usageColorAt } from '@/utils/usageColors';
 import { useLocale } from '@/context/LocaleContext';
-import { TeamRankPager } from './TeamShared';
-import { formatTokenCompact, rankPageSlice } from './teamUtils';
-
-const COLORS = ['#577d21', '#277d96', '#8668a6', '#bc7939', '#bb5275'];
+import { MemberAvatar, TeamRankPager } from './TeamShared';
+import { formatTokenCompact, rankPageSlice, TEAM_RANK_PAGE_SIZE } from './teamUtils';
 
 type MixKind = 'harness' | 'model' | 'skill';
 
@@ -33,6 +32,11 @@ function asSkill(item: SkillItem | Record<string, unknown>): SkillItem {
 
 function itemKey(item: MixItem) {
   return `${item.id}\0${item.label}`;
+}
+
+function mixColor(kind: MixKind, item: MixItem, index: number): string {
+  if (kind === 'harness') return resolveHarnessBrand(item.id, item.label).color;
+  return usageColorAt(index);
 }
 
 function bucketItems(items: AnalysisBucketItem[] | undefined): MixItem[] {
@@ -116,10 +120,11 @@ export const TeamUsageMix: React.FC<{ analysis: TeamAnalysisReady }> = ({ analys
           ) : (
             <>
               <div className="team-mix-list" key={kind}>
-                {visibleItems.map((item) => {
+                {visibleItems.map((item, index) => {
                   const pct = Number(item.share || '0');
                   const key = itemKey(item);
                   const isActive = selectedKey === key;
+                  const color = mixColor(kind, item, (listPage - 1) * TEAM_RANK_PAGE_SIZE + index);
                   return (
                     <button
                       key={key}
@@ -136,7 +141,7 @@ export const TeamUsageMix: React.FC<{ analysis: TeamAnalysisReady }> = ({ analys
                           <span>{kind === 'harness' ? <HarnessMark agentId={item.id} label={item.label} size="sm" /> : null}{item.label}</span>
                           <span className="mono-num">{item.share ? `${item.share}%` : '—'}</span>
                         </div>
-                        <div className="team-bar-track"><span style={{ width: `${Math.max(0, Math.min(100, pct))}%`, background: kind === 'harness' ? resolveHarnessBrand(item.id, item.label).color : '#577d21' }} /></div>
+                        <div className="team-bar-track"><span style={{ width: `${Math.max(0, Math.min(100, pct))}%`, background: color }} /></div>
                       </div>
                       <span className="mono-num team-mix-value">{formatTokenCompact(item.value)}</span>
                     </button>
@@ -164,15 +169,18 @@ export const TeamUsageMix: React.FC<{ analysis: TeamAnalysisReady }> = ({ analys
             <p className="team-chart-empty">{t('teams.overview.mixEmptyDetail')}</p>
           ) : (
             <>
-              {visibleMembers.map((member, index) => (
+              {visibleMembers.map((member, index) => {
+                const color = usageColorAt((distPage - 1) * TEAM_RANK_PAGE_SIZE + index);
+                return (
                 <div className="team-bar-item" key={member.membershipId}>
                   <div className="team-bar-label">
-                    <span><i className="team-dot" style={{ background: COLORS[index % COLORS.length] }} aria-hidden="true" />{member.displayName}</span>
+                    <span><MemberAvatar name={member.displayName} url={member.avatarUrl} /><i className="team-dot" style={{ background: color }} aria-hidden="true" />{member.displayName}</span>
                     <span className="mono-num">{formatTokenCompact(member.useCount)}{member.share ? ` · ${member.share}%` : ''}</span>
                   </div>
-                  <div className="team-bar-track"><span style={{ width: `${Math.max(0, Number(member.share || '0'))}%`, background: COLORS[index % COLORS.length] }} /></div>
+                  <div className="team-bar-track"><span style={{ width: `${Math.max(0, Number(member.share || '0'))}%`, background: color }} /></div>
                 </div>
-              ))}
+                );
+              })}
               <TeamRankPager
                 page={distPage}
                 total={selected.members.length}

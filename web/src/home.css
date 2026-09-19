@@ -163,10 +163,7 @@
 .sky-home-shell .sky-home .range-tabs{height:auto;min-height:0}
 .sky-home-shell .sky-home .range-tabs button{min-width:0;height:auto;line-height:normal}
 .sky-home-shell .sky-metrics .hero-mini-card{box-sizing:border-box}
-.sky-language-select{display:flex;align-items:center;gap:8px;font-size:13px;color:#151b13}
-.sky-language-select select{appearance:none;background:transparent;border:0;padding:7px 0;font:inherit;color:inherit;width:34px;cursor:pointer}
-.sky-language-select select:has(option[value='en-US']:checked){width:52px}
-@media(max-width:760px){.sky-language-select{gap:5px;font-size:11px}.sky-language-select>svg:first-child{width:16px}.sky-language-select>svg:last-child{display:none}.sky-home-shell .sky-home .range-tabs button{padding:6px 15px}.sky-home-shell .sky-home .range-tabs{margin-left:38px}}
+@media(max-width:760px){.sky-language-trigger{gap:4px;font-size:12px}.sky-home-shell .sky-home .range-tabs button{padding:6px 15px}.sky-home-shell .sky-home .range-tabs{margin-left:38px}}
 @media(max-width:400px){.sky-home-shell .sky-home .range-tabs{margin-left:0}}
 .sky-home-shell .sky-rhythm-total>strong{display:flex;align-items:baseline;gap:9px}
 .sky-home-shell .sky-rhythm-total>strong>.hero-delta{font-size:12px;letter-spacing:0}
