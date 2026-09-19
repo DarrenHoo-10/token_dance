@@ -16,6 +16,15 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
 
     location = /token-dance-test { return 308 /token-dance-test/; }
+    # Must precede the general API regex; honor upstream cache policies.
+    location ~ ^/token-dance-test/api/v1/public/(avatars/[^/]+|leaderboards(/stats)?)$ {
+        rewrite ^/token-dance-test/(.*)$ /$1 break;
+        proxy_pass http://127.0.0.1:8131;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
     location ~ ^/token-dance-test/(api/|v1/|v2/) {
         rewrite ^/token-dance-test/(.*)$ /$1 break;
         proxy_pass http://127.0.0.1:8131;
@@ -41,6 +50,11 @@ server {
         root /var/www;
         try_files $uri =404;
         add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+    location ^~ /token-dance-test/images/avatars/ {
+        root /var/www;
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=86400";
     }
     location /token-dance-test/ {
         root /var/www;

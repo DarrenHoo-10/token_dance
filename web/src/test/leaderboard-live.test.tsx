@@ -24,6 +24,16 @@ beforeEach(() => {
   vi.spyOn(api,'getCommunityStats').mockResolvedValue({ metricDate:'2026-09-09', timezone:'UTC' });
 });
 describe('Live leaderboard', () => {
+  it('requests a cacheable public top 100 and caps the rendered rows', async () => {
+    vi.mocked(api.getLeaderboard).mockResolvedValue({...board, entries: Array.from({length: 101}, (_, i) => ({rankNo: i + 1, handle: `user-${i + 1}`, displayName: `User ${i + 1}`, avatarUrl: `/api/v1/public/avatars/${i + 1}`, metricValue: '1'}))});
+    showPage();
+    expect(await screen.findByText('User 100')).toBeInTheDocument();
+    expect(screen.queryByText('User 101')).not.toBeInTheDocument();
+    expect(api.getLeaderboard).toHaveBeenCalledWith({window: 'today', limit: 100});
+    expect(api.getMyLeaderboard).not.toHaveBeenCalled();
+    expect(screen.getByAltText('User 1 profile')).toHaveAttribute('fetchpriority', 'high');
+    expect(document.querySelector('img[src="/api/v1/public/avatars/100"]')).toHaveAttribute('loading', 'lazy');
+  });
   it('explains that a private profile still stays on the board', async () => {
     const update=vi.spyOn(api,'updatePrivacy'); showPage();
     expect(await screen.findByRole('status')).toHaveTextContent('公开开关只控制详细资料页');

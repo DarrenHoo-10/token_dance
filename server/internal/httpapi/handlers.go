@@ -630,10 +630,8 @@ func (h *Handlers) GetAvatarContent(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, err)
 		return
 	}
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(data)
+	// Store bytes in the browser but revalidate visibility before reuse.
+	writeCachedContent(w, r, data, contentType, "private, no-cache")
 }
 
 func (h *Handlers) ClearAvatar(w http.ResponseWriter, r *http.Request) {
@@ -1625,26 +1623,27 @@ func (h *Handlers) Search(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) GetLeaderboards(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	q := leaderboardQueryFromRequest(r)
 	res, err := h.leaderboard.Query(r.Context(), q)
 	if err != nil {
 		WriteError(w, r, err)
 		return
 	}
-	WriteJSON(w, http.StatusOK, res)
+	writePublicCachedJSON(w, r, res)
 }
 
 // GetLeaderboardsStats serves precomputed community totals for the home hero.
 // It only reads rows the stats worker published; there is no on-the-fly
 // aggregation, so a cold day yields omitted fields.
 func (h *Handlers) GetLeaderboardsStats(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	res, err := h.leaderboard.GetCommunityStats(r.Context(), time.Now())
 	if err != nil {
 		WriteError(w, r, err)
 		return
 	}
-	w.Header().Set("Cache-Control", "no-store")
-	WriteJSON(w, http.StatusOK, res)
+	writePublicCachedJSON(w, r, res)
 }
 
 func (h *Handlers) GetMyLeaderboards(w http.ResponseWriter, r *http.Request) {

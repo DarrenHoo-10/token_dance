@@ -28,6 +28,7 @@ type Service struct {
 	cfg     *config.Config
 	clk     clock.Clock
 	storage provider.ObjectStorage
+	avatars avatarCache
 }
 
 func NewService(st store.Store, cfg *config.Config, clk clock.Clock, storage provider.ObjectStorage) *Service {
@@ -199,6 +200,16 @@ func (s *Service) CompleteAvatarIntent(ctx context.Context, objectID, userID str
 		ImageWidth:    uint32(cfg.Width),
 		ImageHeight:   uint32(cfg.Height),
 		ContentType:   detectedContentType,
+	}
+
+	// Persist a small display variant without overwriting the checksummed upload.
+	// A retry can always validate the original bytes again.
+	thumb, thumbType, err := thumbnail(data, s.cfg.MediaAvatarMaxPixels)
+	if err != nil {
+		return nil, domain.ErrInternal
+	}
+	if err := s.storage.PutObject(ctx, avatarThumbnailKey(obj.ObjectKey), bytes.NewReader(thumb), int64(len(thumb)), thumbType); err != nil {
+		return nil, domain.NewAppError(503, "DEPENDENCY_UNAVAILABLE", "media.storageUnavailable", "failed to save avatar thumbnail", nil, err)
 	}
 
 	// 6. Transactional owner-ready avatar switch
