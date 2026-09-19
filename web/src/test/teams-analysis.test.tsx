@@ -9,7 +9,8 @@ import { AuthProvider } from '@/context/AuthContext';
 import { TeamProvider } from '@/context/TeamContext';
 import { TeamAnalyticsPage } from '@/pages/teams/TeamAnalyticsPage';
 import { TeamLayout } from '@/pages/teams/TeamLayout';
-import { memberPercent } from '@/pages/teams/TeamMemberInsights';
+import { buildMemberShareChart, memberPercent, memberShareColors } from '@/pages/teams/TeamMemberInsights';
+import { usageColorAt } from '@/utils/usageColors';
 import { TeamMembersPage } from '@/pages/teams/TeamMembersPage';
 import { useTeamAnalysis } from '@/pages/teams/useTeamAnalysis';
 import { calendarDateInTimeZone } from '@/pages/teams/teamUtils';
@@ -424,6 +425,48 @@ describe('Team member insights', () => {
   it('keeps large integer share precision and handles zero totals', () => {
     expect(memberPercent('900719925474099300', '1801439850948198600')).toBe(50);
     expect(memberPercent('1', '0')).toBe(0);
+  });
+
+  it('paints donut slices and legend dots from the same distinct pool colors', async () => {
+    const members = [
+      { membershipId: 'tmb_milo', displayName: 'Miloilo', tokens: { value: '4190', state: 'available' as const } },
+      { membershipId: 'tmb_neo', displayName: 'Neocatett', tokens: { value: '1760', state: 'available' as const } },
+      { membershipId: 'tmb_green', displayName: 'Greenlabbel', tokens: { value: '1510', state: 'available' as const } },
+      { membershipId: 'tmb_orbit', displayName: 'OrbitAI', tokens: { value: '1020', state: 'available' as const } },
+      { membershipId: 'tmb_byte', displayName: 'ByteForest', tokens: { value: '810', state: 'available' as const } },
+      { membershipId: 'tmb_pixel', displayName: 'PixelRiver', tokens: { value: '710', state: 'available' as const } },
+    ];
+    const colors = memberShareColors(members);
+    const chart = buildMemberShareChart(members, '10000', colors);
+    expect(chart.slices.map((slice) => slice.color)).toEqual(members.map((_, index) => usageColorAt(index)));
+    expect(new Set(chart.slices.map((slice) => slice.color)).size).toBe(6);
+    expect(chart.gradient).toContain(usageColorAt(0));
+    expect(chart.gradient).toContain(usageColorAt(5));
+    chart.slices.forEach((slice) => {
+      expect(chart.gradient).toContain(`${slice.color} ${slice.startPercent}% ${slice.endPercent}%`);
+    });
+
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    const result = readyAnalysis('1', '10000');
+    result.contributions = {
+      items: members.map((member, index) => ({
+        ...member,
+        handle: null,
+        rank: String(index + 1),
+      })),
+      nextCursor: null,
+    };
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
+    renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
+    expect(await screen.findByRole('heading', { name: '每一份贡献' })).toBeInTheDocument();
+    const donut = document.querySelector('.tw-donut') as HTMLElement;
+    const dots = [...document.querySelectorAll('.tw-share-list i')] as HTMLElement[];
+    expect(donut.style.background).toContain(chart.gradient);
+    expect(dots.map((dot) => dot.style.background)).toEqual(chart.slices.map((slice) => {
+      const hex = slice.color.replace('#', '');
+      return `rgb(${parseInt(hex.slice(0, 2), 16)}, ${parseInt(hex.slice(2, 4), 16)}, ${parseInt(hex.slice(4, 6), 16)})`;
+    }));
   });
   it('starts the shared trend with the team series and compares members on demand', async () => {
     vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);

@@ -29,3 +29,17 @@ export function usageColorAt(index: number): string {
   const size = USAGE_COLOR_POOL.length;
   return USAGE_COLOR_POOL[((index % size) + size) % size];
 }
+
+/** Assign sequential pool colors so adjacent members stay distinct. */
+export function assignUsageColors(keys: readonly (string | null | undefined)[]): Map<string, string> {
+  const assigned = new Map<string, string>();
+  let index = 0;
+  for (const key of keys) {
+    const id = (key ?? '').trim() || 'unknown';
+    if (!assigned.has(id)) {
+      assigned.set(id, usageColorAt(index));
+      index += 1;
+    }
+  }
+  return assigned;
+}

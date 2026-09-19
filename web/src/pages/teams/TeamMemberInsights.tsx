@@ -6,15 +6,78 @@ import { useLocale } from '@/context/LocaleContext';
 import { MemberAvatar, TeamRankPager } from './TeamShared';
 import { SkyTeamTrend } from './SkyTeamTrend';
 import { formatTokenCompact, formatTokenExact, rankPageSlice, TEAM_RANK_PAGE_SIZE } from './teamUtils';
-import { usageColor } from '@/utils/usageColors';
+import { assignUsageColors, usageColor, usageColorAt } from '@/utils/usageColors';
 
 const TEAM_SERIES_ID = '__team__';
 const TEAM_COLOR = '#86bc43';
+const SHARE_REMAINDER_COLOR = '#d6ddd1';
 const integer = (value?: string | null) => /^\d+$/.test(value || '') ? BigInt(value!) : 0n;
 
 export function memberPercent(value: string, total: string): number {
   const denominator = integer(total);
   return denominator > 0n ? Number(integer(value) * 10000n / denominator) / 100 : 0;
+}
+
+export type MemberShareSlice = {
+  id: string;
+  label: string;
+  color: string;
+  percent: number;
+  startPercent: number;
+  endPercent: number;
+};
+
+export function memberShareColors(
+  members: Array<{ membershipId: string; tokens: { value?: string | null } }>,
+): Map<string, string> {
+  const ranked = [...members]
+    .filter((member) => integer(member.tokens.value) > 0n)
+    .sort((left, right) => {
+      const leftTokens = integer(left.tokens.value);
+      const rightTokens = integer(right.tokens.value);
+      if (leftTokens === rightTokens) return left.membershipId.localeCompare(right.membershipId);
+      return leftTokens > rightTokens ? -1 : 1;
+    });
+  return assignUsageColors(ranked.map((member) => member.membershipId));
+}
+
+export function buildMemberShareChart(
+  members: Array<{ membershipId: string; displayName: string; tokens: { value?: string | null } }>,
+  total: string,
+  colors: ReadonlyMap<string, string>,
+): { slices: MemberShareSlice[]; remainder: MemberShareSlice | null; gradient: string } {
+  let cursor = 0;
+  const slices = members.map((member, index) => {
+    const percent = memberPercent(member.tokens.value || '0', total);
+    const startPercent = cursor;
+    const endPercent = cursor + percent;
+    cursor = endPercent;
+    return {
+      id: member.membershipId,
+      label: member.displayName,
+      color: colors.get(member.membershipId) || usageColorAt(index),
+      percent,
+      startPercent,
+      endPercent,
+    };
+  });
+  const shown = members.reduce((sum, member) => sum + integer(member.tokens.value), 0n);
+  const leftover = integer(total) > shown ? integer(total) - shown : 0n;
+  const remainder = leftover > 0n
+    ? {
+      id: '__others__',
+      label: '',
+      color: SHARE_REMAINDER_COLOR,
+      percent: memberPercent(leftover.toString(), total),
+      startPercent: cursor,
+      endPercent: 100,
+    }
+    : null;
+  const gradient = [
+    ...slices.map((slice) => `${slice.color} ${slice.startPercent}% ${slice.endPercent}%`),
+    remainder ? `${remainder.color} ${remainder.startPercent}% 100%` : '',
+  ].filter(Boolean).join(', ');
+  return { slices, remainder, gradient };
 }
 
 
@@ -166,9 +229,10 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
   const [chartMode, setChartMode] = useState<'tokens' | 'efficiency'>('tokens');
   const [compare, setCompare] = useState<string[]>([]);
   const [sort, setSort] = useState<'tokens' | 'days' | 'efficiency'>('tokens');
+  const memberColors = useMemo(() => memberShareColors(members), [members]);
   const colorFor = (id: string) => {
     if (id === TEAM_SERIES_ID) return TEAM_COLOR;
-    return usageColor(id);
+    return memberColors.get(id) || usageColor(id);
   };
   const keepKnown = (ids: string[]) => ids.filter((id) => knownIds.has(id));
   const usageSelected = [TEAM_SERIES_ID, ...keepKnown(compare)];
@@ -205,16 +269,7 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
     });
   }, [members, sort]);
   const leaders = sortedMembers.filter((member) => integer(member.tokens.value) > 0n);
-  const shown = leaders.reduce((sum, member) => sum + integer(member.tokens.value), 0n);
-  const remainder = integer(total) > shown ? integer(total) - shown : 0n;
-  const donutStops = [
-    ...leaders.map((member, index) => {
-      const start = leaders.slice(0, index).reduce((sum, item) => sum + memberPercent(item.tokens.value || '0', total), 0);
-      const end = start + memberPercent(member.tokens.value || '0', total);
-      return `${colorFor(member.membershipId)} ${start}% ${end}%`;
-    }),
-    remainder > 0n ? `#d6ddd1 ${leaders.reduce((sum, item) => sum + memberPercent(item.tokens.value || '0', total), 0)}% 100%` : '',
-  ].filter(Boolean).join(', ');
+  const shareChart = buildMemberShareChart(leaders, total, memberColors);
   const detailRows = rankPageSlice(sortedMembers, detailPage);
 
   const visibleMembers = members.filter((member) => integer(member.tokens.value) > 0n);
@@ -293,7 +348,7 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
           </div>
           {integer(total) > 0n ? (
             <>
-              <div className="tw-donut" role="img" aria-label={t('teams.overview.donutHint')} style={{ background: `conic-gradient(${donutStops})` }}>
+              <div className="tw-donut" role="img" aria-label={t('teams.overview.donutHint')} style={{ background: `conic-gradient(${shareChart.gradient})` }}>
                 <div>
                   <span>{t('teams.overview.activeBuilders')}</span>
                   <strong>{analysis.summary.activeMembers || visibleMembers.length}<small>{t('teams.overview.people')}</small></strong>
@@ -301,19 +356,19 @@ export const TeamMemberInsights: React.FC<{ analysis: TeamAnalysisReady }> = ({ 
                 </div>
               </div>
               <div className="tw-share-list">
-                {leaders.map((member) => (
-                  <button type="button" key={member.membershipId}>
-                    <i style={{ background: colorFor(member.membershipId) }} />
-                    <span>{member.displayName}</span>
-                    <strong>{memberPercent(member.tokens.value || '0', total).toFixed(1)}%</strong>
+                {shareChart.slices.map((slice) => (
+                  <button type="button" key={slice.id}>
+                    <i style={{ background: slice.color }} />
+                    <span>{slice.label}</span>
+                    <strong>{slice.percent.toFixed(1)}%</strong>
                     <ArrowUpRight size={12} />
                   </button>
                 ))}
-                {remainder > 0n && (
+                {shareChart.remainder && (
                   <button type="button">
-                    <i style={{ background: '#d6ddd1' }} />
+                    <i style={{ background: shareChart.remainder.color }} />
                     <span>{t('teams.insights.others')}</span>
-                    <strong>{memberPercent(remainder.toString(), total).toFixed(1)}%</strong>
+                    <strong>{shareChart.remainder.percent.toFixed(1)}%</strong>
                   </button>
                 )}
               </div>
