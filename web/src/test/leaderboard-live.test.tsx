@@ -37,14 +37,15 @@ describe('Live leaderboard', () => {
       window,
       entries: [{ rankNo: 1, handle: 'ada', displayName: 'Ada', avatarUrl: null, metricValue, rankDelta: 0 }],
     });
-    let resolveToday!: (value: LeaderboardResponse) => void;
-    vi.mocked(api.getLeaderboard).mockImplementation(({window}={}) => window==='today' ? new Promise(resolve => {resolveToday=resolve;}) : Promise.resolve(ranked('7d','7000000')));
+    let resolveWeek!: (value: LeaderboardResponse) => void;
+    vi.mocked(api.getLeaderboard).mockImplementation(({window}={}) => window==='7d' ? new Promise(resolve => {resolveWeek=resolve;}) : Promise.resolve(ranked('30d','30000000')));
     showPage();
-    fireEvent.click(screen.getByRole('tab',{name:'近 7 天'}));
-    expect((await screen.findAllByText('7.0M')).length).toBeGreaterThan(0);
-    resolveToday(ranked('today','1000000'));
-    await waitFor(()=>expect(screen.getAllByText('7.0M').length).toBeGreaterThan(0));
-    expect(screen.queryAllByText('1.0M')).toHaveLength(0);
+    expect(screen.getByRole('tab',{name:'近 7 天'})).toHaveAttribute('aria-selected', 'true');
+    fireEvent.click(screen.getByRole('tab',{name:'近 30 天'}));
+    expect((await screen.findAllByText('30.0M')).length).toBeGreaterThan(0);
+    resolveWeek(ranked('7d','7000000'));
+    await waitFor(()=>expect(screen.getAllByText('30.0M').length).toBeGreaterThan(0));
+    expect(screen.queryAllByText('7.0M')).toHaveLength(0);
   });
   it('renders precomputed community totals in the hero', async () => {
     vi.mocked(api.getCommunityStats).mockResolvedValue({
@@ -62,13 +63,37 @@ describe('Live leaderboard', () => {
     expect(screen.getByText('32.8K')).toBeInTheDocument();
     expect(screen.getByText('4.6K')).toBeInTheDocument();
     expect(screen.getByText('$268.42')).toBeInTheDocument();
-    expect(screen.getByText('vs 昨日').closest('.hero-delta')).toHaveTextContent('↑ +12.6% vs 昨日');
+    expect(screen.getByText('较上 7 天').closest('.hero-delta')).toHaveTextContent('↑ +12.6% 较上 7 天');
     expect(screen.getByText('↓ −50.0%')).toBeInTheDocument();
     expect(screen.getByText('Zcode')).toBeInTheDocument();
     expect(screen.getByText('Codex CLI')).toBeInTheDocument();
     expect(screen.getByText('64%')).toBeInTheDocument();
-    expect(screen.getByText('社区今日 Token 占比 · 按 harness')).toBeInTheDocument();
+    expect(screen.getByText('社区近 7 天 Token 占比 · 按 harness')).toBeInTheDocument();
     expect(screen.queryByText('今天，整个社区正在持续燃烧 Token')).not.toBeInTheDocument();
+  });
+
+  it('uses seven days by default and reloads hero stats with the selected homepage period', async () => {
+    showPage();
+    await waitFor(() => expect(api.getCommunityStats).toHaveBeenCalledWith('7d'));
+    expect(api.getMyLeaderboard).toHaveBeenCalledWith(expect.objectContaining({ window: '7d' }));
+    expect(screen.getByText('近 7 天 Token')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '今天' }));
+    await waitFor(() => expect(api.getCommunityStats).toHaveBeenLastCalledWith('today'));
+    expect(api.getMyLeaderboard).toHaveBeenLastCalledWith(expect.objectContaining({ window: 'today' }));
+    expect(screen.getAllByText('今日 Token').length).toBeGreaterThan(0);
+  });
+  it('ignores late hero statistics from the previously selected period', async () => {
+    let resolveWeek!: (value: Awaited<ReturnType<typeof api.getCommunityStats>>) => void;
+    vi.mocked(api.getCommunityStats).mockImplementation((window) => window === '7d'
+      ? new Promise(resolve => { resolveWeek = resolve; })
+      : Promise.resolve({ metricDate:'2026-09-09', timezone:'UTC+8', window:'today', tokens:'1000' }));
+    showPage();
+    fireEvent.click(screen.getByRole('tab', { name: '今天' }));
+    expect(await screen.findByText('1.0K')).toBeInTheDocument();
+    resolveWeek({ metricDate:'2026-09-09', timezone:'UTC+8', window:'7d', tokens:'7000000' });
+    await act(async () => {});
+    expect(screen.queryByText('7.0M')).not.toBeInTheDocument();
+    expect(screen.getByText('1.0K')).toBeInTheDocument();
   });
   it('lists community multi-currency costs instead of a fake $8.00', async () => {
     vi.mocked(api.getCommunityStats).mockResolvedValue({

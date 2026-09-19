@@ -561,6 +561,9 @@ export interface CommunityCostAmount {
 export interface CommunityStatsResponse {
   metricDate: string;
   timezone: string;
+  window?: 'today' | '7d' | '30d' | 'all';
+  fromDate?: string;
+  toDate?: string;
   tokens?: string | null;
   developers?: number | null;
   codeLines?: string | null;

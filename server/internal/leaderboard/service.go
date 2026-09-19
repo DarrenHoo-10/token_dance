@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"sort"
 	"strconv"
 	"time"
 
@@ -59,45 +60,62 @@ func (s *Service) Query(ctx context.Context, q store.LeaderboardQuery) (*domain.
 	return result, err
 }
 
-// GetCommunityStats serves precomputed daily community totals with the day
-// over day percentage change. It only reads rows the stats worker wrote; a
-// missing day yields omitted fields so clients can show an empty state
-// instead of a fabricated zero.
-func (s *Service) GetCommunityStats(ctx context.Context, now time.Time) (*domain.CommunityStatsResponse, error) {
-	today := domain.DayDate(now)
-	current, err := s.community.GetCommunityDailyStats(ctx, today)
+// GetCommunityStats aggregates the worker's precomputed daily rows for one
+// homepage window. Request paths never scan raw telemetry. Active developers
+// come from the same precomputed window scores as the leaderboard.
+func (s *Service) GetCommunityStats(ctx context.Context, now time.Time, window string) (*domain.CommunityStatsResponse, error) {
+	fromDate, toDate, previousFrom, previousTo, err := communityWindowDates(window, now)
 	if err != nil {
-		return nil, err
+		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidArgument", "invalid community stats window", nil, err)
 	}
-	if current == nil {
-		return &domain.CommunityStatsResponse{MetricDate: today, Timezone: domain.DayTZName}, nil
-	}
-	costAmount, costs := communityCostProjection(*current)
 	response := &domain.CommunityStatsResponse{
-		MetricDate:   current.MetricDate,
-		Timezone:     domain.DayTZName,
-		Tokens:       uint64String(current.TokensTotal),
-		Developers:   &current.Developers,
-		CodeLines:    uint64String(current.CodeLines),
-		Interactions: uint64String(current.Interactions),
-		CostAmount:   costAmount,
-		Costs:        costs,
-		ComputedAt:   &current.ComputedAt,
+		MetricDate: toDate,
+		Timezone:   domain.DayTZName,
+		Window:     window,
+		FromDate:   fromDate,
+		ToDate:     toDate,
 	}
-	previous, err := s.community.GetCommunityDailyStats(ctx, domain.PreviousDayDate(now))
+	rows, err := s.community.ListCommunityDailyStats(ctx, fromDate, toDate)
 	if err != nil {
 		return nil, err
 	}
-	if previous != nil {
-		response.Deltas = &domain.CommunityStatsDeltaDTO{
-			Tokens:       deltaPct(current.TokensTotal, previous.TokensTotal),
-			Developers:   deltaPct(current.Developers, previous.Developers),
-			CodeLines:    deltaPct(current.CodeLines, previous.CodeLines),
-			Interactions: deltaPct(current.Interactions, previous.Interactions),
-			CostAmount:   communityCostDelta(*current, *previous),
+	if len(rows) == 0 {
+		return response, nil
+	}
+	current := aggregateCommunityRows(toDate, rows)
+	developers, err := s.community.GetCommunityActiveDevelopers(ctx, window, domain.DayDate(now), fromDate, toDate)
+	if err != nil {
+		return nil, err
+	}
+	current.Developers = developers
+	costAmount, costs := communityCostProjection(current)
+	response.Tokens = uint64String(current.TokensTotal)
+	response.Developers = &current.Developers
+	response.CodeLines = uint64String(current.CodeLines)
+	response.Interactions = uint64String(current.Interactions)
+	response.CostAmount = costAmount
+	response.Costs = costs
+	response.ComputedAt = &current.ComputedAt
+
+	if previousFrom != "" {
+		previousRows, err := s.community.ListCommunityDailyStats(ctx, previousFrom, previousTo)
+		if err != nil {
+			return nil, err
+		}
+		if len(previousRows) > 0 {
+			previous := aggregateCommunityRows(previousTo, previousRows)
+			response.Deltas = &domain.CommunityStatsDeltaDTO{
+				Tokens:       deltaPct(current.TokensTotal, previous.TokensTotal),
+				CodeLines:    deltaPct(current.CodeLines, previous.CodeLines),
+				Interactions: deltaPct(current.Interactions, previous.Interactions),
+				CostAmount:   communityCostDelta(current, previous),
+			}
+			if window == "today" {
+				response.Deltas.Developers = deltaPct(current.Developers, previous.Developers)
+			}
 		}
 	}
-	harnesses, err := s.community.GetCommunityHarnessShares(ctx, today, 5)
+	harnesses, err := s.community.GetCommunityHarnessSharesRange(ctx, fromDate, toDate, 5)
 	if err != nil {
 		return nil, err
 	}
@@ -116,8 +134,59 @@ func (s *Service) GetCommunityStats(ctx context.Context, now time.Time) (*domain
 	return response, nil
 }
 
+func communityWindowDates(window string, now time.Time) (string, string, string, string, error) {
+	end := domain.StartOfDay(now)
+	days := 1
+	switch window {
+	case "today":
+	case "7d":
+		days = 7
+	case "30d":
+		days = 30
+	case "all":
+		return "1000-01-01", domain.DayDate(now), "", "", nil
+	default:
+		return "", "", "", "", domain.ErrInvalidArgument
+	}
+	from := end.AddDate(0, 0, -(days - 1))
+	previousTo := from.AddDate(0, 0, -1)
+	previousFrom := previousTo.AddDate(0, 0, -(days - 1))
+	return domain.DayDate(from), domain.DayDate(end), domain.DayDate(previousFrom), domain.DayDate(previousTo), nil
+}
+
+func aggregateCommunityRows(metricDate string, rows []store.CommunityDailyTotals) store.CommunityDailyTotals {
+	totals := store.CommunityDailyTotals{MetricDate: metricDate}
+	costs := make(map[string]float64)
+	for _, row := range rows {
+		totals.TokensTotal += row.TokensTotal
+		if row.Developers > totals.Developers {
+			totals.Developers = row.Developers
+		}
+		totals.CodeLines += row.CodeLines
+		totals.Interactions += row.Interactions
+		if row.ComputedAt.After(totals.ComputedAt) {
+			totals.ComputedAt = row.ComputedAt
+		}
+		if len(row.Costs) == 0 {
+			costs["USD"] += row.CostAmount
+			continue
+		}
+		for _, cost := range row.Costs {
+			costs[cost.Currency] += cost.Amount
+		}
+	}
+	for currency, amount := range costs {
+		totals.Costs = append(totals.Costs, store.CommunityCost{Currency: currency, Amount: amount})
+	}
+	sort.Slice(totals.Costs, func(i, j int) bool { return totals.Costs[i].Currency < totals.Costs[j].Currency })
+	if len(totals.Costs) == 1 {
+		totals.CostAmount = totals.Costs[0].Amount
+	}
+	return totals
+}
+
 // deltaPct returns (current-previous)/previous in percent with one decimal.
-// nil when the previous day is missing or zero — never an invented number.
+// It stays nil when the previous period is zero.
 func deltaPct(current, previous uint64) *float64 {
 	if previous == 0 {
 		return nil

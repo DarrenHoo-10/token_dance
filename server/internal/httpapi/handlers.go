@@ -1638,7 +1638,11 @@ func (h *Handlers) GetLeaderboards(w http.ResponseWriter, r *http.Request) {
 // It only reads rows the stats worker published; there is no on-the-fly
 // aggregation, so a cold day yields omitted fields.
 func (h *Handlers) GetLeaderboardsStats(w http.ResponseWriter, r *http.Request) {
-	res, err := h.leaderboard.GetCommunityStats(r.Context(), time.Now())
+	window := r.URL.Query().Get("window")
+	if window == "" {
+		window = "today"
+	}
+	res, err := h.leaderboard.GetCommunityStats(r.Context(), time.Now(), window)
 	if err != nil {
 		WriteError(w, r, err)
 		return
