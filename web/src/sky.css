@@ -44,7 +44,7 @@
 .sky-hero-copy>.hero-action:hover{color:#111b0b;border-color:#273d12}
 .sky-orb{position:absolute;top:93px;left:50.2%;transform:translateX(-50%);display:flex;align-items:center;flex-direction:column;width:350px;text-align:center;z-index:2}
 .sky-orb>span:first-child{font-size:20px;font-weight:600}
-.sky-orb>strong{font-family:'Arial Black',var(--font-sans);font-size:clamp(75px,7.6vw,119px);line-height:1.2;letter-spacing:-7px;color:#0d1607;font-weight:950;max-width:100%;overflow-wrap:anywhere}
+.sky-orb>strong{font-family:'Segoe UI Variable Display','Segoe UI',var(--font-sans);font-size:clamp(72px,6vw,104px);line-height:.95;letter-spacing:-.055em;color:#0d1607;font-weight:800;max-width:100%;overflow-wrap:anywhere}
 .sky-orb>i{height:10px;width:280px;border-radius:65% 40%;background:var(--lime);transform:rotate(-8deg);margin:3px 0 17px}
 .sky-orb>small{margin-top:18px;font-size:9px;letter-spacing:3px;line-height:2;color:#7e8f70}
 .product-sky .hero-delta,.sky-change{display:inline-flex;align-items:center;font-size:13px;font-weight:650;white-space:nowrap;margin:0;opacity:1;position:static;transform:none;color:#438128;background:transparent;padding:0}

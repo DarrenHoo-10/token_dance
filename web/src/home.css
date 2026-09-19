@@ -17,7 +17,7 @@
 .sky-home-shell .hero-action:hover{color:#111b0b;border-color:#273d12}
 .sky-home-shell .sky-orb{top:98px;width:min(520px,38vw)}
 .sky-home-shell .sky-orb>span:first-child{margin-bottom:8px;letter-spacing:.2px;font-size:19px;font-weight:700;color:#172015}
-.sky-home-shell .sky-orb>strong{font-family:Impact,TokenDisplay,'Arial Black',sans-serif;font-size:clamp(72px,6.25vw,108px);line-height:1;letter-spacing:-2px;color:#070d07;white-space:nowrap;overflow-wrap:normal;font-variant-numeric:tabular-nums}
+.sky-home-shell .sky-orb>strong{font-family:'Segoe UI Variable Display','Segoe UI',var(--font-sans);font-size:clamp(72px,6vw,104px);font-weight:800;line-height:.95;letter-spacing:-.055em;color:#070d07;white-space:nowrap;overflow-wrap:normal;font-variant-numeric:tabular-nums}
 .sky-home-shell .sky-orb>i{margin:0;height:11px;border-radius:70% 65% 35% 25%}
 .sky-home-shell .sky-orb>.hero-delta{margin-top:21px;gap:4px;padding:7px 13px;border-radius:20px;background:#ffffff90;font-size:18px}
 .sky-home-shell .sky-delta-suffix{color:#76816b;font-size:14px;font-weight:500;margin-left:6px}
