@@ -130,7 +130,10 @@ func (s *leaderboardStore) GetLeaderboardView(ctx context.Context, q store.Leade
 		q.Metric = "tokens"
 	}
 	now := time.Now()
-	useRankingIndex := q.BoardKey == "global" && q.Metric == "tokens" && s.index != nil
+	// Today's board changes continuously. Read its canonical MySQL aggregates so
+	// the podium, personal summary and hourly trend cannot disagree with an
+	// already-published Redis/window-score projection.
+	useRankingIndex := q.BoardKey == "global" && q.Metric == "tokens" && q.Window != "today" && s.index != nil
 	checkFreshness := useRankingIndex && q.SnapshotID == ""
 	if checkFreshness {
 		var unpublished bool

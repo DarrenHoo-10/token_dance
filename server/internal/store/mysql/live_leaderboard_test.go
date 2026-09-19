@@ -79,13 +79,26 @@ func TestLeaderboardStatisticsDays(t *testing.T) {
 	}
 }
 
-func TestLeaderboardBypassesStaleRedisWhileRankingWritesArePendingMySQL(t *testing.T) {
+func TestTodayLeaderboardUsesCanonicalMetricsDespiteStaleProjectionsMySQL(t *testing.T) {
 	st, db, cleanup := getTestStore(t)
 	defer cleanup()
 	ctx := context.Background()
 	now := time.Now().UTC()
 	seedTestUser(t, db, st, "usr_fresh_board", "fresh_board", "Fresh Board", "fresh@board.test", true, now)
 	seedRankUsage(t, db, "usr_fresh_board", domain.DayDate(now), "codex", 100, 0, 0)
+	if _, err := db.ExecContext(ctx, `
+		UPDATE user_window_scores
+		SET token_total = 999, revision = 7
+		WHERE user_id = 'usr_fresh_board' AND window_key = 'today' AND generation = ?`, WindowGeneration(now)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		UPDATE ranking_outbox
+		SET task_status = 'applied', applied_at = ?, claim_token = NULL,
+		    locked_by = NULL, lease_expires_at = NULL
+		WHERE user_id = 'usr_fresh_board' AND window_key = 'today'`, now); err != nil {
+		t.Fatal(err)
+	}
 
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -107,7 +120,11 @@ func TestLeaderboardBypassesStaleRedisWhileRankingWritesArePendingMySQL(t *testi
 		t.Fatal(err)
 	}
 	if board.ViewKind != "mysql" || len(board.Entries) != 1 || board.Entries[0].MetricValue != "100" {
-		t.Fatalf("pending durable score must bypass stale Redis: %+v", board)
+		t.Fatalf("today board must use canonical metrics instead of stale projections: %+v", board)
+	}
+	entry, _, err := (&leaderboardStore{db: db}).liveOwnTokenEntry(ctx, "usr_fresh_board", "today", now)
+	if err != nil || entry == nil || entry.MetricValue != "100" {
+		t.Fatalf("personal today summary must use canonical metrics: %+v %v", entry, err)
 	}
 }
 

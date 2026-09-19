@@ -33,8 +33,8 @@ func leaderboardDates(window string, now time.Time) (string, string, error) {
 func liveEligibleTotalsSQL() string {
 	return `
 	SELECT e.user_id, e.handle, e.display_name, e.avatar_url, e.registered_at,
-	       CAST(CASE WHEN s.revision > 0 THEN s.token_total ELSE COALESCE(m.tokens, 0) END AS UNSIGNED) AS tokens,
-	       COALESCE(s.updated_at, m.watermark) AS watermark
+	       CAST(COALESCE(m.tokens, 0) AS UNSIGNED) AS tokens,
+	       m.watermark AS watermark
 	FROM (
 		SELECT u.user_id,
 		       ` + leaderboardHandleExpr() + ` AS handle,
@@ -45,8 +45,6 @@ func liveEligibleTotalsSQL() string {
 		LEFT JOIN public_user_profiles p ON p.user_id = u.user_id
 		WHERE u.account_status = 'active'
 	) e
-	LEFT JOIN user_window_scores s
-	  ON s.user_id = e.user_id AND s.window_key = ? AND s.generation = ? AND s.eligible = TRUE
 	LEFT JOIN (
 		SELECT user_id,
 		       SUM(exact_token_total + derived_token_total) AS tokens,
@@ -103,7 +101,7 @@ func (s *leaderboardStore) previousTotalsQuery(ctx context.Context, window strin
 	if err != nil {
 		return "", nil, err
 	}
-	return liveEligibleTotalsSQL(), []interface{}{window, prevGen, fromMs, toMs}, nil
+	return liveEligibleTotalsSQL(), []interface{}{fromMs, toMs}, nil
 }
 
 func (s *leaderboardStore) getLiveTokenLeaderboard(ctx context.Context, window string, cursor *string, limit int, now time.Time) (*domain.LeaderboardResponse, error) {
@@ -131,7 +129,7 @@ func (s *leaderboardStore) getLiveTokenLeaderboard(ctx context.Context, window s
 	if endRank > 1000 {
 		endRank = 1000
 	}
-	args := []interface{}{window, generation, fromMs, toMs}
+	args := []interface{}{fromMs, toMs}
 	args = append(args, previousArgs...)
 	args = append(args, after, endRank)
 	rows, err := s.db.QueryContext(ctx, liveTokenComparisonSQL(previousSQL)+`
@@ -209,10 +207,9 @@ func (s *leaderboardStore) liveTokenRank(ctx context.Context, userID, window str
 	if err != nil {
 		return nil, nil, err
 	}
-	generation := WindowGeneration(now)
 	var rank, count int
 	err = s.db.QueryRowContext(ctx, liveTokenRankingSQL()+`SELECT rank_no, participants FROM ranked CROSS JOIN stats WHERE user_id = ?`,
-		window, generation, fromMs, toMs, userID).Scan(&rank, &count)
+		fromMs, toMs, userID).Scan(&rank, &count)
 	if err == sql.ErrNoRows {
 		return nil, nil, nil
 	}
@@ -234,12 +231,11 @@ func (s *leaderboardStore) liveOwnTokenEntry(ctx context.Context, userID, window
 	if err != nil {
 		return nil, nil, err
 	}
-	generation := WindowGeneration(now)
 	previousSQL, previousArgs, err := s.previousTotalsQuery(ctx, window, now)
 	if err != nil {
 		return nil, nil, err
 	}
-	args := []interface{}{window, generation, fromMs, toMs}
+	args := []interface{}{fromMs, toMs}
 	args = append(args, previousArgs...)
 	args = append(args, userID)
 	var entry domain.LeaderboardEntry
