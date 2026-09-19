@@ -10,10 +10,11 @@ import { useLocale } from '@/context/LocaleContext';
 import { useTeam } from '@/context/TeamContext';
 import { InviteDialog } from './InviteDialog';
 import { TeamAvatar, teamErrorMessage } from './TeamShared';
+import { BarChart3, Globe2, LockKeyhole, Plus, Settings2, UsersRound } from 'lucide-react';
 
 export const TeamLayout: React.FC = () => {
   const { teamId } = useParams<{ teamId: string }>();
-  const { t } = useLocale();
+  const { t, locale } = useLocale();
   const { authenticated, loading: authLoading } = useAuth();
   const { scope, loading, refresh, applyScope } = useTeam();
   const navigate = useNavigate();
@@ -62,18 +63,21 @@ export const TeamLayout: React.FC = () => {
 
   return (
     <section className="product-page-shell team-dashboard team-page">
-      <div className="product-page-heading with-actions">
+      <div className="sky-team-breadcrumb"><span>{t('teams.label')}</span><span>/</span><LockKeyhole size={13} />{locale === 'zh-CN' ? '仅团队成员可见' : 'Private to your team'}</div>
+      <div className="product-page-heading with-actions sky-team-banner">
         <div className="team-identity">
           <TeamAvatar team={team} />
           <div>
-            <span>{t('teams.label')}</span>
+            <div className="sky-team-eyebrow">BUILD SOMETHING TOGETHER <span>{t(`teams.role.${scope.membership.role}`)}</span></div>
             <h1>{team.name}</h1>
             <p>{team.description || t('teams.overview.noDescription')}</p>
+            <div className="sky-team-meta">{team.memberCount != null && <span><UsersRound size={14} />{team.memberCount} {t('teams.nav.members')}</span>}<span><Globe2 size={13} />{team.timezone}</span></div>
           </div>
         </div>
+        <div className="sky-team-art" aria-hidden="true"><i /><img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" /><span>SMALL IDEAS.<br />SHARED POSSIBILITIES.</span></div>
         <div className="team-heading-actions">
           {permissions.inviteMembers ? (
-            <Button variant="primary" onClick={() => setInviteOpen(true)}>{t('teams.invite.action')}</Button>
+            <Button variant="primary" onClick={() => setInviteOpen(true)}><Plus size={17} />{t('teams.invite.action')}</Button>
           ) : (
             <Button variant="outline" onClick={() => navigate(`/teams/${team.id}/settings`)}>{t('teams.nav.settings')}</Button>
           )}
@@ -81,9 +85,9 @@ export const TeamLayout: React.FC = () => {
       </div>
 
       <nav className="team-tabs" aria-label={t('teams.nav.tabs')}>
-        <NavLink to={`/teams/${team.id}${query}`} end className={({ isActive }) => (isActive ? 'active' : '')}>{t('teams.nav.panel')}</NavLink>
-        <NavLink to={`/teams/${team.id}/members${query}`} className={({ isActive }) => (isActive ? 'active' : '')}>{t('teams.nav.members')}</NavLink>
-        <NavLink to={`/teams/${team.id}/settings${query}`} className={({ isActive }) => (isActive ? 'active' : '')}>{t('teams.nav.settings')}</NavLink>
+        <NavLink to={`/teams/${team.id}${query}`} end className={({ isActive }) => (isActive ? 'active' : '')}><BarChart3 size={17} />{t('teams.nav.panel')}</NavLink>
+        <NavLink to={`/teams/${team.id}/members${query}`} className={({ isActive }) => (isActive ? 'active' : '')}><UsersRound size={17} />{t('teams.nav.members')}</NavLink>
+        <NavLink to={`/teams/${team.id}/settings${query}`} className={({ isActive }) => (isActive ? 'active' : '')}><Settings2 size={17} />{t('teams.nav.settings')}</NavLink>
       </nav>
 
       <Outlet context={{ openInvite: () => setInviteOpen(true) }} />

@@ -107,7 +107,7 @@ export const TeamMembersPage: React.FC = () => {
   };
 
   return (
-    <div>
+    <div className="sky-team-members">
       <div className="segmented-control" role="tablist" style={{ marginBottom: 16 }}>
         <button type="button" className={`segmented-item ${tab === 'joined' ? 'active' : ''}`} onClick={() => setTab('joined')}>
           {t('teams.members.joined', { count: members.length })}

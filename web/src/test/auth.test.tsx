@@ -275,7 +275,7 @@ describe('Auth & Onboarding Flow Tests', () => {
     expect(document.querySelector('.login-companions')).toHaveAttribute('data-mood', 'idle');
   });
 
-  it('renders OnboardingPage with default private visibility', async () => {
+  it('renders OnboardingPage with the current visibility choices', async () => {
     vi.spyOn(api, 'getSession').mockResolvedValue({
       authenticated: true,
       user: {
@@ -302,7 +302,7 @@ describe('Auth & Onboarding Flow Tests', () => {
 
     await waitFor(() => {
       expect(screen.getByText('创建你的公开身份')).toBeInTheDocument();
-      expect(screen.getByText('仅自己可见 (推荐)')).toBeInTheDocument();
+      expect(screen.getByText('仅自己可见')).toBeInTheDocument();
     });
   });
 

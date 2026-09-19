@@ -14,6 +14,7 @@ import { SkillRanking } from '@/components/analytics/SkillRanking';
 import { SyncStatusCard } from '@/components/analytics/SyncStatusCard';
 import { Button } from '@/components/common/Button';
 import { Badge } from '@/components/common/Badge';
+import { UserAvatar } from '@/components/common/UserAvatar';
 import { api, ApiError } from '@/api/client';
 import type {
   PersonalSummary,
@@ -130,6 +131,7 @@ export const PersonalDashboardPage: React.FC = () => {
     <div className="personal-dashboard">
       {/* Header */}
       <div
+        className="sky-personal-heading"
         style={{
           display: 'flex',
           justifyContent: 'space-between',
@@ -139,9 +141,13 @@ export const PersonalDashboardPage: React.FC = () => {
           gap: 16,
         }}
       >
-        <div>
+        <div className="sky-personal-heading-id">
+          <UserAvatar url={user?.avatarUrl} name={user?.displayName || user?.handle || ''} alt="" />
+          <div>
           <p className="eyebrow">{t('nav.tokenBoard')}</p>
           <h1>{t('publicProfile.headline')}</h1>
+          <p className="text-muted">{user?.displayName || user?.handle}</p>
+          </div>
         </div>
 
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>

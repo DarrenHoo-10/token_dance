@@ -19,6 +19,7 @@ import {
   graphemeLength,
 } from './teamUtils';
 import { persistTeamAvatar, TeamAvatar, teamErrorMessage } from './TeamShared';
+import { TeamSharingCard } from './TeamSharingCard';
 
 export const TeamSettingsPage: React.FC = () => {
   const { t } = useLocale();
@@ -46,10 +47,10 @@ export const TeamSettingsPage: React.FC = () => {
     if (scope.permissions.transferOwnership) {
       teamsApi.getMembers(scope.team.id, {}, controller.signal)
         .then((memberRes) => setMembers(memberRes.members || []))
-        .catch((err) => setError(err instanceof ApiError ? err : new ApiError(500, { code: 'UNKNOWN', messageKey: 'errors.unknown' })));
+        .catch((err) => { if (!controller.signal.aborted) setError(err instanceof ApiError ? err : new ApiError(500, { code: 'UNKNOWN', messageKey: 'errors.unknown' })); });
     }
     return () => controller.abort();
-  }, [scope]);
+  }, [scope?.team.id, scope?.team.name, scope?.team.description, scope?.permissions.transferOwnership]);
 
   if (!scope) return <LoadingState />;
   if (error) return <ErrorState error={error} description={teamErrorMessage(t, error)} />;
@@ -75,20 +76,26 @@ export const TeamSettingsPage: React.FC = () => {
   };
 
   const uploadAvatar = async (file: File) => {
-    const next = await persistTeamAvatar(scope, file);
-    applyScope(next);
+    if (busy) return;
+    setBusy(true);
+    try {
+      const next = await persistTeamAvatar(scope, file);
+      applyScope(next);
+    } catch (err) {
+      showToast(err instanceof ApiError ? teamErrorMessage(t, err) : t('errors.unknown'), 'error');
+    } finally { setBusy(false); }
   };
 
   return (
-    <div style={{ display: 'grid', gap: 20 }}>
-      <Card>
+    <div className="sky-team-settings">
+      <Card className="sky-team-profile">
         <div className="panel-header"><h2>{t('teams.settings.profile')}</h2></div>
         <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 16 }}>
           <TeamAvatar team={scope.team} size="lg" />
           {scope.permissions.editProfile && (
             <>
               <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => { const file = e.target.files?.[0]; if (file) void uploadAvatar(file); e.target.value = ''; }} />
-              <Button variant="outline" onClick={() => fileRef.current?.click()}>{t('teams.settings.changeAvatar')}</Button>
+              <Button variant="outline" disabled={busy} onClick={() => fileRef.current?.click()}>{t('teams.settings.changeAvatar')}</Button>
             </>
           )}
         </div>
@@ -102,8 +109,10 @@ export const TeamSettingsPage: React.FC = () => {
         )}
       </Card>
 
+      <TeamSharingCard />
+
       {(scope.permissions.leave || scope.permissions.transferOwnership || scope.permissions.dissolve) && (
-        <Card>
+        <Card className="sky-team-management">
           <div className="panel-header"><h2>{t('teams.settings.management')}</h2></div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {scope.permissions.leave && <Button variant="outline" onClick={() => setLeaveOpen(true)}>{t('teams.settings.leave')}</Button>}
