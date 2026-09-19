@@ -80,7 +80,7 @@
 .token-trend-soft>svg{display:block;width:100%;overflow:visible;touch-action:pan-y}
 .token-trend-soft .token-trend-readout,.product-sky .sr-only{position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .sky-home-shell .sky-detail-grid{grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:20px;margin-top:24px}
-.sky-home-shell .sky-share-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;min-width:0}
+.sky-home-shell .sky-share-grid{grid-column:1/-1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;min-width:0}
 .sky-home-shell .sky-home .sky-ranking{padding:28px 30px 0;background:white}
 .sky-home-shell .sky-ranking .panel-header{margin-bottom:25px}
 .sky-home-shell .sky-ranking .panel-header h2{font-size:20px}
