@@ -39,6 +39,21 @@ it('ignores corrupt and incompatible local data', () => {
   expect(readHomeCommunity('community')).toBeNull();
 });
 
+it('keeps community snapshots scoped to the selected period', () => {
+  writeHomeCommunity('community:7d', {
+    metricDate: publicHomeDay(), timezone: 'UTC+8', window: '7d',
+    harnesses: [{agentId:'codex', label:'Codex CLI', tokens:'700', sharePct:70}],
+  });
+  expect(readHomeCommunity('community:7d')?.harnesses?.[0].label).toBe('Codex CLI');
+  expect(readHomeCommunity('community:today')).toBeNull();
+
+  writeHomeCommunity('community:30d', {
+    metricDate: publicHomeDay(), timezone: 'UTC+8', window: '7d',
+    harnesses: [{agentId:'cursor', label:'Cursor', tokens:'900', sharePct:90}],
+  });
+  expect(readHomeCommunity('community:30d')).toBeNull();
+});
+
 it('continues when storage is disabled or full', () => {
   vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('disabled'); });
   vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('quota'); });

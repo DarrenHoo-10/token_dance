@@ -7,6 +7,12 @@ export const publicHomeDay = () => new Date(Date.now() + 8 * 3600_000).toISOStri
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const numberOrNull = (value: unknown) => value == null || (typeof value === 'number' && Number.isFinite(value));
 const stringOrNull = (value: unknown) => value == null || typeof value === 'string';
+type CommunityWindow = NonNullable<CommunityStatsResponse['window']>;
+
+function communityWindowFromKey(key: string): CommunityWindow | null {
+  const match = /^community:(today|7d|30d|all)$/.exec(key);
+  return match ? match[1] as CommunityWindow : null;
+}
 
 function read(key: string): unknown {
   try {
@@ -44,6 +50,8 @@ export function writeHomeBoard(key: string, entries: LeaderboardEntry[]) {
 export function readHomeCommunity(key: string): CommunityStatsResponse | null {
   const value = read(key);
   if (!record(value) || value.metricDate !== publicHomeDay() || typeof value.timezone !== 'string') return null;
+  const expectedWindow = communityWindowFromKey(key);
+  if (expectedWindow && value.window !== expectedWindow) return null;
   if (!['tokens', 'codeLines', 'interactions', 'computedAt'].every(field => stringOrNull(value[field]))) return null;
   if (!['developers', 'costAmount'].every(field => numberOrNull(value[field]))) return null;
   if (value.deltas != null && (!record(value.deltas) || !Object.values(value.deltas).every(numberOrNull))) return null;
@@ -56,6 +64,8 @@ export function readHomeCommunity(key: string): CommunityStatsResponse | null {
 }
 
 export function writeHomeCommunity(key: string, stats: CommunityStatsResponse) {
-  const { metricDate, timezone, tokens, developers, codeLines, interactions, costAmount, costs, deltas, harnesses, computedAt } = stats;
-  if (metricDate === publicHomeDay()) write(key, { metricDate, timezone, tokens, developers, codeLines, interactions, costAmount, costs, deltas, harnesses, computedAt });
+  const { metricDate, timezone, window, tokens, developers, codeLines, interactions, costAmount, costs, deltas, harnesses, computedAt } = stats;
+  const expectedWindow = communityWindowFromKey(key);
+  if (expectedWindow && window !== expectedWindow) return;
+  if (metricDate === publicHomeDay()) write(key, { metricDate, timezone, window, tokens, developers, codeLines, interactions, costAmount, costs, deltas, harnesses, computedAt });
 }

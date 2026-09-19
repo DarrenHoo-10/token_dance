@@ -21,7 +21,7 @@ beforeEach(() => {
   vi.spyOn(api,'getActivityCalendar').mockRejectedValue(new Error('unavailable'));
   vi.spyOn(api,'getLeaderboard').mockResolvedValue(board);
   vi.spyOn(api,'getMyLeaderboard').mockImplementation((params) => api.getLeaderboard(params));
-  vi.spyOn(api,'getCommunityStats').mockResolvedValue({ metricDate:'2026-09-09', timezone:'UTC' });
+  vi.spyOn(api,'getCommunityStats').mockResolvedValue({ metricDate:'2026-09-09', timezone:'UTC', window:'7d' });
 });
 describe('Live leaderboard', () => {
   it('explains that a private profile still stays on the board', async () => {
@@ -49,7 +49,7 @@ describe('Live leaderboard', () => {
   });
   it('renders precomputed community totals in the hero', async () => {
     vi.mocked(api.getCommunityStats).mockResolvedValue({
-      metricDate:'2026-09-09', timezone:'UTC',
+      metricDate:'2026-09-09', timezone:'UTC', window:'7d',
       tokens:'186400000', developers:128, codeLines:'32800', interactions:'4600', costAmount:268.42,
       deltas:{ tokens:12.6, developers:8.4, codeLines:-50, interactions:12.3, costAmount:11.8 },
       harnesses:[
@@ -78,6 +78,7 @@ describe('Live leaderboard', () => {
   });
 
   it('uses seven days by default and reloads hero stats with the selected homepage period', async () => {
+    vi.mocked(api.getCommunityStats).mockImplementation(async (window) => ({ metricDate:'2026-09-09', timezone:'UTC+8', window }));
     showPage();
     await waitFor(() => expect(api.getCommunityStats).toHaveBeenCalledWith('7d'));
     expect(api.getMyLeaderboard).toHaveBeenCalledWith(expect.objectContaining({ window: '7d' }));
@@ -86,6 +87,30 @@ describe('Live leaderboard', () => {
     await waitFor(() => expect(api.getCommunityStats).toHaveBeenLastCalledWith('today'));
     expect(api.getMyLeaderboard).toHaveBeenLastCalledWith(expect.objectContaining({ window: 'today' }));
     expect(screen.getAllByText('今日 Token').length).toBeGreaterThan(0);
+  });
+  it('updates the common harness breakdown with the selected homepage period', async () => {
+    vi.mocked(api.getCommunityStats).mockImplementation(async (window) => ({
+      metricDate:'2026-09-09', timezone:'UTC+8', window,
+      harnesses: window === 'all'
+        ? [{ agentId:'cursor', label:'Cursor', tokens:'900', sharePct:90 }]
+        : [{ agentId:'codex', label:'Codex CLI', tokens:'700', sharePct:70 }],
+    }));
+    showPage();
+    expect(await screen.findByText('Codex CLI')).toBeInTheDocument();
+    expect(screen.getByText('70%')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: '全部时间' }));
+    expect(await screen.findByText('Cursor')).toBeInTheDocument();
+    expect(screen.getByText('90%')).toBeInTheDocument();
+    expect(screen.queryByText('Codex CLI')).not.toBeInTheDocument();
+  });
+  it('does not display harness data returned for a different period', async () => {
+    vi.mocked(api.getCommunityStats).mockResolvedValue({
+      metricDate:'2026-09-09', timezone:'UTC+8', window:'today',
+      harnesses: [{ agentId:'codex', label:'Codex CLI', tokens:'700', sharePct:70 }],
+    });
+    showPage();
+    await waitFor(() => expect(api.getCommunityStats).toHaveBeenCalledWith('7d'));
+    expect(screen.queryByText('Codex CLI')).not.toBeInTheDocument();
   });
   it('ignores late hero statistics from the previously selected period', async () => {
     let resolveWeek!: (value: Awaited<ReturnType<typeof api.getCommunityStats>>) => void;
@@ -102,7 +127,7 @@ describe('Live leaderboard', () => {
   });
   it('lists community multi-currency costs instead of a fake $8.00', async () => {
     vi.mocked(api.getCommunityStats).mockResolvedValue({
-      metricDate:'2026-09-09', timezone:'UTC',
+      metricDate:'2026-09-09', timezone:'UTC', window:'7d',
       tokens:'1215', developers:1, codeLines:'0', interactions:'6',
       costAmount: null,
       costs: [{ amount: 1, currency: 'USD' }, { amount: 7, currency: 'CNY' }],
