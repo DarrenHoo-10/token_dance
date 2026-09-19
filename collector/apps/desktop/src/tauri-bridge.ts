@@ -25,6 +25,15 @@ export {
 
 export interface CostCoverage { estimatedUsd: number; estimatedCosts?: Record<string, number>; estimatedRequests: number; unpricedRequests: number; detailedTokens: number; }
 
+export interface ModelUsage {
+  modelKey: number;
+  modelId: string;
+  providerId: string;
+  todayTokens: number;
+  weekTokens: number;
+  totalTokens: number;
+}
+
 export interface AgentConfig {
   id: string;
   name: string;
@@ -41,6 +50,7 @@ export interface AgentConfig {
   // Local calendar-day aggregates. Omitted when the native collector has no history yet.
   dailyUsage?: { date: string; tokens: number; costs?: Record<string, number>; pricing?: CostCoverage }[];
   hourlyUsage?: { hour: number; tokens: number }[];
+  modelUsage?: ModelUsage[];
   totalCosts?: Record<string, number>;
   pricing?: CostCoverage;
   historyStart?: string | null;
@@ -477,6 +487,14 @@ export async function getAgentConfigs(): Promise<AgentConfig[]> {
       ...agent,
       hourlyUsage: hourWeights.map((weight, index) => ({ hour: index, tokens: Math.round(agent.todayTokens * weight / hourSum) })),
       dailyUsage,
+      modelUsage: [0.55, 0.25, 0.15, 0.05].map((share, index) => ({
+        modelKey: index + 1,
+        modelId: ['gpt-5.4', 'claude-sonnet-4.6', 'grok-4.6', 'gemini-3.1-pro'][index],
+        providerId: ['openai', 'anthropic', 'x-ai', 'google'][index],
+        todayTokens: Math.round(agent.todayTokens * share),
+        weekTokens: Math.round(dailyUsage.slice(-7).reduce((sum, day) => sum + day.tokens, 0) * share),
+        totalTokens: Math.round(agent.totalTokens * share),
+      })),
     };
   });
 }

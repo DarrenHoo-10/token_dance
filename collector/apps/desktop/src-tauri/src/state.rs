@@ -79,6 +79,8 @@ pub struct AgentConfig {
     pub daily_usage: Vec<DayUsage>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hourly_usage: Vec<HourUsage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub model_usage: Vec<crate::local_store::pipeline::ModelUsage>,
     pub total_costs: std::collections::BTreeMap<String, u64>,
     pub pricing: crate::pricing::CostCoverage,
     pub history_start: Option<String>,
@@ -817,11 +819,11 @@ impl AppState {
                     .get(id)
                     .copied()
                     .unwrap_or(runtime.enabled);
-                let (usage, hourly_usage) = if pipeline_enabled {
+                let (usage, hourly_usage, model_usage) = if pipeline_enabled {
                     pipeline
                         .as_ref()
                         .and_then(|writer| pipeline_agent_usage(writer, id, today))
-                        .map(|pipe| (Some(pipe.usage), pipe.hourly_usage))
+                        .map(|pipe| (Some(pipe.usage), pipe.hourly_usage, pipe.model_usage))
                         .unwrap_or_default()
                 } else {
                     (
@@ -829,6 +831,7 @@ impl AppState {
                             .as_ref()
                             .and_then(|store| store.agent_usage(id, today)),
                         hourly.get(id).cloned().unwrap_or_default(),
+                        Vec::new(),
                     )
                 };
                 let (accuracy, today_tokens, total_tokens, daily_usage) = match &usage {
@@ -871,6 +874,7 @@ impl AppState {
                     total_tokens,
                     daily_usage,
                     hourly_usage,
+                    model_usage,
                     total_costs: usage
                         .as_ref()
                         .map(|item| item.total_costs.clone())
@@ -1247,6 +1251,7 @@ impl AppState {
 struct PipelineAgentUsageView {
     usage: AgentUsageSnapshot,
     hourly_usage: Vec<HourUsage>,
+    model_usage: Vec<crate::local_store::pipeline::ModelUsage>,
 }
 
 fn beijing_bounds_for_date(date: chrono::NaiveDate) -> (i64, i64) {
@@ -1372,6 +1377,7 @@ fn pipeline_agent_usage(
             .into(),
         },
         hourly_usage,
+        model_usage: history.models,
     })
 }
 

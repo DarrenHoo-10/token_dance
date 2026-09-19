@@ -79,7 +79,18 @@ impl Catalog {
         Ok(c)
     }
     pub fn model(&self, id: &str) -> Option<&Model> {
+        // Prefer a dedicated price if the catalog eventually lists a Cursor variant.
+        if let Some(m) = self.data.iter().find(|m| m.id.eq_ignore_ascii_case(id)) {
+            return Some(m);
+        }
         let id = match id {
+            // Approximate Cursor's reasoning/speed variants with the base model's
+            // API rates. These are estimates, not Cursor subscription charges.
+            "cursor-grok-4.6"
+            | "cursor-grok-4.6-high"
+            | "cursor-grok-4.6-high-fast"
+            | "cursor-grok-4.6-xhigh"
+            | "cursor-grok-4.6-xhigh-fast" => "x-ai/grok-4.6",
             "grok-4.6-build" => "x-ai/grok-4.6",
             "gemini-3.7-flash-high" => "google/gemini-3.7-flash",
             "claude-opus-4-6-thinking" => "anthropic/claude-opus-4.6",
@@ -521,5 +532,37 @@ mod tests {
             pricing: Rates::default(),
         });
         assert_eq!(c.model("grok-4.6-build").unwrap().id, "x-ai/grok-4.6");
+    }
+
+    #[test]
+    fn cursor_grok_variants_use_base_rates_for_estimates() {
+        let mut c = catalog();
+        c.data[0].id = "x-ai/grok-4.6".into();
+        let mut ledger = CostLedger::default();
+        let e = event('A');
+        ledger.record(&e, "2026-09-19", 1100, &catalog());
+        let request = &ledger.requests[&e.event_id];
+        for id in [
+            "cursor-grok-4.6",
+            "cursor-grok-4.6-high",
+            "cursor-grok-4.6-high-fast",
+            "cursor-grok-4.6-xhigh",
+            "cursor-grok-4.6-xhigh-fast",
+        ] {
+            let model = c.model(id).expect("Cursor base-model estimate");
+            assert_eq!(model.id, "x-ai/grok-4.6");
+            assert_eq!(estimate_context(model, request), Some(156000));
+        }
+        for id in ["default", "composer-2.5-fast", "cursor-grok-unknown"] {
+            assert!(c.model(id).is_none());
+        }
+        c.data.push(Model {
+            id: "cursor-grok-4.6-high-fast".into(),
+            pricing: Rates::default(),
+        });
+        assert_eq!(
+            c.model("cursor-grok-4.6-high-fast").unwrap().id,
+            "cursor-grok-4.6-high-fast"
+        );
     }
 }

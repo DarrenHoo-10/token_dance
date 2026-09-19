@@ -4,7 +4,8 @@ import { annualUsage, quotaStale, quotaStatusText, quotaWindowLabel, type AgentQ
 
 export function QuotaRings({ quota, zh }: { quota?: AgentQuota; zh: boolean }) {
   const status = quotaStatusText(quota, zh);
-  if (!quota?.windows.length || quota.status === 'auth_required' || quota.status === 'not_connected') return <div className="usage-quota-empty"><span className="usage-ring unavailable">—</span><span>{status ?? (zh ? '暂不支持额度查询' : 'Plan quota unavailable')}</span></div>;
+  if (!quota || (!quota.windows.length && !status)) return null;
+  if (!quota.windows.length || quota.status === 'auth_required' || quota.status === 'not_connected') return <div className="usage-quota-empty"><span className="usage-ring unavailable">—</span><span>{status}</span></div>;
   return <><div className="usage-quotas">{quota.windows.map((window, index) => {
     const stale = quotaStale(quota, window.resetsAt);
     const label = quotaWindowLabel(window, zh);

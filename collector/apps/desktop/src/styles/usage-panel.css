@@ -17,3 +17,14 @@ html[data-platform="macos"] .usage-panel .usage-window-controls{display:none}
 html[data-platform="macos"] .usage-brand img{width:28px;height:28px}
 
 .usage-source-row>strong{margin-left:auto}.usage-source-row>small+strong{margin-left:0}
+
+.usage-models{margin-top:12px;padding-top:10px;border-top:1px solid var(--usage-line);font-size:11px;color:var(--usage-muted)}
+.usage-models summary{cursor:pointer;font-weight:500;width:fit-content;padding:2px 0}
+.usage-models ul{list-style:none;margin:7px 0 0;padding:0}
+.usage-models li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0}
+.usage-model-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--usage-ink)}
+.usage-model-tokens{flex-shrink:0;font-variant-numeric:tabular-nums;color:var(--usage-ink)}
+.usage-model-tokens small{margin-left:4px;font-size:10px;color:var(--usage-muted)}
+.usage-model-more{display:block;margin:6px 0 0;padding:3px 0;border:0;background:none;color:var(--usage-muted);font:inherit;cursor:pointer}
+.usage-model-more:hover{color:var(--usage-ink)}
+.usage-models summary:focus-visible,.usage-model-more:focus-visible{outline:2px solid #798aa5;outline-offset:3px;border-radius:2px}
