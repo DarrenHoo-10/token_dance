@@ -60,10 +60,13 @@ func (s *Service) Query(ctx context.Context, q store.LeaderboardQuery) (*domain.
 	return result, err
 }
 
-// GetCommunityStats aggregates the worker's precomputed daily rows for one
-// homepage window. Request paths never scan raw telemetry. Active developers
-// come from the same precomputed window scores as the leaderboard.
+// GetCommunityStats reads aggregate telemetry for one homepage window. The
+// rolling 24-hour view uses hour buckets; longer windows use the worker's
+// precomputed daily rows. Request paths never scan raw events.
 func (s *Service) GetCommunityStats(ctx context.Context, now time.Time, window string) (*domain.CommunityStatsResponse, error) {
+	if window == "today" {
+		return s.getRolling24HourCommunityStats(ctx, now)
+	}
 	fromDate, toDate, previousFrom, previousTo, err := communityWindowDates(window, now)
 	if err != nil {
 		return nil, domain.NewAppError(400, "API_INVALID_ARGUMENT", "api.invalidArgument", "invalid community stats window", nil, err)
@@ -133,6 +136,58 @@ func (s *Service) GetCommunityStats(ctx context.Context, now time.Time, window s
 	}
 	response.Models = projectCommunityModels(rows, current.TokensTotal, 5)
 	response.Skills = projectCommunitySkills(rows, 5)
+	return response, nil
+}
+
+func (s *Service) getRolling24HourCommunityStats(ctx context.Context, now time.Time) (*domain.CommunityStatsResponse, error) {
+	from, to := domain.Rolling24HourBuckets(now)
+	response := &domain.CommunityStatsResponse{
+		MetricDate: domain.DayDate(now),
+		Timezone:   domain.DayTZName,
+		Window:     "today",
+		FromDate:   domain.DayDate(from),
+		ToDate:     domain.DayDate(to),
+	}
+	current, harnesses, err := s.community.GetCommunityRollingStats(ctx, from.UnixMilli(), to.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	if current.ComputedAt.IsZero() {
+		return response, nil
+	}
+	response.Tokens = uint64String(current.TokensTotal)
+	response.Developers = &current.Developers
+	response.CodeLines = uint64String(current.CodeLines)
+	response.Interactions = uint64String(current.Interactions)
+	response.CostAmount, response.Costs = communityCostProjection(current)
+	response.ComputedAt = &current.ComputedAt
+
+	previousTo := from.Add(-time.Hour)
+	previousFrom := previousTo.Add(-23 * time.Hour)
+	previous, _, err := s.community.GetCommunityRollingStats(ctx, previousFrom.UnixMilli(), previousTo.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	if !previous.ComputedAt.IsZero() {
+		response.Deltas = &domain.CommunityStatsDeltaDTO{
+			Tokens:       deltaPct(current.TokensTotal, previous.TokensTotal),
+			Developers:   deltaPct(current.Developers, previous.Developers),
+			CodeLines:    deltaPct(current.CodeLines, previous.CodeLines),
+			Interactions: deltaPct(current.Interactions, previous.Interactions),
+			CostAmount:   communityCostDelta(current, previous),
+		}
+	}
+	for _, harness := range harnesses {
+		share := float64(0)
+		if current.TokensTotal > 0 {
+			share = math.Round(float64(harness.TokensTotal)/float64(current.TokensTotal)*1000) / 10
+		}
+		response.Harnesses = append(response.Harnesses, domain.CommunityHarnessDTO{
+			AgentID: harness.AgentID, Label: harness.Label, Tokens: uint64String(harness.TokensTotal), SharePct: &share,
+		})
+	}
+	response.Models = projectCommunityModels([]store.CommunityDailyTotals{current}, current.TokensTotal, 5)
+	response.Skills = projectCommunitySkills([]store.CommunityDailyTotals{current}, 5)
 	return response, nil
 }
 

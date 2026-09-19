@@ -91,7 +91,7 @@ export const ActivityPage: React.FC = () => {
             className="form-input"
             style={{ height: 36, fontSize: 12, padding: '0 10px' }}
           >
-            <option value="today">{t('common.today')}</option>
+            <option value="today">{t('dashboard.windowToday')}</option>
             <option value="7d">{t('common.days7')}</option>
             <option value="30d">{t('common.days30')}</option>
             <option value="all">{t('common.allTime')}</option>

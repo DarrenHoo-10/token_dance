@@ -30,7 +30,20 @@ func leaderboardDates(window string, now time.Time) (string, string, error) {
 	return start.Format("2006-01-02"), end.Format("2006-01-02"), nil
 }
 
-func liveEligibleTotalsSQL() string {
+func liveLeaderboardBucketRange(window string, now time.Time) (string, int64, int64, error) {
+	if window == "today" {
+		from, to := domain.Rolling24HourBuckets(now)
+		return domain.TelemetryGrainHour, from.UnixMilli(), to.UnixMilli(), nil
+	}
+	from, to, err := leaderboardDates(window, now)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	fromMs, toMs, err := dayGrainBucketRange(from, to)
+	return domain.TelemetryGrainDay, fromMs, toMs, err
+}
+
+func liveEligibleTotalsSQL(grain string) string {
 	return `
 	SELECT e.user_id, e.handle, e.display_name, e.avatar_url, e.registered_at,
 	       CAST(COALESCE(m.tokens, 0) AS UNSIGNED) AS tokens,
@@ -50,14 +63,14 @@ func liveEligibleTotalsSQL() string {
 		       SUM(exact_token_total + derived_token_total) AS tokens,
 		       FROM_UNIXTIME(MAX(updated_at) / 1000) AS watermark
 		FROM bound_telemetry_model_metrics
-		WHERE grain = 'day' AND delete_at IS NULL
+		WHERE grain = '` + grain + `' AND delete_at IS NULL
 		  AND bucket_start >= ? AND bucket_start <= ?
 		GROUP BY user_id
 	) m ON m.user_id = e.user_id`
 }
 
-func liveTokenRankingSQL() string {
-	return `WITH totals AS (` + liveEligibleTotalsSQL() + `), ranked AS (
+func liveTokenRankingSQL(grain string) string {
+	return `WITH totals AS (` + liveEligibleTotalsSQL(grain) + `), ranked AS (
 	SELECT totals.*, ROW_NUMBER() OVER (ORDER BY tokens DESC, registered_at ASC, user_id ASC) AS rank_no
 	FROM totals
 ), stats AS (
@@ -75,8 +88,8 @@ func savedPreviousTotalsSQL() string {
 	WHERE s.window_key = ? AND s.generation = ? AND s.eligible = TRUE`
 }
 
-func liveTokenComparisonSQL(previousSQL string) string {
-	return liveTokenRankingSQL() + `, previous_totals AS (` + previousSQL + `), previous_ranked AS (
+func liveTokenComparisonSQL(grain, previousSQL string) string {
+	return liveTokenRankingSQL(grain) + `, previous_totals AS (` + previousSQL + `), previous_ranked AS (
     SELECT user_id, ROW_NUMBER() OVER (ORDER BY tokens DESC, registered_at ASC, user_id ASC) AS rank_no
     FROM previous_totals
 )
@@ -84,6 +97,12 @@ func liveTokenComparisonSQL(previousSQL string) string {
 }
 
 func (s *leaderboardStore) previousTotalsQuery(ctx context.Context, window string, now time.Time) (string, []interface{}, error) {
+	if window == "today" {
+		currentFrom, _ := domain.Rolling24HourBuckets(now)
+		previousTo := currentFrom.Add(-time.Hour)
+		previousFrom := previousTo.Add(-23 * time.Hour)
+		return liveEligibleTotalsSQL(domain.TelemetryGrainHour), []interface{}{previousFrom.UnixMilli(), previousTo.UnixMilli()}, nil
+	}
 	prevNow := domain.StartOfDay(now).AddDate(0, 0, -1)
 	prevGen := WindowGeneration(prevNow)
 	hasSaved, err := savedPreviousWindowExists(ctx, s.db, window, prevGen)
@@ -93,23 +112,15 @@ func (s *leaderboardStore) previousTotalsQuery(ctx context.Context, window strin
 	if hasSaved {
 		return savedPreviousTotalsSQL(), []interface{}{window, prevGen}, nil
 	}
-	from, to, err := leaderboardDates(window, prevNow)
+	grain, fromMs, toMs, err := liveLeaderboardBucketRange(window, prevNow)
 	if err != nil {
 		return "", nil, err
 	}
-	fromMs, toMs, err := dayGrainBucketRange(from, to)
-	if err != nil {
-		return "", nil, err
-	}
-	return liveEligibleTotalsSQL(), []interface{}{fromMs, toMs}, nil
+	return liveEligibleTotalsSQL(grain), []interface{}{fromMs, toMs}, nil
 }
 
 func (s *leaderboardStore) getLiveTokenLeaderboard(ctx context.Context, window string, cursor *string, limit int, now time.Time) (*domain.LeaderboardResponse, error) {
-	from, to, err := leaderboardDates(window, now)
-	if err != nil {
-		return nil, err
-	}
-	fromMs, toMs, err := dayGrainBucketRange(from, to)
+	grain, fromMs, toMs, err := liveLeaderboardBucketRange(window, now)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +143,7 @@ func (s *leaderboardStore) getLiveTokenLeaderboard(ctx context.Context, window s
 	args := []interface{}{fromMs, toMs}
 	args = append(args, previousArgs...)
 	args = append(args, after, endRank)
-	rows, err := s.db.QueryContext(ctx, liveTokenComparisonSQL(previousSQL)+`
+	rows, err := s.db.QueryContext(ctx, liveTokenComparisonSQL(grain, previousSQL)+`
 	SELECT stats.participants, stats.tokens, stats.watermark,
 	       ranked.rank_no, ranked.handle, ranked.display_name, ranked.avatar_url, ranked.tokens, previous_ranked.rank_no
 	FROM stats LEFT JOIN ranked ON ranked.rank_no > ? AND ranked.rank_no <= ?
@@ -199,16 +210,12 @@ func (s *leaderboardStore) getLiveTokenLeaderboard(ctx context.Context, window s
 }
 
 func (s *leaderboardStore) liveTokenRank(ctx context.Context, userID, window string, now time.Time) (*int, *float64, error) {
-	from, to, err := leaderboardDates(window, now)
-	if err != nil {
-		return nil, nil, nil
-	}
-	fromMs, toMs, err := dayGrainBucketRange(from, to)
+	grain, fromMs, toMs, err := liveLeaderboardBucketRange(window, now)
 	if err != nil {
 		return nil, nil, err
 	}
 	var rank, count int
-	err = s.db.QueryRowContext(ctx, liveTokenRankingSQL()+`SELECT rank_no, participants FROM ranked CROSS JOIN stats WHERE user_id = ?`,
+	err = s.db.QueryRowContext(ctx, liveTokenRankingSQL(grain)+`SELECT rank_no, participants FROM ranked CROSS JOIN stats WHERE user_id = ?`,
 		fromMs, toMs, userID).Scan(&rank, &count)
 	if err == sql.ErrNoRows {
 		return nil, nil, nil
@@ -223,11 +230,7 @@ func (s *leaderboardStore) liveTokenRank(ctx context.Context, userID, window str
 // This is used only by authenticated personal summaries. The public list stays
 // capped at 1000; callers never supply a different account's user ID.
 func (s *leaderboardStore) liveOwnTokenEntry(ctx context.Context, userID, window string, now time.Time) (*domain.LeaderboardEntry, *float64, error) {
-	from, to, err := leaderboardDates(window, now)
-	if err != nil {
-		return nil, nil, nil
-	}
-	fromMs, toMs, err := dayGrainBucketRange(from, to)
+	grain, fromMs, toMs, err := liveLeaderboardBucketRange(window, now)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -243,7 +246,7 @@ func (s *leaderboardStore) liveOwnTokenEntry(ctx context.Context, userID, window
 	var previousRank sql.NullInt64
 	var tokenValue sql.NullString
 	var count int
-	err = s.db.QueryRowContext(ctx, liveTokenComparisonSQL(previousSQL)+`
+	err = s.db.QueryRowContext(ctx, liveTokenComparisonSQL(grain, previousSQL)+`
 	SELECT ranked.rank_no, ranked.handle, ranked.display_name, ranked.avatar_url, ranked.tokens, previous_ranked.rank_no, stats.participants
 	FROM ranked CROSS JOIN stats LEFT JOIN previous_ranked ON previous_ranked.user_id = ranked.user_id
 	WHERE ranked.user_id = ?`, args...).Scan(&entry.RankNo, &entry.Handle, &entry.DisplayName, &avatar, &tokenValue, &previousRank, &count)

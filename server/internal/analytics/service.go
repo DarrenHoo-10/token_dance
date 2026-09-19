@@ -34,9 +34,10 @@ func NewServiceWithConfig(st store.Store, cfg *config.Config, clk clock.Clock) *
 	return &Service{store: st.Analytics(), pStore: st.Profile(), clk: clk, cursorKeys: cfg.IdempotencyKeys}
 }
 
-// ResolveTimeRange cuts today/7d/30d/10w/all/custom windows on the product
-// statistics calendar (Beijing, UTC+8). userTZ is ignored so personal tokens,
-// streak and rank cannot disagree with the public leaderboard.
+// ResolveTimeRange cuts the rolling 24h and calendar 7d/30d/10w/all/custom
+// windows on the product statistics calendar (Beijing, UTC+8). userTZ is
+// ignored so personal tokens, streak and rank cannot disagree with the public
+// leaderboard.
 func (s *Service) ResolveTimeRange(key, userTZ, customFrom, customTo string) (domain.TimeRange, error) {
 	now := s.clk.Now()
 	loc := domain.DayTZ
@@ -49,7 +50,7 @@ func (s *Service) ResolveTimeRange(key, userTZ, customFrom, customTo string) (do
 	to := now
 	switch rangeKey {
 	case domain.TimeRangeToday:
-		from = startOfToday
+		from, _ = domain.Rolling24HourBuckets(now)
 	case domain.TimeRange7d:
 		from = startOfToday.AddDate(0, 0, -6)
 	case domain.TimeRange30d:

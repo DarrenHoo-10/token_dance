@@ -207,7 +207,7 @@ func (s *privacyStore) GetPublicProfileByHandle(ctx context.Context, handle stri
 	row, err := sqlcgen.New(s.db).GetPublishedProfileByHandle(ctx, handle)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, domain.ErrNotFound
+			return s.getActiveUserPublicProfileByHandle(ctx, handle)
 		}
 		return nil, fmt.Errorf("failed to query public profile by handle: %w", err)
 	}
@@ -232,6 +232,45 @@ func (s *privacyStore) GetPublicProfileByHandle(ctx context.Context, handle stri
 		CreatedAt:            row.CreatedAt,
 		UpdatedAt:            row.UpdatedAt,
 	}, nil
+}
+
+func (s *privacyStore) getActiveUserPublicProfileByHandle(ctx context.Context, handle string) (*domain.PublicUserProfile, error) {
+	var pub domain.PublicUserProfile
+	var avatarURL, bio sql.NullString
+	var onboardingCompletedAt sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		SELECT user_id, handle, display_name, avatar_url, bio, onboarding_completed_at,
+		       profile_version, created_at, updated_at
+		FROM users
+		WHERE handle = ? AND account_status = 'active' AND deleted_at IS NULL
+		LIMIT 1`, handle).Scan(
+		&pub.UserID,
+		&pub.Handle,
+		&pub.DisplayName,
+		&avatarURL,
+		&bio,
+		&onboardingCompletedAt,
+		&pub.SourceProfileVersion,
+		&pub.CreatedAt,
+		&pub.UpdatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrNotFound
+		}
+		return nil, fmt.Errorf("failed to query active user profile by handle: %w", err)
+	}
+	if !onboardingCompletedAt.Valid {
+		return nil, domain.ErrNotFound
+	}
+	pub.AvatarURL = ptrFromNullString(avatarURL)
+	pub.Bio = ptrFromNullString(bio)
+	pub.ProjectionVersion = pub.SourceProfileVersion
+	if pub.ProjectionVersion == 0 {
+		pub.ProjectionVersion = 1
+	}
+	domain.RevealPublicProfile(&pub)
+	return &pub, nil
 }
 
 func (s *privacyStore) SetAccountStatusTx(ctx context.Context, userID string, status domain.AccountStatus, now time.Time) error {

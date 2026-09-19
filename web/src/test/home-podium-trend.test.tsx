@@ -24,19 +24,19 @@ describe('Homepage podium public trends', () => {
     localStorage.clear();
     auth.authenticated = false;
     auth.user = null;
-    vi.spyOn(api, 'getLeaderboard').mockResolvedValue({
+    vi.spyOn(api, 'getLeaderboard').mockImplementation(async (params) => ({
       snapshotId: '',
       boardKey: 'global',
-      window: 'today',
+      window: params.window ?? 'today',
       metric: 'tokens',
       entries: [
         { rankNo: 1, handle: 'ada', displayName: 'Ada', avatarUrl: null, metricValue: '200', rankDelta: 0 },
         { rankNo: 2, handle: 'grace', displayName: 'Grace', avatarUrl: null, metricValue: '100', rankDelta: 0 },
         { rankNo: 3, handle: 'linus', displayName: 'Linus', avatarUrl: null, metricValue: '50', rankDelta: 0 },
       ],
-    });
+    }));
     vi.spyOn(api, 'getMyLeaderboard');
-    vi.spyOn(api, 'getCommunityStats').mockResolvedValue({ metricDate: '2026-09-09', timezone: 'UTC', window: 'today' });
+    vi.spyOn(api, 'getCommunityStats').mockImplementation(async (window) => ({ metricDate: '2026-09-09', timezone: 'UTC', window }));
     vi.spyOn(api, 'getPublicTokenTrends').mockImplementation(async (handle) => ({
       visible: true,
       points: handle === 'linus'
@@ -75,5 +75,20 @@ describe('Homepage podium public trends', () => {
     expect(await screen.findByText('这个范围里，还没有创作记录。')).toBeInTheDocument();
     expect(screen.queryByText('该开发者尚未公开用量趋势。')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '登录，留下你的足迹' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the trajectory period in sync with the leaderboard period', async () => {
+    showHome();
+    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('ada', { range: 'today' }));
+    expect(screen.queryByRole('combobox', { name: '用量趋势周期' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: '近 7 天' }));
+    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('ada', { range: '7d' }));
+
+    fireEvent.click(screen.getByRole('tab', { name: '近 30 天' }));
+    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('ada', { range: '30d' }));
+
+    fireEvent.click(screen.getByRole('tab', { name: '全部时间' }));
+    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('ada', { range: 'all' }));
   });
 });

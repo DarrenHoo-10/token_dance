@@ -1380,6 +1380,12 @@ func (m *MemoryStore) GetTokenTrend(ctx context.Context, userID string, r domain
 
 	now := time.Now().UTC()
 	fixtures, hasFixtures := m.userTrendFixtures[userID]
+	granularity := "day"
+	if r.Key == domain.TimeRangeToday {
+		granularity = "hour"
+	} else if r.Key == domain.TimeRangeAll {
+		granularity = "month"
+	}
 
 	if !hasFixtures {
 		// No collected data yet: empty trend.
@@ -1389,7 +1395,7 @@ func (m *MemoryStore) GetTokenTrend(ctx context.Context, userID string, r domain
 			AgentID:     agentID,
 			ProviderID:  providerID,
 			ModelID:     modelID,
-			Granularity: "day",
+			Granularity: granularity,
 			Points:      []domain.TrendPoint{},
 		}, nil
 	}
@@ -1417,10 +1423,14 @@ func (m *MemoryStore) GetTokenTrend(ctx context.Context, userID string, r domain
 			continue
 		}
 
-		b, ok := buckets[f.Date]
+		bucketDate := f.Date
+		if granularity == "month" && len(bucketDate) >= 7 {
+			bucketDate = bucketDate[:7]
+		}
+		b, ok := buckets[bucketDate]
 		if !ok {
-			b = &dayBucket{Date: f.Date}
-			buckets[f.Date] = b
+			b = &dayBucket{Date: bucketDate}
+			buckets[bucketDate] = b
 		}
 		b.ExactTokens += f.ExactTokens
 		b.DerivedTokens += f.DerivedTokens
@@ -1470,7 +1480,7 @@ func (m *MemoryStore) GetTokenTrend(ctx context.Context, userID string, r domain
 		AgentID:            agentID,
 		ProviderID:         providerID,
 		ModelID:            modelID,
-		Granularity:        "day",
+		Granularity:        granularity,
 		Points:             points,
 		DataWatermarkAt:    &now,
 		AggregationVersion: 2,
@@ -2325,6 +2335,19 @@ func (m *MemoryStore) ListCommunityDailyStats(ctx context.Context, fromDate, toD
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].MetricDate < result[j].MetricDate })
 	return result, nil
+}
+
+func (m *MemoryStore) GetCommunityRollingStats(ctx context.Context, fromBucketMs, toBucketMs int64) (store.CommunityDailyTotals, []store.CommunityHarness, error) {
+	date := domain.DayDate(time.UnixMilli(toBucketMs))
+	rows, _ := m.ListCommunityDailyStats(ctx, date, date)
+	if len(rows) == 0 {
+		return store.CommunityDailyTotals{}, nil, nil
+	}
+	if rows[0].ComputedAt.IsZero() {
+		rows[0].ComputedAt = time.UnixMilli(toBucketMs).UTC()
+	}
+	harnesses, _ := m.GetCommunityHarnessSharesRange(ctx, date, date, 5)
+	return rows[0], harnesses, nil
 }
 
 // The in-memory store has daily counts rather than user identities. Its peak

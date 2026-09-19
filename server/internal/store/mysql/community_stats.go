@@ -61,6 +61,158 @@ type communityStatsStore struct {
 	db *sql.DB
 }
 
+func (s *communityStatsStore) GetCommunityRollingStats(ctx context.Context, fromBucketMs, toBucketMs int64) (store.CommunityDailyTotals, []store.CommunityHarness, error) {
+	var totals store.CommunityDailyTotals
+	var updatedAt sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT
+			CAST(COALESCE(SUM(exact_token_total + derived_token_total), 0) AS UNSIGNED),
+			COUNT(DISTINCT CASE WHEN exact_token_total + derived_token_total > 0 THEN user_id END),
+			CAST(COALESCE(SUM(model_request_count), 0) AS UNSIGNED),
+			MAX(updated_at)
+		FROM bound_telemetry_model_metrics
+		WHERE grain = 'hour' AND delete_at IS NULL
+		  AND bucket_start >= ? AND bucket_start <= ?`, fromBucketMs, toBucketMs).Scan(
+		&totals.TokensTotal,
+		&totals.Developers,
+		&totals.Interactions,
+		&updatedAt,
+	); err != nil {
+		return store.CommunityDailyTotals{}, nil, fmt.Errorf("sum rolling community model metrics: %w", err)
+	}
+	if updatedAt.Valid {
+		totals.ComputedAt = time.UnixMilli(updatedAt.Int64).UTC()
+	}
+	var harnessUpdatedAt sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `
+		SELECT CAST(COALESCE(SUM(code_generated_lines), 0) AS UNSIGNED), MAX(updated_at)
+		FROM bound_telemetry_harness_metrics
+		WHERE grain = 'hour' AND delete_at IS NULL
+		  AND bucket_start >= ? AND bucket_start <= ?`, fromBucketMs, toBucketMs).Scan(&totals.CodeLines, &harnessUpdatedAt); err != nil {
+		return store.CommunityDailyTotals{}, nil, fmt.Errorf("sum rolling community code lines: %w", err)
+	}
+	if harnessUpdatedAt.Valid && (!updatedAt.Valid || harnessUpdatedAt.Int64 > updatedAt.Int64) {
+		totals.ComputedAt = time.UnixMilli(harnessUpdatedAt.Int64).UTC()
+	}
+
+	costRows, err := s.db.QueryContext(ctx, `
+		SELECT currency, CAST(COALESCE(SUM(reported_cost_units + estimated_cost_units), 0) AS CHAR)
+		FROM bound_telemetry_cost_metrics
+		WHERE grain = 'hour' AND delete_at IS NULL
+		  AND bucket_start >= ? AND bucket_start <= ?
+		GROUP BY currency ORDER BY currency`, fromBucketMs, toBucketMs)
+	if err != nil {
+		return store.CommunityDailyTotals{}, nil, fmt.Errorf("sum rolling community costs: %w", err)
+	}
+	for costRows.Next() {
+		var currency, units string
+		if err := costRows.Scan(&currency, &units); err != nil {
+			costRows.Close()
+			return store.CommunityDailyTotals{}, nil, err
+		}
+		var amount float64
+		fmt.Sscanf(units, "%f", &amount)
+		totals.Costs = append(totals.Costs, store.CommunityCost{Currency: currency, Amount: amount / 1e8})
+	}
+	if err := costRows.Err(); err != nil {
+		costRows.Close()
+		return store.CommunityDailyTotals{}, nil, err
+	}
+	if err := costRows.Close(); err != nil {
+		return store.CommunityDailyTotals{}, nil, err
+	}
+	applyCommunityCosts(&totals, totals.Costs)
+
+	modelRows, err := s.db.QueryContext(ctx, `
+		SELECT tm.model_id, CAST(COALESCE(SUM(m.exact_token_total + m.derived_token_total), 0) AS UNSIGNED)
+		FROM bound_telemetry_model_metrics m
+		JOIN telemetry_models tm ON tm.id = m.model_key
+		WHERE m.grain = 'hour' AND m.delete_at IS NULL
+		  AND m.bucket_start >= ? AND m.bucket_start <= ? AND tm.delete_at IS NULL
+		GROUP BY tm.model_id
+		ORDER BY SUM(m.exact_token_total + m.derived_token_total) DESC, tm.model_id ASC
+		LIMIT ?`, fromBucketMs, toBucketMs, communitySharePersistLimit)
+	if err != nil {
+		return store.CommunityDailyTotals{}, nil, fmt.Errorf("sum rolling community model shares: %w", err)
+	}
+	for modelRows.Next() {
+		var item store.CommunityModelShare
+		if err := modelRows.Scan(&item.ModelID, &item.Tokens); err != nil {
+			modelRows.Close()
+			return store.CommunityDailyTotals{}, nil, err
+		}
+		item.Label = item.ModelID
+		totals.ModelShares = append(totals.ModelShares, item)
+	}
+	if err := modelRows.Err(); err != nil {
+		modelRows.Close()
+		return store.CommunityDailyTotals{}, nil, err
+	}
+	if err := modelRows.Close(); err != nil {
+		return store.CommunityDailyTotals{}, nil, err
+	}
+
+	skillRows, err := s.db.QueryContext(ctx, `
+		SELECT sk.public_name, CAST(COALESCE(SUM(m.use_count), 0) AS UNSIGNED)
+		FROM bound_telemetry_skill_metrics m
+		JOIN telemetry_skills sk ON sk.id = m.skill_id
+		WHERE m.grain = 'hour' AND m.delete_at IS NULL
+		  AND m.bucket_start >= ? AND m.bucket_start <= ?
+		  AND sk.delete_at IS NULL AND sk.public_name IS NOT NULL AND CHAR_LENGTH(sk.public_name) > 0
+		GROUP BY sk.public_name
+		ORDER BY SUM(m.use_count) DESC, sk.public_name ASC
+		LIMIT ?`, fromBucketMs, toBucketMs, communitySharePersistLimit)
+	if err != nil {
+		return store.CommunityDailyTotals{}, nil, fmt.Errorf("sum rolling community skill shares: %w", err)
+	}
+	for skillRows.Next() {
+		var item store.CommunitySkillShare
+		if err := skillRows.Scan(&item.Label, &item.Uses); err != nil {
+			skillRows.Close()
+			return store.CommunityDailyTotals{}, nil, err
+		}
+		item.SkillID = item.Label
+		totals.SkillShares = append(totals.SkillShares, item)
+	}
+	if err := skillRows.Err(); err != nil {
+		skillRows.Close()
+		return store.CommunityDailyTotals{}, nil, err
+	}
+	if err := skillRows.Close(); err != nil {
+		return store.CommunityDailyTotals{}, nil, err
+	}
+
+	harnessRows, err := s.db.QueryContext(ctx, `
+		SELECT harness_id, CAST(COALESCE(SUM(exact_token_total + derived_token_total), 0) AS UNSIGNED)
+		FROM bound_telemetry_model_metrics
+		WHERE grain = 'hour' AND delete_at IS NULL
+		  AND bucket_start >= ? AND bucket_start <= ?
+		GROUP BY harness_id
+		ORDER BY SUM(exact_token_total + derived_token_total) DESC, harness_id ASC
+		LIMIT 5`, fromBucketMs, toBucketMs)
+	if err != nil {
+		return store.CommunityDailyTotals{}, nil, fmt.Errorf("sum rolling community harness shares: %w", err)
+	}
+	var harnesses []store.CommunityHarness
+	for harnessRows.Next() {
+		var item store.CommunityHarness
+		if err := harnessRows.Scan(&item.AgentID, &item.TokensTotal); err != nil {
+			harnessRows.Close()
+			return store.CommunityDailyTotals{}, nil, err
+		}
+		item.Label = agentDisplayName(item.AgentID)
+		harnesses = append(harnesses, item)
+	}
+	if err := harnessRows.Err(); err != nil {
+		harnessRows.Close()
+		return store.CommunityDailyTotals{}, nil, err
+	}
+	if err := harnessRows.Close(); err != nil {
+		return store.CommunityDailyTotals{}, nil, err
+	}
+	return totals, harnesses, nil
+}
+
 func (s *communityStatsStore) SumCommunityDay(ctx context.Context, date string) (store.CommunityDailyTotals, error) {
 	totals := store.CommunityDailyTotals{MetricDate: date}
 	bucketStart, err := domain.DayBucketStartMs(date)

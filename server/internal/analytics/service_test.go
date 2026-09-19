@@ -20,9 +20,9 @@ func TestTimeRangesUseBeijingCalendar(t *testing.T) {
 	if today.Timezone != "UTC+8" {
 		t.Fatalf("expected UTC+8 timezone label, got %q", today.Timezone)
 	}
-	wantFrom := time.Date(2026, 9, 9, 16, 0, 0, 0, time.UTC)
+	wantFrom := time.Date(2026, 9, 9, 2, 0, 0, 0, time.UTC)
 	if !today.From.Equal(wantFrom) {
-		t.Fatalf("today must start at Beijing midnight, got %v", today.From)
+		t.Fatalf("today must cover 24 aligned Beijing hour buckets, got %v", today.From)
 	}
 	custom, err := svc.ResolveTimeRange("custom", "America/New_York", "2026-03-08", "2026-03-08")
 	if err != nil {

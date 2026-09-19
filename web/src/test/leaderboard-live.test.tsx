@@ -56,7 +56,7 @@ describe('Live leaderboard', () => {
     let resolveToday!: (value: LeaderboardResponse) => void;
     vi.mocked(api.getLeaderboard).mockImplementation(({window}={}) => window==='today' ? new Promise(resolve => {resolveToday=resolve;}) : Promise.resolve(ranked('30d','30000000')));
     showPage();
-    expect(screen.getByRole('tab',{name:'今天'})).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab',{name:'过去 24 小时'})).toHaveAttribute('aria-selected', 'true');
     fireEvent.click(screen.getByRole('tab',{name:'近 30 天'}));
     expect((await screen.findAllByText('30.0M')).length).toBeGreaterThan(0);
     resolveToday(ranked('today','7000000'));
@@ -79,12 +79,12 @@ describe('Live leaderboard', () => {
     expect(screen.getByText('32.8K')).toBeInTheDocument();
     expect(screen.getByText('4.6K')).toBeInTheDocument();
     expect(screen.getByText('$268.42')).toBeInTheDocument();
-    expect(screen.getByText('较昨日').closest('.hero-delta')).toHaveTextContent('↑ +12.6% 较昨日');
+    expect(screen.getByText('较前 24h').closest('.hero-delta')).toHaveTextContent('↑ +12.6% 较前 24h');
     expect(screen.getByText('↓ −50.0%')).toBeInTheDocument();
     expect(screen.getByText('Zcode')).toBeInTheDocument();
     expect(screen.getByText('Codex CLI')).toBeInTheDocument();
     expect(screen.getByText('64%')).toBeInTheDocument();
-    expect(screen.getByText('社区今天 Token 占比 · 按 harness')).toBeInTheDocument();
+    expect(screen.getByText('社区过去 24 小时 Token 占比 · 按 harness')).toBeInTheDocument();
     expect(document.querySelector('[data-harness="zcode"]')).toBeTruthy();
     expect(document.querySelector('[data-harness="codex"]')).toBeTruthy();
     expect(document.querySelector('[data-harness="zcode"] svg')).toBeTruthy();
@@ -139,8 +139,8 @@ describe('Live leaderboard', () => {
     showPage();
     expect(await screen.findByText('gpt-5')).toBeInTheDocument();
     expect(screen.getByText('review')).toBeInTheDocument();
-    expect(screen.getByText('社区今天 Token 占比 · 按模型')).toBeInTheDocument();
-    expect(screen.getByText('社区今天 调用占比 · 按 Skill')).toBeInTheDocument();
+    expect(screen.getByText('社区过去 24 小时 Token 占比 · 按模型')).toBeInTheDocument();
+    expect(screen.getByText('社区过去 24 小时 调用占比 · 按 Skill')).toBeInTheDocument();
     expect(screen.getByText('50%')).toBeInTheDocument();
     expect(screen.getByText('90%')).toBeInTheDocument();
   });
@@ -150,7 +150,7 @@ describe('Live leaderboard', () => {
     showPage();
     await waitFor(() => expect(api.getCommunityStats).toHaveBeenCalledWith('today'));
     expect(api.getMyLeaderboard).toHaveBeenCalledWith(expect.objectContaining({ window: 'today' }));
-    expect(screen.getAllByText('今日 Token').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('过去 24h Token').length).toBeGreaterThan(0);
     fireEvent.click(screen.getByRole('tab', { name: '近 7 天' }));
     await waitFor(() => expect(api.getCommunityStats).toHaveBeenLastCalledWith('7d'));
     expect(api.getMyLeaderboard).toHaveBeenLastCalledWith(expect.objectContaining({ window: '7d' }));

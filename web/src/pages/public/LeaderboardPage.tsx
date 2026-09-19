@@ -140,7 +140,6 @@ export const LeaderboardPage: React.FC = () => {
   const [allTimeSummary, setAllTimeSummary] = useState<PersonalSummary | null>(null);
   const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
   const [streak, setStreak] = useState(0);
-  const [trendRange, setTrendRange] = useState('today');
   const [refreshTick, setRefreshTick] = useState(0);
   const [selectedHandle, setSelectedHandle] = useState<string | null>(null);
   const [selectedEntry, setSelectedEntry] = useState<LeaderboardEntry | null>(null);
@@ -227,7 +226,7 @@ export const LeaderboardPage: React.FC = () => {
     setTrendReady(false);
     setSelectedTrends([]);
     Promise.all([
-      api.getPublicTokenTrends(selectedHandle, { range: trendRange }).catch((error) => {
+      api.getPublicTokenTrends(selectedHandle, { range: selectedCommunityWindow }).catch((error) => {
         if (error instanceof ApiError && (error.status === 404 || error.code === 'PUBLIC_PROFILE_NOT_FOUND')) {
           return { points: [] } as TokenTrendsResponse;
         }
@@ -248,7 +247,7 @@ export const LeaderboardPage: React.FC = () => {
       setTrendReady(true);
     });
     return () => { cancelled = true; };
-  }, [selectedHandle, trendRange]);
+  }, [selectedHandle, selectedCommunityWindow]);
 
   const podium = entries.length >= 3 ? [entries[1], entries[0], entries[2]] : entries.slice(0, entries.length);
   const rankValue = summary?.ranking?.rank ?? null;
@@ -257,13 +256,15 @@ export const LeaderboardPage: React.FC = () => {
     ? allTimeSummary.metrics.totalTokens.value : null;
   const selectedName = selectedEntry ? publicLeaderboardName(selectedEntry) : selectedProfile?.displayName || selectedHandle;
   const trendDays = [...selectedTrends].sort((a, b) => a.date.localeCompare(b.date));
-  const trendChange = trendRange === 'today' ? null : calendarPeriodChange(
-    trendDays.map((day) => ({ date: day.date, level: 1, tokenTotal: String(day.tokenTotal || 0) })),
-    trendRange === '7d' ? 7 : 30,
-  );
-  const rangeLabel = zh ? ({ Today: '今天', '7 Days': '近 7 天', '30 Days': '近 30 天', 'All Time': '全部时间' }[range]) : range;
-  const heroTokenLabel = zh ? ({ Today: '今日 Token', '7 Days': '近 7 天 Token', '30 Days': '近 30 天 Token', 'All Time': '累计 Token' }[range]) : ({ Today: 'Today’s tokens', '7 Days': 'Tokens · 7 days', '30 Days': 'Tokens · 30 days', 'All Time': 'All-time tokens' }[range]);
-  const comparisonLabel = zh ? ({ Today: '较昨日', '7 Days': '较上 7 天', '30 Days': '较上 30 天', 'All Time': undefined }[range]) : ({ Today: 'vs yesterday', '7 Days': 'vs prior 7 days', '30 Days': 'vs prior 30 days', 'All Time': undefined }[range]);
+  const trendChange = selectedCommunityWindow === '7d' || selectedCommunityWindow === '30d'
+    ? calendarPeriodChange(
+      trendDays.map((day) => ({ date: day.date, level: 1, tokenTotal: String(day.tokenTotal || 0) })),
+      selectedCommunityWindow === '7d' ? 7 : 30,
+    )
+    : null;
+  const rangeLabel = zh ? ({ Today: '过去 24 小时', '7 Days': '近 7 天', '30 Days': '近 30 天', 'All Time': '全部时间' }[range]) : ({ Today: 'Past 24 hours', '7 Days': '7 Days', '30 Days': '30 Days', 'All Time': 'All Time' }[range]);
+  const heroTokenLabel = zh ? ({ Today: '过去 24h Token', '7 Days': '近 7 天 Token', '30 Days': '近 30 天 Token', 'All Time': '累计 Token' }[range]) : ({ Today: 'Tokens · past 24h', '7 Days': 'Tokens · 7 days', '30 Days': 'Tokens · 30 days', 'All Time': 'All-time tokens' }[range]);
+  const comparisonLabel = zh ? ({ Today: '较前 24h', '7 Days': '较上 7 天', '30 Days': '较上 30 天', 'All Time': undefined }[range]) : ({ Today: 'vs prior 24h', '7 Days': 'vs prior 7 days', '30 Days': 'vs prior 30 days', 'All Time': undefined }[range]);
   const connectionError = <div className={entries.length ? 'leaderboard-refresh-status' : 'leaderboard-empty'} role="alert"><p>{zh ? '连接异常' : 'Connection error'}</p><button className="btn btn-outline" type="button" onClick={() => setRefreshTick(tick => tick + 1)}>{zh ? '重试' : 'Retry'}</button></div>;
   const emptyBoard = loading && !entries.length && !loadError ? <p className="leaderboard-empty">{zh ? '加载中…' : 'Loading…'}</p> : loadError ? connectionError : !entries.length ? <p className="leaderboard-empty">{zh ? '暂无账号' : 'No accounts yet'}</p> : null;
   const viewingSelf = Boolean(authenticated && user?.handle && selectedHandle && user.handle.toLowerCase() === selectedHandle.toLowerCase());
@@ -323,7 +324,7 @@ export const LeaderboardPage: React.FC = () => {
             <div className="range-tabs" role="tablist" aria-label={zh ? '首页统计周期' : 'Homepage statistics period'}>
               {ranges.map((item) => (
                 <button key={item} type="button" role="tab" aria-selected={range === item} className={range === item ? 'active' : ''} onClick={() => setRange(item)}>
-                  {zh ? ({ Today: '今天', '7 Days': '近 7 天', '30 Days': '近 30 天', 'All Time': '全部时间' }[item]) : item}
+                  {zh ? ({ Today: '过去 24 小时', '7 Days': '近 7 天', '30 Days': '近 30 天', 'All Time': '全部时间' }[item]) : ({ Today: 'Past 24 hours', '7 Days': '7 Days', '30 Days': '30 Days', 'All Time': 'All Time' }[item])}
                 </button>
               ))}
             </div>
@@ -347,11 +348,6 @@ export const LeaderboardPage: React.FC = () => {
                 <h2><BarChart3 size={24} />{rhythmTitle}</h2>
                 <p>{zh ? '让每一次与 AI 的协作，留下足迹。' : 'Small steps. A story worth seeing.'}</p>
               </div>
-              <select className="form-input" value={trendRange} onChange={(e) => setTrendRange(e.target.value)} aria-label={zh ? '用量趋势周期' : 'Trend period'}>
-                <option value="today">{zh ? '今天' : 'Today'}</option>
-                <option value="7d">{zh ? '近 7 天' : '7 days'}</option>
-                <option value="30d">{zh ? '近 30 天' : '30 days'}</option>
-              </select>
             </div>
             {selectedHandle ? (
               <>
@@ -393,7 +389,7 @@ export const LeaderboardPage: React.FC = () => {
           <aside className="sky-side">
             <section className="panel sky-personal">
               <div className="panel-header">
-                <h2>{zh ? '我的今日' : 'My day'}</h2>
+                <h2>{zh ? '我的过去 24h' : 'My past 24h'}</h2>
                 <button className="sky-icon-button" type="button" onClick={() => authenticated ? personalAnalytics.show() : navigate('/login')} aria-label={zh ? '打开个人数据' : 'Open analytics'}><ArrowUpRight size={19} /></button>
               </div>
               {authenticated ? (
@@ -407,7 +403,7 @@ export const LeaderboardPage: React.FC = () => {
                   </div>
                   <div className="sky-personal-stats">
                     <div className="stat-block">
-                      <span>{zh ? '今日排名' : 'Today’s rank'}</span>
+                      <span>{zh ? '过去 24h 排名' : 'Past 24h rank'}</span>
                       <div className="stat-line">
                         <strong>{rankValue ?? '—'}</strong>
                         <TrendBadge value={summary?.ranking?.delta} />
@@ -415,7 +411,7 @@ export const LeaderboardPage: React.FC = () => {
                       </div>
                     </div>
                     <div className="stat-block">
-                      <span>{zh ? '今日 Token' : 'Today’s Tokens'}</span>
+                      <span>{zh ? '过去 24h Token' : 'Past 24h tokens'}</span>
                       <div className="stat-line"><strong>{formatTokens(todayTokens)}</strong></div>
                     </div>
                     <div className="stat-block">

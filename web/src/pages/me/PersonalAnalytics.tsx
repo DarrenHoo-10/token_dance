@@ -31,7 +31,7 @@ import type {
 import '@/personal-analytics.css';
 
 const PERIODS = [
-  { key: 'today', zh: '今天', en: 'Today' },
+  { key: 'today', zh: '过去 24 小时', en: 'Past 24 hours' },
   { key: '7d', zh: '近 7 天', en: '7 days' },
   { key: '30d', zh: '近 30 天', en: '30 days' },
   { key: 'all', zh: '全部时间', en: 'All time' },
@@ -328,7 +328,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
               {metric.change != null ? (
                 <>
                   <ChangeBadge value={metric.change} en={!zh} />
-                  <span>{zh ? (range === 'today' ? '较昨日' : '较上期') : (range === 'today' ? 'vs yesterday' : 'vs prior period')}</span>
+                  <span>{zh ? (range === 'today' ? '较前 24h' : '较上期') : (range === 'today' ? 'vs prior 24h' : 'vs prior period')}</span>
                 </>
               ) : (
                 <span>{metric.hint}</span>
@@ -340,7 +340,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
 
       <div className="analytics-context">
         <span>
-          <Trophy size={14} />{zh ? '今日排名' : 'Today’s rank'}{' '}
+          <Trophy size={14} />{zh ? '过去 24h 排名' : 'Past 24h rank'}{' '}
           <b>{summary?.ranking.rank ? `#${summary.ranking.rank}` : '—'}</b>
           {rankDelta != null && rankDelta !== 0 && (
             <span className={rankDelta < 0 ? 'rank-down' : 'rank-up'}><RankIcon size={13} />{Math.abs(rankDelta)}</span>
