@@ -12,7 +12,7 @@ import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from '@/context/AuthContext';
 import { useVisibleRefresh } from '@/hooks/useVisibleRefresh';
 import { api } from '@/api/client';
-import type { LeaderboardEntry, LeaderboardResponse, PersonalSummary, CalendarDay, CommunityStatsResponse } from '@/types/api';
+import type { LeaderboardEntry, PersonalSummary, CalendarDay, CommunityStatsResponse } from '@/types/api';
 import { formatCommunityCost } from '@/utils/cost';
 
 type Range = 'Today' | '7 Days' | '30 Days' | 'All Time';
@@ -70,7 +70,7 @@ function TrendBadge({ value }: { value: number | null | undefined }) {
 
 function PersonAvatar({ entry, className = '' }: { entry: LeaderboardEntry; className?: string }) {
   const name = publicLeaderboardName(entry);
-  return <UserAvatar url={entry.avatarUrl} name={name} className={`leader-avatar ${className}`} fallbackClassName={`leader-avatar ${className} avatar-fallback`} alt={`${name} profile`} />;
+  return <UserAvatar url={entry.avatarUrl} name={name} className={`leader-avatar ${className}`} fallbackClassName={`leader-avatar ${className} avatar-fallback`} alt={`${name} profile`} fetchPriority="high" />;
 }
 
 function PodiumCard({ entry }: { entry: LeaderboardEntry }) {
@@ -94,7 +94,6 @@ export const LeaderboardPage: React.FC = () => {
   const [range, setRange] = useState<Range>('Today');
   const requestId = useRef(0);
   const hasSnapshotRef = useRef(false);
-  const [boardSummary, setBoardSummary] = useState<Partial<LeaderboardResponse>>({});
   const [sharing, setSharing] = useState<{ publicProfileEnabled: boolean; showTokenTotal: boolean } | null>(null);
 
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
@@ -112,11 +111,10 @@ export const LeaderboardPage: React.FC = () => {
     const id = ++requestId.current;
     if (!hasSnapshotRef.current) setLoading(true);
     try {
-      const res = await api.getLeaderboardView(authenticated, { window: windowByRange[range], limit: 10 });
+      const res = await api.getLeaderboard({ window: windowByRange[range], limit: 100 });
       if (id !== requestId.current) return;
       hasSnapshotRef.current = true;
-      setBoardSummary(res);
-      setEntries(res.entries || []);
+      setEntries((res.entries || []).slice(0, 100));
       setLoadError(false);
     } catch {
       if (id !== requestId.current) return;
@@ -124,7 +122,7 @@ export const LeaderboardPage: React.FC = () => {
     } finally {
       if (id === requestId.current) setLoading(false);
     }
-  }, [range, authenticated]);
+  }, [range]);
 
   useEffect(() => {
     void fetchLeaderboard();
@@ -203,7 +201,7 @@ export const LeaderboardPage: React.FC = () => {
       {loadError && connectionError}
       {podium.length > 0 && <div className="podium-grid">{podium.map((entry) => <PodiumCard key={entry.rankNo} entry={entry} />)}</div>}
       <div className="leaderboard-list-heading"><h2>{zh ? '排行榜' : 'Rankings'}</h2><Link to={`/leaderboard/list?window=${windowByRange[range]}`}>{zh ? '查看完整列表' : 'View full list'} →</Link></div>
-      <LeaderboardTable entries={entries} ownEntry={authenticated ? boardSummary.ownEntry : null} />
+      <LeaderboardTable entries={entries} />
     </>;
   };
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"tokendance/internal/crypto"
+	"tokendance/internal/media"
 	"tokendance/internal/provider"
 	mysqlstore "tokendance/internal/store/mysql"
 )
@@ -442,6 +443,12 @@ func (w *Worker) deletionDeleteObjects(ctx context.Context, claim *deletionClaim
 			SELECT ?, object_key, 'upload' FROM user_upload_objects
 			WHERE user_id = ? AND object_key <> ''`, claim.requestID, userID); err != nil {
 			return fmt.Errorf("queue upload object keys: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT IGNORE INTO deletion_object_keys (request_id, object_key, object_kind)
+			SELECT ?, CONCAT(object_key, ?), 'upload' FROM user_upload_objects
+			WHERE user_id = ? AND object_type = 'avatar' AND object_key <> ''`, claim.requestID, media.AvatarThumbnailSuffix, userID); err != nil {
+			return fmt.Errorf("queue avatar thumbnail keys: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT IGNORE INTO deletion_object_keys (request_id, object_key, object_kind)
