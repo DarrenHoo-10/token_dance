@@ -1,7 +1,7 @@
 import { avatarUrl } from '@/utils/avatar';
 import React, { useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { ChevronDown, Database, BarChart3, LogOut, Menu, Settings, UserRound, X } from 'lucide-react';
+import { ChevronDown, Database, BarChart3, LogOut, Menu, Search, Settings, UserRound, X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
@@ -12,6 +12,7 @@ export const Navbar: React.FC = () => {
   const { t, locale } = useLocale();
   const navigate = useNavigate();
   const location = useLocation();
+  const home = location.pathname === '/leaderboard';
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
@@ -92,13 +93,19 @@ export const Navbar: React.FC = () => {
         <button
           type="button"
           className="nav-document"
-          onClick={() => navigate(authenticated ? '/me' : '/login?return_to=%2Fme')}
-          aria-label={t('publicProfile.headline')}
+          onClick={() => {
+            if (home) {
+              const input = document.querySelector<HTMLInputElement>('.sky-board-search input');
+              input?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+              input?.focus({ preventScroll: true });
+            } else navigate(authenticated ? '/me' : '/login?return_to=%2Fme');
+          }}
+          aria-label={home ? (locale === 'zh-CN' ? '搜索开发者' : 'Find a developer') : t('publicProfile.headline')}
         >
-          <BarChart3 size={22} aria-hidden="true" />
+          {home ? <Search size={21} aria-hidden="true" /> : <BarChart3 size={22} aria-hidden="true" />}
         </button>
 
-        <LocaleSwitcher />
+        <LocaleSwitcher compact={home} />
 
         {authenticated && user ? (
           <div className="user-menu" ref={userMenuRef}>
