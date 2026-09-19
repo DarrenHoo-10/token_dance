@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from '@/context/AuthContext';
+import { usePersonalAnalytics } from '@/context/PersonalAnalyticsContext';
 import { usePublicHomeResource } from '@/hooks/usePublicHomeResource';
 import { useVisibleRefresh } from '@/hooks/useVisibleRefresh';
 import { readHomeBoard, readHomeCommunity, writeHomeBoard, writeHomeCommunity } from '@/utils/publicHomeCache';
@@ -131,10 +132,10 @@ export const LeaderboardPage: React.FC = () => {
   const { locale } = useLocale();
   const navigate = useNavigate();
   const { user, authenticated } = useAuth();
+  const personalAnalytics = usePersonalAnalytics();
   const zh = locale === 'zh-CN';
   const accountKey = user?.userId ?? user?.handle ?? '';
   const [range, setRange] = useState<Range>('7 Days');
-  const [sharing, setSharing] = useState<{ publicProfileEnabled: boolean; showTokenTotal: boolean } | null>(null);
   const [summary, setSummary] = useState<PersonalSummary | null>(null);
   const [allTimeSummary, setAllTimeSummary] = useState<PersonalSummary | null>(null);
   const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
@@ -144,7 +145,6 @@ export const LeaderboardPage: React.FC = () => {
   const [selectedHandle, setSelectedHandle] = useState<string | null>(null);
   const [selectedEntry, setSelectedEntry] = useState<LeaderboardEntry | null>(null);
   const [selectedTrends, setSelectedTrends] = useState<TokenTrendItem[]>([]);
-  const [selectedHidden, setSelectedHidden] = useState(false);
   const [selectedStreak, setSelectedStreak] = useState<number | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<PublicUserProfile | null>(null);
   const [trendReady, setTrendReady] = useState(false);
@@ -171,13 +171,11 @@ export const LeaderboardPage: React.FC = () => {
     if (!authenticated) {
       setSummary(null);
       setAllTimeSummary(null);
-      setSharing(null);
       setCalendarDays([]);
       setStreak(0);
       return () => {};
     }
     let cancelled = false;
-    api.getPrivacy().then(result => { if (!cancelled) setSharing(result); }).catch(() => {});
     api.getPersonalSummary('all')
       .then((result) => { if (!cancelled) setAllTimeSummary(result); })
       .catch(() => { /* Keep unavailable historical totals distinct from zero. */ });
@@ -220,7 +218,6 @@ export const LeaderboardPage: React.FC = () => {
   useEffect(() => {
     if (!selectedHandle) {
       setSelectedTrends([]);
-      setSelectedHidden(false);
       setSelectedStreak(null);
       setSelectedProfile(null);
       setTrendReady(true);
@@ -229,26 +226,22 @@ export const LeaderboardPage: React.FC = () => {
     let cancelled = false;
     setTrendReady(false);
     setSelectedTrends([]);
-    setSelectedHidden(false);
     Promise.all([
       api.getPublicTokenTrends(selectedHandle, { range: trendRange }).catch((error) => {
         if (error instanceof ApiError && (error.status === 404 || error.code === 'PUBLIC_PROFILE_NOT_FOUND')) {
-          return { visible: false } as TokenTrendsResponse;
+          return { points: [] } as TokenTrendsResponse;
         }
         throw error;
       }),
       api.getPublicProfile(selectedHandle).catch(() => null),
     ]).then(([trends, profile]) => {
       if (cancelled) return;
-      const hidden = trends.visible === false;
-      setSelectedHidden(hidden);
-      setSelectedTrends(hidden ? [] : publicTrendPoints(trends));
+      setSelectedTrends(publicTrendPoints(trends));
       setSelectedProfile(profile);
       setSelectedStreak(profile?.currentStreak ?? null);
       setTrendReady(true);
     }).catch(() => {
       if (cancelled) return;
-      setSelectedHidden(true);
       setSelectedTrends([]);
       setSelectedProfile(null);
       setSelectedStreak(null);
@@ -290,10 +283,17 @@ export const LeaderboardPage: React.FC = () => {
           <p className="eyebrow">DEVELOPER TOKEN OBSERVATORY</p>
           <h1 id="sky-hero-title">Let Token <span>Dance</span></h1>
           <p>{zh ? '看见你与 AI 一起创造的每一天。' : 'Every day you create with AI, made visible.'}</p>
-          <Link className="sky-text-link" to={authenticated ? '/me' : '/download'}>
-            {zh ? (authenticated ? '查看我的创作足迹' : '开始记录你的创造') : (authenticated ? 'Explore my activity' : 'Start your journey')}
-            <ArrowUpRight size={17} />
-          </Link>
+          {authenticated ? (
+            <button type="button" className="sky-text-link" onClick={personalAnalytics.show}>
+              {zh ? '查看我的创作足迹' : 'Explore my activity'}
+              <ArrowUpRight size={17} />
+            </button>
+          ) : (
+            <Link className="sky-text-link" to="/download">
+              {zh ? '开始记录你的创造' : 'Start your journey'}
+              <ArrowUpRight size={17} />
+            </Link>
+          )}
         </div>
         <div className="sky-orb">
           <span>{heroTokenLabel}</span>
@@ -360,12 +360,16 @@ export const LeaderboardPage: React.FC = () => {
                     <small>Token</small>
                     <DeltaChip value={trendChange} />
                   </strong>
-                  {rhythmLink && <Link to={rhythmLink.to} className="sky-text-link">{rhythmLink.label}<ArrowUpRight size={16} /></Link>}
+                  {viewingSelf ? (
+                    <button type="button" className="sky-text-link" onClick={personalAnalytics.show}>{zh ? '个人数据' : 'My analytics'}<ArrowUpRight size={16} /></button>
+                  ) : rhythmLink ? (
+                    <Link to={rhythmLink.to} className="sky-text-link">{rhythmLink.label}<ArrowUpRight size={16} /></Link>
+                  ) : null}
                 </div>
                 {!trendReady ? (
                   <p className="side-card-empty">{zh ? '正在加载公开轨迹…' : 'Loading the public rhythm…'}</p>
-                ) : selectedHidden || !selectedTrends.length ? (
-                  <p className="side-card-empty">{zh ? '该开发者尚未公开用量趋势。' : 'This builder has not published a usage trend.'}</p>
+                ) : !selectedTrends.length ? (
+                  <p className="side-card-empty">{zh ? '这个范围里，还没有创作记录。' : 'No activity in this range yet.'}</p>
                 ) : (
                   <TokenTrendChart trends={trendDays} height={205} />
                 )}
@@ -386,18 +390,12 @@ export const LeaderboardPage: React.FC = () => {
         <div className="sky-detail-grid">
           <section className="panel sky-ranking">
             {entries.length > 0 && <HomeLeaderboard key={range} entries={entries} ownEntry={authenticated ? boardSummary.ownEntry : null} window={windowByRange[range]} />}
-            {authenticated && sharing && !sharing.publicProfileEnabled && (
-              <div className="sky-privacy-note" role="status">
-                <p>{zh ? '公开开关只控制详细资料页。排行榜仍显示头像、昵称、Token 和排名。' : 'The public switch only controls your detailed profile. Your avatar, nickname, tokens, and rank stay on the leaderboard.'}</p>
-                <button className="btn btn-outline" onClick={() => navigate('/me')}>{zh ? '管理公开设置' : 'Manage sharing'}</button>
-              </div>
-            )}
           </section>
           <aside className="sky-side">
             <section className="panel sky-personal">
               <div className="panel-header">
                 <h2>{zh ? '我的今日' : 'My day'}</h2>
-                <button className="sky-icon-button" type="button" onClick={() => navigate('/me')} aria-label={zh ? '打开个人数据' : 'Open analytics'}><ArrowUpRight size={19} /></button>
+                <button className="sky-icon-button" type="button" onClick={() => authenticated ? personalAnalytics.show() : navigate('/login')} aria-label={zh ? '打开个人数据' : 'Open analytics'}><ArrowUpRight size={19} /></button>
               </div>
               {authenticated ? (
                 <>

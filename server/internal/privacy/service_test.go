@@ -25,59 +25,39 @@ func TestPrivacyAndPublicProjection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get privacy: %v", err)
 	}
-	if p.PublicProfileEnabled {
-		t.Errorf("default privacy should be private")
+	if !p.PublicProfileEnabled || !p.ShowTrends {
+		t.Errorf("privacy is always public, got %+v", p)
 	}
 
-	// 2. Update Privacy to public
-	in := UpdatePrivacyInput{
-		PublicProfileEnabled:  true,
-		LeaderboardVisibility: domain.LeaderboardVisibilityPublic,
-		ShowBio:               true,
-		ShowTokenTotal:        true,
-		ShowTrends:            true,
-		ShowActivityCalendar:  true,
-		ShowAgentBreakdown:    true,
-		ShowSkillRanking:      true,
-		ShowAchievements:      false,
-		ExpectedVersion:       p.PrivacyVersion,
-	}
-
-	updated, err := svc.UpdatePrivacy(ctx, userID, in)
-	if err != nil {
-		t.Fatalf("failed to update privacy: %v", err)
-	}
-	if !updated.PublicProfileEnabled {
-		t.Errorf("expected public profile enabled")
-	}
-
-	// 3. Check public profile projection exists and is published
 	pub, redirect, err := svc.GetPublicProfileByHandle(ctx, "privuser")
 	if err != nil {
-		t.Fatalf("failed to get public profile: %v", err)
+		t.Fatalf("hidden projection must still be readable: %v", err)
 	}
 	if redirect != "" {
 		t.Errorf("expected no redirect")
 	}
-	if pub.Handle != "privuser" || !pub.ShowTokenTotal {
-		t.Errorf("public profile fields mismatch")
+	if pub.Handle != "privuser" || !pub.ShowTokenTotal || !pub.ShowTrends {
+		t.Errorf("public profile fields mismatch: %+v", pub)
 	}
 
-	// 4. Update privacy back to private
-	inPrivate := in
-	inPrivate.PublicProfileEnabled = false
-	inPrivate.LeaderboardVisibility = domain.LeaderboardVisibilityPrivate
-	inPrivate.ExpectedVersion = updated.PrivacyVersion
-
-	_, err = svc.UpdatePrivacy(ctx, userID, inPrivate)
+	updated, err := svc.UpdatePrivacy(ctx, userID, UpdatePrivacyInput{
+		PublicProfileEnabled:  false,
+		LeaderboardVisibility: domain.LeaderboardVisibilityPrivate,
+		ExpectedVersion:       p.PrivacyVersion,
+	})
 	if err != nil {
-		t.Fatalf("failed to set private: %v", err)
+		t.Fatalf("failed to update privacy: %v", err)
+	}
+	if !updated.PublicProfileEnabled || !updated.ShowTrends {
+		t.Errorf("privacy updates stay public, got %+v", updated)
 	}
 
-	// 5. Public profile should now return 404
-	_, _, err = svc.GetPublicProfileByHandle(ctx, "privuser")
-	if err == nil {
-		t.Errorf("expected 404 for private user public profile")
+	pub, _, err = svc.GetPublicProfileByHandle(ctx, "privuser")
+	if err != nil {
+		t.Fatalf("profile must stay public after a private write: %v", err)
+	}
+	if !pub.ShowTrends {
+		t.Errorf("expected trends to stay visible")
 	}
 }
 

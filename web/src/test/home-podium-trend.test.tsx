@@ -66,10 +66,11 @@ describe('Homepage podium public trends', () => {
     expect(screen.getByRole('link', { name: '公开资料' })).toHaveAttribute('href', '/u/linus');
   });
 
-  it('shows an empty public-trend state instead of a login wall', async () => {
-    vi.mocked(api.getPublicTokenTrends).mockResolvedValue({ visible: false });
+  it('shows an empty-range state instead of a login wall', async () => {
+    vi.mocked(api.getPublicTokenTrends).mockResolvedValue({ visible: true, points: [] });
     showHome();
-    expect(await screen.findByText('该开发者尚未公开用量趋势。')).toBeInTheDocument();
+    expect(await screen.findByText('这个范围里，还没有创作记录。')).toBeInTheDocument();
+    expect(screen.queryByText('该开发者尚未公开用量趋势。')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '登录，留下你的足迹' })).not.toBeInTheDocument();
   });
 });

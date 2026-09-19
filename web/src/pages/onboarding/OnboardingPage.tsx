@@ -25,7 +25,6 @@ export const OnboardingPage: React.FC = () => {
   const [bio, setBio] = useState('');
   const [timezone, setTimezone] = useState('Asia/Shanghai');
   const [selectedLocale, setSelectedLocale] = useState<Locale>(locale);
-  const [isPublic, setIsPublic] = useState(true);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -51,8 +50,8 @@ export const OnboardingPage: React.FC = () => {
         timezone,
         locale: selectedLocale,
         privacy: {
-          publicProfileEnabled: isPublic,
-          leaderboardVisibility: isPublic ? 'public' : 'private',
+          publicProfileEnabled: true,
+          leaderboardVisibility: 'public',
         },
         returnTo: rawReturnTo || undefined,
       });
@@ -66,7 +65,7 @@ export const OnboardingPage: React.FC = () => {
           handle: profileObj?.handle || cleanHandle,
           locale: (profileObj?.locale as Locale) || selectedLocale,
           onboardingRequired: false,
-          productState: isPublic ? 'active_public' : 'active_private',
+          productState: 'active_public',
         });
       }
       await refreshSession();
@@ -309,51 +308,19 @@ export const OnboardingPage: React.FC = () => {
               />
             </div>
 
-            {/* Visibility Mode Selector */}
-            <div style={{ marginBottom: 28 }}>
-              <label className="form-label" style={{ marginBottom: 10 }}>
-                {t('onboarding.step3')}
-              </label>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                <div
-                  onClick={() => setIsPublic(false)}
-                  style={{
-                    padding: '16px',
-                    borderRadius: 'var(--radius-md)',
-                    border: !isPublic ? '2px solid var(--lime-border)' : '1px solid var(--border-light)',
-                    backgroundColor: !isPublic ? 'var(--lime-subtle)' : 'var(--bg-surface)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <strong style={{ fontSize: 13 }}>{t('onboarding.choicePrivateTitle')}</strong>
-                    {!isPublic && <span className="badge badge-lime">✓</span>}
-                  </div>
-                  <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, margin: 0 }}>
-                    {t('onboarding.choicePrivateDesc')}
-                  </p>
-                </div>
-
-                <div
-                  onClick={() => setIsPublic(true)}
-                  style={{
-                    padding: '16px',
-                    borderRadius: 'var(--radius-md)',
-                    border: isPublic ? '2px solid var(--lime-border)' : '1px solid var(--border-light)',
-                    backgroundColor: isPublic ? 'var(--lime-subtle)' : 'var(--bg-surface)',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <strong style={{ fontSize: 13 }}>{t('onboarding.choicePublicTitle')}</strong>
-                    {isPublic && <span className="badge badge-lime">✓</span>}
-                  </div>
-                  <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, margin: 0 }}>
-                    {t('onboarding.choicePublicDesc')}
-                  </p>
-                </div>
-              </div>
+            <div
+              style={{
+                marginBottom: 28,
+                padding: '14px 16px',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid var(--lime-border)',
+                backgroundColor: 'var(--lime-subtle)',
+              }}
+            >
+              <strong style={{ fontSize: 13 }}>{t('onboarding.step3')}</strong>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, margin: 0 }}>
+                {t('onboarding.choicePublicDesc')}
+              </p>
             </div>
 
             <Button type="submit" variant="primary" size="lg" loading={loading} style={{ width: '100%' }}>

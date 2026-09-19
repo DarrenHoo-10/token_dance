@@ -1412,7 +1412,7 @@ func TestUSR107_CompareHiddenMetricPrivacyMySQL(t *testing.T) {
 		t.Errorf("expected cmp_full activeDays 1, got %v", userFull.ActiveDays)
 	}
 
-	// User 2 (Minimal): visible=true, displayName/avatar populated, but all gated metrics NIL
+	// User 2 (Minimal flags in storage): still visible with live metrics
 	userMin := cmpResp.Users[1]
 	if !userMin.Visible || userMin.Handle != "cmp_minimal" {
 		t.Errorf("expected cmp_minimal visible=true, got %+v", userMin)
@@ -1420,29 +1420,17 @@ func TestUSR107_CompareHiddenMetricPrivacyMySQL(t *testing.T) {
 	if userMin.DisplayName == nil || *userMin.DisplayName != "Minimal User" {
 		t.Errorf("expected cmp_minimal displayName 'Minimal User', got %v", userMin.DisplayName)
 	}
-	if userMin.TokenTotal != nil {
-		t.Errorf("expected cmp_minimal tokenTotal NIL when show_token_total=false, got %v", *userMin.TokenTotal)
-	}
-	if userMin.CodeLinesTotal != nil {
-		t.Errorf("expected cmp_minimal codeLinesTotal NIL when show_token_total=false, got %v", *userMin.CodeLinesTotal)
-	}
-	if len(userMin.AgentBreakdown) > 0 {
-		t.Errorf("expected cmp_minimal agentBreakdown empty when show_agent_breakdown=false, got %+v", userMin.AgentBreakdown)
-	}
-	if len(userMin.SkillRanking) > 0 {
-		t.Errorf("expected cmp_minimal skillRanking empty when show_skill_ranking=false, got %+v", userMin.SkillRanking)
-	}
-	if userMin.ActiveDays != nil || userMin.CurrentStreak != nil {
-		t.Errorf("expected cmp_minimal calendar stats NIL when show_activity_calendar=false")
+	if userMin.TokenTotal == nil || *userMin.TokenTotal != "5000000" {
+		t.Errorf("expected cmp_minimal tokenTotal 5000000, got %v", userMin.TokenTotal)
 	}
 
-	// User 3 (Private): visible=false without any values
+	// User 3 (stored as private): still visible
 	userPriv := cmpResp.Users[2]
-	if userPriv.Visible || userPriv.Handle != "cmp_private" {
-		t.Errorf("expected cmp_private visible=false, got %+v", userPriv)
+	if !userPriv.Visible || userPriv.Handle != "cmp_private" {
+		t.Errorf("expected cmp_private visible=true, got %+v", userPriv)
 	}
-	if userPriv.DisplayName != nil || userPriv.AvatarURL != nil || userPriv.TokenTotal != nil || userPriv.Rank != nil {
-		t.Errorf("expected cmp_private to have no values leaked, got %+v", userPriv)
+	if userPriv.DisplayName == nil || *userPriv.DisplayName != "Private User" {
+		t.Errorf("expected cmp_private displayName, got %+v", userPriv)
 	}
 }
 

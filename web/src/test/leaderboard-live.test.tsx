@@ -26,11 +26,11 @@ beforeEach(() => {
   vi.spyOn(api,'getPublicProfile').mockRejectedValue(new Error('hidden'));
 });
 describe('Live leaderboard', () => {
-  it('explains that a private profile still stays on the board', async () => {
+  it('does not offer a public-profile switch on the homepage', async () => {
     const update=vi.spyOn(api,'updatePrivacy'); showPage();
-    expect(await screen.findByRole('status')).toHaveTextContent('公开开关只控制详细资料页');
-    fireEvent.click(screen.getByRole('button',{name:'管理公开设置'}));
-    expect(screen.getByRole('heading',{name:'我的数据'})).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: '平台排行榜' })).toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button',{name:'管理公开设置'})).not.toBeInTheDocument();
     expect(update).not.toHaveBeenCalled();
   });
   it('ignores a late response from the previously selected period', async () => {

@@ -991,21 +991,33 @@ func (m *MemoryStore) GetPublicProfileByHandle(ctx context.Context, handle strin
 
 	handle = strings.ToLower(strings.TrimSpace(handle))
 	for _, pub := range m.publicProfiles {
-		if strings.EqualFold(pub.Handle, handle) {
-			if pub.ProfileStatus != domain.ProfileStatusPublished {
-				return nil, domain.ErrNotFound
-			}
-			u, ok := m.users[pub.UserID]
-			if !ok || u.AccountStatus != domain.AccountStatusActive {
-				return nil, domain.ErrNotFound
-			}
-			priv, ok := m.privacySettings[pub.UserID]
-			if !ok || !priv.PublicProfileEnabled {
-				return nil, domain.ErrNotFound
-			}
-			pubCopy := *pub
-			return &pubCopy, nil
+		if !strings.EqualFold(pub.Handle, handle) {
+			continue
 		}
+		u, ok := m.users[pub.UserID]
+		if !ok || u.AccountStatus != domain.AccountStatusActive || u.OnboardingCompletedAt == nil {
+			return nil, domain.ErrNotFound
+		}
+		pubCopy := *pub
+		return &pubCopy, nil
+	}
+	for _, u := range m.users {
+		if u.Handle == nil || !strings.EqualFold(*u.Handle, handle) {
+			continue
+		}
+		if u.AccountStatus != domain.AccountStatusActive || u.OnboardingCompletedAt == nil {
+			return nil, domain.ErrNotFound
+		}
+		return &domain.PublicUserProfile{
+			UserID:            u.UserID,
+			Handle:            *u.Handle,
+			DisplayName:       u.DisplayName,
+			AvatarURL:         u.AvatarURL,
+			Bio:               u.Bio,
+			ProjectionVersion: 1,
+			CreatedAt:         u.CreatedAt,
+			UpdatedAt:         u.UpdatedAt,
+		}, nil
 	}
 	return nil, domain.ErrNotFound
 }

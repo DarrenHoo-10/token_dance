@@ -8,7 +8,7 @@ export function getArticles(zh: boolean): DocArticle[] {
       { id: 'install', title: '1. 获取并运行客户端', paragraphs: ['从下载页获取与你的电脑匹配的版本：Windows 运行 EXE；Mac 打开 DMG 并把 TokenDance 拖入 Applications。启动后点击系统托盘或菜单栏图标打开用量面板。'], action: { to: '/download', label: '前往客户端下载' } },
       { id: 'login', title: '2. 登录你的账号', paragraphs: ['打开客户端的「设置」，点击「登录」。在浏览器中完成网站登录，再回到客户端确认账号已连接。', '已有网页登录状态时，可以直接完成授权。登录失效或授权未完成时，从客户端设置重新发起登录。'] },
       { id: 'collect', title: '3. 确认正在采集', paragraphs: ['在支持的 AI 工具里完成一次使用，再打开托盘面板查看 Token 用量。在设置中确认需要的采集来源已开启。', '保持采集开启、账号登录和网络连接，客户端会自动同步。收起面板不影响后台运行。'] },
-      { id: 'ranking', title: '4. 回到排行榜，找到自己', paragraphs: ['使用同一账号打开 TokenBoard，查看对应周期的排名。网站排行榜、个人今日 Token、活跃日历和社区统计都按北京时间（UTC+8）划分「今天」。桌面采集端的日桶也使用同一套日历。'], note: '排行榜展示头像、昵称、Token 和排名。关闭详细资料页的公开开关，不会隐藏这些榜单信息。', action: { to: '/leaderboard', label: '打开排行榜' } },
+      { id: 'ranking', title: '4. 回到排行榜，找到自己', paragraphs: ['使用同一账号打开 TokenBoard，查看对应周期的排名。网站排行榜、个人今日 Token、活跃日历和社区统计都按北京时间（UTC+8）划分「今天」。桌面采集端的日桶也使用同一套日历。'], note: '排行榜展示头像、昵称、Token 和排名。用量趋势和详细资料页默认对社区公开。', action: { to: '/leaderboard', label: '打开排行榜' } },
     ] },
     { slug: 'install', label: '安装与运行', group: '开始使用', title: '安装与运行', lead: 'TokenDance 常驻 Windows 托盘或 Mac 菜单栏。按电脑的系统和芯片选择安装包，无需为每个 AI 工具分别安装扩展。', sections: [
       { id: 'windows', title: '下载 Windows 版', paragraphs: ['当前支持 Windows x64。下载 TokenDance.exe，放在固定文件夹中运行；也可以下载 ZIP 压缩包，解压后运行其中的程序。', '版本号、文件大小和预览版标记均以下载页为准。需要 WebView2 Runtime；签名状态和其他运行要求以对应版本的发布说明为准。'], action: { to: '/download', label: '下载桌面客户端' } },
@@ -28,7 +28,7 @@ export function getArticles(zh: boolean): DocArticle[] {
     { slug: 'privacy', label: '数据与隐私', group: '了解 TokenDance', title: '数据与隐私', lead: '了解什么留在本机、什么会同步，以及其他人能在排行榜上看到什么。', sections: [
       { id: 'data', title: '同步什么', paragraphs: ['客户端将经过隐私过滤的用量记录发送到 TokenDance，用于汇总 Token、关联工具来源和计算排名。只有登录并连接设备后才进行账号同步。'] },
       { id: 'content', title: '不上传什么', paragraphs: ['不上传提示词、模型回复、源代码正文、diff 正文或工具输出；不会将 Agent 登录凭据复制到 TokenDance 网站。'] },
-      { id: 'public', title: '谁能看到你的数据', note: '排行榜与详细资料页分别控制。排行榜展示头像、昵称、Token 和排名。关闭详细资料页公开开关，不会将账号从排行榜隐藏。', paragraphs: ['使用前请确认你的昵称和头像适合公开展示。详细资料页的公开范围可在网站账号设置中管理。'] },
+      { id: 'public', title: '谁能看到你的数据', note: '用量趋势、详细资料页和排行榜默认对社区公开。邮箱、设备、项目和会话明细不会公开。', paragraphs: ['使用前请确认你的昵称和头像适合公开展示。'] },
       { id: 'quota', title: '额度查询', paragraphs: ['部分工具的额度从本机日志读取，部分工具复用本机有效登录状态向对应官方服务发起只读查询。凭据不上传到 TokenDance 网站。', '查询失败时，额度显示待更新，不作为真实零额度。'] },
     ] },
     { slug: 'faq', label: '常见问题', group: '帮助与更新', title: '常见问题', lead: '先确认账号、采集状态和统计周期，通常就能定位用量显示问题。', sections: [
@@ -36,7 +36,7 @@ export function getArticles(zh: boolean): DocArticle[] {
       { id: 'background', title: '关闭面板，还会继续采集吗？', paragraphs: ['会。收起面板后后台继续运行；退出应用会停止。暂停采集时，自动同步也会暂停。'] },
       { id: 'quota', title: '为什么有 Token，却看不到额度或费用？', paragraphs: ['Token 采集、额度查询和费用记录是独立能力。未支持、缺少记录或查询待更新时显示为空或待更新，不应解释为零。'] },
       { id: 'offline', title: '断网后，用量会丢失吗？', paragraphs: ['待同步记录会保留在本机队列中，网络恢复后自动重试。不要在等待同步时删除应用数据。'] },
-      { id: 'visibility', title: '关闭公开资料，会从榜单消失吗？', paragraphs: ['不会。公开开关只控制详细资料页；排行榜仍展示头像、昵称、Token 和排名。'] },
+      { id: 'visibility', title: '我的用量和资料是公开的吗？', paragraphs: ['是。用量趋势、详细资料页和排行榜默认对社区可见，不再提供关闭开关。邮箱、设备、项目和会话明细仍然不会公开。'] },
       { id: 'platform', title: '支持哪些操作系统？', paragraphs: ['支持 Windows x64 和 macOS 13+（Apple Silicon / Intel）。安装包以下载页的实际发布状态为准。使用一个桌面客户端连接多个受支持的 AI 工具，各来源的采集方式和前置条件可在来源设置中检查。'] },
     ] },
     { slug: 'releases', label: '发布说明', group: '帮助与更新', title: '发布说明', lead: '下载页自动获取最新公开 Windows 版本，包含预览版。下载文件、版本号和发布说明始终来自同一份发行记录。', sections: [
@@ -49,7 +49,7 @@ export function getArticles(zh: boolean): DocArticle[] {
       { id: 'install', title: '1. Get and run the app', paragraphs: ['Download TokenDance.exe for Windows. Run it, then click the TokenDance icon in the notification area to open your usage panel.'], action: { to: '/download', label: 'Download the desktop app' } },
       { id: 'login', title: '2. Sign in to your account', paragraphs: ['Open Settings in the desktop app and choose Sign in. Complete sign-in in your browser, then return to the app and confirm your account is connected.', 'An existing website session can complete authorization directly. If sign-in expires or authorization is incomplete, start again from the desktop settings.'] },
       { id: 'collect', title: '3. Check collection', paragraphs: ['Use a supported AI tool, then check tokens in the tray panel. Enable the sources you want to collect in Settings.', 'Keep collection enabled, stay signed in and connected to the internet for automatic sync. Hiding the panel does not stop background collection.'] },
-      { id: 'ranking', title: '4. Find yourself on the board', paragraphs: ['Open TokenBoard with the same account and select the matching period. The website leaderboard, personal today tokens, activity calendar and community stats all cut “today” on Beijing time (UTC+8). Desktop day buckets use the same calendar.'], note: 'The leaderboard displays your avatar, name, tokens and rank. Turning off your detailed public profile does not hide these leaderboard fields.', action: { to: '/leaderboard', label: 'Open the leaderboard' } },
+      { id: 'ranking', title: '4. Find yourself on the board', paragraphs: ['Open TokenBoard with the same account and select the matching period. The website leaderboard, personal today tokens, activity calendar and community stats all cut “today” on Beijing time (UTC+8). Desktop day buckets use the same calendar.'], note: 'The leaderboard displays your avatar, name, tokens and rank. Usage trends and detailed profiles stay public.', action: { to: '/leaderboard', label: 'Open the leaderboard' } },
     ] },
     { slug: 'install', label: 'Install & run', group: 'Getting started', title: 'Install & run', lead: 'TokenDance runs in the Windows system tray. Run the portable app without installing separate extensions for each AI tool.', sections: [
       { id: 'windows', title: 'Download for Windows', paragraphs: ['Windows x64 is currently supported. Download TokenDance.exe to a permanent folder and run it, or extract the ZIP package and run the executable inside.', 'See the download page for the version, file size and preview status. WebView2 Runtime is required. Refer to the release notes for signing status and other requirements.'], action: { to: '/download', label: 'Download the desktop app' } },
@@ -69,7 +69,7 @@ export function getArticles(zh: boolean): DocArticle[] {
     { slug: 'privacy', label: 'Data & privacy', group: 'About TokenDance', title: 'Data & privacy', lead: 'Understand what stays local, what syncs and what other people can see on the leaderboard.', sections: [
       { id: 'data', title: 'What syncs', paragraphs: ['Privacy-filtered usage records are sent to TokenDance to aggregate tokens, associate tool sources and calculate ranks. Account sync requires sign-in and a connected device.'] },
       { id: 'content', title: 'What is not uploaded', paragraphs: ['Prompts, model responses, source code, diff contents and tool output are not uploaded. Agent sign-in credentials are not copied to the TokenDance website.'] },
-      { id: 'public', title: 'Who can see your data', note: 'The leaderboard and detailed profile are separate. Your avatar, name, tokens and rank remain on the leaderboard when your detailed public profile is turned off.', paragraphs: ['Choose a name and avatar suitable for public display. Manage detailed profile visibility in your website account settings.'] },
+      { id: 'public', title: 'Who can see your data', note: 'Usage trends, your detailed profile, and the leaderboard stay public. Email, devices, projects, and session details stay private.', paragraphs: ['Choose a name and avatar suitable for public display.'] },
       { id: 'quota', title: 'Quota lookups', paragraphs: ['Some quotas come from local logs. Others reuse a valid local sign-in to make read-only requests to the tool’s official service. Credentials are not uploaded to the TokenDance website.', 'Failed lookups are marked as needing an update, not as a real zero quota.'] },
     ] },
     { slug: 'faq', label: 'FAQ', group: 'Help & updates', title: 'Frequently asked questions', lead: 'Start by checking your account, collection status and reporting period.', sections: [
@@ -77,7 +77,7 @@ export function getArticles(zh: boolean): DocArticle[] {
       { id: 'background', title: 'Does hiding the panel stop collection?', paragraphs: ['No. The app continues in the background. Quitting stops it; pausing collection also pauses sync.'] },
       { id: 'quota', title: 'Why are quotas or costs missing when tokens are visible?', paragraphs: ['Tokens, quotas and costs are independent capabilities. Unsupported or missing records stay unavailable, and stale lookups are marked as needing an update rather than zero.'] },
       { id: 'offline', title: 'What happens when I go offline?', paragraphs: ['Pending records remain in the local queue and retry when your connection returns. Keep application data while records are pending.'] },
-      { id: 'visibility', title: 'Does a private profile hide me from the leaderboard?', paragraphs: ['No. The switch controls only your detailed profile. Your avatar, name, tokens and rank remain on the leaderboard.'] },
+      { id: 'visibility', title: 'Are my usage and profile public?', paragraphs: ['Yes. Usage trends, your detailed profile, and the leaderboard stay visible. There is no switch to turn them off. Email, devices, projects, and session details stay private.'] },
       { id: 'platform', title: 'Which operating systems are supported?', paragraphs: ['Windows x64 and macOS 13+ (Apple Silicon / Intel). Check the download page for published packages, and source settings for tool requirements.'] },
     ] },
     { slug: 'releases', label: 'Release notes', group: 'Help & updates', title: 'Release notes', lead: 'The download page checks the newest published version for each platform, including previews. The file, version and release notes all come from the same release record.', sections: [

@@ -318,8 +318,8 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
   });
 
   describe('Privacy & Device Updates Invalidate Shared Surfaces', () => {
-    it('toggles public profile and leaderboard visibility together', async () => {
-      const getSessionSpy = vi.spyOn(api, 'getSession').mockResolvedValue({
+    it('shows that usage stays public without user-facing switches', async () => {
+      vi.spyOn(api, 'getSession').mockResolvedValue({
         authenticated: true,
         user: {
           userId: 'usr_01',
@@ -331,80 +331,15 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
           productState: 'active_private',
         },
       });
-
-      vi.spyOn(api, 'getPrivacy').mockResolvedValue({
-        publicProfileEnabled: false,
-        leaderboardVisibility: 'private',
-        showBio: false,
-        showTokenTotal: false,
-        showTrends: false,
-        showActivityCalendar: false,
-        showAgentBreakdown: false,
-        showSkillRanking: false,
-        showAchievements: false,
-        privacyVersion: 1,
-      });
-
-      const updatePrivacySpy = vi.spyOn(api, 'updatePrivacy')
-        .mockResolvedValueOnce({
-          publicProfileEnabled: true,
-          leaderboardVisibility: 'public',
-          showBio: false,
-          showTokenTotal: false,
-          showTrends: false,
-          showActivityCalendar: false,
-          showAgentBreakdown: false,
-          showSkillRanking: false,
-          showAchievements: false,
-          privacyVersion: 2,
-        })
-        .mockResolvedValueOnce({
-          publicProfileEnabled: false,
-          leaderboardVisibility: 'private',
-          showBio: false,
-          showTokenTotal: false,
-          showTrends: false,
-          showActivityCalendar: false,
-          showAgentBreakdown: false,
-          showSkillRanking: false,
-          showAchievements: false,
-          privacyVersion: 3,
-        });
+      const updatePrivacySpy = vi.spyOn(api, 'updatePrivacy');
 
       renderWithProviders(<PrivacySettingsPage />, '/settings/privacy');
 
-      const visibilitySwitch = await screen.findByRole('checkbox', { name: '公开详细资料页' });
-      const saveBtn = screen.getByText('保存');
-
-      fireEvent.click(visibilitySwitch);
-      fireEvent.click(saveBtn);
-
-      await waitFor(() => {
-        expect(updatePrivacySpy).toHaveBeenNthCalledWith(
-          1,
-          expect.objectContaining({
-            publicProfileEnabled: true,
-            leaderboardVisibility: 'public',
-          }),
-          1
-        );
-        expect(getSessionSpy).toHaveBeenCalledTimes(2);
-      });
-
-      fireEvent.click(visibilitySwitch);
-      fireEvent.click(saveBtn);
-
-      await waitFor(() => {
-        expect(updatePrivacySpy).toHaveBeenNthCalledWith(
-          2,
-          expect.objectContaining({
-            publicProfileEnabled: false,
-            leaderboardVisibility: 'private',
-          }),
-          2
-        );
-        expect(getSessionSpy).toHaveBeenCalledTimes(3);
-      });
+      expect(await screen.findByText('排行榜与公开主页')).toBeInTheDocument();
+      expect(screen.getByText(/不再提供关闭开关/)).toBeInTheDocument();
+      expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();
+      expect(screen.queryByText('保存')).not.toBeInTheDocument();
+      expect(updatePrivacySpy).not.toHaveBeenCalled();
     });
 
     it('refetches devices and shared session after device pause/resume/revoke', async () => {
