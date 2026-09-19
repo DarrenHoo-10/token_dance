@@ -630,8 +630,9 @@ func (h *Handlers) GetAvatarContent(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, err)
 		return
 	}
-	// Store bytes in the browser but revalidate visibility before reuse.
-	writeCachedContent(w, r, data, contentType, "private, no-cache")
+	// Uploads have unique object IDs. A refreshed profile/board replaces the URL
+	// on changes; cached old URLs may remain readable for at most seven days.
+	writeCachedContent(w, r, data, contentType, "private, max-age=604800, immutable")
 }
 
 func (h *Handlers) ClearAvatar(w http.ResponseWriter, r *http.Request) {
