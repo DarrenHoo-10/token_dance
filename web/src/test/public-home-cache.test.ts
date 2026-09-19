@@ -25,6 +25,12 @@ it('invalidates snapshots at Beijing midnight without depending on browser timez
   expect(readHomeCommunity('community')).toBeNull();
 });
 
+it('expires same-day snapshots after one minute', () => {
+  writeHomeBoard('board:today', entries);
+  vi.advanceTimersByTime(60_001);
+  expect(readHomeBoard('board:today')).toBeNull();
+});
+
 it('ignores corrupt and incompatible local data', () => {
   writeHomeBoard('board:today', entries);
   const key = localStorage.key(0)!;

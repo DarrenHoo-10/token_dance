@@ -27,7 +27,7 @@ describe('Homepage podium public trends', () => {
     vi.spyOn(api, 'getLeaderboard').mockResolvedValue({
       snapshotId: '',
       boardKey: 'global',
-      window: '7d',
+      window: 'today',
       metric: 'tokens',
       entries: [
         { rankNo: 1, handle: 'ada', displayName: 'Ada', avatarUrl: null, metricValue: '200', rankDelta: 0 },
@@ -36,7 +36,7 @@ describe('Homepage podium public trends', () => {
       ],
     });
     vi.spyOn(api, 'getMyLeaderboard');
-    vi.spyOn(api, 'getCommunityStats').mockResolvedValue({ metricDate: '2026-09-09', timezone: 'UTC', window: '7d' });
+    vi.spyOn(api, 'getCommunityStats').mockResolvedValue({ metricDate: '2026-09-09', timezone: 'UTC', window: 'today' });
     vi.spyOn(api, 'getPublicTokenTrends').mockImplementation(async (handle) => ({
       visible: true,
       points: handle === 'linus'
@@ -56,13 +56,13 @@ describe('Homepage podium public trends', () => {
   it('lets guests open a podium builder without signing in', async () => {
     showHome();
     expect(await screen.findByRole('heading', { name: 'Ada的创作轨迹' })).toBeInTheDocument();
-    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('ada', { range: '30d' }));
+    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('ada', { range: 'today' }));
     expect(api.getMyLeaderboard).not.toHaveBeenCalled();
     expect(screen.queryByText('登录，留下你的足迹')).not.toBeInTheDocument();
     expect(screen.queryByText('登录后查看用量趋势与活跃记录。')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '查看 Linus 的公开创作轨迹' }));
     expect(await screen.findByRole('heading', { name: 'Linus的创作轨迹' })).toBeInTheDocument();
-    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('linus', { range: '30d' }));
+    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('linus', { range: 'today' }));
     expect(screen.getByRole('link', { name: '公开资料' })).toHaveAttribute('href', '/u/linus');
     const hero = screen.getByRole('link', { name: /开始记录你的创造/ });
     expect(hero).toHaveClass('hero-action');

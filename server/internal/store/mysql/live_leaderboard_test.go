@@ -8,7 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
 	"tokendance/internal/domain"
+	"tokendance/internal/ranking"
 )
 
 func seedRankUsage(t *testing.T, db *sql.DB, userID, date, agent string, exact, derived, estimated int) {
@@ -72,6 +76,55 @@ func TestLeaderboardStatisticsDays(t *testing.T) {
 	}
 	if _, _, err := leaderboardDates("bad", now); err == nil {
 		t.Fatal("invalid window accepted")
+	}
+}
+
+func TestTodayLeaderboardUsesCanonicalMetricsDespiteStaleProjectionsMySQL(t *testing.T) {
+	st, db, cleanup := getTestStore(t)
+	defer cleanup()
+	ctx := context.Background()
+	now := time.Now().UTC()
+	seedTestUser(t, db, st, "usr_fresh_board", "fresh_board", "Fresh Board", "fresh@board.test", true, now)
+	seedRankUsage(t, db, "usr_fresh_board", domain.DayDate(now), "codex", 100, 0, 0)
+	if _, err := db.ExecContext(ctx, `
+		UPDATE user_window_scores
+		SET token_total = 999, revision = 7
+		WHERE user_id = 'usr_fresh_board' AND window_key = 'today' AND generation = ?`, WindowGeneration(now)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `
+		UPDATE ranking_outbox
+		SET task_status = 'applied', applied_at = ?, claim_token = NULL,
+		    locked_by = NULL, lease_expires_at = NULL
+		WHERE user_id = 'usr_fresh_board' AND window_key = 'today'`, now); err != nil {
+		t.Fatal(err)
+	}
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+	idx := ranking.NewIndex(rdb)
+	st.SetRanking(idx)
+	if _, err := idx.Apply(ctx, ranking.ApplyInput{
+		Window: "today", Generation: WindowGeneration(now), UserID: "usr_fresh_board",
+		Tokens: 21, Revision: 1, RegisteredAt: now, Op: ranking.OpUpsert, Now: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := idx.PublishDirtyWindows(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+
+	board, err := st.Leaderboard().GetLeaderboard(ctx, "global", "today", "tokens", nil, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if board.ViewKind != "mysql" || len(board.Entries) != 1 || board.Entries[0].MetricValue != "100" {
+		t.Fatalf("today board must use canonical metrics instead of stale projections: %+v", board)
+	}
+	entry, _, err := (&leaderboardStore{db: db}).liveOwnTokenEntry(ctx, "usr_fresh_board", "today", now)
+	if err != nil || entry == nil || entry.MetricValue != "100" {
+		t.Fatalf("personal today summary must use canonical metrics: %+v %v", entry, err)
 	}
 }
 

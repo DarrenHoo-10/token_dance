@@ -135,12 +135,12 @@ export const LeaderboardPage: React.FC = () => {
   const personalAnalytics = usePersonalAnalytics();
   const zh = locale === 'zh-CN';
   const accountKey = user?.userId ?? user?.handle ?? '';
-  const [range, setRange] = useState<Range>('7 Days');
+  const [range, setRange] = useState<Range>('Today');
   const [summary, setSummary] = useState<PersonalSummary | null>(null);
   const [allTimeSummary, setAllTimeSummary] = useState<PersonalSummary | null>(null);
   const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
   const [streak, setStreak] = useState(0);
-  const [trendRange, setTrendRange] = useState('30d');
+  const [trendRange, setTrendRange] = useState('today');
   const [refreshTick, setRefreshTick] = useState(0);
   const [selectedHandle, setSelectedHandle] = useState<string | null>(null);
   const [selectedEntry, setSelectedEntry] = useState<LeaderboardEntry | null>(null);
@@ -257,7 +257,7 @@ export const LeaderboardPage: React.FC = () => {
     ? allTimeSummary.metrics.totalTokens.value : null;
   const selectedName = selectedEntry ? publicLeaderboardName(selectedEntry) : selectedProfile?.displayName || selectedHandle;
   const trendDays = [...selectedTrends].sort((a, b) => a.date.localeCompare(b.date));
-  const trendChange = calendarPeriodChange(
+  const trendChange = trendRange === 'today' ? null : calendarPeriodChange(
     trendDays.map((day) => ({ date: day.date, level: 1, tokenTotal: String(day.tokenTotal || 0) })),
     trendRange === '7d' ? 7 : 30,
   );
@@ -348,6 +348,7 @@ export const LeaderboardPage: React.FC = () => {
                 <p>{zh ? '让每一次与 AI 的协作，留下足迹。' : 'Small steps. A story worth seeing.'}</p>
               </div>
               <select className="form-input" value={trendRange} onChange={(e) => setTrendRange(e.target.value)} aria-label={zh ? '用量趋势周期' : 'Trend period'}>
+                <option value="today">{zh ? '今天' : 'Today'}</option>
                 <option value="7d">{zh ? '近 7 天' : '7 days'}</option>
                 <option value="30d">{zh ? '近 30 天' : '30 days'}</option>
               </select>

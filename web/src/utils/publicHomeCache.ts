@@ -3,6 +3,7 @@ import type { CommunityStatsResponse, LeaderboardEntry } from '@/types/api';
 // Bounded public snapshots for each board and community period. Never store /me data.
 const prefix = `tokendance:public-home:v1:${import.meta.env.BASE_URL}:`;
 const maxBytes = 512 * 1024;
+const maxAgeMs = 60_000;
 export const publicHomeDay = () => new Date(Date.now() + 8 * 3600_000).toISOString().slice(0, 10);
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const numberOrNull = (value: unknown) => value == null || (typeof value === 'number' && Number.isFinite(value));
@@ -19,13 +20,18 @@ function read(key: string): unknown {
     const raw = localStorage.getItem(prefix + key);
     if (!raw || raw.length > maxBytes) return null;
     const saved: unknown = JSON.parse(raw);
-    return record(saved) && saved.day === publicHomeDay() ? saved.data : null;
+    return record(saved)
+      && saved.day === publicHomeDay()
+      && typeof saved.savedAt === 'number'
+      && Date.now() - saved.savedAt >= 0
+      && Date.now() - saved.savedAt <= maxAgeMs
+      ? saved.data : null;
   } catch { return null; }
 }
 
 function write(key: string, data: unknown) {
   try {
-    const raw = JSON.stringify({ day: publicHomeDay(), data });
+    const raw = JSON.stringify({ day: publicHomeDay(), savedAt: Date.now(), data });
     if (raw.length <= maxBytes) localStorage.setItem(prefix + key, raw);
   } catch { /* Private browsing, disabled storage and quota limits must not break the page. */ }
 }
