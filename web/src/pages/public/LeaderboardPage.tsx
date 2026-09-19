@@ -1,7 +1,9 @@
 import { LeaderboardTable } from '@/components/analytics/LeaderboardTable';
 import { publicLeaderboardName } from '@/components/analytics/leaderboardName';
 import { RankChange } from '@/components/analytics/RankChange';
+import { HarnessMark } from '@/components/common/HarnessMark';
 import { UserAvatar } from '@/components/common/UserAvatar';
+import { resolveHarnessBrand } from '@/components/common/harnessBrand';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
@@ -235,7 +237,7 @@ export const LeaderboardPage: React.FC = () => {
         </> : <p className="side-card-empty">{zh ? '登录后查看你的活跃度热力图。' : 'Sign in to see your activity heatmap.'}</p>}
       </section>
       <section className="side-card tools-card"><div className="card-heading"><h2>{zh ? '常用 harness' : 'Top harnesses'}</h2><button type="button" className="view-all">{zh ? '全部' : 'View all'}</button></div>
-        {(community?.harnesses?.length ?? 0) > 0 ? <div className="tool-list">{community?.harnesses?.map((harness, index) => <div className="tool-row" key={harness.agentId}><span className="tool-mark" data-accent={index === 0 || undefined}>{harness.label.slice(0, 1).toUpperCase()}</span><strong>{harness.label}</strong><div className="tool-track"><i style={{ width: `${Math.round(harness.sharePct ?? 0)}%` }} data-accent={index === 0 || undefined} /></div><span>{Math.round(harness.sharePct ?? 0)}%</span></div>)}</div>
+        {(community?.harnesses?.length ?? 0) > 0 ? <div className="tool-list">{community?.harnesses?.map((harness) => { const brand = resolveHarnessBrand(harness.agentId, harness.label); const share = Math.round(harness.sharePct ?? 0); return <div className="tool-row" key={harness.agentId}><HarnessMark agentId={harness.agentId} label={harness.label} /><strong>{harness.label}</strong><div className="tool-track"><i style={{ width: `${share}%`, background: brand.color }} /></div><span>{share}%</span></div>; })}</div>
           : <p className="side-card-empty">{zh ? '暂无社区 harness 用量数据。' : 'No harness usage recorded yet.'}</p>}
       </section>
     </aside>

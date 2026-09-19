@@ -137,6 +137,10 @@ describe('Live leaderboard', () => {
     expect(screen.getByText('Zcode')).toBeInTheDocument();
     expect(screen.getByText('Codex CLI')).toBeInTheDocument();
     expect(screen.getByText('64%')).toBeInTheDocument();
+    expect(document.querySelector('[data-harness="zcode"]')).toBeTruthy();
+    expect(document.querySelector('[data-harness="codex"]')).toBeTruthy();
+    expect(document.querySelector('[data-harness="zcode"] svg')).toBeTruthy();
+    expect(document.querySelector('[data-harness="codex"] svg')).toBeTruthy();
     expect(screen.queryByText('社区今日 Token 占比 · 按 harness')).not.toBeInTheDocument();
     expect(screen.queryByText('今天，整个社区正在持续燃烧 Token')).not.toBeInTheDocument();
   });

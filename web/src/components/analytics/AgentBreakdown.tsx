@@ -1,4 +1,6 @@
 import React from 'react';
+import { HarnessMark } from '@/components/common/HarnessMark';
+import { resolveHarnessBrand } from '@/components/common/harnessBrand';
 import { useLocale } from '@/context/LocaleContext';
 import type { AgentBreakdownItem } from '@/types/api';
 
@@ -30,19 +32,20 @@ export const AgentBreakdown: React.FC<AgentBreakdownProps> = ({ items }) => {
       {items.map((agent, idx) => {
         const itemKey = agent.key || agent.agentId || `agent-${idx}`;
         const itemLabel = agent.displayName || agent.label || agent.key || agent.agentId || t('dashboard.unknownAgent');
+        const brand = resolveHarnessBrand(agent.agentId || agent.key, itemLabel);
         const pct = typeof agent.percentage === 'number' ? agent.percentage : parseFloat(agent.percentage) || 0;
 
         return (
           <div key={itemKey} className="agent-bar-item">
             <div>
               <div className="agent-bar-meta">
-                <span>{itemLabel}</span>
+                <span className="agent-bar-name">{brand.known ? <HarnessMark agentId={agent.agentId || agent.key} label={itemLabel} size="sm" /> : null}{itemLabel}</span>
                 <span className="mono-num">{pct.toFixed(0)}%</span>
               </div>
               <div className="progress-track">
                 <div
                   className="progress-fill"
-                  style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+                  style={{ width: `${Math.min(100, Math.max(0, pct))}%`, background: brand.known ? brand.color : undefined }}
                 />
               </div>
             </div>

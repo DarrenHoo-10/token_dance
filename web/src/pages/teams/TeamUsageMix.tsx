@@ -1,6 +1,8 @@
 import React, { useMemo, useState } from 'react';
 import type { AnalysisBucketItem, SkillItem, SkillMemberUse, TeamAnalysisReady } from '@/api/teams';
 import { Card } from '@/components/common/Card';
+import { HarnessMark } from '@/components/common/HarnessMark';
+import { resolveHarnessBrand } from '@/components/common/harnessBrand';
 import { useLocale } from '@/context/LocaleContext';
 import { TeamRankPager } from './TeamShared';
 import { formatTokenCompact, rankPageSlice } from './teamUtils';
@@ -131,10 +133,10 @@ export const TeamUsageMix: React.FC<{ analysis: TeamAnalysisReady }> = ({ analys
                     >
                       <div className="team-mix-row-copy">
                         <div className="team-bar-label">
-                          <span>{item.label}</span>
+                          <span>{kind === 'harness' ? <HarnessMark agentId={item.id} label={item.label} size="sm" /> : null}{item.label}</span>
                           <span className="mono-num">{item.share ? `${item.share}%` : '—'}</span>
                         </div>
-                        <div className="team-bar-track"><span style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
+                        <div className="team-bar-track"><span style={{ width: `${Math.max(0, Math.min(100, pct))}%`, background: kind === 'harness' ? resolveHarnessBrand(item.id, item.label).color : '#577d21' }} /></div>
                       </div>
                       <span className="mono-num team-mix-value">{formatTokenCompact(item.value)}</span>
                     </button>
