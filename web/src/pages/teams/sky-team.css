@@ -114,7 +114,7 @@
 .tw-avatar-stack .team-member-avatar{width:31px;height:31px;border:2px solid #fff;margin-left:-6px;box-shadow:none}
 .tw-avatar-stack .team-member-avatar:first-child{margin-left:0}
 .tw-workspace .sr-only{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
-.tw-toolbar .tw-custom-range{flex-basis:100%}
+.tw-toolbar .tw-custom-range{flex:0 1 auto;min-width:0}
 .tw-workspace .tw-tabbar nav>a{
   display:flex;
   gap:8px;
@@ -218,8 +218,10 @@
 .tw-filter-selects select{appearance:none;border:1px solid #e2e9dc;padding:10px 32px 10px 12px;border-radius:10px;background:#ffffffa6;color:#66765a;max-width:176px;font-size:11px}.tw-filter-selects label svg{pointer-events:none;position:absolute;right:11px}
 .tw-export{display:flex;align-items:center;gap:6px;border:1px solid #e2e9dc;border-radius:10px;padding:10px 12px;font-size:11px!important;background:white;color:#4e6240}
 .tw-export:hover{background:#eef4e7}.tw-filter-note{display:flex;align-items:center;flex-wrap:wrap;gap:7px;font-size:11px;color:#6d8753;margin:-4px 0 20px}.tw-filter-note button{display:flex;align-items:center;gap:5px;text-decoration:underline;margin-left:auto;font-size:11px}
-.tw-custom-range{display:flex;gap:12px;align-items:end;background:#fff;border-radius:14px;padding:17px;margin:-3px 0 19px;flex-wrap:wrap;font-size:11px;color:#7d8d6e}
-.tw-custom-range label{display:flex;flex-direction:column;gap:8px}.tw-custom-range input{border:1px solid #dce5d4;padding:8px 10px;border-radius:7px;background:#fafcf8;color:#3a4e2c}.tw-custom-range>span{align-self:center}.tw-custom-range>.button{padding:9px 15px;font-size:11px}.tw-custom-range>p{width:100%;color:#b65e42;padding-top:5px}
+.tw-custom-range{display:flex;gap:8px 12px;align-items:center;background:transparent;border-radius:0;padding:0;margin:0;flex-wrap:wrap;font-size:11px;color:#7d8d6e}
+.tw-custom-range .team-date-fields{min-width:0}
+.tw-custom-range .team-date-trigger{height:34px;font-size:12px}
+.tw-custom-range .team-date-hint{margin:0;text-align:left}
 .tw-kpi-grid{display:grid;grid-template-columns:1.12fr 1fr 1fr 1fr;gap:15px}
 .tw-kpi{min-width:0;overflow:hidden;padding:22px 24px 20px;border:1px solid #e7ede0;border-radius:19px;background:#ffffffd9;position:relative}
 .tw-kpi>span{display:flex;gap:8px;align-items:center;font-size:11px;color:#7f8c73}.tw-kpi>span svg{color:#97ab7c}

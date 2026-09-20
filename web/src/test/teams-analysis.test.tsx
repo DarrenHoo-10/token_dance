@@ -161,6 +161,44 @@ describe('Team analysis updating state', () => {
     await waitFor(() => expect(query).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ range: 'custom', from: '2026-09-01', to: '2026-09-06' }), expect.any(AbortSignal)));
   });
 
+  it('places custom date fields beside the custom tab and hides the old copy', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
+    renderTeamWorkspace('/teams/tem_0123456789abcdefghijklmnop?range=7d');
+    await screen.findByRole('tab', { name: '近 7 天' });
+    fireEvent.click(screen.getByRole('tab', { name: '自定义' }));
+    const toolbar = document.querySelector('.team-filter-toolbar');
+    const customTab = screen.getByRole('tab', { name: '自定义' });
+    const from = screen.getByLabelText('开始日期');
+    const toField = screen.getByLabelText('结束日期');
+    expect(toolbar?.contains(customTab)).toBe(true);
+    expect(toolbar?.contains(from)).toBe(true);
+    expect(toolbar?.contains(toField)).toBe(true);
+    expect(customTab.compareDocumentPosition(from) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(from.compareDocumentPosition(toField) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(from.compareDocumentPosition(screen.getByRole('heading', { name: '一起创造的轨迹' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(document.querySelector('.tw-date-label')).toBeNull();
+    expect(toolbar?.textContent).not.toMatch(/—\s*\d{2}\.\d{2}/);
+    expect(screen.queryByText('最多 90 天 · 应用后更新全部分析')).not.toBeInTheDocument();
+    expect(screen.queryByText('Up to 90 days · Applies to all analytics')).not.toBeInTheDocument();
+  });
+
+  it('keeps the 90-day limit without the custom-range hint', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(readyAnalysis('1', '120000'));
+    const today = shanghaiToday();
+    const [year, month, day] = today.split('-').map(Number);
+    const tooLongFrom = new Date(Date.UTC(year, month - 1, day - 90)).toISOString().slice(0, 10);
+    renderTeamWorkspace(`/teams/tem_0123456789abcdefghijklmnop?range=custom&from=${tooLongFrom}&to=${today}`);
+    expect(await screen.findByRole('alert')).toHaveTextContent('自定义范围最多 90 天。');
+    expect(screen.getByLabelText('开始日期')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('结束日期')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.queryByText('最多 90 天 · 应用后更新全部分析')).not.toBeInTheDocument();
+    expect(document.querySelector('.team-filter-toolbar')?.contains(screen.getByRole('alert'))).toBe(true);
+  });
+
   it('clears retained charts when authorization changes during date editing', async () => {
     const query = vi.spyOn(teamsApi, 'getAnalysis')
       .mockResolvedValueOnce(readyAnalysis('1', '120000'))

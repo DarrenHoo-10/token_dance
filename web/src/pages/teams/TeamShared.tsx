@@ -17,7 +17,6 @@ import {
   rankPageCount,
   sha256Hex,
   TEAM_RANK_PAGE_SIZE,
-  formatDotDate,
 } from './teamUtils';
 import './teams.css';
 import './sky-team.css';
@@ -138,12 +137,7 @@ export const SharingControls: React.FC<{
   );
 };
 
-function shiftIsoDate(iso: string, days: number): string {
-  const [year, month, day] = iso.split('-').map(Number);
-  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
-}
-
-export const TeamDateRangeBar: React.FC<{ timezone: string; part?: 'controls' | 'custom' | 'all' }> = ({ timezone, part = 'all' }) => {
+export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) => {
   const { t, locale } = useLocale();
   const [params, setParams] = useSearchParams();
   const range = params.get('range') || 'today';
@@ -151,8 +145,8 @@ export const TeamDateRangeBar: React.FC<{ timezone: string; part?: 'controls' | 
   const to = params.get('to') || '';
   const spanError = range === 'custom' && from && to && inclusiveDaySpan(from, to) > TEAM_RANGE_MAX_DAYS;
   const today = calendarDateInTimeZone(new Date(), timezone);
-  const displayedFrom = range === 'custom' ? from : range === '7d' ? shiftIsoDate(today, -6) : range === '30d' ? shiftIsoDate(today, -29) : today;
-  const displayedTo = range === 'custom' ? (to || today) : today;
+  const displayedFrom = from;
+  const displayedTo = to || today;
 
   const setRange = (next: string) => {
     const nextParams = new URLSearchParams(params);
@@ -186,7 +180,7 @@ export const TeamDateRangeBar: React.FC<{ timezone: string; part?: 'controls' | 
     setParams(nextParams, { replace: true });
   }, [from, params, range, setParams, to, today]);
 
-  const controls = (
+  return (
     <>
       <div className="tw-periods" role="tablist" aria-label={t('dashboard.timeRangeSelector')}>
         {[
@@ -207,13 +201,9 @@ export const TeamDateRangeBar: React.FC<{ timezone: string; part?: 'controls' | 
           </button>
         ))}
       </div>
-      <span className="tw-date-label">{formatDotDate(displayedFrom)} — {displayedTo.slice(5).replace('-', '.')}</span>
-    </>
-  );
-  const custom = range === 'custom' ? (
+      {range === 'custom' ? (
         <form className="tw-custom-range" onSubmit={(event) => event.preventDefault()}>
-          <label>
-            {t('teams.range.from')}
+          <div className="team-date-fields">
             <TeamDateField
               value={displayedFrom}
               onChange={(next) => setDate('from', next)}
@@ -223,28 +213,23 @@ export const TeamDateRangeBar: React.FC<{ timezone: string; part?: 'controls' | 
               invalid={Boolean(spanError)}
               align="start"
             />
-          </label>
-          <span>—</span>
-          <label>
-            {t('teams.range.to')}
+            <span className="team-date-arrow" aria-hidden="true">—</span>
             <TeamDateField
               value={displayedTo}
               onChange={(next) => setDate('to', next)}
               label={t('teams.range.to')}
-              min={range === 'custom' && from ? from : undefined}
+              min={from || undefined}
               max={today}
               locale={locale}
               invalid={Boolean(spanError)}
               align="end"
             />
-          </label>
-          <span>{t('teams.range.customHint')}</span>
-          {spanError && <p role="alert">{t('teams.range.tooLong')}</p>}
+          </div>
+          {spanError ? <p className="team-date-hint is-error" role="alert">{t('teams.range.tooLong')}</p> : null}
         </form>
-  ) : null;
-  if (part === 'controls') return controls;
-  if (part === 'custom') return custom;
-  return <>{controls}{custom}</>;
+      ) : null}
+    </>
+  );
 };
 
 export function useTeamSearchFilters() {

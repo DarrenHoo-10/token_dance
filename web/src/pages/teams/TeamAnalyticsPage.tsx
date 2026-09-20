@@ -75,7 +75,7 @@ export const TeamAnalyticsPage: React.FC = () => {
   const filterBar = (
     <>
       <section className="tw-toolbar team-filter-toolbar" aria-label={t('teams.overview.filtersLabel')}>
-        <TeamDateRangeBar timezone={scope.team.timezone} part="controls" />
+        <TeamDateRangeBar timezone={scope.team.timezone} />
         <div className="tw-filter-selects">
           <label>
             <span className="sr-only">{t('teams.overview.agentFilter')}</span>
@@ -100,7 +100,6 @@ export const TeamAnalyticsPage: React.FC = () => {
           )}
         </div>
       </section>
-      <TeamDateRangeBar timezone={scope.team.timezone} part="custom" />
       {(agent || model) && (
         <div className="tw-filter-note">
           <SlidersHorizontal size={14} />

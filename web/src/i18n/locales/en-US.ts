@@ -465,7 +465,6 @@ export const enUS = {
       days7: '7 days',
       days30: '30 days',
       tooLong: 'Custom ranges can cover at most 90 days.',
-      customHint: 'Up to 90 days · Applies to all analytics',
       showingPrevious: 'Finish selecting dates to update. Charts keep the current range; new visits show today.',
       chooseDates: 'Select both dates to update',
     },
