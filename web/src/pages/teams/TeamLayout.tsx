@@ -4,6 +4,7 @@ import { ApiError } from '@/api/client';
 import { teamsApi } from '@/api/teams';
 import { ErrorState } from '@/components/states/ErrorState';
 import { LoadingState } from '@/components/states/LoadingState';
+import { UnauthorizedState } from '@/components/states/UnauthorizedState';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { useTeam } from '@/context/TeamContext';
@@ -30,13 +31,6 @@ export const TeamLayout: React.FC = () => {
   const [pageError, setPageError] = useState<ApiError | null>(null);
   const [faces, setFaces] = useState<TeamMember[]>([]);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (authLoading) return;
-    if (!authenticated) {
-      navigate(`/login?return_to=${encodeURIComponent(`/teams/${teamId || ''}`)}`, { replace: true });
-    }
-  }, [authLoading, authenticated, navigate, teamId]);
 
   useEffect(() => {
     if (!authenticated || !teamId) return;
@@ -71,8 +65,9 @@ export const TeamLayout: React.FC = () => {
     return () => controller.abort();
   }, [authenticated, scope, teamId]);
 
-  if (authLoading || (loading && !scope)) return <LoadingState />;
-  if (!authenticated) return <LoadingState />;
+  if (authLoading) return <LoadingState />;
+  if (!authenticated) return <UnauthorizedState />;
+  if (loading && !scope) return <LoadingState />;
   if (pageError) return <ErrorState error={pageError} description={teamErrorMessage(t, pageError)} onRetry={() => void refresh()} />;
   if (!scope || !teamId || scope.team.id !== teamId) return <LoadingState />;
 

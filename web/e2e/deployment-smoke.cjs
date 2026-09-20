@@ -16,7 +16,9 @@ const { chromium } = require('playwright-core');
     page.on('pageerror', e => errors.push(e.message));
     page.on('response', r => { if (r.status() >= 400) badResponses.push(`${r.status()} ${new URL(r.url()).pathname}`); });
     await page.goto(base + '/', { waitUntil: 'networkidle' });
-    await page.waitForURL(base + '/login?return_to=/');
+    await page.waitForURL(base + '/leaderboard');
+    assert.equal(await page.getByRole('tab', { name: 'All Time', exact: true }).count(), 1);
+    await page.goto(base + '/login', { waitUntil: 'networkidle' });
     assert.equal(await page.locator('input[type="email"]').count(), 1);
     assert.equal(await page.locator('input[type="password"]').count(), 1);
     for (const img of await page.locator('img').all()) {

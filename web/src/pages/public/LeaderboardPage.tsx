@@ -5,7 +5,7 @@ import { HarnessMark } from '@/components/common/HarnessMark';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { resolveHarnessBrand } from '@/components/common/harnessBrand';
 import React, { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import {
   ArrowRight, ArrowUpRight, BarChart3, Code2, Crown, Download, Monitor, UsersRound, Wallet, Zap,
   Flame, ShieldCheck, TrendingDown, TrendingUp,
@@ -130,7 +130,6 @@ function PodiumCard({ entry, selected, onSelect, zh }: {
 
 export const LeaderboardPage: React.FC = () => {
   const { locale } = useLocale();
-  const navigate = useNavigate();
   const { user, authenticated } = useAuth();
   const personalAnalytics = usePersonalAnalytics();
   const zh = locale === 'zh-CN';
@@ -390,7 +389,7 @@ export const LeaderboardPage: React.FC = () => {
             <section className="panel sky-personal">
               <div className="panel-header">
                 <h2>{zh ? '我的过去 24h' : 'My past 24h'}</h2>
-                <button className="sky-icon-button" type="button" onClick={() => authenticated ? personalAnalytics.show() : navigate('/login')} aria-label={zh ? '打开个人数据' : 'Open analytics'}><ArrowUpRight size={19} /></button>
+                <button className="sky-icon-button" type="button" onClick={() => personalAnalytics.show()} aria-label={zh ? '打开个人数据' : 'Open analytics'}><ArrowUpRight size={19} /></button>
               </div>
               {authenticated ? (
                 <>

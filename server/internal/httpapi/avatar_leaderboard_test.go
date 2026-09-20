@@ -7,6 +7,32 @@ import (
 	"testing"
 )
 
+func TestPublicLeaderboardAndStatsDoNotRequireAuth(t *testing.T) {
+	router, _, _ := setupTestRouter(t)
+	for _, path := range []string{
+		"/api/v1/public/leaderboards?window=today",
+		"/api/v1/public/leaderboards/stats?window=today",
+		"/api/v1/public/leaderboards/stats?window=7d",
+	} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status %d: %s", path, rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), `"ownEntry"`) {
+			t.Fatalf("%s leaked ownEntry: %s", path, rec.Body.String())
+		}
+	}
+
+	for _, path := range []string{"/api/v1/me/leaderboards", "/api/v1/me/summary", "/api/v1/me/exports"} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s should stay private, got %d: %s", path, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestPublicLeaderboardIgnoresClientUserID(t *testing.T) {
 	router, _, _ := setupTestRouter(t)
 	rec := httptest.NewRecorder()
