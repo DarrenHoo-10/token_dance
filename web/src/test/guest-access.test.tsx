@@ -113,7 +113,7 @@ describe('Guest access without a site-wide login wall', () => {
     expect(screen.queryByText('login-page')).not.toBeInTheDocument();
   });
 
-  it('opens personal analytics as an in-page login prompt and stays on the leaderboard', async () => {
+  it('offers an explicit sign-in action on the guest personal card', async () => {
     mockPublicHome();
     renderGuest(
       <Routes>
@@ -125,16 +125,15 @@ describe('Guest access without a site-wide login wall', () => {
 
     expect(await screen.findByRole('heading', { name: 'Ada的创作轨迹' })).toBeInTheDocument();
     expect(api.getMyLeaderboard).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: '打开个人数据' }));
-    const dialog = await screen.findByRole('dialog');
-    expect(dialog).toHaveTextContent('需要登录');
-    expect(dialog).toHaveTextContent('该页面仅限登录用户访问，请先登录或注册。');
-    expect(screen.getByRole('button', { name: '前往登录' })).toBeInTheDocument();
-    expect(screen.getByTestId('current-path')).toHaveTextContent('/leaderboard');
-    expect(screen.queryByText('login-page')).not.toBeInTheDocument();
+    const login = screen.getByRole('link', { name: '登录查看' });
+    expect(login).toHaveAttribute('href', '/login?return_to=%2Fme');
+    fireEvent.click(login);
+    expect(await screen.findByText('login-page')).toBeInTheDocument();
+    expect(screen.getByTestId('current-path')).toHaveTextContent('/login?return_to=%2Fme');
+
   });
 
-  it('opens the same login prompt from the navbar analytics button', async () => {
+  it('uses the fixed analytics action to sign in with a return destination', async () => {
     renderGuest(
       <>
         <Navbar />
@@ -146,11 +145,10 @@ describe('Guest access without a site-wide login wall', () => {
       '/docs',
     );
 
-    fireEvent.click(await screen.findByRole('button', { name: '个人数据页' }));
-    expect(await screen.findByText('需要登录')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: '前往登录' })).toBeInTheDocument();
-    expect(screen.getByTestId('current-path')).toHaveTextContent('/docs');
-    expect(screen.queryByText('login-page')).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: '我的数据' }));
+    expect(await screen.findByText('login-page')).toBeInTheDocument();
+    expect(screen.getByTestId('current-path')).toHaveTextContent('/login?return_to=%2Fme');
+
   });
 
   it('prompts login on create-team and team workspace without leaving the route', async () => {

@@ -291,8 +291,8 @@ class ApiHttpClient {
     return res;
   }
 
-  public async getProfile(): Promise<UserProfile> {
-    return this.request<UserProfile>('/me/profile', { method: 'GET' });
+  public async getProfile(signal?: AbortSignal): Promise<UserProfile> {
+    return this.request<UserProfile>('/me/profile', { method: 'GET', signal });
   }
 
   public async updateProfile(data: UpdateProfileRequest, profileVersion?: number): Promise<UserProfile> {

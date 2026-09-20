@@ -98,15 +98,17 @@ export const Navbar: React.FC = () => {
           onClick={() => {
             if (home) {
               const input = document.querySelector<HTMLInputElement>('.sky-board-search input');
-              input?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+              input?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
               input?.focus({ preventScroll: true });
-            } else {
-              personalAnalytics.show();
-            }
+            } else navigate('/leaderboard?search=1');
           }}
-          aria-label={home ? (locale === 'zh-CN' ? '搜索开发者' : 'Find a developer') : t('publicProfile.headline')}
+          aria-label={locale === 'zh-CN' ? '搜索开发者' : 'Find a developer'}
+          title={locale === 'zh-CN' ? '搜索开发者' : 'Find a developer'}
         >
-          {home ? <Search size={21} aria-hidden="true" /> : <BarChart3 size={22} aria-hidden="true" />}
+          <Search size={21} aria-hidden="true" />
+        </button>
+        <button type="button" className="nav-analytics" onClick={() => authenticated ? personalAnalytics.show() : navigate('/login?return_to=%2Fme')} aria-label={locale === 'zh-CN' ? '我的数据' : 'My analytics'} title={locale === 'zh-CN' ? '我的数据' : 'My analytics'}>
+          <BarChart3 size={21} aria-hidden="true" /><span>{locale === 'zh-CN' ? '我的数据' : 'My analytics'}</span>
         </button>
 
         <LocaleSwitcher compact />

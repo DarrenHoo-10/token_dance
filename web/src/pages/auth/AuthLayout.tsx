@@ -80,7 +80,7 @@ export function AuthLayout({ mode, returnTo, mood, errorMessage, children }: Aut
             </div>
           )}
           {children}
-          <p className="login-terms">{t('auth.termsNotice')}</p>
+          <p className="login-terms">{t('auth.termsNotice')}<NavLink to="/docs/privacy" target="_blank" rel="noopener noreferrer">{locale === 'zh-CN' ? '数据与隐私（新窗口）' : 'Data & privacy (new tab)'}</NavLink></p>
         </div>
       </main>
     </div>

@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight, ArrowUpRight, BarChart3, Code2, Crown, Download, Monitor, UsersRound, Wallet, Zap,
-  Flame, ShieldCheck, TrendingDown, TrendingUp,
+  Flame, ShieldCheck, TrendingDown, TrendingUp, HelpCircle,
 } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from '@/context/AuthContext';
@@ -25,6 +25,7 @@ import { formatCommunityCost } from '@/utils/cost';
 import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
 import { calendarPeriodChange } from '@/components/analytics/calendarPeriodChange';
 import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
+import { hasRankedTokens, personalTokenRank } from '@/components/analytics/tokenRanking';
 
 type Range = 'Today' | '7 Days' | '30 Days' | 'All Time';
 
@@ -72,14 +73,15 @@ function DeltaChip({ value, suffix }: { value?: number | null; suffix?: string }
   );
 }
 
-function HeroMiniCard({ label, value, delta, icon }: { label: string; value: string; delta?: number | null; icon: React.ReactNode }) {
+function HeroMiniCard({ label, value, delta, icon, help, unit }: { label: string; value: string; delta?: number | null; icon: React.ReactNode; help?: string; unit?: string }) {
   return (
     <div className="hero-mini-card">
       <span className="sky-metric-icon" aria-hidden="true">{icon}</span>
       <div>
-        <span className="hero-mini-label">{label}</span>
+        <span className="hero-mini-label">{label}{help && <details className="metric-help"><summary aria-label={`${label} · ${help}`}><HelpCircle size={13} /></summary><p>{help}</p></details>}</span>
         <div className="sky-metric-value">
           <strong className="hero-mini-value">{value ?? '—'}</strong>
+          {unit && <small>{unit}</small>}
           <DeltaChip value={delta} />
         </div>
       </div>
@@ -248,8 +250,9 @@ export const LeaderboardPage: React.FC = () => {
     return () => { cancelled = true; };
   }, [selectedHandle, selectedCommunityWindow]);
 
-  const podium = entries.length >= 3 ? [entries[1], entries[0], entries[2]] : entries.slice(0, entries.length);
-  const rankValue = summary?.ranking?.rank ?? null;
+  const rankedEntries = entries.filter(entry => hasRankedTokens(entry.metricValue));
+  const podium = rankedEntries.length >= 3 ? [rankedEntries[1], rankedEntries[0], rankedEntries[2]] : rankedEntries;
+  const rankValue = personalTokenRank(summary);
   const todayTokens = summary?.ranking?.entry?.metricValue ?? summary?.metrics?.totalTokens?.value ?? null;
   const allTimeTokens = allTimeSummary?.metrics.totalTokens.supported
     ? allTimeSummary.metrics.totalTokens.value : null;
@@ -265,7 +268,7 @@ export const LeaderboardPage: React.FC = () => {
   const heroTokenLabel = zh ? ({ Today: '过去 24h Token', '7 Days': '近 7 天 Token', '30 Days': '近 30 天 Token', 'All Time': '累计 Token' }[range]) : ({ Today: 'Tokens · past 24h', '7 Days': 'Tokens · 7 days', '30 Days': 'Tokens · 30 days', 'All Time': 'All-time tokens' }[range]);
   const comparisonLabel = zh ? ({ Today: '较前 24h', '7 Days': '较上 7 天', '30 Days': '较上 30 天', 'All Time': undefined }[range]) : ({ Today: 'vs prior 24h', '7 Days': 'vs prior 7 days', '30 Days': 'vs prior 30 days', 'All Time': undefined }[range]);
   const connectionError = <div className={entries.length ? 'leaderboard-refresh-status' : 'leaderboard-empty'} role="alert"><p>{zh ? '连接异常' : 'Connection error'}</p><button className="btn btn-outline" type="button" onClick={() => setRefreshTick(tick => tick + 1)}>{zh ? '重试' : 'Retry'}</button></div>;
-  const emptyBoard = loading && !entries.length && !loadError ? <p className="leaderboard-empty">{zh ? '加载中…' : 'Loading…'}</p> : loadError ? connectionError : !entries.length ? <p className="leaderboard-empty">{zh ? '暂无账号' : 'No accounts yet'}</p> : null;
+  const emptyBoard = loading && !entries.length && !loadError ? <p className="leaderboard-empty">{zh ? '加载中…' : 'Loading…'}</p> : loadError ? connectionError : !entries.length ? <p className="leaderboard-empty">{zh ? '暂无账号' : 'No accounts yet'}</p> : !podium.length ? <p className="leaderboard-empty">{zh ? '本周期暂无有效用量，暂未有人上榜。' : 'No recorded usage in this period. No one is ranked yet.'}</p> : null;
   const viewingSelf = Boolean(authenticated && user?.handle && selectedHandle && user.handle.toLowerCase() === selectedHandle.toLowerCase());
   const rhythmTitle = selectedName
     ? (zh ? `${selectedName}的创作轨迹` : `${selectedName}'s creative rhythm`)
@@ -306,7 +309,7 @@ export const LeaderboardPage: React.FC = () => {
         <div className="sky-metrics">
           <HeroMiniCard icon={<UsersRound />} label={zh ? '活跃开发者' : 'Active devs'} value={community?.developers != null ? formatTokens(String(community.developers)).replace('.0K', 'K') : '—'} delta={community?.deltas?.developers} />
           <HeroMiniCard icon={<Code2 />} label={zh ? '生成代码行' : 'Code lines'} value={formatTokens(community?.codeLines)} delta={community?.deltas?.codeLines} />
-          <HeroMiniCard icon={<Zap />} label={zh ? 'AI 交互' : 'AI turns'} value={formatTokens(community?.interactions)} delta={community?.deltas?.interactions} />
+          <HeroMiniCard icon={<Zap />} label={zh ? '模型请求' : 'Model requests'} value={formatTokens(community?.interactions)} delta={community?.deltas?.interactions} unit={zh ? '次' : 'requests'} help={zh ? '统计当前周期内已同步的模型请求次数，与用户消息数、工具调用次数不同。仅覆盖已采集的来源。' : 'Synced model requests in this period, distinct from user messages and tool calls. Covers collected sources only.'} />
           <HeroMiniCard icon={<Wallet />} label={zh ? '预估费用' : 'Est. cost'} value={formatCommunityCost(community ?? {})} delta={community?.deltas?.costAmount} />
         </div>
       </section>
@@ -389,7 +392,7 @@ export const LeaderboardPage: React.FC = () => {
             <section className="panel sky-personal">
               <div className="panel-header">
                 <h2>{zh ? '我的过去 24h' : 'My past 24h'}</h2>
-                <button className="sky-icon-button" type="button" onClick={() => personalAnalytics.show()} aria-label={zh ? '打开个人数据' : 'Open analytics'}><ArrowUpRight size={19} /></button>
+                {authenticated && <button className="sky-text-link" type="button" onClick={() => personalAnalytics.show()} aria-label={zh ? '打开个人数据' : 'Open analytics'}>{zh ? '查看我的数据' : 'View my data'}<ArrowUpRight size={16} /></button>}
               </div>
               {authenticated ? (
                 <>
@@ -404,9 +407,9 @@ export const LeaderboardPage: React.FC = () => {
                     <div className="stat-block">
                       <span>{zh ? '过去 24h 排名' : 'Past 24h rank'}</span>
                       <div className="stat-line">
-                        <strong>{rankValue ?? '—'}</strong>
-                        <TrendBadge value={summary?.ranking?.delta} />
-                        {summary?.ranking?.percentile != null && <em>{zh ? `前 ${formatPercentile(summary.ranking.percentile)}%` : `Top ${formatPercentile(summary.ranking.percentile)}%`}</em>}
+                        <strong>{rankValue ?? (summary ? (zh ? '暂未上榜' : 'Not ranked yet') : '—')}</strong>
+                        {rankValue != null && <TrendBadge value={summary?.ranking?.delta} />}
+                        {rankValue != null && summary?.ranking?.percentile != null && <em>{zh ? `前 ${formatPercentile(summary.ranking.percentile)}%` : `Top ${formatPercentile(summary.ranking.percentile)}%`}</em>}
                       </div>
                     </div>
                     <div className="stat-block">
@@ -421,7 +424,7 @@ export const LeaderboardPage: React.FC = () => {
                   <ActivityCalendar days={calendarDays} streakDays={streak} />
                 </>
               ) : (
-                <p className="side-card-empty">{zh ? '登录后查看你的排名与统计。' : 'Sign in to see your rank and stats.'}</p>
+                <div className="sky-login-prompt"><p className="side-card-empty">{zh ? '登录后查看你的排名与统计。' : 'Sign in to see your rank and stats.'}</p><Link className="btn btn-dark" to="/login?return_to=%2Fme">{zh ? '登录查看' : 'Sign in to view'}<ArrowRight size={16} /></Link></div>
               )}
             </section>
           </aside>

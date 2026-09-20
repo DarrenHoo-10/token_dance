@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { AuthProvider } from '@/context/AuthContext';
 import { LocaleProvider } from '@/context/LocaleContext';
@@ -110,6 +110,21 @@ afterEach(() => {
 });
 
 describe('Personal analytics overlay', () => {
+  it('does not show a rank or rank movement before positive usage is synced', async () => {
+    renderOverlay('/leaderboard');
+    await act(async () => {
+      const summary = await api.getPersonalSummary('today');
+      summary.metrics.totalTokens.value = '0';
+      summary.sync.lastCommittedAt = null;
+      vi.mocked(api.getPersonalSummary).mockResolvedValue(summary);
+    });
+    fireEvent.click(screen.getByRole('button', { name: '个人数据' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Test Dev，你的创造正在发生。' });
+    expect(await within(dialog).findByText('暂未上榜')).toBeInTheDocument();
+    expect(within(dialog).queryByText('#6')).not.toBeInTheDocument();
+    expect(dialog.querySelector('.rank-up, .rank-down')).toBeNull();
+  });
+
   it('opens over the homepage and closes without leaving the page', async () => {
     renderOverlay('/leaderboard');
     expect(screen.getByRole('heading', { name: '平台排行榜' })).toBeInTheDocument();
@@ -147,7 +162,8 @@ describe('Personal analytics overlay', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Test Dev，你的创造正在发生。' });
     fireEvent.click(within(dialog).getByRole('button', { name: '近 7 天' }));
     await waitFor(() => expect(api.getPersonalSummary).toHaveBeenCalledWith('7d'));
-    fireEvent.change(within(dialog).getByLabelText('趋势 Agent 筛选'), { target: { value: 'cursor' } });
+    fireEvent.click(within(dialog).getByRole('combobox', { name: '趋势 Agent 筛选' }));
+    fireEvent.click(within(dialog).getByRole('option', { name: 'cursor' }));
     expect(await within(dialog).findByText('没有符合筛选的记录')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: /重置筛选/ }));
     await waitFor(() => expect(within(dialog).queryByText('没有符合筛选的记录')).not.toBeInTheDocument());
