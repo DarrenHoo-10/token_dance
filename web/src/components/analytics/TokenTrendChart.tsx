@@ -16,7 +16,7 @@ export const TokenTrendChart: React.FC<TokenTrendChartProps> = ({ trends, height
     observer.observe(chart.current);
     return () => observer.disconnect();
   }, [trends?.length]);
-  const { points, ticks, start, span } = trendTimeAxis(trends ?? [], width < 400 ? 4 : 7);
+  const { points, ticks, start, span } = trendTimeAxis(trends ?? [], Math.max(2, Math.min(7, Math.floor(width / 100))));
   if (!points.length) return <div className="token-trend-empty" style={{ minHeight: height }}>{t('dashboard.noTrendData')}</div>;
   const bottom = height - 27, top = 34, max = Math.max(1, ...points.map(p => p.total)) * 1.08;
   const timeX = (time: number) => span === 0 ? width / 2 : 8 + (time - start) / span * (width - 16);
