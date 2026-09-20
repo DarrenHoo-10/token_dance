@@ -118,6 +118,8 @@ describe('Personal analytics overlay', () => {
     expect(within(dialog).getByRole('button', { name: '过去 24 小时' })).toHaveAttribute('aria-pressed', 'true');
     expect(within(dialog).getByRole('button', { name: '近 7 天' })).toBeInTheDocument();
     expect(within(dialog).getByRole('img', { name: 'Test Dev' })).toHaveClass('personal-heading-avatar');
+    expect(within(dialog).getByText('连续 12 天')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: /2026-09-19/ })).toHaveTextContent('1.1M');
     expect(screen.queryByText('独立个人页')).not.toBeInTheDocument();
     expect(screen.getByTestId('path')).toHaveTextContent('/leaderboard');
     expect(screen.queryByRole('checkbox')).not.toBeInTheDocument();

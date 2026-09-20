@@ -146,6 +146,11 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         dataWatermarkAt: '2026-08-30T10:00:00Z',
         generatedAt: '2026-08-30T10:00:00Z',
         projectionVersion: 1,
+        activityCalendar: [
+          { date: '2026-08-15', level: 3, tokenTotal: '1200000' },
+          { date: '2026-08-16', level: 2, tokenTotal: '373000' },
+          { date: '2026-08-17', level: 0, tokenTotal: '0' },
+        ],
       });
 
       const getTrendsSpy = vi.spyOn(api, 'getPublicTokenTrends').mockResolvedValue({
@@ -184,6 +189,10 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         expect(screen.getByText('#1')).toBeInTheDocument();
         expect(screen.getByText('325.7M')).toBeInTheDocument();
         expect(screen.getByText('test-runner')).toBeInTheDocument();
+        expect(screen.getByText('连续 23 天')).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /2026-08-15/ })).toHaveTextContent('1.2M');
+        expect(screen.getByRole('button', { name: /2026-08-16/ })).toHaveTextContent('373K');
+        expect(screen.getByRole('button', { name: /2026-08-17/ }).querySelector('.calendar-day-usage')).toBeNull();
       });
     });
 

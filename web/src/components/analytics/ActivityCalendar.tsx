@@ -5,12 +5,24 @@ import type { ActivityCalendarDay } from '@/types/api';
 
 export interface ActivityCalendarProps { days: ActivityCalendarDay[]; streakDays?: number }
 
+function scaleCompact(value: number, suffix: string) {
+  return `${value.toFixed(1).replace(/\.0$/, '')}${suffix}`;
+}
+
+/** Compact token label used on calendar cells, matching product totals such as 1.2M / 373K. */
+export function formatCalendarCompact(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '';
+  if (value >= 1_000_000_000) return scaleCompact(value / 1_000_000_000, 'B');
+  if (value >= 1_000_000) return scaleCompact(value / 1_000_000, 'M');
+  if (value >= 1_000) return scaleCompact(value / 1_000, 'K');
+  return String(Math.round(value));
+}
+
 function formatCalendarTokens(value: number) {
   if (!Number.isFinite(value) || value <= 0) return { value: '—', unit: '' };
-  if (value >= 1_000_000_000) return { value: (value / 1_000_000_000).toFixed(2), unit: 'B' };
-  if (value >= 1_000_000) return { value: (value / 1_000_000).toFixed(2), unit: 'M' };
-  if (value >= 1_000) return { value: (value / 1_000).toFixed(1), unit: 'K' };
-  return { value: String(Math.round(value)), unit: '' };
+  const compact = formatCalendarCompact(value);
+  const unit = compact.match(/[KMB]$/)?.[0] ?? '';
+  return { value: unit ? compact.slice(0, -1) : compact, unit };
 }
 
 function formatSelectedDate(date: string | undefined, today: string, zh: boolean, locale: string) {
@@ -63,7 +75,7 @@ export const ActivityCalendar: React.FC<ActivityCalendarProps> = ({ days, streak
     <div className="activity-calendar activity-month-calendar">
       <div className="calendar-title-row">
         <span><CalendarDays size={16} />{zh ? '创作日历' : 'Activity calendar'}</span>
-        {streakDays > 0 && <span className="streak-badge"><Flame size={13} />{streakLabel}</span>}
+        {streakDays > 0 && <span className="streak-badge"><Flame size={13} aria-hidden="true" />{streakLabel}</span>}
       </div>
       <div className="calendar-month-row calendar-month-heading">
         <div>
@@ -85,19 +97,21 @@ export const ActivityCalendar: React.FC<ActivityCalendarProps> = ({ days, streak
           const date = month + '-' + String(day).padStart(2, '0');
           const record = byDate.get(date);
           const level = Math.max(0, Math.min(5, record?.level ?? 0));
+          const tokens = Number(record?.tokenTotal) || 0;
+          const compact = tokens > 0 ? formatCalendarCompact(tokens) : '';
           return (
             <button
               type="button"
               key={date}
               disabled={!record}
-              className={'calendar-day level-' + level + (date === selectedDate ? ' selected' : '') + (date === shanghaiToday ? ' is-today' : '')}
+              className={'calendar-day level-' + level + (compact ? ' has-usage' : '') + (date === selectedDate ? ' selected' : '') + (date === shanghaiToday ? ' is-today' : '')}
               data-intensity={record?.level ?? 0}
               aria-pressed={date === selectedDate}
               aria-label={record ? t('dashboard.activityCellLabel', { date, tokens: record.tokenTotal }) : date + ' · ' + (zh ? '暂无记录' : 'No record')}
               onClick={() => setSelected(date)}
             >
-              <span>{day}</span>
-              <i aria-hidden="true" />
+              <span className="calendar-day-num">{day}</span>
+              {compact ? <span className="calendar-day-usage">{compact}</span> : <i aria-hidden="true" />}
             </button>
           );
         })}
