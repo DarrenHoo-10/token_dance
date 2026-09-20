@@ -53,6 +53,23 @@ describe('Homepage podium public trends', () => {
     });
   });
 
+  it('shows zero-usage accounts as unranked and excludes them from the podium', async () => {
+    auth.authenticated = true;
+    vi.mocked(api.getMyLeaderboard).mockResolvedValue({
+      snapshotId: '', boardKey: 'global', window: 'today', metric: 'tokens',
+      entries: [{ rankNo: 1, handle: 'new', displayName: 'New', avatarUrl: null, metricValue: '0', rankDelta: 4 }],
+    });
+    vi.spyOn(api, 'getPersonalSummary').mockResolvedValue({
+      metrics: { totalTokens: { value: '0', supported: true } },
+      ranking: { rank: 1, delta: 4, percentile: 10 },
+    } as never);
+    vi.spyOn(api, 'getActivityCalendar').mockResolvedValue({ days: [] } as never);
+    showHome();
+    await waitFor(() => expect(screen.getAllByText('暂未上榜')).toHaveLength(2));
+    expect(screen.queryByRole('button', { name: '查看 New 的公开创作轨迹' })).not.toBeInTheDocument();
+    expect(screen.queryByText('前 10%')).not.toBeInTheDocument();
+  });
+
   it('lets guests open a podium builder without signing in', async () => {
     showHome();
     expect(await screen.findByRole('heading', { name: 'Ada的创作轨迹' })).toBeInTheDocument();

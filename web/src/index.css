@@ -1343,3 +1343,4 @@ h3 { font-size: 15px; margin-bottom: 4px; }
 .leaderboard-me-badge { display: inline-block; margin-left: 8px; padding: 2px 7px; border-radius: 5px; background: #c4f25d; color: #1b2a10; font-size: 12px; font-weight: 700; }
 .leaderboard-refresh-status { display: flex; align-items: center; justify-content: flex-end; gap: 12px; padding: 8px 24px 0; color: #8a2f1f; font-size: 13px; }
 .leaderboard-refresh-status p { margin: 0; }
+.list-unranked { white-space: nowrap; color: #727a70; font-size: 12px; }

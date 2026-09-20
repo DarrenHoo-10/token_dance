@@ -8,6 +8,7 @@ import { LoadingState } from '@/components/states/LoadingState';
 import { ErrorState } from '@/components/states/ErrorState';
 import { UnauthorizedState } from '@/components/states/UnauthorizedState';
 import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
+import { personalTokenRank } from '@/components/analytics/tokenRanking';
 import { AgentBreakdown } from '@/components/analytics/AgentBreakdown';
 import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
 import { SkillRanking } from '@/components/analytics/SkillRanking';
@@ -285,7 +286,8 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
   const hourly = trendsHourly(trends, displayTrends);
   const syncStatus = summary?.sync.status || (summary?.sync.lastCommittedAt ? 'healthy' : 'unknown');
   const name = user?.displayName || user?.handle || (zh ? '开发者' : 'Builder');
-  const rankDelta = summary?.ranking.delta;
+  const rank = personalTokenRank(summary);
+  const rankDelta = rank != null ? summary?.ranking.delta : null;
   const RankIcon = rankDelta != null && rankDelta < 0 ? ArrowDownRight : ArrowUpRight;
   const metrics = overlayMetrics(summary?.metrics, zh, locale);
 
@@ -341,7 +343,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
       <div className="analytics-context">
         <span>
           <Trophy size={14} />{zh ? '过去 24h 排名' : 'Past 24h rank'}{' '}
-          <b>{summary?.ranking.rank ? `#${summary.ranking.rank}` : '—'}</b>
+          <b>{rank != null ? `#${rank}` : summary ? (zh ? '暂未上榜' : 'Not ranked yet') : '—'}</b>
           {rankDelta != null && rankDelta !== 0 && (
             <span className={rankDelta < 0 ? 'rank-down' : 'rank-up'}><RankIcon size={13} />{Math.abs(rankDelta)}</span>
           )}

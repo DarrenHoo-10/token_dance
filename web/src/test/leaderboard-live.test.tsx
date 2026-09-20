@@ -250,7 +250,7 @@ describe('Percentile formatting', () => {
     vi.spyOn(api,'getPersonalSummary').mockResolvedValue({
       range: { key: 'today', from: '', to: '', timezone: 'Asia/Shanghai' },
       metrics: { estimatedCost: { supported: false }, totalTokens: { value: '0', supported: true }, generatedCodeLines: { supported: false }, tokensPerCodeLine: { supported: false }, inputContextTokens: { supported: false }, outputTokens: { supported: false }, cacheHitRate: { supported: false }, activeDurationMs: { supported: false }, messageCount: { supported: false }, userMessageCount: { supported: false } },
-      ranking: { rank: 3, percentile: 77.77777777777779 },
+      ranking: { rank: 3, percentile: 77.77777777777779, entry: { metricValue: '100' } },
       sync: { lastCommittedAt: null, pendingLocalCount: null },
       aggregationVersion: 2,
     } as never);

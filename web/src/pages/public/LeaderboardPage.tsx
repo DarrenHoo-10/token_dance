@@ -25,6 +25,7 @@ import { formatCommunityCost } from '@/utils/cost';
 import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
 import { calendarPeriodChange } from '@/components/analytics/calendarPeriodChange';
 import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
+import { hasRankedTokens, personalTokenRank } from '@/components/analytics/tokenRanking';
 
 type Range = 'Today' | '7 Days' | '30 Days' | 'All Time';
 
@@ -248,8 +249,9 @@ export const LeaderboardPage: React.FC = () => {
     return () => { cancelled = true; };
   }, [selectedHandle, selectedCommunityWindow]);
 
-  const podium = entries.length >= 3 ? [entries[1], entries[0], entries[2]] : entries.slice(0, entries.length);
-  const rankValue = summary?.ranking?.rank ?? null;
+  const rankedEntries = entries.filter(entry => hasRankedTokens(entry.metricValue));
+  const podium = rankedEntries.length >= 3 ? [rankedEntries[1], rankedEntries[0], rankedEntries[2]] : rankedEntries;
+  const rankValue = personalTokenRank(summary);
   const todayTokens = summary?.ranking?.entry?.metricValue ?? summary?.metrics?.totalTokens?.value ?? null;
   const allTimeTokens = allTimeSummary?.metrics.totalTokens.supported
     ? allTimeSummary.metrics.totalTokens.value : null;
@@ -404,9 +406,9 @@ export const LeaderboardPage: React.FC = () => {
                     <div className="stat-block">
                       <span>{zh ? '过去 24h 排名' : 'Past 24h rank'}</span>
                       <div className="stat-line">
-                        <strong>{rankValue ?? '—'}</strong>
-                        <TrendBadge value={summary?.ranking?.delta} />
-                        {summary?.ranking?.percentile != null && <em>{zh ? `前 ${formatPercentile(summary.ranking.percentile)}%` : `Top ${formatPercentile(summary.ranking.percentile)}%`}</em>}
+                        <strong>{rankValue ?? (summary ? (zh ? '暂未上榜' : 'Not ranked yet') : '—')}</strong>
+                        {rankValue != null && <TrendBadge value={summary?.ranking?.delta} />}
+                        {rankValue != null && summary?.ranking?.percentile != null && <em>{zh ? `前 ${formatPercentile(summary.ranking.percentile)}%` : `Top ${formatPercentile(summary.ranking.percentile)}%`}</em>}
                       </div>
                     </div>
                     <div className="stat-block">
