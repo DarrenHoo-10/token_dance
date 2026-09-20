@@ -160,7 +160,7 @@ describe('Navigation & Locale Switching Tests', () => {
     expect(menuTrigger).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('sends signed-out visitors from the site home to login', async () => {
+  it('sends signed-out visitors from the site home to the public leaderboard', async () => {
     vi.spyOn(api, 'getSession').mockResolvedValue({
       authenticated: false,
       user: null,
@@ -189,8 +189,9 @@ describe('Navigation & Locale Switching Tests', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId('current-path')).toHaveTextContent('/login?return_to=/');
+      expect(screen.getByTestId('current-path')).toHaveTextContent('/leaderboard');
     });
+    expect(screen.queryByText('login-page')).not.toBeInTheDocument();
   });
 
   it('sends signed-in visitors from the site home to the official homepage', async () => {

@@ -100,8 +100,9 @@ export const Navbar: React.FC = () => {
               const input = document.querySelector<HTMLInputElement>('.sky-board-search input');
               input?.scrollIntoView({ block: 'center', behavior: 'smooth' });
               input?.focus({ preventScroll: true });
-            } else if (authenticated) personalAnalytics.show();
-            else navigate('/login?return_to=%2Fleaderboard');
+            } else {
+              personalAnalytics.show();
+            }
           }}
           aria-label={home ? (locale === 'zh-CN' ? '搜索开发者' : 'Find a developer') : t('publicProfile.headline')}
         >

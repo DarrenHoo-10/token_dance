@@ -3,7 +3,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { LocaleProvider } from '@/context/LocaleContext';
 import { NotificationProvider } from '@/context/NotificationContext';
-import { AuthProvider, useAuth } from '@/context/AuthContext';
+import { AuthProvider } from '@/context/AuthContext';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { SettingsLayout } from '@/components/layout/SettingsLayout';
 
@@ -51,9 +51,7 @@ const PreserveSearchRedirect: React.FC<{ to: string }> = ({ to }) => {
 };
 
 export const RootRedirect: React.FC = () => {
-  const { authenticated, loading } = useAuth();
-  if (loading) return null;
-  return authenticated ? <Navigate to="/leaderboard" replace /> : <Navigate to="/login?return_to=/" replace />;
+  return <Navigate to="/leaderboard" replace />;
 };
 
 export const App: React.FC = () => {

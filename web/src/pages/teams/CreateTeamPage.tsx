@@ -8,6 +8,7 @@ import { Input } from '@/components/common/Input';
 import { Select } from '@/components/common/Select';
 import { ErrorState } from '@/components/states/ErrorState';
 import { LoadingState } from '@/components/states/LoadingState';
+import { UnauthorizedState } from '@/components/states/UnauthorizedState';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { useTeam } from '@/context/TeamContext';
@@ -58,13 +59,6 @@ export const CreateTeamPage: React.FC = () => {
   const pageStateRef = useRef<CreateState>(pageState);
   pageStateRef.current = pageState;
   const userKey = user?.userId || user?.handle || 'anon';
-
-  useEffect(() => {
-    if (authLoading) return;
-    if (!authenticated) {
-      navigate('/login?return_to=%2Fteams%2Fnew', { replace: true });
-    }
-  }, [authLoading, authenticated, navigate]);
 
   useEffect(() => {
     if (!authenticated) return;
@@ -240,7 +234,9 @@ export const CreateTeamPage: React.FC = () => {
     }
   };
 
-  if (authLoading || pageState === 'checkingMembership') return <LoadingState />;
+  if (authLoading) return <LoadingState />;
+  if (!authenticated) return <UnauthorizedState />;
+  if (pageState === 'checkingMembership') return <LoadingState />;
 
   if (pageState === 'checkFailed') {
     return (
