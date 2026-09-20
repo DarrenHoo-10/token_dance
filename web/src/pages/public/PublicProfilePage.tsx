@@ -134,7 +134,7 @@ const PublicProfileContent: React.FC = () => {
 
       <div className="public-data-secondary-grid">
         <article className="panel"><div className="panel-header"><div><h2>{zh ? 'Agent 构成' : 'Agent Breakdown'}</h2><p className="text-muted">{zh ? '按 Token 占比' : 'By token share'}</p></div></div><AgentBreakdown items={displayAgents} /></article>
-        <article className="panel"><div className="panel-header"><div><h2>{zh ? '活跃日历' : 'Activity Calendar'}</h2><p className="text-muted">{zh ? '近 10 周活跃轨迹' : 'Activity across the last 10 weeks'}</p></div></div><ActivityCalendar days={displayCalendar} /></article>
+        <article className="panel"><div className="panel-header"><div><h2>{zh ? '活跃日历' : 'Activity Calendar'}</h2><p className="text-muted">{zh ? '近 10 周活跃轨迹' : 'Activity across the last 10 weeks'}</p></div></div><ActivityCalendar days={displayCalendar} streakDays={profile.currentStreak ?? 0} /></article>
         <article className="panel"><div className="panel-header"><div><h2>{zh ? 'Skill 排行榜' : 'Skill Ranking'}</h2><p className="text-muted">{zh ? '按调用次数排序' : 'Ranked by call count'}</p></div></div><SkillRanking skills={displaySkills} /></article>
       </div>
     </section>

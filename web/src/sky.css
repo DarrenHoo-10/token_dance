@@ -148,7 +148,10 @@
 .calendar-weekdays{font-size:10px;text-align:center;color:#839870;margin-bottom:10px}
 .calendar-month-grid{display:grid;gap:5px}
 .calendar-day{border:1px solid transparent;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:2px;width:100%;min-height:32px;padding:5px 2px;background:#f0f5e9;color:#5c7544;border-radius:7px;font-size:11px;cursor:pointer}
+.calendar-day-num{line-height:1.1}
+.calendar-day-usage{font-size:8px;line-height:1;font-weight:700;letter-spacing:-.2px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .calendar-day i{width:3px;height:3px;border-radius:50%;background:currentColor}
+.calendar-day.has-usage i{display:none}
 .calendar-day.level-1{background:#eaf4d9}
 .calendar-day.level-2{background:#d7edb6}
 .calendar-day.level-3{background:#c1e48e}

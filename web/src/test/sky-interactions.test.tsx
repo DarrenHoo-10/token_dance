@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
+import { ActivityCalendar, formatCalendarCompact } from '@/components/analytics/ActivityCalendar';
 import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
 import { LocaleProvider } from '@/context/LocaleContext';
 import { TeamSharingCard } from '@/pages/teams/TeamSharingCard';
@@ -24,6 +24,34 @@ describe('Sky analytics interactions', () => {
     expect(screen.getByRole('button', { name: '上个月' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: '下个月' }));
     expect(screen.getByRole('button', { name: '2026-02-28：8400 Token' })).toHaveAttribute('aria-pressed', 'true');
+  });
+  it('prints real compact usage on used days and keeps empty days unmarked', () => {
+    render(<LocaleProvider><ActivityCalendar days={[
+      { date: '2026-02-01', level: 2, tokenTotal: '1200000' },
+      { date: '2026-02-02', level: 3, tokenTotal: '373000' },
+      { date: '2026-02-03', level: 0, tokenTotal: '0' },
+    ]} streakDays={12} /></LocaleProvider>);
+    const usedMillion = screen.getByRole('button', { name: /2026-02-01/ });
+    const usedThousand = screen.getByRole('button', { name: /2026-02-02/ });
+    const zero = screen.getByRole('button', { name: /2026-02-03/ });
+    const missing = screen.getByRole('button', { name: /2026-02-04/ });
+    expect(usedMillion).toHaveTextContent('1.2M');
+    expect(usedThousand).toHaveTextContent('373K');
+    expect(zero).not.toHaveTextContent('0K');
+    expect(zero.querySelector('.calendar-day-usage')).toBeNull();
+    expect(missing).toBeDisabled();
+    expect(missing.querySelector('.calendar-day-usage')).toBeNull();
+    expect(screen.getByText('连续 12 天')).toBeInTheDocument();
+    expect(document.querySelector('.streak-badge')).toBeTruthy();
+  });
+  it('formats calendar compact totals like other product numbers', () => {
+    expect(formatCalendarCompact(1_200_000)).toBe('1.2M');
+    expect(formatCalendarCompact(373_000)).toBe('373K');
+    expect(formatCalendarCompact(3_000_000)).toBe('3M');
+    expect(formatCalendarCompact(42)).toBe('42');
+    expect(formatCalendarCompact(0)).toBe('');
+    expect(formatCalendarCompact(-8)).toBe('');
+    expect(formatCalendarCompact(Number.NaN)).toBe('');
   });
   it('supports keyboard trend selection and clamps it after the date range shrinks', () => {
     const view = (trends: { date: string; tokenTotal: string }[]) => <LocaleProvider><TokenTrendChart trends={trends} /></LocaleProvider>;

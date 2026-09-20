@@ -646,12 +646,13 @@
   align-items: center;
   gap: 4px;
   font-size: 10px;
-  color: #6d9147;
+  color: #c45a4a;
   padding: 5px 8px;
-  background: #f0f7e7;
+  background: #fdecea;
   border-radius: 15px;
   white-space: nowrap;
 }
+.calendar-section .streak-badge svg { color: currentColor; }
 
 .calendar-section .calendar-month-row,
 .calendar-section .calendar-month-heading {
@@ -701,24 +702,35 @@
 
 .calendar-section .calendar-day {
   min-width: 0;
-  height: 41px;
-  min-height: 41px;
+  height: 48px;
+  min-height: 48px;
   border-radius: 9px;
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-direction: row;
-  gap: 0;
+  flex-direction: column;
+  gap: 2px;
   background: #f5f7f1;
   border: 1px solid transparent;
   font-size: 12px;
   font-weight: 500;
-  padding: 0 0 4px;
+  padding: 3px 1px 4px;
   color: #151b13;
   outline: none;
   box-shadow: none;
   transition: background .15s, box-shadow .15s;
+}
+.calendar-section .calendar-day-num { font-size: 10px; line-height: 1.1; font-weight: 600; }
+.calendar-section .calendar-day-usage {
+  font-size: 8px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: -.2px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .calendar-section .calendar-day i {
@@ -746,7 +758,8 @@
 .calendar-section .calendar-day[data-intensity='4'] i,
 .calendar-section .calendar-day.level-4 i,
 .calendar-section .calendar-day.level-5 i { background: #6c9c31; width: 8px; border-radius: 3px; }
-.calendar-section .calendar-day[data-intensity='0'] i { display: none; }
+.calendar-section .calendar-day[data-intensity='0'] i,
+.calendar-section .calendar-day.has-usage i { display: none; }
 .calendar-section .calendar-day:disabled { color: #c4cbba; background: #fbfcf9; }
 .calendar-section .calendar-day:disabled i { display: none; }
 .calendar-section .calendar-day.is-today { border-color: #91b767; }
@@ -999,7 +1012,7 @@
   .agent-legend strong,
   .agent-donut-legend strong { grid-column: auto; font-size: 12px; }
   .analytics-lower-stack { gap: 16px; }
-  .calendar-section .calendar-day { height: 39px; }
+  .calendar-section .calendar-day { height: 44px; min-height: 44px; }
   .analytics-footnote { flex-direction: column; align-items: flex-start; gap: 9px; }
 }
 
@@ -1031,7 +1044,7 @@
   .agent-donut-chart { width: 113px; height: 113px; flex-basis: 113px; padding: 10px; }
   .agent-donut strong,
   .agent-donut-chart strong { font-size: 22px; }
-  .calendar-section .calendar-day { height: 34px; }
+  .calendar-section .calendar-day { height: 40px; min-height: 40px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
