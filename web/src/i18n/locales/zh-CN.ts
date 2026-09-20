@@ -465,7 +465,6 @@ export const zhCN = {
       days7: '近 7 天',
       days30: '近 30 天',
       tooLong: '自定义范围最多 90 天。',
-      customHint: '最多 90 天 · 应用后更新全部分析',
       showingPrevious: '日期尚未选齐，图表保留当前统计；首次打开显示今天。',
       chooseDates: '选齐日期后自动更新',
     },
