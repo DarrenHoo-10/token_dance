@@ -66,6 +66,7 @@ describe('Homepage podium public trends', () => {
     vi.spyOn(api, 'getActivityCalendar').mockResolvedValue({ days: [] } as never);
     showHome();
     await waitFor(() => expect(screen.getAllByText('暂未上榜')).toHaveLength(2));
+    expect(screen.getByText('本周期暂无有效用量，暂未有人上榜。')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: '查看 New 的公开创作轨迹' })).not.toBeInTheDocument();
     expect(screen.queryByText('前 10%')).not.toBeInTheDocument();
   });
