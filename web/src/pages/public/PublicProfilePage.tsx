@@ -73,11 +73,11 @@ const PublicProfileContent: React.FC = () => {
 
   const metrics = useMemo<PersonalSummaryMetrics | null>(() => {
     if (!profile) return null;
-    const total = Number(profile.tokenTotal || 0);
+    const total = Number(profile.showTokenTotal === false ? 0 : profile.tokenTotal || 0);
     const codeLines = Number(profile.codeLinesTotal || 0);
     return {
       estimatedCost: { amount: profile.estimatedCostTotal ?? null, currency: 'USD', supported: Boolean(profile.estimatedCostTotal) },
-      totalTokens: { value: profile.tokenTotal ?? null, supported: Boolean(profile.tokenTotal) },
+      totalTokens: { value: profile.showTokenTotal === false ? null : profile.tokenTotal ?? null, supported: profile.showTokenTotal !== false && profile.tokenTotal != null },
       generatedCodeLines: { value: profile.codeLinesTotal ?? null, supported: Boolean(profile.codeLinesTotal) },
       tokensPerCodeLine: { value: total > 0 && codeLines > 0 ? String(total / codeLines) : null, supported: total > 0 && codeLines > 0 },
       inputContextTokens: { value: null, supported: false },
@@ -125,7 +125,7 @@ const PublicProfileContent: React.FC = () => {
         <Button variant="outline" onClick={() => { navigator.clipboard.writeText(window.location.href); showToast(t('publicProfile.linkCopied'), 'success'); }}><Link2 size={16} aria-hidden="true" />{zh ? '复制链接' : 'Copy link'}</Button>
       </div>
 
-      <MetricGrid metrics={metrics} />
+      <MetricGrid metrics={metrics} compact tokenHidden={profile.showTokenTotal === false} />
 
       <div className="public-data-primary-grid">
         <article className="panel"><div className="panel-header"><div><h2>{zh ? 'Token 趋势' : 'Token Trend'}</h2><p className="text-muted">{zh ? '最近 30 天' : 'Last 30 days'}</p></div></div><TokenTrendChart trends={displayTrends} /></article>

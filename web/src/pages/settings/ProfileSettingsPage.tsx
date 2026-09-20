@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { useNotification } from '@/context/NotificationContext';
@@ -14,11 +14,14 @@ import type { UserProfile, Locale } from '@/types/api';
 
 export const ProfileSettingsPage: React.FC = () => {
   const { user, setUser, refreshSession } = useAuth();
-  const { setLocale, t } = useLocale();
+  const { setLocale, t, locale } = useLocale();
   const { showToast } = useNotification();
+  const localeRef = useRef(locale);
+  localeRef.current = locale;
 
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [saving, setSaving] = useState(false);
   const [avatarBusy, setAvatarBusy] = useState(false);
   const [error, setError] = useState<ApiError | Error | null>(null);
@@ -30,11 +33,21 @@ export const ProfileSettingsPage: React.FC = () => {
   const [selectedLocale, setSelectedLocale] = useState<Locale>('zh-CN');
 
   useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      if (!active) return;
+      active = false;
+      controller.abort();
+      setError(new Error(localeRef.current === 'zh-CN' ? '资料加载超时，请检查网络后重试。' : 'Profile loading timed out. Check your connection and retry.'));
+      setLoading(false);
+    }, 15_000);
     async function load() {
       try {
         setLoading(true);
         setError(null);
-        const p = await api.getProfile();
+        const p = await api.getProfile(controller.signal);
+        if (!active) return;
         setProfile(p);
         setDisplayName(p.displayName || '');
         setHandle(p.handle || '');
@@ -42,13 +55,15 @@ export const ProfileSettingsPage: React.FC = () => {
         setTimezone(p.timezone || 'Asia/Shanghai');
         setSelectedLocale(p.locale || 'zh-CN');
       } catch (err) {
-        setError(err instanceof ApiError ? err : new Error(String(err)));
+        if (active) setError(err instanceof ApiError ? err : new Error(String(err)));
       } finally {
-        setLoading(false);
+        window.clearTimeout(timer);
+        if (active) setLoading(false);
       }
     }
     load();
-  }, []);
+    return () => { active = false; controller.abort(); window.clearTimeout(timer); };
+  }, [loadAttempt]);
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,7 +106,7 @@ export const ProfileSettingsPage: React.FC = () => {
   };
 
   if (loading) return <LoadingState />;
-  if (error) return <ErrorState error={error} />;
+  if (error) return <ErrorState error={error} onRetry={() => setLoadAttempt(value => value + 1)} />;
 
   return (
     <div className="panel">

@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight, ArrowUpRight, BarChart3, Code2, Crown, Download, Monitor, UsersRound, Wallet, Zap,
-  Flame, ShieldCheck, TrendingDown, TrendingUp,
+  Flame, ShieldCheck, TrendingDown, TrendingUp, HelpCircle,
 } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import { useAuth } from '@/context/AuthContext';
@@ -73,14 +73,15 @@ function DeltaChip({ value, suffix }: { value?: number | null; suffix?: string }
   );
 }
 
-function HeroMiniCard({ label, value, delta, icon }: { label: string; value: string; delta?: number | null; icon: React.ReactNode }) {
+function HeroMiniCard({ label, value, delta, icon, help, unit }: { label: string; value: string; delta?: number | null; icon: React.ReactNode; help?: string; unit?: string }) {
   return (
     <div className="hero-mini-card">
       <span className="sky-metric-icon" aria-hidden="true">{icon}</span>
       <div>
-        <span className="hero-mini-label">{label}</span>
+        <span className="hero-mini-label">{label}{help && <details className="metric-help"><summary aria-label={`${label} · ${help}`}><HelpCircle size={13} /></summary><p>{help}</p></details>}</span>
         <div className="sky-metric-value">
           <strong className="hero-mini-value">{value ?? '—'}</strong>
+          {unit && <small>{unit}</small>}
           <DeltaChip value={delta} />
         </div>
       </div>
@@ -308,7 +309,7 @@ export const LeaderboardPage: React.FC = () => {
         <div className="sky-metrics">
           <HeroMiniCard icon={<UsersRound />} label={zh ? '活跃开发者' : 'Active devs'} value={community?.developers != null ? formatTokens(String(community.developers)).replace('.0K', 'K') : '—'} delta={community?.deltas?.developers} />
           <HeroMiniCard icon={<Code2 />} label={zh ? '生成代码行' : 'Code lines'} value={formatTokens(community?.codeLines)} delta={community?.deltas?.codeLines} />
-          <HeroMiniCard icon={<Zap />} label={zh ? 'AI 交互' : 'AI turns'} value={formatTokens(community?.interactions)} delta={community?.deltas?.interactions} />
+          <HeroMiniCard icon={<Zap />} label={zh ? '模型请求' : 'Model requests'} value={formatTokens(community?.interactions)} delta={community?.deltas?.interactions} unit={zh ? '次' : 'requests'} help={zh ? '统计当前周期内已同步的模型请求次数，与用户消息数、工具调用次数不同。仅覆盖已采集的来源。' : 'Synced model requests in this period, distinct from user messages and tool calls. Covers collected sources only.'} />
           <HeroMiniCard icon={<Wallet />} label={zh ? '预估费用' : 'Est. cost'} value={formatCommunityCost(community ?? {})} delta={community?.deltas?.costAmount} />
         </div>
       </section>
@@ -391,7 +392,7 @@ export const LeaderboardPage: React.FC = () => {
             <section className="panel sky-personal">
               <div className="panel-header">
                 <h2>{zh ? '我的过去 24h' : 'My past 24h'}</h2>
-                <button className="sky-icon-button" type="button" onClick={() => personalAnalytics.show()} aria-label={zh ? '打开个人数据' : 'Open analytics'}><ArrowUpRight size={19} /></button>
+                {authenticated && <button className="sky-text-link" type="button" onClick={() => personalAnalytics.show()} aria-label={zh ? '打开个人数据' : 'Open analytics'}>{zh ? '查看我的数据' : 'View my data'}<ArrowUpRight size={16} /></button>}
               </div>
               {authenticated ? (
                 <>
@@ -423,7 +424,7 @@ export const LeaderboardPage: React.FC = () => {
                   <ActivityCalendar days={calendarDays} streakDays={streak} />
                 </>
               ) : (
-                <p className="side-card-empty">{zh ? '登录后查看你的排名与统计。' : 'Sign in to see your rank and stats.'}</p>
+                <div className="sky-login-prompt"><p className="side-card-empty">{zh ? '登录后查看你的排名与统计。' : 'Sign in to see your rank and stats.'}</p><Link className="btn btn-dark" to="/login?return_to=%2Fme">{zh ? '登录查看' : 'Sign in to view'}<ArrowRight size={16} /></Link></div>
               )}
             </section>
           </aside>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowDownRight, ArrowRight, ArrowUpRight, BarChart3, CheckCheck, ChevronDown, Download, Flame, Layers3, RefreshCw, ShieldCheck, Sparkles, Trophy } from 'lucide-react';
+import { ArrowDownRight, ArrowRight, ArrowUpRight, BarChart3, CheckCheck, Download, Flame, Layers3, RefreshCw, ShieldCheck, Sparkles, Trophy } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { useNotification } from '@/context/NotificationContext';
@@ -9,6 +9,7 @@ import { ErrorState } from '@/components/states/ErrorState';
 import { UnauthorizedState } from '@/components/states/UnauthorizedState';
 import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
 import { personalTokenRank } from '@/components/analytics/tokenRanking';
+import { FilterSelect } from '@/components/common/FilterSelect';
 import { AgentBreakdown } from '@/components/analytics/AgentBreakdown';
 import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
 import { SkillRanking } from '@/components/analytics/SkillRanking';
@@ -139,7 +140,7 @@ function overlayMetrics(metrics: PersonalSummaryMetrics | undefined, zh: boolean
     { key: 'totalTokens', name: zh ? '总 Token' : 'Total tokens', ...(metrics?.totalTokens?.supported === false ? dash : tokens ?? dash), hint: zh ? '本周期已同步用量' : 'Synced usage this period', change: parseChange(metrics?.totalTokens), supported: metrics?.totalTokens?.supported !== false },
     { key: 'estimatedCost', name: zh ? '预估费用' : 'Estimated cost', value: protoCost(cost.value) ?? '—', unit: '', hint: zh ? '估算值 · USD' : 'Estimated · USD', change: null, supported: cost.supported },
     { key: 'generatedCodeLines', name: zh ? '生成代码行' : 'Lines of code', ...(metrics?.generatedCodeLines?.supported === false ? dash : lines ?? dash), hint: zh ? '工具记录的代码行数' : 'Recorded by supported tools', change: parseChange(metrics?.generatedCodeLines), supported: metrics?.generatedCodeLines?.supported !== false },
-    { key: 'messageCount', name: zh ? '总消息数' : 'Total messages', ...(metrics?.messageCount?.supported === false ? dash : messages ?? dash), hint: zh ? '已记录的交互轮次' : 'Recorded interactions', change: parseChange(metrics?.messageCount), supported: metrics?.messageCount?.supported !== false },
+    { key: 'messageCount', name: zh ? '总消息数' : 'Total messages', ...(metrics?.messageCount?.supported === false ? dash : messages ?? dash), hint: zh ? '工具记录的消息与轮次事件，非模型请求数' : 'Recorded message/turn events, not model requests', change: parseChange(metrics?.messageCount), supported: metrics?.messageCount?.supported !== false },
     { key: 'activeDurationMs', name: zh ? '会话总时长' : 'Session duration', ...(metrics?.activeDurationMs?.supported === false ? dash : duration ?? dash), hint: zh ? '已记录会话累计时长' : 'Combined recorded sessions', change: parseChange(metrics?.activeDurationMs), supported: metrics?.activeDurationMs?.supported !== false },
     { key: 'inputContextTokens', name: zh ? '输入上下文' : 'Input context', ...(metrics?.inputContextTokens?.supported === false ? dash : input ?? dash), hint: 'Prompt + Cache read', change: parseChange(metrics?.inputContextTokens), supported: metrics?.inputContextTokens?.supported !== false },
     { key: 'outputTokens', name: zh ? '输出 Token' : 'Output tokens', ...(metrics?.outputTokens?.supported === false ? dash : output ?? dash), hint: zh ? '补全与生成 Token' : 'Completion and generation', change: parseChange(metrics?.outputTokens), supported: metrics?.outputTokens?.supported !== false },
@@ -173,6 +174,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
     providers: [],
     models: [],
   });
+  const [filterStatus, setFilterStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [devices, setDevices] = useState<CollectorDevice[] | null>(null);
 
   const [error, setError] = useState<ApiError | Error | null>(null);
@@ -206,13 +208,11 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
   }, [range, selectedAgent, selectedModel]);
 
   const fetchStatic = useCallback(async () => {
-    const [calRes, filterRes] = await Promise.all([
-      api.getActivityCalendar('10w'),
-      api.getFilterOptions(),
+    setFilterStatus('loading');
+    await Promise.all([
+      api.getActivityCalendar('10w').then(calRes => { setCalendarDays(calRes.days || []); setCalendarStreak(calRes.currentStreak || 0); }).catch(() => setCalendarDays([])),
+      api.getFilterOptions().then(filterRes => { setFilterOptions(filterRes); setFilterStatus('ready'); }).catch(() => setFilterStatus('error')),
     ]);
-    setCalendarDays(calRes.days || []);
-    setCalendarStreak(calRes.currentStreak || 0);
-    setFilterOptions(filterRes);
   }, []);
 
   useEffect(() => {
@@ -333,7 +333,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
                   <span>{zh ? (range === 'today' ? '较前 24h' : '较上期') : (range === 'today' ? 'vs prior 24h' : 'vs prior period')}</span>
                 </>
               ) : (
-                <span>{metric.hint}</span>
+                <span>{!summary?.sync.lastCommittedAt && metric.value === '—' ? (zh ? '等待首次同步' : 'Waiting for first sync') : !metric.supported ? (zh ? '当前来源暂无此项数据' : 'Unavailable from current sources') : metric.value === '—' ? (zh ? '本周期暂无记录' : 'No records in this period') : metric.hint}</span>
               )}
             </div>
           </div>
@@ -363,30 +363,17 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
             <span className="source-counter"><span />{zh ? '已同步用量' : 'Synced usage'}</span>
           </div>
           <div className="analytics-filter-row">
-            <label>
-              <span className="sr-only">{zh ? '趋势 Agent 筛选' : 'Trend agent filter'}</span>
-              <select aria-label={zh ? '趋势 Agent 筛选' : 'Trend agent filter'} value={selectedAgent} onChange={(event) => setSelectedAgent(event.target.value)}>
-                <option value="all">{zh ? '全部 Agent' : 'All agents'}</option>
-                {filterOptions.agents.map((agent) => {
-                  const key = optionKey(agent);
-                  return <option key={key} value={key}>{optionLabel(agent)}</option>;
-                })}
-              </select>
-              <ChevronDown size={12} />
-            </label>
-            <label>
-              <span className="sr-only">{zh ? '趋势模型筛选' : 'Trend model filter'}</span>
-              <select aria-label={zh ? '趋势模型筛选' : 'Trend model filter'} value={selectedModel} onChange={(event) => setSelectedModel(event.target.value)}>
-                <option value="all">{zh ? '全部模型' : 'All models'}</option>
-                {filterOptions.models.map((model) => {
-                  const key = optionKey(model);
-                  return <option key={key} value={key}>{optionLabel(model)}</option>;
-                })}
-              </select>
-              <ChevronDown size={12} />
-            </label>
+            <FilterSelect label={zh ? '趋势 Agent 筛选' : 'Trend agent filter'} value={selectedAgent} onChange={setSelectedAgent} disabled={filterStatus !== 'ready' || !filterOptions.agents.length} options={[
+              { value: 'all', label: filterOptions.agents.length ? (zh ? '全部 Agent' : 'All agents') : (zh ? '暂无 Agent' : 'No agents') },
+              ...filterOptions.agents.map(agent => ({ value: optionKey(agent), label: optionLabel(agent) })),
+            ]} />
+            <FilterSelect label={zh ? '趋势模型筛选' : 'Trend model filter'} value={selectedModel} onChange={setSelectedModel} disabled={filterStatus !== 'ready' || !filterOptions.models.length} options={[
+              { value: 'all', label: filterOptions.models.length ? (zh ? '全部模型' : 'All models') : (zh ? '暂无模型' : 'No models') },
+              ...filterOptions.models.map(model => ({ value: optionKey(model), label: optionLabel(model) })),
+            ]} />
             <small>{zh ? '仅筛选趋势图' : 'Chart filters only'}</small>
           </div>
+          {filterStatus === 'error' ? <p className="filter-status" role="status">{zh ? '筛选选项加载失败。' : 'Filters could not be loaded. '}<button type="button" className="text-link" onClick={fetchStatic}>{t('common.retry')}</button></p> : filterStatus === 'loading' ? <p className="filter-status">{zh ? '正在加载筛选选项…' : 'Loading filters…'}</p> : (!filterOptions.agents.length || !filterOptions.models.length) && <p className="filter-status">{zh ? '尚未同步的来源或模型暂不可筛选。' : 'Sources and models become available after sync.'}</p>}
           {!trendsReady && !displayTrends.length ? (
             <div className="analytics-chart-empty" aria-busy="true">
               <Layers3 size={28} />

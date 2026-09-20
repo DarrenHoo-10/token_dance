@@ -1050,3 +1050,21 @@
 @media (prefers-reduced-motion: reduce) {
   .analytics-dialog[open] { animation: none; }
 }
+
+/* The toolbar stays outside the scrolling analytics content. */
+.analytics-dialog{overflow:hidden}
+.analytics-dialog[open]{display:flex;flex-direction:column}
+.analytics-dialog-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex:none;padding:10px 20px;border-bottom:1px solid #edf2e8;background:#fff;color:#617153;font-size:12px}
+.analytics-dialog .analytics-dialog-toolbar .close-dialog{position:static;float:none;margin:0;width:36px;height:36px;flex:none}
+.analytics-dialog .analytics-dialog-scroll{min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#cad6be transparent;padding-top:20px;max-height:calc(100dvh - 108px)}
+.filter-select{position:relative;min-width:0;max-width:200px}
+.personal-analytics .filter-select>button{display:flex;align-items:center;justify-content:space-between;gap:8px;max-width:100%;min-height:34px;padding:7px 11px;border:1px solid #dce6d2;border-radius:16px;background:#f8faf5;color:#50683b;font-size:12px}
+.filter-select>button>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.personal-analytics .filter-select>button:disabled{cursor:default;color:#87937e;background:#f5f7f2;border-color:#e6ebdf}
+.filter-select>button:focus-visible{outline:2px solid #789d50;outline-offset:2px}
+.filter-options{position:absolute;top:calc(100% + 6px);left:0;z-index:10;width:max-content;min-width:100%;max-width:min(300px,80vw);max-height:220px;overflow:auto;margin:0;padding:5px;list-style:none;border:1px solid #dce6d2;border-radius:12px;background:#fff;box-shadow:0 8px 28px #24331e20}
+.filter-options [role=option]{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:9px 11px;border-radius:7px;color:#405432;font-size:12px;cursor:pointer;overflow-wrap:anywhere}
+.filter-options .is-active{background:#edf5e4}
+.filter-status{margin-top:8px!important;font-size:11px;color:#6f7e62;line-height:1.6}
+.filter-status button{margin-left:6px}
+@media(max-width:760px){.analytics-dialog .analytics-dialog-scroll{max-height:calc(100dvh - 84px)}.analytics-dialog-toolbar{padding:8px 16px}.filter-select{max-width:calc(50% - 4px)}.filter-select:nth-child(2) .filter-options{left:auto;right:0}}

@@ -49,7 +49,7 @@ describe('Auth & Onboarding Flow Tests', () => {
     });
 
     const emailInput = screen.getByPlaceholderText('name@example.com');
-    const passwordInput = screen.getByPlaceholderText('••••••••••••');
+    const passwordInput = screen.getByPlaceholderText('请输入密码');
     const submitBtn = screen.getByRole('button', { name: '登录 TokenDance' });
 
     fireEvent.change(emailInput, { target: { value: 'test@example.com' } });
@@ -188,7 +188,7 @@ describe('Auth & Onboarding Flow Tests', () => {
       );
 
       const emailInput = await screen.findByPlaceholderText('name@example.com');
-      const passwordInput = screen.getByPlaceholderText(mode === 'login' ? '••••••••••••' : '至少 8 个字符');
+      const passwordInput = screen.getByPlaceholderText(mode === 'login' ? '请输入密码' : '至少 8 个字符');
       const submitButton = screen.getByRole('button', { name: mode === 'login' ? '登录 TokenDance' : '验证并完成注册' });
       const form = passwordInput.closest('form')!;
       fireEvent.change(emailInput, { target: { value: 'member@example.com' } });

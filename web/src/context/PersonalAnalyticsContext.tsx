@@ -96,10 +96,13 @@ export function PersonalAnalyticsDialog({
       aria-labelledby="personal-analytics-heading"
       aria-hidden={open ? undefined : 'true'}
     >
-      <div className="dialog-inner">
+      <div className="analytics-dialog-toolbar">
+        <span>{zh ? '个人数据' : 'Personal analytics'}</span>
         <button type="button" className="icon-button close-dialog" onClick={onClose} aria-label={zh ? '关闭' : 'Close'}>
           <X size={21} />
         </button>
+      </div>
+      <div className="dialog-inner analytics-dialog-scroll">
         <PersonalAnalytics onLeave={onClose} active={ready || open} />
       </div>
     </dialog>

@@ -162,7 +162,8 @@ describe('Personal analytics overlay', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Test Dev，你的创造正在发生。' });
     fireEvent.click(within(dialog).getByRole('button', { name: '近 7 天' }));
     await waitFor(() => expect(api.getPersonalSummary).toHaveBeenCalledWith('7d'));
-    fireEvent.change(within(dialog).getByLabelText('趋势 Agent 筛选'), { target: { value: 'cursor' } });
+    fireEvent.click(within(dialog).getByRole('combobox', { name: '趋势 Agent 筛选' }));
+    fireEvent.click(within(dialog).getByRole('option', { name: 'cursor' }));
     expect(await within(dialog).findByText('没有符合筛选的记录')).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: /重置筛选/ }));
     await waitFor(() => expect(within(dialog).queryByText('没有符合筛选的记录')).not.toBeInTheDocument());
