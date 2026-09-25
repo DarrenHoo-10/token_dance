@@ -16,7 +16,7 @@ import { useNotification } from '@/context/NotificationContext';
 import { ErrorState } from '@/components/states/ErrorState';
 import { LoadingState } from '@/components/states/LoadingState';
 import { api, ApiError } from '@/api/client';
-import type { PersonalSummaryMetrics, PublicUserProfile, SkillItem, TokenTrendPoint } from '@/types/api';
+import type { PersonalSummaryMetrics, PublicUserProfile, SkillItem, TokenTrendPoint, TokenTrendsResponse } from '@/types/api';
 
 export const PublicProfilePage: React.FC = () => {
   const { handle } = useParams<{ handle: string }>();
@@ -45,6 +45,7 @@ const PublicProfileContent: React.FC = () => {
   const zh = locale === 'zh-CN';
   const [profile, setProfile] = useState<PublicUserProfile | null>(null);
   const [trends, setTrends] = useState<TokenTrendPoint[]>([]);
+  const [trendRange, setTrendRange] = useState<TokenTrendsResponse['range']>(undefined);
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<ApiError | Error | null>(null);
@@ -61,6 +62,7 @@ const PublicProfileContent: React.FC = () => {
       ]);
       setProfile(profileRes);
       setTrends(trendRes?.points || trendRes?.trends || profileRes.tokenTrend || []);
+      setTrendRange(trendRes?.range);
       setSkills(skillRes?.skills || skillRes?.items || profileRes.skillRanking || []);
     } catch (err) {
       setError(err instanceof ApiError ? err : new Error(String(err)));
@@ -128,7 +130,7 @@ const PublicProfileContent: React.FC = () => {
       <MetricGrid metrics={metrics} compact tokenHidden={profile.showTokenTotal === false} />
 
       <div className="public-data-primary-grid">
-        <article className="panel"><div className="panel-header"><div><h2>{zh ? 'Token 趋势' : 'Token Trend'}</h2><p className="text-muted">{zh ? '最近 30 天' : 'Last 30 days'}</p></div></div><TokenTrendChart trends={displayTrends} /></article>
+        <article className="panel"><div className="panel-header"><div><h2>{zh ? 'Token 趋势' : 'Token Trend'}</h2><p className="text-muted">{zh ? '最近 30 天' : 'Last 30 days'}</p></div></div><TokenTrendChart trends={displayTrends} range={trendRange} /></article>
         <article className="panel"><div className="public-rank-label">{zh ? '全球排名' : 'Global Rank'}</div><strong className="public-rank-value mono-num">{profile.rank ? `#${profile.rank}` : '—'}</strong><span className="public-rank-delta">{profile.rankDelta ? `${profile.rankDelta > 0 ? '+' : ''}${profile.rankDelta}` : ''}</span><p>{zh ? 'TokenBoard 公开排名' : 'Public TokenBoard position'}</p></article>
       </div>
 

@@ -48,4 +48,38 @@ describe('Trend time axis', () => {
     expect(months.ticks.map(tick => tick.label)).toEqual(['2026-01', '2026-02', '2026-03', '2026-04']);
     expect(trendTimeAxis([{ date: 'invalid' }], 7).points).toEqual([]);
   });
+
+  it('fills every selected hourly and daily bucket, including empty edges', () => {
+    const hourly = trendTimeAxis(
+      [{ date: '2026-09-20 12:00', tokenTotal: '50' }], 7,
+      { key: 'today', from: '2026-09-19T15:00:00Z', to: '2026-09-20T14:42:00Z', timezone: 'Asia/Shanghai' },
+    );
+    expect(hourly.points).toHaveLength(24);
+    expect(hourly.points[0]).toMatchObject({ date: '2026-09-19 23:00', total: 0 });
+    expect(hourly.points[13]).toMatchObject({ date: '2026-09-20 12:00', total: 50 });
+    expect(hourly.points[23]).toMatchObject({ date: '2026-09-20 22:00', total: 0 });
+    expect(hourly.span).toBe(23 * 3600000);
+    expect(hourly.ticks[0].label).toBe('09.19 23:00');
+    expect(hourly.ticks.at(-1)?.label).toBe('22:00');
+
+    for (const [key, days] of [['7d', 7], ['30d', 30]] as const) {
+      const start = key === '7d' ? '2026-09-13T16:00:00Z' : '2026-08-21T16:00:00Z';
+      const daily = trendTimeAxis([{ date: '2026-09-18', tokenTotal: '75' }], 7,
+        { key, from: start, to: '2026-09-20T14:42:00Z', timezone: 'Asia/Shanghai' });
+      expect(daily.points).toHaveLength(days);
+      expect(daily.points[0].total).toBe(0);
+      expect(daily.points.at(-1)).toMatchObject({ date: '2026-09-20', total: 0 });
+      expect(daily.points.find(point => point.date === '2026-09-18')?.total).toBe(75);
+      expect(daily.ticks[0].label).toBe(key === '7d' ? '09.14' : '08.22');
+      expect(daily.ticks.at(-1)?.label).toBe('09.20');
+    }
+  });
+
+  it('draws an all-zero selected range instead of an empty state', () => {
+    render(<LocaleProvider><TokenTrendChart trends={[]} range={{
+      key: '7d', from: '2026-09-13T16:00:00Z', to: '2026-09-20T14:42:00Z', timezone: 'Asia/Shanghai',
+    }} /></LocaleProvider>);
+    expect(screen.getByRole('slider')).toHaveAttribute('max', '6');
+    expect(screen.getByRole('slider')).toHaveAttribute('aria-valuetext', '2026-09-20: 0 Token');
+  });
 });

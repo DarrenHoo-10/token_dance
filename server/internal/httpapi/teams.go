@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	teamCacheControl = "private, no-store"
-	teamJSONMaxBytes = 16 * 1024
+	teamCacheControl       = "private, no-store"
+	teamAvatarCacheControl = "private, max-age=300, must-revalidate"
+	teamJSONMaxBytes       = 16 * 1024
 )
 
 func writeTeamJSON(w http.ResponseWriter, status int, data interface{}) {
@@ -854,11 +855,8 @@ func (h *Handlers) GetTeamAvatarContent(w http.ResponseWriter, r *http.Request) 
 		writeTeamError(w, r, err)
 		return
 	}
-	w.Header().Set("Cache-Control", teamCacheControl)
-	w.Header().Set("Content-Type", content.ContentType)
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(content.Body)
+	w.Header().Set("Vary", "Cookie, Authorization")
+	writeCachedContent(w, r, content.Body, content.ContentType, teamAvatarCacheControl)
 }
 
 func emptyToNil(s string) interface{} {

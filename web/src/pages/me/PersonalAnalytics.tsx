@@ -280,7 +280,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
 
   const displayTrends = trends?.points || trends?.trends || [];
   const filtered = selectedAgent !== 'all' || selectedModel !== 'all';
-  const chartEmpty = trendsReady && !trendError && displayTrends.length === 0;
+  const chartEmpty = trendsReady && !trendError && displayTrends.length === 0 && !trends?.range;
   const selectionTotal = displayTrends.reduce((sum, point) => sum + (Number(point.tokenTotal) || 0), 0);
   const selectionLabel = formatSelectionTokens(selectionTotal, locale);
   const hourly = trendsHourly(trends, displayTrends);
@@ -393,7 +393,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
               )}
             </div>
           ) : (
-            <TokenTrendChart key={`${range}-${selectedAgent}-${selectedModel}`} trends={displayTrends} />
+            <TokenTrendChart key={`${range}-${selectedAgent}-${selectedModel}`} trends={displayTrends} range={trends?.range} />
           )}
           <div className="trend-precise-total">
             <span>{zh ? '筛选内 Token' : 'Tokens in selection'}</span>

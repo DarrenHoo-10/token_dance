@@ -8,7 +8,7 @@ import { useLocale } from '@/context/LocaleContext';
 import { TeamDateField } from './TeamDateField';
 import { getApiErrorMessage } from '@/i18n';
 import { UserAvatar } from '@/components/common/UserAvatar';
-import { avatarUrl } from '@/utils/avatar';
+import { teamAvatarUrl } from '@/utils/avatar';
 import {
   TEAM_RANGE_MAX_DAYS,
   calendarDateInTimeZone,
@@ -40,11 +40,11 @@ export async function persistTeamAvatar(scope: TeamScope, file: File): Promise<T
   });
 }
 
-export const TeamAvatar: React.FC<{ team: Pick<Team, 'id' | 'name' | 'avatarUrl'>; size?: 'sm' | 'md' | 'lg' }> = ({
+export const TeamAvatar: React.FC<{ team: Pick<Team, 'id' | 'name' | 'avatarUrl' | 'profileVersion'>; size?: 'sm' | 'md' | 'lg' }> = ({
   team,
   size = 'md',
 }) => {
-  const src = team.avatarUrl ? avatarUrl(team.avatarUrl.startsWith('/api/') ? team.avatarUrl : `/api/v1/teams/${team.id}/avatar/content`) : '';
+  const src = teamAvatarUrl(team);
   return (
     <span className={`team-letter-avatar ${size === 'md' ? '' : size}`.trim()} aria-hidden="true">
       {src ? <img src={src} alt="" /> : firstGrapheme(team.name)}

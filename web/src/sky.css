@@ -40,8 +40,6 @@
 .sky-hero-copy h1 span{color:#91d52f;position:relative}
 .sky-hero-copy h1 span:after{content:'';position:absolute;bottom:-9px;height:7px;left:1%;right:-8%;border-top:2px solid #a8e93f;border-radius:50%;transform:rotate(-4deg)}
 .sky-hero-copy>p:not(.eyebrow){font-size:16px;margin-top:22px;letter-spacing:.4px}
-.sky-hero-copy>.hero-action{display:flex;gap:12px;align-items:center;margin-top:27px;padding:0 0 8px;border:0;border-bottom:1px solid #8ca478;background:none;cursor:pointer;font:inherit;font-size:12px;color:#3c5630}
-.sky-hero-copy>.hero-action:hover{color:#111b0b;border-color:#273d12}
 .sky-orb{position:absolute;top:93px;left:50.2%;transform:translateX(-50%);display:flex;align-items:center;flex-direction:column;width:350px;text-align:center;z-index:2}
 .sky-orb>span:first-child{font-size:20px;font-weight:600}
 .sky-orb>strong{font-family:'Segoe UI Variable Display','Segoe UI',var(--font-sans);font-size:clamp(72px,6vw,104px);line-height:.95;letter-spacing:-.055em;color:#0d1607;font-weight:800;max-width:100%;overflow-wrap:anywhere}
@@ -405,7 +403,6 @@
 .sky-hero-copy h1{font-size:clamp(37px,8.8vw,63px);letter-spacing:-2.6px}
 .sky-hero-copy .eyebrow{font-size:8px;letter-spacing:2.6px;margin-bottom:16px}
 .sky-hero-copy>p:not(.eyebrow){font-size:13px;margin-top:22px}
-.sky-hero-copy>.hero-action{font-size:11px;margin-top:18px}
 .sky-orb{left:50%;top:266px;width:275px}
 .sky-orb>strong{font-size:90px;letter-spacing:-5px}
 .sky-orb>span:first-child{font-size:18px}

@@ -1783,12 +1783,18 @@ fn codex_patch_requires_success_and_is_replay_idempotent() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("patch.jsonl");
     let patch = "*** Begin Patch\n*** Update File: fixture.rs\n@@\n-old\n+new\n*** End Patch";
+    let wrapped = format!(
+        "text(await tools.apply_patch({}));",
+        serde_json::to_string(patch).unwrap()
+    );
     let records = vec![
         json!({"type":"session_meta","timestamp":now,"payload":{"id":"patch-session"}}),
         json!({"type":"response_item","timestamp":now+1,"payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"ok","input":patch}}),
         json!({"type":"response_item","timestamp":now+2,"payload":{"type":"custom_tool_call_output","call_id":"ok","output":"Success. Updated the following files:"}}),
         json!({"type":"response_item","timestamp":now+3,"payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"failed","input":patch}}),
         json!({"type":"response_item","timestamp":now+4,"payload":{"type":"custom_tool_call_output","call_id":"failed","output":"patch failed"}}),
+        json!({"type":"response_item","timestamp":now+5,"payload":{"type":"custom_tool_call","name":"exec","call_id":"wrapped","input":wrapped}}),
+        json!({"type":"response_item","timestamp":now+6,"payload":{"type":"custom_tool_call_output","call_id":"wrapped","output":[{"type":"input_text","text":"Script completed with output:"},{"type":"input_text","text":"{}"}]}}),
     ];
     std::fs::write(
         &path,
@@ -1812,7 +1818,7 @@ fn codex_patch_requires_success_and_is_replay_idempotent() {
             c.execute(r#"UPDATE collection_sources SET cursor_json='{"offset":0}', decoder_state_json='{}' WHERE id=?1"#,[id])?;
             Ok(())
         }).unwrap();
-        for _ in 0..6 {
+        for _ in 0..8 {
             let sink = StoreSinkMut::new(&mut store);
             run_source_once(
                 &sink,
@@ -1825,7 +1831,7 @@ fn codex_patch_requires_success_and_is_replay_idempotent() {
             )
             .unwrap();
         }
-        assert_eq!(store.event_count().unwrap(), 2);
+        assert_eq!(store.event_count().unwrap(), 3);
     }
 }
 

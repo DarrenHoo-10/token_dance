@@ -10,7 +10,7 @@ import { useLocale } from '@/context/LocaleContext';
 import { useTeam } from '@/context/TeamContext';
 import { InviteDialog } from './InviteDialog';
 import { MemberAvatar, teamErrorMessage } from './TeamShared';
-import { avatarUrl } from '@/utils/avatar';
+import { teamAvatarUrl } from '@/utils/avatar';
 import { formatDotDate, formatUtcOffset } from './teamUtils';
 import { BarChart3, Globe2, Layers3, LockKeyhole, Plus, Settings2, UsersRound } from 'lucide-react';
 import type { TeamMember } from '@/api/teams';
@@ -73,9 +73,7 @@ export const TeamLayout: React.FC = () => {
 
   const { team, permissions } = scope;
   const query = location.search;
-  const avatarSrc = team.avatarUrl
-    ? avatarUrl(team.avatarUrl.startsWith('/api/') ? team.avatarUrl : `/api/v1/teams/${team.id}/avatar/content`)
-    : '';
+  const avatarSrc = teamAvatarUrl(team);
   const memberCount = team.memberCount ?? faces.length;
   const extraFaces = Math.max(0, faces.length - 5);
   const outlet: TeamOutletContext = {
