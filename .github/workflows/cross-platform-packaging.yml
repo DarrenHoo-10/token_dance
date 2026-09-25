@@ -407,8 +407,8 @@ jobs:
       - name: Stage free unnotarized DMG
         if: github.event_name == 'workflow_dispatch' && inputs.unnotarized_macos_release
         run: |
-          cp collector/apps/desktop/release/*-macos-${{ matrix.architecture }}-unnotarized.dmg collector/packaging/macos/release/
-          cp collector/apps/desktop/release/*-macos-${{ matrix.architecture }}-unnotarized.dmg.sha256 collector/packaging/macos/release/
+          cp collector/apps/desktop/release/*-macos-${{ matrix.architecture }}.dmg collector/packaging/macos/release/
+          cp collector/apps/desktop/release/*-macos-${{ matrix.architecture }}.dmg.sha256 collector/packaging/macos/release/
       - uses: actions/upload-artifact@v4
         if: github.event_name == 'workflow_dispatch' && inputs.unnotarized_macos_release
         with:

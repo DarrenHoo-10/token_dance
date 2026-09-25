@@ -25,9 +25,13 @@ class UnnotarizedTests(unittest.TestCase):
         for forbidden in ('notarytool', 'disable-library-validation', '--master-disable', 'xattr -d'):
             self.assertNotIn(forbidden,source)
         workflow = (ROOT / '.github/workflows/cross-platform-packaging.yml').read_text()
+        mac_build = (ROOT / 'collector/apps/desktop/scripts/build-macos.mjs').read_text()
         self.assertIn('unnotarized_macos_release:',workflow)
         self.assertIn('inputs.sign_release || inputs.unnotarized_macos_release',workflow)
         self.assertIn('tokendance-desktop-macos-${{ matrix.architecture }}-unnotarized',workflow)
+        self.assertIn('TokenDance-${version}-macos-${outArch}.dmg', mac_build)
+        self.assertNotIn('TokenDance-${version}-macos-${outArch}-unnotarized.dmg', mac_build)
+        self.assertIn('*-macos-${{ matrix.architecture }}.dmg collector/packaging/macos/release/', workflow)
 
 
 if __name__ == '__main__': unittest.main()
