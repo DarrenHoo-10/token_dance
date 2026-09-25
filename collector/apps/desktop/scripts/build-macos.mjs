@@ -151,7 +151,7 @@ run("lipo", [binary, "-verify_arch", outArch]);
 const identity = options.notarized ? resolveSigningIdentity() : null;
 let notarizedInfo = null;
 if (!options.debug && !options.notarized) {
-  const dmg = path.join(releaseDir, `TokenDance-${version}-macos-${outArch}-unnotarized.dmg`);
+  const dmg = path.join(releaseDir, `TokenDance-${version}-macos-${outArch}.dmg`);
   run("python3", [path.resolve(desktopRoot, "../../packaging/macos/package-unnotarized.py"), staged, dmg]);
   notarizedInfo = JSON.parse(fs.readFileSync(dmg.replace(/\.dmg$/, ".build-info.json"), "utf8"));
   if (installToApplications) installSignedApp(staged);

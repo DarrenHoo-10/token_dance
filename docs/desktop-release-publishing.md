@@ -123,13 +123,13 @@ npm --prefix collector/apps/desktop run build:macos -- x86_64 --unnotarized --no
 
 默认不传签名选项时同样走未公证分发。`--notarized` 才启用下文的付费签名、公证流程；两个选项不能同时使用。CI 手动运行 `cross-platform-packaging` 时选择 `main`，勾选 `unnotarized_macos_release`，不要同时勾选 `sign_release`。此路径不会读取任何 Apple 发布 secrets。
 
-输出 `TokenDance-<version>-macos-<architecture>-unnotarized.dmg`、`.dmg.sha256` 和 `.build-info.json`。应用使用免费的 ad-hoc 签名保证基本包完整性，这不等于 Developer ID 身份认证或 Apple 公证。元数据明确记录 `notarized=false`、`signingAuthority=adhoc`、`credentialStore=login-keychain`。发布器和下载页都保留此标识，禁止把未公证包标为已公证。
+输出 `TokenDance-<version>-macos-<architecture>.dmg`、`.dmg.sha256` 和 `.build-info.json`。文件名不编码公证状态；应用使用免费的 ad-hoc 签名保证基本包完整性，这不等于 Developer ID 身份认证或 Apple 公证。元数据明确记录 `notarized=false`、`signingAuthority=adhoc`、`credentialStore=login-keychain`。发布器和下载页都保留此标识，禁止把未公证包标为已公证。
 
 用户安装：打开 DMG，拖入 Applications，从“应用程序”启动。如果 macOS 因无法验证开发者而阻止首次打开，在确认文件来自项目下载页后进入“系统设置 → 隐私与安全 → 仍要打开”。不要求关闭整个 Gatekeeper，也不提供关闭系统保护或移除隔离标记的脚本。
 
 免费版本保留登录、设备签名和自动同步，使用系统加密的传统登录钥匙串，不使用明文凭据降级。后台读写保持静默；系统锁定或升级后访问权改变时保留原密钥，用户可在恢复页面点击“授权并继续”，或手动登录/重试时授权。恢复页显示进行中、取消和失败状态，支持再次尝试；授权成功后在同一进程中继续初始化并打开主窗口，不通过重启丢失临时授权。系统提供的“始终允许”可减少相同构建重启后的重复授权；ad-hoc 构建升级后仍可能需要重新允许。切换到付费 DP Keychain 发行不能无条件替换已有身份。
 
-上传及登记仍用下方同一 `publish_manifest.py --platform ... --dmg ...` 命令，文件名选择 `-unnotarized` 产物。CLI 从 build-info 读取真实公证状态，无需伪造证书或公证记录；主分支、哈希、大小、架构及远端字节检查仍然执行。
+上传及登记仍用下方同一 `publish_manifest.py --platform ... --dmg ...` 命令。CLI 从 build-info 读取真实公证状态，无需伪造证书或公证记录；主分支、哈希、大小、架构及远端字节检查仍然执行。两种签名模式使用相同的文件名格式，不能在同一个版本号下互相替换。
 
 ### 可选的 Developer ID 公证分发
 
