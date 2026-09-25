@@ -333,7 +333,13 @@ fn configure_window(window: &WebviewWindow, ignore_mouse: bool) -> Result<(), St
     native.setHidesOnDeactivate(false);
     native.setIgnoresMouseEvents(ignore_mouse);
     native.setAcceptsMouseMovedEvents(true);
-    native.setLevel(NSFloatingWindowLevel);
+    // Keep effects below the sphere even if WebKit or macOS reorders windows
+    // after the initial show. Both levels remain above ordinary app windows.
+    native.setLevel(if ignore_mouse {
+        NSFloatingWindowLevel - 1
+    } else {
+        NSFloatingWindowLevel
+    });
     // CanJoinAllSpaces and MoveToActiveSpace are mutually exclusive.
     native.setCollectionBehavior(
         NSWindowCollectionBehavior::CanJoinAllSpaces
