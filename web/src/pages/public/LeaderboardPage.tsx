@@ -4,7 +4,7 @@ import { CommunityShareBoard } from '@/components/analytics/CommunityShareBoard'
 import { HarnessMark } from '@/components/common/HarnessMark';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import { resolveHarnessBrand } from '@/components/common/harnessBrand';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   ArrowRight, ArrowUpRight, BarChart3, Code2, Crown, Download, Monitor, UsersRound, Wallet, Zap,
@@ -144,11 +144,10 @@ export const LeaderboardPage: React.FC = () => {
   const [refreshTick, setRefreshTick] = useState(0);
   const [selectedHandle, setSelectedHandle] = useState<string | null>(null);
   const [selectedEntry, setSelectedEntry] = useState<LeaderboardEntry | null>(null);
-  const [selectedTrends, setSelectedTrends] = useState<TokenTrendItem[]>([]);
-  const [selectedTrendRange, setSelectedTrendRange] = useState<TimeRange | null>(null);
+  const [trendState, setTrendState] = useState<{ key: string | null; points: TokenTrendItem[]; range: TimeRange | null; ready: boolean }>({ key: null, points: [], range: null, ready: false });
   const [selectedStreak, setSelectedStreak] = useState<number | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<PublicUserProfile | null>(null);
-  const [trendReady, setTrendReady] = useState(false);
+  const trendCache = useRef(new Map<string, { points: TokenTrendItem[]; range: TimeRange | null; loadedAt: number }>());
 
   const fetchLeaderboard = useCallback(
     () => api.getLeaderboardView(authenticated, { window: windowByRange[range], limit: 10 }),
@@ -202,15 +201,19 @@ export const LeaderboardPage: React.FC = () => {
 
   useEffect(() => {
     if (!entries.length) {
-      setSelectedHandle(null);
-      setSelectedEntry(null);
+      // A new period has no entries until its board request finishes. Keep the
+      // current selection so its trend can load without waiting for the board.
+      if (board.data !== null) {
+        setSelectedHandle(null);
+        setSelectedEntry(null);
+      }
       return;
     }
     setSelectedHandle((current) => {
       if (current && entries.some((entry) => entry.handle === current)) return current;
       return (entries.find((entry) => entry.rankNo === 1) ?? entries[0]).handle;
     });
-  }, [entries]);
+  }, [entries, board.data]);
 
   useEffect(() => {
     setSelectedEntry(entries.find((entry) => entry.handle === selectedHandle) ?? null);
@@ -218,42 +221,58 @@ export const LeaderboardPage: React.FC = () => {
 
   useEffect(() => {
     if (!selectedHandle) {
-      setSelectedTrends([]);
-      setSelectedTrendRange(null);
       setSelectedStreak(null);
       setSelectedProfile(null);
-      setTrendReady(true);
       return;
     }
     let cancelled = false;
-    setTrendReady(false);
-    setSelectedTrends([]);
-    setSelectedTrendRange(null);
-    Promise.all([
-      api.getPublicTokenTrends(selectedHandle, { range: selectedCommunityWindow }).catch((error) => {
-        if (error instanceof ApiError && (error.status === 404 || error.code === 'PUBLIC_PROFILE_NOT_FOUND')) {
-          return { points: [] } as TokenTrendsResponse;
-        }
-        throw error;
-      }),
-      api.getPublicProfile(selectedHandle).catch(() => null),
-    ]).then(([trends, profile]) => {
+    setSelectedProfile(null);
+    setSelectedStreak(null);
+    api.getPublicProfile(selectedHandle).then((profile) => {
       if (cancelled) return;
-      setSelectedTrends(publicTrendPoints(trends));
-      setSelectedTrendRange(trends.visible === false ? null : trends.range ?? null);
       setSelectedProfile(profile);
       setSelectedStreak(profile?.currentStreak ?? null);
-      setTrendReady(true);
     }).catch(() => {
       if (cancelled) return;
-      setSelectedTrends([]);
-      setSelectedTrendRange(null);
       setSelectedProfile(null);
       setSelectedStreak(null);
-      setTrendReady(true);
     });
     return () => { cancelled = true; };
-  }, [selectedHandle, selectedCommunityWindow]);
+  }, [selectedHandle]);
+
+  useEffect(() => {
+    if (!selectedHandle) {
+      setTrendState({ key: null, points: [], range: null, ready: true });
+      return;
+    }
+    const cacheKey = `${selectedHandle}:${selectedCommunityWindow}`;
+    const cached = trendCache.current.get(cacheKey);
+    if (cached) {
+      setTrendState({ key: cacheKey, points: cached.points, range: cached.range, ready: true });
+      if (Date.now() - cached.loadedAt < 30_000) return;
+    } else {
+      setTrendState({ key: cacheKey, points: [], range: null, ready: false });
+    }
+    let cancelled = false;
+    api.getPublicTokenTrends(selectedHandle, { range: selectedCommunityWindow }).catch((error) => {
+      if (error instanceof ApiError && (error.status === 404 || error.code === 'PUBLIC_PROFILE_NOT_FOUND')) {
+        return { points: [] } as TokenTrendsResponse;
+      }
+      throw error;
+    }).then((trends) => {
+      if (cancelled) return;
+      const points = publicTrendPoints(trends);
+      const range = trends.visible === false ? null : trends.range ?? null;
+      trendCache.current.set(cacheKey, { points, range, loadedAt: Date.now() });
+      setTrendState({ key: cacheKey, points, range, ready: true });
+    }).catch(() => {
+      if (cancelled) return;
+      if (!cached) {
+        setTrendState({ key: cacheKey, points: [], range: null, ready: true });
+      }
+    });
+    return () => { cancelled = true; };
+  }, [selectedHandle, selectedCommunityWindow, refreshTick]);
 
   const rankedEntries = entries.filter(entry => hasRankedTokens(entry.metricValue));
   const podium = rankedEntries.length >= 3 ? [rankedEntries[1], rankedEntries[0], rankedEntries[2]] : rankedEntries;
@@ -262,7 +281,9 @@ export const LeaderboardPage: React.FC = () => {
   const allTimeTokens = allTimeSummary?.metrics.totalTokens.supported
     ? allTimeSummary.metrics.totalTokens.value : null;
   const selectedName = selectedEntry ? publicLeaderboardName(selectedEntry) : selectedProfile?.displayName || selectedHandle;
-  const trendDays = [...selectedTrends].sort((a, b) => a.date.localeCompare(b.date));
+  const currentTrendKey = selectedHandle ? `${selectedHandle}:${selectedCommunityWindow}` : null;
+  const currentTrend = trendState.key === currentTrendKey ? trendState : { points: [], range: null, ready: false };
+  const trendDays = [...currentTrend.points].sort((a, b) => a.date.localeCompare(b.date));
   const trendChange = selectedCommunityWindow === '7d' || selectedCommunityWindow === '30d'
     ? calendarPeriodChange(
       trendDays.map((day) => ({ date: day.date, level: 1, tokenTotal: String(day.tokenTotal || 0) })),
@@ -348,7 +369,7 @@ export const LeaderboardPage: React.FC = () => {
               <>
                 <div className="sky-rhythm-total">
                   <strong>
-                    {trendDays.length || selectedTrendRange ? formatTokens(String(trendDays.reduce((total, day) => total + Number(day.tokenTotal || 0), 0))) : '—'}
+                    {trendDays.length || currentTrend.range ? formatTokens(String(trendDays.reduce((total, day) => total + Number(day.tokenTotal || 0), 0))) : '—'}
                     <small>Token</small>
                     <DeltaChip value={trendChange} />
                   </strong>
@@ -356,12 +377,12 @@ export const LeaderboardPage: React.FC = () => {
                     <Link to={rhythmLink.to} className="sky-text-link">{rhythmLink.label}<ArrowUpRight size={16} /></Link>
                   ) : null}
                 </div>
-                {!trendReady ? (
+                {!currentTrend.ready ? (
                   <p className="side-card-empty">{zh ? '正在加载公开轨迹…' : 'Loading the public rhythm…'}</p>
-                ) : !selectedTrends.length && !selectedTrendRange ? (
+                ) : !currentTrend.points.length && !currentTrend.range ? (
                   <p className="side-card-empty">{zh ? '这个范围里，还没有创作记录。' : 'No activity in this range yet.'}</p>
                 ) : (
-                  <TokenTrendChart trends={trendDays} range={selectedTrendRange ?? undefined} height={205} />
+                  <TokenTrendChart trends={trendDays} range={currentTrend.range ?? undefined} height={205} />
                 )}
                 <div className="sky-panel-foot sky-chart-footer">
                   <span><i />{zh ? '公开 Token' : 'Public tokens'}</span>

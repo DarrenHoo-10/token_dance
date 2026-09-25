@@ -117,4 +117,30 @@ describe('Homepage podium public trends', () => {
     fireEvent.click(screen.getByRole('tab', { name: '全部时间' }));
     await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('ada', { range: 'all' }));
   });
+
+  it('does not wait for or reload the profile when switching trend periods', async () => {
+    vi.mocked(api.getPublicProfile).mockImplementation(() => new Promise(() => {}));
+    showHome();
+    await waitFor(() => expect(screen.getByRole('slider', { name: '选择趋势日期' })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('tab', { name: '近 7 天' }));
+    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('ada', { range: '7d' }));
+    await waitFor(() => expect(screen.getByRole('slider', { name: '选择趋势日期' })).toBeInTheDocument());
+    expect(api.getPublicProfile).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuses a recently loaded trend when revisiting a period', async () => {
+    showHome();
+    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('ada', { range: 'today' }));
+
+    fireEvent.click(screen.getByRole('tab', { name: '近 7 天' }));
+    await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('ada', { range: '7d' }));
+    await waitFor(() => expect(screen.getByRole('slider', { name: '选择趋势日期' })).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('tab', { name: '过去 24 小时' }));
+    fireEvent.click(screen.getByRole('tab', { name: '近 7 天' }));
+    await waitFor(() => expect(screen.getByRole('slider', { name: '选择趋势日期' })).toBeInTheDocument());
+    expect(vi.mocked(api.getPublicTokenTrends).mock.calls.filter(([, params]) => params?.range === '7d')).toHaveLength(1);
+    expect(api.getPublicProfile).toHaveBeenCalledTimes(1);
+  });
 });
