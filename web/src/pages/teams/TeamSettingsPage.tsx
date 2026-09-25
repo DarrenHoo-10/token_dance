@@ -10,6 +10,8 @@ import { useNotification } from '@/context/NotificationContext';
 import { useTeam } from '@/context/TeamContext';
 import {
   TEAM_DESCRIPTION_MAX,
+  TEAM_AVATAR_MAX_BYTES,
+  TEAM_AVATAR_TYPES,
   TEAM_NAME_MAX,
   TEAM_NAME_MIN,
   createIdempotencyKey,
@@ -18,7 +20,7 @@ import {
 } from './teamUtils';
 import { persistTeamAvatar, teamErrorMessage } from './TeamShared';
 import { TeamSharingCard } from './TeamSharingCard';
-import { avatarUrl } from '@/utils/avatar';
+import { teamAvatarUrl } from '@/utils/avatar';
 
 export const TeamSettingsPage: React.FC = () => {
   const { t } = useLocale();
@@ -32,11 +34,23 @@ export const TeamSettingsPage: React.FC = () => {
   const [members, setMembers] = useState<TeamMember[]>([]);
   const [error, setError] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState('');
   const [leaveOpen, setLeaveOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [dissolveOpen, setDissolveOpen] = useState(false);
   const [targetMembershipId, setTargetMembershipId] = useState('');
   const [confirmName, setConfirmName] = useState('');
+
+  useEffect(() => {
+    if (!avatarFile) {
+      setAvatarPreview('');
+      return;
+    }
+    const url = URL.createObjectURL(avatarFile);
+    setAvatarPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [avatarFile]);
 
   useEffect(() => {
     if (!scope) return;
@@ -55,9 +69,7 @@ export const TeamSettingsPage: React.FC = () => {
   if (error) return <ErrorState error={error} description={teamErrorMessage(t, error)} />;
 
   const canEdit = scope.permissions.editProfile;
-  const avatarSrc = scope.team.avatarUrl
-    ? avatarUrl(scope.team.avatarUrl.startsWith('/api/') ? scope.team.avatarUrl : `/api/v1/teams/${scope.team.id}/avatar/content`)
-    : '';
+  const avatarSrc = avatarPreview || teamAvatarUrl(scope.team);
 
   const saveProfile = async () => {
     const trimmed = name.trim();
@@ -81,13 +93,21 @@ export const TeamSettingsPage: React.FC = () => {
 
   const uploadAvatar = async (file: File) => {
     if (busy) return;
+    if (!TEAM_AVATAR_TYPES.includes(file.type) || file.size <= 0 || file.size > TEAM_AVATAR_MAX_BYTES) {
+      showToast(t('teams.create.avatarInvalid'), 'error');
+      return;
+    }
+    setAvatarFile(file);
     setBusy(true);
     try {
       const next = await persistTeamAvatar(scope, file);
       applyScope(next);
     } catch (err) {
       showToast(err instanceof ApiError ? teamErrorMessage(t, err) : t('errors.unknown'), 'error');
-    } finally { setBusy(false); }
+    } finally {
+      setAvatarFile(null);
+      setBusy(false);
+    }
   };
 
   const confirmDialog = (open: boolean, onClose: () => void, title: string, lead: string, danger: boolean, onConfirm: () => Promise<void>, extra?: React.ReactNode) => (

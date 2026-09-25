@@ -2,7 +2,11 @@ package httpapi
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,6 +27,56 @@ import (
 	"tokendance/internal/store/memory"
 	"tokendance/internal/teams"
 )
+
+func TestTeamAvatarUsesPrivateVersionedCache(t *testing.T) {
+	app := setupTeamsApp(t, true, true, true, true, true)
+	created := app.do(http.MethodPost, "/api/v1/teams", []byte(`{"name":"Cache Team","timezone":"UTC"}`), true, map[string]string{"Idempotency-Key": "avatar-cache-team"})
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create team: %d %s", created.Code, created.Body.String())
+	}
+	teamPath := created.Header().Get("Location")
+	var picture bytes.Buffer
+	if err := png.Encode(&picture, image.NewNRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(picture.Bytes())
+	intentBody, _ := json.Marshal(map[string]interface{}{
+		"contentType": "image/png", "byteSize": picture.Len(), "sha256": hex.EncodeToString(digest[:]),
+	})
+	intent := app.do(http.MethodPost, teamPath+"/avatar-upload-intents", intentBody, true, nil)
+	if intent.Code != http.StatusCreated {
+		t.Fatalf("create avatar intent: %d %s", intent.Code, intent.Body.String())
+	}
+	var upload struct {
+		ObjectID string `json:"objectId"`
+	}
+	if err := json.Unmarshal(intent.Body.Bytes(), &upload); err != nil || upload.ObjectID == "" {
+		t.Fatalf("invalid avatar intent: %v %s", err, intent.Body.String())
+	}
+	objectPath := teamPath + "/avatar-upload-intents/" + upload.ObjectID
+	if rec := app.do(http.MethodPut, objectPath+"/content", picture.Bytes(), true, map[string]string{"Content-Type": "image/png"}); rec.Code != http.StatusNoContent {
+		t.Fatalf("upload avatar: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := app.do(http.MethodPost, objectPath+"/complete", []byte(`{"expectedProfileVersion":"1"}`), true, nil); rec.Code != http.StatusOK {
+		t.Fatalf("complete avatar: %d %s", rec.Code, rec.Body.String())
+	}
+	avatarPath := teamPath + "/avatar/content?v=2"
+	first := app.do(http.MethodGet, avatarPath, nil, false, nil)
+	if first.Code != http.StatusOK || first.Header().Get("Cache-Control") != teamAvatarCacheControl || first.Header().Get("Vary") != "Cookie, Authorization" || first.Header().Get("ETag") == "" || !bytes.Equal(first.Body.Bytes(), picture.Bytes()) {
+		t.Fatalf("avatar response: %d %v", first.Code, first.Header())
+	}
+	second := app.do(http.MethodGet, avatarPath, nil, false, map[string]string{"If-None-Match": first.Header().Get("ETag")})
+	if second.Code != http.StatusNotModified || second.Body.Len() != 0 {
+		t.Fatalf("avatar revalidation: %d %s", second.Code, second.Body.String())
+	}
+	if rec := app.do(http.MethodDelete, teamPath+"/avatar", []byte(`{"expectedProfileVersion":"2"}`), true, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("clear avatar: %d %s", rec.Code, rec.Body.String())
+	}
+	removed := app.do(http.MethodGet, avatarPath, nil, false, map[string]string{"If-None-Match": first.Header().Get("ETag")})
+	if removed.Code != http.StatusNotFound || removed.Header().Get("Cache-Control") != teamCacheControl {
+		t.Fatalf("removed avatar: %d %v", removed.Code, removed.Header())
+	}
+}
 
 type teamTestApp struct {
 	router http.Handler

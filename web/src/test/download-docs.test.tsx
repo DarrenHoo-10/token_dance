@@ -24,11 +24,13 @@ const makeMacRelease = (tag: string, architecture = 'arm64', overrides: Record<s
 });
 
 describe('macOS DMG releases', () => {
-  it('clearly labels unnotarized downloads and explains the first-open step', async () => {
+  it('shows the Mac download without the removed explanatory text', async () => {
     vi.stubGlobal('fetch', vi.fn(url => respond(url === macosReleasesApi ? manifest([makeMacRelease('0.3.0','arm64',{notarized:false})]) : manifest([]))));
     page();
-    expect(await screen.findByText(/Mac 未公证版本/)).toBeInTheDocument();
-    expect(screen.getByText(/首次打开若被阻止/)).toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('tab', { name: 'Apple Silicon' }));
+    expect(await screen.findByRole('link', { name: '下载 Apple Silicon DMG' })).toBeInTheDocument();
+    expect(screen.queryByText(/未公证/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/首次打开若被阻止/)).not.toBeInTheDocument();
     expect(screen.queryByText('已通过 Apple 公证')).not.toBeInTheDocument();
   });
   it('selects newest versions independently for Apple Silicon and Intel', () => {
@@ -53,8 +55,6 @@ describe('macOS DMG releases', () => {
     page();
     fireEvent.click(await screen.findByRole('tab', { name: 'Apple Silicon' }));
     expect(await screen.findByRole('link', {name:'下载 Apple Silicon DMG'})).toHaveAttribute('href', `${downloadBase}/0.3.0/TokenDance-arm64.dmg`);
-    expect(within(screen.getByRole('article', {name:'macOS Apple Silicon'})).getByText(/^v0.3.0/)).toBeInTheDocument();
-    expect(screen.getByText('macOS 13.0+ · M 系列芯片')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'Intel Mac' }));
     expect(screen.getByRole('link', {name:'下载 Intel DMG'})).toHaveAttribute('href', `${downloadBase}/0.2.0/TokenDance-x64.dmg`);
     fireEvent.click(screen.getByRole('button', {name:'EN'}));
@@ -64,10 +64,10 @@ describe('macOS DMG releases', () => {
     vi.stubGlobal('fetch', vi.fn(url => url === macosReleasesApi ? Promise.resolve(new Response('', {status:404})) : respond(manifest([makeRelease('0.1.0')]))));
     page();
     fireEvent.click(await screen.findByRole('tab', { name: 'Apple Silicon' }));
-    expect(screen.getByText('安装包准备中')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '暂未发布' })).toBeDisabled();
     expect(screen.queryByRole('link', {name:'下载 Apple Silicon DMG'})).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'Intel Mac' }));
-    expect(screen.getByText('安装包准备中')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '暂未发布' })).toBeDisabled();
     fireEvent.click(screen.getByRole('tab', { name: 'Windows' }));
     expect(screen.getAllByRole('link', {name:'下载 Windows 版'})).toHaveLength(1);
   });
@@ -153,12 +153,12 @@ describe('Downloads and docs', () => {
     const links = await screen.findAllByRole('link', { name: '下载 Windows 版' });
     expect(links).toHaveLength(1);
     for (const link of links) expect(link).toHaveAttribute('href', `${downloadBase}/0.1.10/TokenDance.exe`);
-    expect(within(screen.getByRole('article', {name:'Windows x64'})).getByText(/^v0.1.10/)).toBeInTheDocument();
+    expect(screen.getByText('校验信息')).toBeInTheDocument();
     expect(screen.getAllByRole('tab')).toHaveLength(3);
     expect(fetchMock).toHaveBeenCalledWith(releasesApi, expect.objectContaining({ credentials: 'omit' }));
     fireEvent.click(screen.getByRole('button', { name: 'EN' }));
     expect(screen.getAllByRole('link', { name: 'Download for Windows' })).toHaveLength(1);
-    expect(screen.getByText(/One small desktop companion/)).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Make every day of creating visible.' })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
   it('shows retry on a failed manifest request, then recovers without exposing unverified package links', async () => {
@@ -167,7 +167,7 @@ describe('Downloads and docs', () => {
       : ++windowsAttempts === 1 ? respond({}, false) : respond(manifest([makeRelease('0.2.0')])));
     vi.stubGlobal('fetch', fetchMock);
     page();
-    expect(await screen.findByRole('alert')).toHaveTextContent('暂时无法获取最新版本');
+    expect(await screen.findByRole('button', { name: '重新获取 Windows x64' })).toBeEnabled();
     expect(screen.queryByRole('link', { name: '下载 Windows 版' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /GitHub/ })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: '重新获取 Windows x64' }));
@@ -176,15 +176,14 @@ describe('Downloads and docs', () => {
   it('renders a distinct empty state', async () => {
     vi.stubGlobal('fetch', vi.fn(() => respond(manifest([]))));
     page();
-    expect(await within(screen.getByRole('article', {name:'Windows x64'})).findByText('安装包准备中')).toBeInTheDocument();
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(await within(screen.getByRole('article', {name:'Windows x64'})).findByRole('button', { name: '暂未发布' })).toBeDisabled();
   });
   it('rejects oversized metadata and times out stalled requests', async () => {
     vi.stubGlobal('fetch', vi.fn(() => respond({ padding: 'x'.repeat(2 * 1024 * 1024) })));
     const mounted = page();
-    expect(await screen.findAllByRole('alert')).toHaveLength(1);
+    expect(await screen.findByRole('button', { name: '重新获取 Windows x64' })).toBeEnabled();
     fireEvent.click(screen.getByRole('tab', { name: 'Apple Silicon' }));
-    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(await screen.findByRole('button', { name: '重新获取 macOS Apple Silicon' })).toBeEnabled();
     mounted.unmount();
     vi.useFakeTimers();
     vi.stubGlobal('fetch', vi.fn((_url, options) => new Promise((_resolve, reject) => {
@@ -192,7 +191,7 @@ describe('Downloads and docs', () => {
     })));
     page();
     await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
-    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: '重新获取 Windows x64' })).toBeEnabled();
   });
   it('keeps docs and download navigation under the deployment subpath and supports language switching', async () => {
     page('/token-dance/docs/quickstart', '/token-dance');

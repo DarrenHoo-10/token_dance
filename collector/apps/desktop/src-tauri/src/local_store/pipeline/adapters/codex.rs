@@ -385,14 +385,21 @@ impl CodexStrategy {
         if kind == "response_item" {
             if let Some(p) = nested {
                 let ty = str_field(p, "type").unwrap_or_default();
-                if ty == "custom_tool_call"
-                    && str_field(p, "name").as_deref() == Some("apply_patch")
-                {
+                if ty == "custom_tool_call" {
                     if let (Some(call), Some(patch)) = (
                         str_field(p, "call_id"),
                         p.get("input").and_then(Value::as_str),
                     ) {
-                        if let Some(code) = super::common::patch_code_payload(patch) {
+                        let name = str_field(p, "name").unwrap_or_default();
+                        let wrapped = matches!(name.as_str(), "exec" | "functions.exec")
+                            .then(|| literal_wrapped_patch(patch))
+                            .flatten();
+                        let patch = if name == "apply_patch" {
+                            Some(patch)
+                        } else {
+                            wrapped.as_deref()
+                        };
+                        if let Some(code) = patch.and_then(super::common::patch_code_payload) {
                             if !state.json["pending_code"].is_object() {
                                 state.json["pending_code"] = json!({});
                             }
@@ -411,12 +418,7 @@ impl CodexStrategy {
                         let code = state.json["pending_code"]
                             .as_object_mut()
                             .and_then(|m| m.remove(&call));
-                        let output = p.get("output").and_then(Value::as_str).unwrap_or("");
-                        let parsed = serde_json::from_str::<Value>(output).ok();
-                        let success = parsed.as_ref().is_some_and(|v| {
-                            v.pointer("/metadata/exit_code").and_then(Value::as_i64) == Some(0)
-                        }) || output
-                            .starts_with("Success. Updated the following files:");
+                        let success = p.get("output").is_some_and(successful_patch_output);
                         if success {
                             if let Some(code) = code {
                                 let mut fact = super::common::emit_code_fact(
@@ -649,6 +651,61 @@ impl CodexStrategy {
         }
 
         Ok(DecodeOutcome::ContextOnly)
+    }
+}
+
+fn literal_wrapped_patch(input: &str) -> Option<String> {
+    let source = input.trim();
+    let argument = source.strip_prefix("text(await tools.apply_patch(")?;
+    if !argument.starts_with('"') {
+        return None;
+    }
+    let mut values = serde_json::Deserializer::from_str(argument).into_iter::<String>();
+    let patch = values.next()?.ok()?;
+    (argument[values.byte_offset()..].trim() == "));").then_some(patch)
+}
+
+fn successful_patch_output(output: &Value) -> bool {
+    if let Some(text) = output.as_str() {
+        return text.starts_with("Success. Updated the following files:")
+            || serde_json::from_str::<Value>(text)
+                .ok()
+                .is_some_and(|value| {
+                    value.pointer("/metadata/exit_code").and_then(Value::as_i64) == Some(0)
+                });
+    }
+    output.as_array().is_some_and(|blocks| {
+        blocks.len() == 2
+            && blocks[0]
+                .get("text")
+                .and_then(Value::as_str)
+                .is_some_and(|text| text.starts_with("Script completed"))
+            && blocks[1].get("text").and_then(Value::as_str) == Some("{}")
+    })
+}
+
+#[cfg(test)]
+mod patch_wrapper_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_only_a_literal_single_patch_and_its_success_output() {
+        let patch = "*** Begin Patch\n*** Add File: fixture.rs\n+one\n*** End Patch";
+        let input = format!(
+            "text(await tools.apply_patch({}));",
+            serde_json::to_string(patch).unwrap()
+        );
+        assert_eq!(literal_wrapped_patch(&input).as_deref(), Some(patch));
+        assert!(literal_wrapped_patch("text(await tools.apply_patch(variable));").is_none());
+        assert!(literal_wrapped_patch(&format!("{input} text('extra');")).is_none());
+        assert!(successful_patch_output(&json!([
+            {"type":"input_text","text":"Script completed with output:"},
+            {"type":"input_text","text":"{}"}
+        ])));
+        assert!(!successful_patch_output(&json!([
+            {"type":"input_text","text":"Script error"},
+            {"type":"input_text","text":"{}"}
+        ])));
     }
 }
 

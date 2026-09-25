@@ -1,10 +1,10 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { useLocale } from '@/context/LocaleContext';
-import type { TokenTrendItem } from '@/types/api';
+import type { TimeRange, TokenTrendItem } from '@/types/api';
 import { trendTimeAxis } from './trendTimeAxis';
 
-export interface TokenTrendChartProps { trends: TokenTrendItem[]; mode?: 'total' | 'structure'; height?: number }
-export const TokenTrendChart: React.FC<TokenTrendChartProps> = ({ trends, height = 205 }) => {
+export interface TokenTrendChartProps { trends: TokenTrendItem[]; range?: TimeRange; mode?: 'total' | 'structure'; height?: number }
+export const TokenTrendChart: React.FC<TokenTrendChartProps> = ({ trends, range, height = 205 }) => {
   const { t, locale } = useLocale();
   const id = useId().replace(/:/g, '');
   const [selected, setSelected] = useState<number | null>(null);
@@ -16,7 +16,7 @@ export const TokenTrendChart: React.FC<TokenTrendChartProps> = ({ trends, height
     observer.observe(chart.current);
     return () => observer.disconnect();
   }, [trends?.length]);
-  const { points, ticks, start, span } = trendTimeAxis(trends ?? [], Math.max(2, Math.min(7, Math.floor(width / 100))));
+  const { points, ticks, start, span } = trendTimeAxis(trends ?? [], Math.max(2, Math.min(7, Math.floor(width / 100))), range);
   if (!points.length) return <div className="token-trend-empty" style={{ minHeight: height }}>{t('dashboard.noTrendData')}</div>;
   const bottom = height - 27, top = 34, max = Math.max(1, ...points.map(p => p.total)) * 1.08;
   const timeX = (time: number) => span === 0 ? width / 2 : 8 + (time - start) / span * (width - 16);

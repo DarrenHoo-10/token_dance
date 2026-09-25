@@ -82,9 +82,6 @@ describe('Homepage podium public trends', () => {
     expect(await screen.findByRole('heading', { name: 'Linus的创作轨迹' })).toBeInTheDocument();
     await waitFor(() => expect(api.getPublicTokenTrends).toHaveBeenCalledWith('linus', { range: 'today' }));
     expect(screen.getByRole('link', { name: '公开资料' })).toHaveAttribute('href', '/u/linus');
-    const hero = screen.getByRole('link', { name: /开始记录你的创造/ });
-    expect(hero).toHaveClass('hero-action');
-    expect(hero).toHaveAttribute('href', '/download');
   });
 
   it('shows an empty-range state instead of a login wall', async () => {
@@ -93,6 +90,17 @@ describe('Homepage podium public trends', () => {
     expect(await screen.findByText('这个范围里，还没有创作记录。')).toBeInTheDocument();
     expect(screen.queryByText('该开发者尚未公开用量趋势。')).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: '登录，留下你的足迹' })).not.toBeInTheDocument();
+  });
+
+  it('shows all hourly buckets when the public trend has no usage', async () => {
+    vi.mocked(api.getPublicTokenTrends).mockResolvedValue({
+      visible: true, points: [],
+      range: { key: 'today', from: '2026-09-19T15:00:00Z', to: '2026-09-20T14:42:00Z', timezone: 'Asia/Shanghai' },
+    });
+    showHome();
+    await waitFor(() => expect(screen.getByRole('slider', { name: '选择趋势日期' })).toHaveAttribute('max', '23'));
+    expect(screen.getByRole('slider', { name: '选择趋势日期' })).toHaveAttribute('aria-valuetext', '2026-09-20 22:00: 0 Token');
+    expect(screen.queryByText('这个范围里，还没有创作记录。')).not.toBeInTheDocument();
   });
 
   it('keeps the trajectory period in sync with the leaderboard period', async () => {

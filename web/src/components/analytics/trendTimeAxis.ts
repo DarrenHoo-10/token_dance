@@ -1,4 +1,4 @@
-import type { TokenTrendItem } from '@/types/api';
+import type { TimeRange, TokenTrendItem } from '@/types/api';
 
 const HOUR = 3_600_000;
 const DAY = 24 * HOUR;
@@ -13,9 +13,25 @@ function bucketTime(date: string) {
   return Date.parse(/[zZ]$|[+-]\d{2}:?\d{2}$/.test(normalized) ? normalized : `${normalized}+08:00`);
 }
 
-export function trendTimeAxis(trends: TokenTrendItem[], tickCount: number) {
-  const points = trends.map(item => ({ date: item.date, time: bucketTime(item.date), total: Math.max(0, Number(item.tokenTotal) || 0) }))
+export function trendTimeAxis(trends: TokenTrendItem[], tickCount: number, range?: TimeRange) {
+  let points = trends.map(item => ({ date: item.date, time: bucketTime(item.date), total: Math.max(0, Number(item.tokenTotal) || 0) }))
     .filter(point => Number.isFinite(point.time)).sort((a, b) => a.time - b.time);
+  if (range && ['today', '7d', '30d'].includes(range.key)) {
+    const from = Date.parse(range.from);
+    const to = Date.parse(range.to);
+    const unit = range.key === 'today' ? HOUR : DAY;
+    const startBucket = Math.floor((from + OFFSET) / unit) * unit - OFFSET;
+    const endBucket = Math.floor((to + OFFSET) / unit) * unit - OFFSET;
+    const count = (endBucket - startBucket) / unit + 1;
+    if (Number.isFinite(count) && count > 0 && count <= 30) {
+      const byTime = new Map(points.map(point => [point.time, point]));
+      points = Array.from({ length: count }, (_, index) => {
+        const time = startBucket + index * unit;
+        const date = new Date(time + OFFSET).toISOString().slice(0, range.key === 'today' ? 16 : 10).replace('T', ' ');
+        return byTime.get(time) ?? { date, time, total: 0 };
+      });
+    }
+  }
   if (!points.length) return { points, ticks: [], start: 0, span: 0 };
   const start = points[0].time;
   const end = points[points.length - 1].time;

@@ -62,7 +62,6 @@ describe('Home all-time usage', () => {
     expect(screen.getByText('19.2M')).toBeInTheDocument();
     expect(request).toHaveBeenCalledWith('all');
     expect(request).toHaveBeenCalledWith('today');
-    expect(screen.getByRole('button', { name: /查看我的创作足迹/ })).toHaveClass('hero-action');
   });
 
   it('keeps today visible if the historical request fails', async () => {

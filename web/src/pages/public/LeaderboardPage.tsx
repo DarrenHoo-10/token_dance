@@ -19,7 +19,7 @@ import { readHomeBoard, readHomeCommunity, writeHomeBoard, writeHomeCommunity } 
 import { api, ApiError } from '@/api/client';
 import type {
   LeaderboardEntry, LeaderboardResponse, PersonalSummary, CalendarDay, CommunityStatsResponse,
-  PublicUserProfile, TokenTrendItem, TokenTrendsResponse,
+  PublicUserProfile, TimeRange, TokenTrendItem, TokenTrendsResponse,
 } from '@/types/api';
 import { formatCommunityCost } from '@/utils/cost';
 import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
@@ -145,6 +145,7 @@ export const LeaderboardPage: React.FC = () => {
   const [selectedHandle, setSelectedHandle] = useState<string | null>(null);
   const [selectedEntry, setSelectedEntry] = useState<LeaderboardEntry | null>(null);
   const [selectedTrends, setSelectedTrends] = useState<TokenTrendItem[]>([]);
+  const [selectedTrendRange, setSelectedTrendRange] = useState<TimeRange | null>(null);
   const [selectedStreak, setSelectedStreak] = useState<number | null>(null);
   const [selectedProfile, setSelectedProfile] = useState<PublicUserProfile | null>(null);
   const [trendReady, setTrendReady] = useState(false);
@@ -218,6 +219,7 @@ export const LeaderboardPage: React.FC = () => {
   useEffect(() => {
     if (!selectedHandle) {
       setSelectedTrends([]);
+      setSelectedTrendRange(null);
       setSelectedStreak(null);
       setSelectedProfile(null);
       setTrendReady(true);
@@ -226,6 +228,7 @@ export const LeaderboardPage: React.FC = () => {
     let cancelled = false;
     setTrendReady(false);
     setSelectedTrends([]);
+    setSelectedTrendRange(null);
     Promise.all([
       api.getPublicTokenTrends(selectedHandle, { range: selectedCommunityWindow }).catch((error) => {
         if (error instanceof ApiError && (error.status === 404 || error.code === 'PUBLIC_PROFILE_NOT_FOUND')) {
@@ -237,12 +240,14 @@ export const LeaderboardPage: React.FC = () => {
     ]).then(([trends, profile]) => {
       if (cancelled) return;
       setSelectedTrends(publicTrendPoints(trends));
+      setSelectedTrendRange(trends.visible === false ? null : trends.range ?? null);
       setSelectedProfile(profile);
       setSelectedStreak(profile?.currentStreak ?? null);
       setTrendReady(true);
     }).catch(() => {
       if (cancelled) return;
       setSelectedTrends([]);
+      setSelectedTrendRange(null);
       setSelectedProfile(null);
       setSelectedStreak(null);
       setTrendReady(true);
@@ -286,17 +291,6 @@ export const LeaderboardPage: React.FC = () => {
           <p className="eyebrow">DEVELOPER TOKEN OBSERVATORY</p>
           <h1 id="sky-hero-title">Let Token <span>Dance</span></h1>
           <p>{zh ? '看见你与 AI 一起创造的每一天。' : 'Every day you create with AI, made visible.'}</p>
-          {authenticated ? (
-            <button type="button" className="hero-action" onClick={personalAnalytics.show}>
-              {zh ? '查看我的创作足迹' : 'Explore my activity'}
-              <ArrowUpRight size={18} />
-            </button>
-          ) : (
-            <Link className="hero-action" to="/download">
-              {zh ? '开始记录你的创造' : 'Start your journey'}
-              <ArrowUpRight size={18} />
-            </Link>
-          )}
         </div>
         <div className="sky-orb">
           <span>{heroTokenLabel}</span>
@@ -305,7 +299,6 @@ export const LeaderboardPage: React.FC = () => {
           <DeltaChip value={community?.deltas?.tokens} suffix={comparisonLabel} />
           <small>SMALL TOKENS<br />BIG CHANGES</small>
         </div>
-        <div className="sky-hero-bottom-note"><span />{zh ? '每一个 Token，都有创造的意义' : 'Every token is a little possibility'}</div>
         <div className="sky-metrics">
           <HeroMiniCard icon={<UsersRound />} label={zh ? '活跃开发者' : 'Active devs'} value={community?.developers != null ? formatTokens(String(community.developers)).replace('.0K', 'K') : '—'} delta={community?.deltas?.developers} />
           <HeroMiniCard icon={<Code2 />} label={zh ? '生成代码行' : 'Code lines'} value={formatTokens(community?.codeLines)} delta={community?.deltas?.codeLines} />
@@ -355,7 +348,7 @@ export const LeaderboardPage: React.FC = () => {
               <>
                 <div className="sky-rhythm-total">
                   <strong>
-                    {trendDays.length ? formatTokens(String(trendDays.reduce((total, day) => total + Number(day.tokenTotal || 0), 0))) : '—'}
+                    {trendDays.length || selectedTrendRange ? formatTokens(String(trendDays.reduce((total, day) => total + Number(day.tokenTotal || 0), 0))) : '—'}
                     <small>Token</small>
                     <DeltaChip value={trendChange} />
                   </strong>
@@ -365,10 +358,10 @@ export const LeaderboardPage: React.FC = () => {
                 </div>
                 {!trendReady ? (
                   <p className="side-card-empty">{zh ? '正在加载公开轨迹…' : 'Loading the public rhythm…'}</p>
-                ) : !selectedTrends.length ? (
+                ) : !selectedTrends.length && !selectedTrendRange ? (
                   <p className="side-card-empty">{zh ? '这个范围里，还没有创作记录。' : 'No activity in this range yet.'}</p>
                 ) : (
-                  <TokenTrendChart trends={trendDays} height={205} />
+                  <TokenTrendChart trends={trendDays} range={selectedTrendRange ?? undefined} height={205} />
                 )}
                 <div className="sky-panel-foot sky-chart-footer">
                   <span><i />{zh ? '公开 Token' : 'Public tokens'}</span>
