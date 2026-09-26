@@ -24,6 +24,25 @@ use tokio::sync::Mutex;
 #[derive(Default)]
 pub struct AccountState(Mutex<Option<Connection>>, Mutex<()>, AtomicU64);
 
+fn device_key_error_code(error: wal_spool::KeyError) -> &'static str {
+    match error {
+        wal_spool::KeyError::NotFound => "DEVICE_KEY_MISSING",
+        _ => "DEVICE_KEY_ERROR",
+    }
+}
+
+fn blocked_sync_status(error: &str) -> Option<&'static str> {
+    match error {
+        "DEVICE_KEY_MISSING" => Some("DEVICE_KEY_MISSING"),
+        "REJECTED_EVENTS" | "EVENT_TOO_LARGE" => Some("DATA_REJECTED"),
+        "DEVICE_BOUND_ELSEWHERE" => Some("DEVICE_BOUND_ELSEWHERE"),
+        "DEVICE_UNAVAILABLE" | "DEVICE_KEY_ERROR" | "ACCOUNT_FORBIDDEN" => {
+            Some("NEEDS_ATTENTION")
+        }
+        _ => None,
+    }
+}
+
 struct Connection {
     origin: Url,
     client: Client,
@@ -359,7 +378,7 @@ impl Connection {
             let create = !app.control_dir_path().join("device-registered").exists();
             let seed = OsKeyProvider::device_seed(create)
                 .data_key()
-                .map_err(|_| "DEVICE_KEY_ERROR")?;
+                .map_err(device_key_error_code)?;
             self.register_sync_device(
                 Arc::new(InMemoryDeviceSigner::from_seed(seed)),
                 &user.user_id,
@@ -454,26 +473,13 @@ impl AccountState {
                 current.retry_at = Some(
                     Instant::now() + Duration::from_secs(10 * (1u64 << current.failures.min(5))),
                 );
-                current.blocked = matches!(
-                    error.as_str(),
-                    "DEVICE_UNAVAILABLE"
-                        | "DEVICE_BOUND_ELSEWHERE"
-                        | "DEVICE_KEY_ERROR"
-                        | "REJECTED_EVENTS"
-                        | "EVENT_TOO_LARGE"
-                        | "ACCOUNT_FORBIDDEN"
-                );
+                let blocked_status = blocked_sync_status(&error);
+                current.blocked = blocked_status.is_some();
                 if current.blocked {
                     // Recheck slowly so a device resumed on the website can
                     // recover without requiring a manual desktop action.
                     current.retry_at = Some(Instant::now() + Duration::from_secs(300));
-                    if matches!(error.as_str(), "REJECTED_EVENTS" | "EVENT_TOO_LARGE") {
-                        "DATA_REJECTED"
-                    } else if error == "DEVICE_BOUND_ELSEWHERE" {
-                        "DEVICE_BOUND_ELSEWHERE"
-                    } else {
-                        "NEEDS_ATTENTION"
-                    }
+                    blocked_status.expect("blocked errors have a status")
                 } else if error == "SYNC_ENDPOINT_INVALID" {
                     "SYNC_ENDPOINT_INVALID"
                 } else if error == "SYNC_PROTOCOL_UNSUPPORTED" {
@@ -525,6 +531,41 @@ pub fn start_auto_sync(handle: tauri::AppHandle, app: AppState) {
             account.auto_sync_tick(&app).await;
         }
     });
+}
+
+#[tauri::command]
+pub async fn recover_sync_device(
+    state: State<'_, AccountState>,
+    app: State<'_, AppState>,
+) -> Result<(), String> {
+    if crate::local_test::enabled() {
+        return Err("LOCAL_TEST_MODE".into());
+    }
+    let mut guard = state.0.lock().await;
+    let current = guard.as_mut().ok_or("LOGIN_REQUIRED")?;
+    if current.cookies.is_empty() || current.session().await?.user.is_none() {
+        return Err("LOGIN_REQUIRED".into());
+    }
+    match OsKeyProvider::device_seed(false).data_key() {
+        Err(wal_spool::KeyError::NotFound) => {}
+        Ok(_) => return Err("DEVICE_KEY_PRESENT".into()),
+        Err(_) => return Err("DEVICE_KEY_ERROR".into()),
+    }
+    // A missing registered key requires this explicit, authenticated action.
+    OsKeyProvider::device_seed(true)
+        .data_key()
+        .map_err(|_| "DEVICE_KEY_ERROR")?;
+    if let Some(mut uploader) = current.upload_consumer.take() {
+        uploader.finish_in_flight().await;
+    }
+    current.transport = None;
+    current.telemetry_v2 = None;
+    current.binding_status_version = 0;
+    current.retry_at = None;
+    current.failures = 0;
+    current.blocked = false;
+    *app.sync_status.write().await = "WAITING".into();
+    Ok(())
 }
 
 const SESSION_TTL_SECS: u64 = 30 * 24 * 60 * 60;
@@ -979,6 +1020,25 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    #[test]
+    fn missing_device_key_requires_explicit_recovery_without_masking_other_failures() {
+        assert_eq!(
+            device_key_error_code(wal_spool::KeyError::NotFound),
+            "DEVICE_KEY_MISSING"
+        );
+        assert_eq!(
+            device_key_error_code(wal_spool::KeyError::Unavailable("locked".into())),
+            "DEVICE_KEY_ERROR"
+        );
+        assert_eq!(
+            blocked_sync_status("DEVICE_KEY_MISSING"),
+            Some("DEVICE_KEY_MISSING")
+        );
+        assert_eq!(blocked_sync_status("DEVICE_KEY_ERROR"), Some("NEEDS_ATTENTION"));
+        assert_eq!(blocked_sync_status("DEVICE_BOUND_ELSEWHERE"), Some("DEVICE_BOUND_ELSEWHERE"));
+        assert_eq!(blocked_sync_status("NETWORK_ERROR"), None);
+    }
 
     #[test]
     fn login_and_registration_keep_callback_and_deployment_path() {

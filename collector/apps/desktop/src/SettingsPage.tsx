@@ -2,6 +2,7 @@ import { RebuildData } from "./components/RebuildData";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { brandLogo, localTestBuild } from "./brand";
 import { DesktopAccountCard } from "./DesktopAccountCard";
+import { recoverSyncDevice } from "./account-bridge";
 import { getAgentConfigs, getAutostartStatus, getDaemonStatus, getWebsiteUrl, hideWindow, isTauriEnvironment, openLoginItemsSettings, openWebsite, retryRuntimeInit, setAgentStatus, setAutostart, setGlobalPause, startWindowDrag } from "./tauri-bridge";
 import { resolveWebsiteOrigin } from "./website";
 import type { AgentConfig, AutostartInfo, DaemonStatus } from "./tauri-bridge";
@@ -102,6 +103,7 @@ export function SettingsPage() {
       {error && <div className="settings-error" role="alert">{t("无法读取本机设置，已保留上次状态。", "Unable to refresh settings. Showing the last known state.")}<button onClick={() => void refresh()}>{t("重试", "Retry")}</button></div>}
       {data?.status.initError && <div className="settings-error" role="alert">{t("凭据暂不可用，采集已暂停。请检查系统凭据存储的访问权限，然后重试。", "Credentials are temporarily unavailable and collection is paused. Check access to the system credential store, then retry.")}<span> {data.status.initError}</span><button disabled={busy} onClick={() => void perform(async () => { await retryRuntimeInit(); }, true)}>{t("重试", "Retry")}</button></div>}
       <DesktopAccountCard key={website} zh={zh} />
+      {data?.status.syncStatus === "DEVICE_KEY_MISSING" && <div className="settings-error" role="alert">{t("本机设备密钥已丢失。恢复连接会在网站注册新设备，并继续同步本机保留的记录。", "This device key is missing. Recovery registers a new device on the website and resumes syncing records kept locally.")}<button disabled={busy} onClick={() => void perform(recoverSyncDevice, true)}>{t("恢复设备连接", "Recover device connection")}</button></div>}
       <section className="settings-section" aria-labelledby="preferences-heading">
         <div className="settings-section-heading"><h2 id="preferences-heading">{t("运行偏好", "Preferences")}</h2><span>{t("更改自动保存", "Changes save automatically")}</span></div>
         <div className="settings-sheet">

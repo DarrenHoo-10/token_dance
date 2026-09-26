@@ -111,7 +111,7 @@ export interface UploadBatchPreview {
 }
 
 export interface DaemonStatus {
-  syncStatus?: "LOGIN_REQUIRED" | "WAITING" | "SYNCING" | "SYNCED" | "RETRYING" | "PAUSED" | "NEEDS_PROFILE" | "NEEDS_ATTENTION" | "CLIENT_UPGRADE_REQUIRED" | "DEVICE_BOUND_ELSEWHERE";
+  syncStatus?: "LOGIN_REQUIRED" | "WAITING" | "SYNCING" | "SYNCED" | "RETRYING" | "PAUSED" | "NEEDS_PROFILE" | "NEEDS_ATTENTION" | "DEVICE_KEY_MISSING" | "CLIENT_UPGRADE_REQUIRED" | "DEVICE_BOUND_ELSEWHERE";
   lastSyncAt?: string | null;
   status: "RUNNING" | "PAUSED" | "DEGRADED" | "STOPPED" | "REBUILDING" | "STORAGE_ERROR";
   globalPaused: boolean;

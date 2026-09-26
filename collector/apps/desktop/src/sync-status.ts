@@ -10,6 +10,7 @@ export function syncStatusText(status: string | undefined, pending: number, zh: 
     case "DATA_REJECTED": return t("部分记录校验未通过，已保留在本机", "Some records rejected · Kept locally");
     case "PAUSED": return t("同步已暂停", "Sync paused");
     case "NEEDS_PROFILE": return t("完善网站资料后同步", "Complete your web profile to sync");
+    case "DEVICE_KEY_MISSING": return t("设备密钥缺失，请在设置中恢复连接", "Device key missing · Recover in Settings");
     case "NEEDS_ATTENTION": return t("同步受阻，请检查网站设备状态", "Sync blocked · Check device on web");
     case "CLIENT_UPGRADE_REQUIRED": return t("更新后恢复同步，本机采集继续", "Update to resume sync · Local collection continues");
     case "DEVICE_BOUND_ELSEWHERE": return t("此设备已绑定其他账号，请先在原账号解绑", "Unbind this device from its previous account first");
