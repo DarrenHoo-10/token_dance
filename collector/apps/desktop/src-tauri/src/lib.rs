@@ -276,6 +276,7 @@ pub fn run() {
             commands::account::get_account_session,
             commands::account::login_account,
             commands::account::logout_account,
+            commands::account::recover_sync_device,
         ])
         .on_page_load(|webview, payload| {
             if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {

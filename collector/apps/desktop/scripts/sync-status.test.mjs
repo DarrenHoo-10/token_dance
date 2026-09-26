@@ -13,6 +13,7 @@ test("new queued events override a previously synced state", () => {
 test("background failures, pause and expired access have distinct states", () => {
   assert.match(syncStatusText("RETRYING", 2, true), /自动重试/);
   assert.match(syncStatusText("NEEDS_ATTENTION", 2, true), /同步受阻/);
+  assert.match(syncStatusText("DEVICE_KEY_MISSING", 2, true), /设置中恢复连接/);
   assert.equal(syncStatusText("PAUSED", 2, false), "Sync paused");
   assert.equal(syncStatusText("SYNCING", 2, false), "Syncing");
 });

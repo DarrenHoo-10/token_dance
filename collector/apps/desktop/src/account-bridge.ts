@@ -20,6 +20,10 @@ export async function loginAccount(website: string, mode: "login" | "register" =
 export async function logoutAccount(website: string): Promise<void> {
   if (isTauriEnvironment()) await invoke("logout_account", { website });
 }
+export async function recoverSyncDevice(): Promise<void> {
+  if (!isTauriEnvironment()) throw new Error("PREVIEW_ONLY");
+  await invoke("recover_sync_device");
+}
 export async function openAccountWebsite(path: "/register" | "/forgot-password" | "/onboarding"): Promise<void> {
   const url = websitePageUrl(accountWebsite(), path);
   if (isTauriEnvironment()) await invoke("open_website", { url });
