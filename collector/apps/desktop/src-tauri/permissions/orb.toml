@@ -90,4 +90,5 @@ commands.allow = [
   "get_account_session",
   "login_account",
   "logout_account",
+  "recover_sync_device",
 ]
