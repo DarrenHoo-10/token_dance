@@ -77,6 +77,8 @@ describe('Live leaderboard', () => {
     expect(await screen.findByText('186.4M')).toBeInTheDocument();
     expect(screen.getByText('128')).toBeInTheDocument();
     expect(screen.getByText('32.8K')).toBeInTheDocument();
+    expect(screen.getByText('已记录代码行')).toBeInTheDocument();
+    expect(screen.getByLabelText(/已记录代码行 · 仅累计已同步/)).toBeInTheDocument();
     expect(screen.getByText('4.6K')).toBeInTheDocument();
     expect(screen.getByText('$268.42')).toBeInTheDocument();
     expect(screen.getByText('较前 24h').closest('.hero-delta')).toHaveTextContent('↑ +12.6% 较前 24h');
