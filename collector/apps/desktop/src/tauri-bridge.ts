@@ -705,6 +705,8 @@ export async function hideWindow(): Promise<void> {
 export async function showWindow(): Promise<void> {
   if (isTauriEnvironment()) {
     await invoke("show_window");
+  } else {
+    window.location.search = "";
   }
 }
 

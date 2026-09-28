@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { brandLogo, localTestBuild } from "./brand";
 import { DesktopAccountCard } from "./DesktopAccountCard";
 import { recoverSyncDevice } from "./account-bridge";
-import { getAgentConfigs, getAutostartStatus, getDaemonStatus, getWebsiteUrl, hideWindow, isTauriEnvironment, openLoginItemsSettings, openWebsite, retryRuntimeInit, setAgentStatus, setAutostart, setGlobalPause, startWindowDrag } from "./tauri-bridge";
+import { getAgentConfigs, getAutostartStatus, getDaemonStatus, getWebsiteUrl, hideWindow, isTauriEnvironment, openLoginItemsSettings, openWebsite, retryRuntimeInit, setAgentStatus, setAutostart, setGlobalPause, showWindow, startWindowDrag } from "./tauri-bridge";
 import { resolveWebsiteOrigin } from "./website";
 import type { AgentConfig, AutostartInfo, DaemonStatus } from "./tauri-bridge";
 import "./styles/settings.css";
@@ -92,7 +92,7 @@ export function SettingsPage() {
       void startWindowDrag();
     }}>
       <div className="settings-brand" data-tauri-drag-region><img src={brandLogo} alt="" draggable={false} data-tauri-drag-region /><div className="desktop-update-wordmark"><strong data-tauri-drag-region>TokenDance{localTestBuild ? " Test" : ""}</strong>{!localTestBuild && <UpdateNotice zh={zh} />}</div><span data-tauri-drag-region>{t("桌面端", "Desktop")}</span></div>
-      <div className="usage-controls"><div className="usage-window-controls" role="group" aria-label={t("语言与窗口控制", "Language and window controls")}>
+      <div className="usage-controls"><button className="settings-monitor-button" onClick={() => void showWindow().catch(err => setNotice(String(err)))} aria-label={t("返回监控页面", "Back to usage panel")}>{t("← 监控", "← Usage")}</button><div className="usage-window-controls" role="group" aria-label={t("语言与窗口控制", "Language and window controls")}>
         <button className="usage-language" onClick={() => changeLanguage(zh ? "en" : "zh")} aria-label={t("切换到英文", "Switch to Chinese")}>{zh ? "EN" : "中"}</button>
         <button className="usage-minimize" onClick={() => void perform(hideWindow)} aria-label={t("最小化到托盘", "Minimize to tray")} title={t("最小化到托盘", "Minimize to tray")}><span aria-hidden="true">−</span></button>
         <button className="usage-close" onClick={() => void hideWindow().catch(err => setNotice(String(err)))} aria-label={t("关闭窗口", "Close window")} title={t("关闭窗口", "Close window")}><span aria-hidden="true">×</span></button>

@@ -221,6 +221,12 @@ pub fn show_usage_panel(app: &AppHandle, point: PhysicalPosition<f64>) -> tauri:
             if window.outer_position()? != position { window.set_position(position)?; }
             if window.inner_size()? != size { window.set_size(size)?; }
         }
+        // Switching from settings must cancel its pending presentation before
+        // showing the panel; otherwise the settings window stays in front.
+        app.state::<WindowPresentation>().mark_hidden("settings");
+        if let Some(settings) = app.get_webview_window("settings") {
+            settings.hide()?;
+        }
         present(&window)?;
     }
     Ok(())
@@ -327,8 +333,7 @@ pub(crate) fn activate_primary_window(app: &AppHandle) -> Result<(), String> {
 }
 #[tauri::command]
 pub fn show_window(window: WebviewWindow) -> Result<(), String> {
-    if window.label() == "settings" { open_settings(window.app_handle().clone()) }
-    else { request_initial_panel(window.app_handle()).map_err(|e| e.to_string()) }
+    request_initial_panel(window.app_handle()).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -392,6 +397,16 @@ mod tests {
         assert!(!state.request("settings", OpenRequest::Settings));
         state.cancel("settings");
         assert!(state.ready("settings").is_none());
+    }
+
+    #[test]
+    fn returning_to_monitor_cancels_pending_settings_presentation() {
+        let state = WindowPresentation::default();
+        assert!(!state.request("settings", OpenRequest::Settings));
+        state.mark_hidden("settings");
+        assert!(state.ready("settings").is_none());
+        assert!(!state.request("main", OpenRequest::Panel(PhysicalPosition::new(0.0, 0.0))));
+        assert!(matches!(state.ready("main"), Some(OpenRequest::Panel(_))));
     }
 
     #[test]
