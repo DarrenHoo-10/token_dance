@@ -94,7 +94,7 @@ export function UsagePanel() {
       <button disabled={busy} onClick={() => void act(hideWindow)} aria-label={text('最小化到托盘', 'Minimize to tray')} title={text('收起到托盘 · Esc', 'Hide to tray · Esc')}>−</button>
     </div></header>
     <main className="usage-content">
-      <div className="usage-heading"><h1>{text('我的用量', 'My usage')}</h1><span>{new Date().toLocaleDateString(zh ? 'zh-CN' : 'en-US', { month: 'short', day: 'numeric' })}</span></div>
+      <div className="usage-heading"><h1>{text('我的用量', 'My usage')}</h1><span>{new Date().toLocaleDateString(zh ? 'zh-CN' : 'en-US', { month: 'short', day: 'numeric', timeZone: 'Asia/Shanghai' })}</span></div>
       <div className="usage-totals" aria-label={text('统计周期', 'Usage period')}>{periods.map(period => {
         const values = agents.map(agent => usageTokens(agent, period.key)).filter(value => value !== null);
         return <button className="usage-total-card" key={period.key} aria-pressed={range === period.key} onClick={() => setRange(period.key)} title={period.key === 'all' ? text('本机已记录的全部历史；升级前已清理的数据不包含在内', 'All recorded local history; excludes history removed before this upgrade') : undefined}>

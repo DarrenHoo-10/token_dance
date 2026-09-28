@@ -641,7 +641,7 @@ impl OrbController {
     fn refresh_snapshot(&mut self, detect_usage_pulse: bool, daemon: Option<&crate::state::DaemonStatus>) {
         let prefs = self.prefs.snapshot();
         let now = now_ms();
-        let date = chrono::Local::now().date_naive();
+        let date = crate::state::beijing_today();
         let usage = self.state.get_usage_summary(date);
         let collector = daemon
             .map(|status| CollectorSnapshot {
@@ -1200,7 +1200,7 @@ fn quota_record(quota: AgentQuota) -> QuotaRecord {
 
 fn empty_usage() -> UsageSummary {
     UsageSummary {
-        local_date: chrono::Local::now().date_naive().format("%Y-%m-%d").to_string(),
+        local_date: crate::state::beijing_today().format("%Y-%m-%d").to_string(),
         state: super::model::UsageState::Unknown,
         today_tokens: None,
         known_source_count: 0,

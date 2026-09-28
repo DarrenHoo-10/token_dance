@@ -216,6 +216,10 @@ pub type ModelAllocator =
 /// Harness-owned strategy. Public runner owns lease, budget, admission, CAS.
 pub trait HarnessStrategy: Send + Sync {
     fn set_model_allocator(&mut self, _allocator: ModelAllocator) {}
+    /// Whether this strategy owns an exact source locator when a harness has multiple strategies.
+    fn owns_source(&self, _locator_ref: &str) -> bool {
+        false
+    }
     /// Actual collector health when independent of the legacy adapter runtime.
     fn collection_status(&self) -> Option<&'static str> {
         None

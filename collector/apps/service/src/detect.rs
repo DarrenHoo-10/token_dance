@@ -48,7 +48,7 @@ pub fn detect_from_home(home: &Path) -> DetectionSnapshot {
 fn detect_from_resolver(resolver: &PathResolver) -> DetectionSnapshot {
     let home = resolver.home();
     let mut snapshot = DetectionSnapshot::default();
-    detect_claude(home, &mut snapshot);
+    detect_claude(resolver, &mut snapshot);
     detect_codex(resolver, &mut snapshot);
     detect_grok(home, &mut snapshot);
     detect_zcode(home, &mut snapshot);
@@ -202,10 +202,14 @@ pub fn detected_adapter_ids(snapshot: &DetectionSnapshot) -> Vec<&'static str> {
         .collect()
 }
 
-fn detect_claude(home: &Path, snapshot: &mut DetectionSnapshot) {
-    let root = home.join(".claude");
+fn detect_claude(resolver: &PathResolver, snapshot: &mut DetectionSnapshot) {
+    let root = resolver.claude_root();
     let projects = root.join("projects");
-    if !root.is_dir() {
+    if !root.is_dir()
+        && !resolver
+            .claude_desktop_store()
+            .is_some_and(|path| path.is_dir())
+    {
         return;
     }
     let mut detection = AgentDetection::installed(
@@ -657,6 +661,38 @@ fn grok_session_is_subagent(session_dir: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_code_respects_a_configured_root() {
+        let home = tempfile::tempdir().unwrap();
+        let custom = home.path().join("custom-claude");
+        let projects = custom.join("projects");
+        fs::create_dir_all(&projects).unwrap();
+        let resolver =
+            PathResolver::isolated(home.path().to_path_buf()).with_explicit_claude(custom);
+        let snapshot = detect_from_resolver(&resolver);
+        assert_eq!(
+            snapshot
+                .source(OfficialAgent::ClaudeCode, adapter_claude::HISTORY_SOURCE_ID)
+                .and_then(|source| source.path.as_ref()),
+            Some(&projects),
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn claude_desktop_is_detected_without_cli_history() {
+        let home = tempfile::tempdir().unwrap();
+        let store = home.path().join(
+            "Library/Application Support/Claude/IndexedDB/https_claude.ai_0.indexeddb.leveldb",
+        );
+        fs::create_dir_all(store).unwrap();
+        let snapshot = detect_from_home(home.path());
+        assert!(snapshot.is_installed(OfficialAgent::ClaudeCode));
+        assert!(snapshot
+            .source(OfficialAgent::ClaudeCode, adapter_claude::HISTORY_SOURCE_ID)
+            .is_none());
+    }
 
     #[test]
     fn lists_newest_jsonl_files_from_a_tree() {

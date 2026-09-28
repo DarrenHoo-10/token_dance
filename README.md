@@ -46,7 +46,7 @@ TokenDance 常驻 Windows 托盘，点击图标即可展开用量面板。也可
 
 ## 支持的编程工具
 
-**Codex · Claude Code · Grok Build · ZCode · Cursor · Pi · DeepSeek Harness**
+**Codex · Claude（Code / Cowork）· Grok Build · ZCode · Cursor · Pi · DeepSeek Harness**
 
 不同工具支持的用量、费用和额度信息有所不同，具体以应用内显示为准。
 

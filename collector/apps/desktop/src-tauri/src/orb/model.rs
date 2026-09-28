@@ -426,7 +426,7 @@ pub enum WindowIdError {
 pub fn agent_display_name(agent_id: &str) -> &str {
     match agent_id {
         "codex" => "Codex",
-        "claude-code" => "Claude Code",
+        "claude-code" => "Claude",
         "cursor" => "Cursor",
         "grok-build" => "Grok Build",
         "zcode" => "ZCode",

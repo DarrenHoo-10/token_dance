@@ -85,7 +85,7 @@ function mockDetailsSnapshot(): OrbDetailsSnapshot {
       ...snap.usage,
       sources: [
         { agentId: 'codex', agentName: 'Codex', todayTokens: '2100000' },
-        { agentId: 'claude-code', agentName: 'Claude Code', todayTokens: '1800000' },
+        { agentId: 'claude-code', agentName: 'Claude', todayTokens: '1800000' },
         { agentId: 'cursor', agentName: 'Cursor', todayTokens: '1200000' },
         { agentId: 'grok-build', agentName: 'Grok Build', todayTokens: null },
       ],

@@ -26,7 +26,7 @@ func rangeDateStrings(r domain.TimeRange) (string, string, *time.Location) {
 func agentDisplayName(id string) string {
 	switch id {
 	case "claude-code":
-		return "Claude Code"
+		return "Claude"
 	case "cursor":
 		return "Cursor"
 	case "codex":

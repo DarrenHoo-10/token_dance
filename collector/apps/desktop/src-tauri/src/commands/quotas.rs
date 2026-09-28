@@ -2,6 +2,7 @@ use serde::Serialize;
 use serde_json::Value;
 mod zcode;
 mod connected;
+mod claude_desktop;
 use std::{fs, io::{Read, Seek, SeekFrom}, path::{Path, PathBuf}, sync::Mutex, time::{Duration, Instant}};
 
 #[derive(Clone, Debug, Serialize)]
@@ -163,7 +164,10 @@ pub async fn get_agent_quotas() -> Result<Vec<AgentQuota>, String> {
         if let Some((time, result)) = cache.as_ref() {
             if time.elapsed() < Duration::from_secs(3) { return Ok(result.clone()); }
         }
-        let result = read_codex_quota();
+        let mut result = read_codex_quota();
+        if let Some(quota) = claude_desktop::read_quota() {
+            result.push(quota);
+        }
         *cache = Some((Instant::now(), result.clone()));
         Ok(result)
     }).await.map_err(|error| error.to_string())??;

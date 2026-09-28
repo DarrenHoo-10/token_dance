@@ -263,6 +263,7 @@ fn registry_covers_all_ten_harnesses() {
         identity_secret: secret(),
         codex_roots: vec![("codex-sessions".into(), dir.path().join("codex"))],
         claude_projects: dir.path().join("claude"),
+        claude_desktop_leveldb: dir.path().join("claude-desktop.indexeddb.leveldb"),
         cursor_transcripts: dir.path().join("cursor"),
         zcode_db: dir.path().join("zcode.sqlite"),
         opencode_db: dir.path().join("opencode.sqlite"),
@@ -272,8 +273,23 @@ fn registry_covers_all_ten_harnesses() {
         workbuddy_history: dir.path().join("workbuddy"),
         doubao_history: dir.path().join("doubao"),
     };
+    let desktop_locator = roots.claude_desktop_leveldb.to_string_lossy().into_owned();
+    let cli_locator = roots.claude_projects.join("session.jsonl");
+    std::fs::create_dir_all(&roots.claude_desktop_leveldb).unwrap();
     let reg = HarnessRegistry::from_roots(roots, alloc);
     assert_eq!(reg.harness_ids().len(), 10);
+    let desktop = reg
+        .get_for_source("claude-code", &desktop_locator)
+        .unwrap();
+    assert!(desktop.owns_source(&desktop_locator));
+    let sources = desktop.discover(DiscoveryBudget::default()).unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0].source_kind, SourceKind::Other);
+    assert_eq!(sources[0].cursor_kind, CursorKind::Opaque);
+    assert!(!reg
+        .get_for_source("claude-code", &cli_locator.to_string_lossy())
+        .unwrap()
+        .owns_source(&cli_locator.to_string_lossy()));
 }
 
 #[test]

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { collectionStatusText, usageTokens, usageCosts, annualUsage, usageTrend, quotaStale, quotaStatusText, quotaWindowLabel } from '../src/usage-analytics.ts';
 import { lastSevenDays } from '../src/weekly-usage.ts';
-const now = new Date(2026, 8, 5, 12);
+const now = new Date('2026-09-05T04:00:00Z');
 const dates = lastSevenDays(now);
 test('quota labels separate Codex windows, shared weekly usage and Cursor billing pools', () => {
   assert.equal(quotaWindowLabel({label:'shared_week', windowMinutes:10080}, true), '共享周额度');
@@ -43,8 +43,8 @@ test('annual calendar does not fill unrecorded history with zeros', () => {
   const oldZero = { ...agent, dailyUsage: [{ date: '2026-08-01', tokens: 0 }, ...agent.dailyUsage] };
   assert.equal(annualUsage([oldZero], now).days.find(day => day.date === '2026-08-01').tokens, null);
 });
-test('today trend uses 24 local hours and hides future hours', () => {
-  const noon = new Date(2026, 8, 10, 10, 30);
+test('today trend uses 24 Beijing hours and hides future hours', () => {
+  const noon = new Date('2026-09-10T02:30:00Z');
   const hourly = Array.from({ length: 24 }, (_, hour) => ({ hour, tokens: hour + 1 }));
   const points = usageTrend([{ ...agent, hourlyUsage: hourly }], 'today', noon);
   assert.equal(points.length, 24);
@@ -80,7 +80,7 @@ test('all-time trend starts at first usage day and caps at one year', () => {
   assert.equal(short[0].key, dates[5]);
   assert.equal(short[0].tokens, 4);
 });
-test('annual calendar includes leap day and local date boundaries', () => {
+test('annual calendar includes leap day and Beijing date boundaries', () => {
   const year = annualUsage([], new Date(2024, 2, 1, 0, 1));
   assert.equal(year.days.length, 366);
   assert.ok(year.days.some(day => day.date === '2024-02-29'));

@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { lastSevenDays, weeklyUsage } from '../src/weekly-usage.ts';
 
-const now = new Date(2026, 0, 3, 0, 5);
+const now = new Date('2026-01-02T16:05:00Z');
 const dates = lastSevenDays(now);
 const agent = (id, values) => ({ id, accuracy: 'exact', totalTokens: 999999999, dailyUsage: dates.map((date, i) => ({ date, tokens: values[i] })) });
 
-test('seven local calendar days include today and cross year boundaries', () => {
+test('seven Beijing calendar days include today and cross year boundaries', () => {
   assert.deepEqual(dates, ['2025-12-28', '2025-12-29', '2025-12-30', '2025-12-31', '2026-01-01', '2026-01-02', '2026-01-03']);
 });
 
@@ -40,4 +40,9 @@ test('zero usage is valid, while invalid daily values are unavailable', () => {
   for (const invalid of [-1, NaN, Infinity, null]) {
     assert.equal(weeklyUsage([agent('bad', [0, 0, 0, invalid, 0, 0, 0])], now).total, null);
   }
+});
+
+test('Beijing day rolls over at 16:00 UTC', () => {
+  assert.equal(lastSevenDays(new Date('2026-09-27T15:59:59Z')).at(-1), '2026-09-27');
+  assert.equal(lastSevenDays(new Date('2026-09-27T16:00:00Z')).at(-1), '2026-09-28');
 });

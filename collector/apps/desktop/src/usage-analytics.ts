@@ -1,5 +1,5 @@
 import type { AgentConfig } from './tauri-bridge.ts';
-import { lastSevenDays, weeklyUsage } from './weekly-usage.ts';
+import { beijingDateKey, lastSevenDays, weeklyUsage } from './weekly-usage.ts';
 
 export type UsageRange = 'today' | 'week' | 'all';
 export interface AgentQuota {
@@ -25,7 +25,7 @@ export function quotaWindowLabel(window: { label?: string | null; windowMinutes?
 }
 
 export function quotaStatusText(quota: AgentQuota | undefined, zh: boolean): string | null {
-  const names: Record<string, string> = { 'grok-build': 'Grok Build', cursor: 'Cursor', zcode: 'ZCode', codex: 'Codex', 'claude-code': 'Claude Code', pi: 'Pi', 'deepseek-harness': 'DeepSeek Harness', opencode: 'OpenCode', workbuddy: 'WorkBuddy', 'doubao-work': 'Doubao Work' };
+  const names: Record<string, string> = { 'grok-build': 'Grok Build', cursor: 'Cursor', zcode: 'ZCode', codex: 'Codex', 'claude-code': 'Claude', pi: 'Pi', 'deepseek-harness': 'DeepSeek Harness', opencode: 'OpenCode', workbuddy: 'WorkBuddy', 'doubao-work': 'Doubao Work' };
   const name = names[quota?.agentId ?? ''] ?? quota?.agentId ?? '';
   switch (quota?.status) {
     case 'not_connected': return zh ? `请在 ${name} 登录` : `Sign in to ${name}`;
@@ -83,18 +83,14 @@ export function usageCosts(agents: AgentConfig[], range: UsageRange, now = new D
 
 export type TrendPoint = { key: string; label: string; tokens: number | null };
 
-function localDateKey(now: Date) {
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-}
-
 function monthDay(date: string) {
   return `${Number(date.slice(5, 7))}/${Number(date.slice(8, 10))}`;
 }
 
 export function usageTrend(agents: AgentConfig[], range: UsageRange, now = new Date()): TrendPoint[] {
   if (range === 'today') {
-    const date = localDateKey(now);
-    const currentHour = now.getHours();
+    const date = beijingDateKey(now);
+    const currentHour = (now.getUTCHours() + 8) % 24;
     const hourlyAgents = agents.filter(agent => (agent.hourlyUsage?.length ?? 0) > 0);
     return Array.from({ length: 24 }, (_, hour) => {
       const tokens = hourlyAgents.length && hour <= currentHour
@@ -126,8 +122,9 @@ export function usageTrend(agents: AgentConfig[], range: UsageRange, now = new D
 }
 
 export function annualUsage(agents: AgentConfig[], now = new Date()) {
-  const start = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate() + 1, 12);
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12);
+  const [year, month, day] = beijingDateKey(now).split('-').map(Number);
+  const start = new Date(Date.UTC(year - 1, month - 1, day + 1, 12));
+  const end = new Date(Date.UTC(year, month - 1, day, 12));
   const totals = new Map<string, number>();
   for (const agent of agents) {
     if (agent.accuracy === 'unknown') continue;
@@ -137,11 +134,11 @@ export function annualUsage(agents: AgentConfig[], now = new Date()) {
     }
   }
   const days: { date: string; tokens: number | null }[] = [];
-  for (const day = new Date(start); day <= end; day.setDate(day.getDate() + 1)) {
-    const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+  for (const day = new Date(start); day <= end; day.setUTCDate(day.getUTCDate() + 1)) {
+    const date = day.toISOString().slice(0, 10);
     days.push({ date, tokens: totals.get(date) ?? null });
   }
-  return { days, offset: (start.getDay() + 6) % 7, active: days.filter(day => (day.tokens ?? 0) > 0).length };
+  return { days, offset: (start.getUTCDay() + 6) % 7, active: days.filter(day => (day.tokens ?? 0) > 0).length };
 }
 
 export function quotaStale(quota: AgentQuota, resetsAt: number | null, now = Date.now()) {

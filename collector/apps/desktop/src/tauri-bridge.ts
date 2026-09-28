@@ -206,7 +206,7 @@ const mockState = {
     },
     {
       id: "claude-code",
-      name: "Claude Code",
+      name: "Claude",
       adapterId: "adapter-claude",
       adapterVersion: "1.5.0",
       status: "ACTIVE" as const,

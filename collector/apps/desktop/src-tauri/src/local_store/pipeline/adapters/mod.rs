@@ -4,6 +4,8 @@
 //! (P2) owns lease, budget, admission, and checkpoint CAS.
 
 mod capability;
+mod claude_desktop;
+mod claude_desktop_store;
 mod codex;
 mod common;
 mod cursor;

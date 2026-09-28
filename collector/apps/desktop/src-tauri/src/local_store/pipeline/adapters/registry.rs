@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use super::claude_desktop::ClaudeDesktopStrategy;
 use super::codex::CodexStrategy;
 use super::common::SkillBook;
 use super::cursor::CursorStrategy;
@@ -20,6 +21,7 @@ pub struct AdapterRoots {
     /// All supported Codex detection sources (sessions, archived, …) keyed by source_id.
     pub codex_roots: Vec<(String, PathBuf)>,
     pub claude_projects: PathBuf,
+    pub claude_desktop_leveldb: PathBuf,
     pub cursor_transcripts: PathBuf,
     pub cursor_usage: Option<super::cursor_usage::CursorUsagePaths>,
     pub zcode_db: PathBuf,
@@ -62,6 +64,13 @@ impl HarnessRegistry {
             CLAUDE,
             secret.clone(),
             roots.claude_projects,
+            book.clone(),
+            skill_allocator.clone(),
+        )));
+        strategy_source_ids.push(None);
+        strategies.push(Box::new(ClaudeDesktopStrategy::new(
+            secret.clone(),
+            roots.claude_desktop_leveldb,
             book.clone(),
             skill_allocator.clone(),
         )));
@@ -164,6 +173,11 @@ impl HarnessRegistry {
         harness_id: &str,
         locator_ref: &str,
     ) -> Option<&dyn HarnessStrategy> {
+        if let Some(strategy) = self.strategies.iter().find(|strategy| {
+            strategy.harness_id() == harness_id && strategy.owns_source(locator_ref)
+        }) {
+            return Some(strategy.as_ref());
+        }
         if harness_id == super::codex::HARNESS_ID {
             if let Some(strategy) = self.get(harness_id) {
                 // CodexStrategy keeps all roots; locator selection is inside read via path.

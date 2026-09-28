@@ -2,7 +2,7 @@ use super::*;
 
 fn seed_pipeline(root: &std::path::Path) {
     let now = chrono::Utc::now().timestamp_millis();
-    let today = chrono::Local::now().date_naive();
+    let today = beijing_today();
     let bucket = beijing_bounds_for_date(today).0;
     let conn = rusqlite::Connection::open(root.join("tokendance-events.sqlite3")).unwrap();
     conn.execute(
@@ -27,7 +27,7 @@ async fn review3_agent_list_uses_pipeline_even_when_legacy_has_data() {
     old_event.occurred_at = chrono::Local::now().to_rfc3339();
     assert!(app.record_usage(&[old_event]));
     seed_pipeline(root.path());
-    let orb = app.get_usage_summary(chrono::Local::now().date_naive());
+    let orb = app.get_usage_summary(beijing_today());
     assert_eq!(orb.today_tokens.as_deref(), Some("42"));
     let agents = app.get_agents().await;
     let codex = agents.iter().find(|a| a.id == "codex").unwrap();
@@ -55,7 +55,7 @@ async fn review3_agent_list_preserves_pipeline_costs() {
 async fn review3_pipeline_history_keeps_all_time_totals_and_currency_coverage() {
     let (root, app) = crate::tests::state().await;
     seed_pipeline(root.path());
-    let today = chrono::Local::now().date_naive();
+    let today = beijing_today();
     let old_day = today - chrono::Duration::days(DISPLAY_DAYS + 1);
     let conn = rusqlite::Connection::open(root.path().join("tokendance-events.sqlite3")).unwrap();
     conn.execute("UPDATE cost_metrics SET estimated_cost_units=50000000, estimated_request_count=1, cost_known_count=2", []).unwrap();
@@ -100,7 +100,7 @@ async fn review3_pipeline_known_zero_is_preserved() {
     assert_eq!(codex.accuracy, "exact");
     assert_eq!(codex.total_costs.get("USD"), Some(&0));
     assert_eq!(
-        app.get_usage_summary(chrono::Local::now().date_naive())
+        app.get_usage_summary(beijing_today())
             .today_tokens
             .as_deref(),
         Some("0")

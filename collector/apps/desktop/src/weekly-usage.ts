@@ -1,10 +1,17 @@
 import type { AgentConfig } from "./tauri-bridge.ts";
 
-// Calendar dates in the device's local timezone, including today; avoid UTC/DST shifts.
+// Daily facts use the same UTC+8 calendar as the collector.
+export function beijingDateKey(now = new Date()): string {
+  return new Date(now.getTime() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
 export function lastSevenDays(now = new Date()): string[] {
+  const today = beijingDateKey(now);
+  const anchor = new Date(`${today}T12:00:00Z`);
   return Array.from({ length: 7 }, (_, index) => {
-    const day = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6 + index, 12);
-    return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, "0")}-${String(day.getDate()).padStart(2, "0")}`;
+    const day = new Date(anchor);
+    day.setUTCDate(anchor.getUTCDate() - 6 + index);
+    return day.toISOString().slice(0, 10);
   });
 }
 

@@ -410,6 +410,7 @@ pub struct PathResolver {
     env_codex_home: Option<PathBuf>,
     explicit_codex: Option<PathBuf>,
     explicit_claude: Option<PathBuf>,
+    env_claude_home: Option<PathBuf>,
     use_environment: bool,
 }
 
@@ -420,6 +421,9 @@ impl PathResolver {
             env_codex_home: std::env::var_os("CODEX_HOME").map(PathBuf::from),
             explicit_codex: None,
             explicit_claude: None,
+            env_claude_home: std::env::var_os("CLAUDE_CONFIG_DIR")
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from),
             use_environment: true,
         }
     }
@@ -430,12 +434,18 @@ impl PathResolver {
             env_codex_home: None,
             explicit_codex: None,
             explicit_claude: None,
+            env_claude_home: None,
             use_environment: false,
         }
     }
 
     pub fn with_explicit_codex(mut self, path: PathBuf) -> Self {
         self.explicit_codex = Some(path);
+        self
+    }
+
+    pub fn with_explicit_claude(mut self, path: PathBuf) -> Self {
+        self.explicit_claude = Some(path);
         self
     }
 
@@ -453,7 +463,29 @@ impl PathResolver {
     pub fn claude_root(&self) -> PathBuf {
         self.explicit_claude
             .clone()
+            .or_else(|| self.env_claude_home.clone())
             .unwrap_or_else(|| self.home.join(".claude"))
+    }
+
+    pub fn claude_desktop_store(&self) -> Option<PathBuf> {
+        #[cfg(target_os = "macos")]
+        {
+            Some(self.home.join(
+                "Library/Application Support/Claude/IndexedDB/https_claude.ai_0.indexeddb.leveldb",
+            ))
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Some(
+                self.env_dir("APPDATA")
+                    .unwrap_or_else(|| self.home.join("AppData/Roaming"))
+                    .join("Claude/IndexedDB/https_claude.ai_0.indexeddb.leveldb"),
+            )
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            None
+        }
     }
 
     pub fn cursor_candidates(&self) -> Vec<PathBuf> {
