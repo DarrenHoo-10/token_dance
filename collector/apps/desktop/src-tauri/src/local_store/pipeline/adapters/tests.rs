@@ -1803,6 +1803,10 @@ fn codex_patch_requires_success_and_is_replay_idempotent() {
         "text(await tools.apply_patch({}));",
         serde_json::to_string(patch).unwrap()
     );
+    let assigned = format!(
+        "const patch = {};\ntext(await tools.apply_patch(patch))",
+        serde_json::to_string(patch).unwrap()
+    );
     let records = vec![
         json!({"type":"session_meta","timestamp":now,"payload":{"id":"patch-session"}}),
         json!({"type":"response_item","timestamp":now+1,"payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"ok","input":patch}}),
@@ -1811,6 +1815,8 @@ fn codex_patch_requires_success_and_is_replay_idempotent() {
         json!({"type":"response_item","timestamp":now+4,"payload":{"type":"custom_tool_call_output","call_id":"failed","output":"patch failed"}}),
         json!({"type":"response_item","timestamp":now+5,"payload":{"type":"custom_tool_call","name":"exec","call_id":"wrapped","input":wrapped}}),
         json!({"type":"response_item","timestamp":now+6,"payload":{"type":"custom_tool_call_output","call_id":"wrapped","output":[{"type":"input_text","text":"Script completed with output:"},{"type":"input_text","text":"{}"}]}}),
+        json!({"type":"response_item","timestamp":now+7,"payload":{"type":"custom_tool_call","name":"exec","call_id":"assigned","input":assigned}}),
+        json!({"type":"response_item","timestamp":now+8,"payload":{"type":"custom_tool_call_output","call_id":"assigned","output":[{"type":"input_text","text":"Script completed with output:"},{"type":"input_text","text":"{}"}]}}),
     ];
     std::fs::write(
         &path,
@@ -1834,7 +1840,7 @@ fn codex_patch_requires_success_and_is_replay_idempotent() {
             c.execute(r#"UPDATE collection_sources SET cursor_json='{"offset":0}', decoder_state_json='{}' WHERE id=?1"#,[id])?;
             Ok(())
         }).unwrap();
-        for _ in 0..8 {
+        for _ in 0..records.len() + 1 {
             let sink = StoreSinkMut::new(&mut store);
             run_source_once(
                 &sink,
@@ -1847,7 +1853,16 @@ fn codex_patch_requires_success_and_is_replay_idempotent() {
             )
             .unwrap();
         }
-        assert_eq!(store.event_count().unwrap(), 3);
+        assert_eq!(store.event_count().unwrap(), 4);
+        let generated: i64 = store.with_connection(|conn| {
+            conn.query_row(
+                "SELECT COALESCE(SUM(json_extract(payload_json,'$.code.generated')),0) FROM events WHERE event_type='code_changed'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| crate::local_store::pipeline::PipelineError::Sqlite(error.to_string()))
+        }).unwrap();
+        assert_eq!(generated, 3);
     }
 }
 
