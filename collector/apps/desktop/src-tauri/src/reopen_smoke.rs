@@ -73,6 +73,22 @@ pub(crate) fn start(app: &AppHandle) {
                 })
                 .await?;
             }
+            on_ui(&app, |app| {
+                let main = app.get_webview_window("main").ok_or("missing main window")?;
+                let settings = app.get_webview_window("settings").ok_or("missing settings window")?;
+                if !settings.is_visible().map_err(|e| e.to_string())? {
+                    return Err("settings was not visible before returning to monitor".into());
+                }
+                let main_identity = main.ns_window().map_err(|e| e.to_string())? as usize;
+                crate::commands::window::request_initial_panel(app).map_err(|e| e.to_string())?;
+                if settings.is_visible().map_err(|e| e.to_string())?
+                    || !main.is_visible().map_err(|e| e.to_string())?
+                    || main.ns_window().map_err(|e| e.to_string())? as usize != main_identity
+                {
+                    return Err("settings did not return to the existing monitor window".into());
+                }
+                Ok(())
+            }).await?;
             Ok::<(), String>(())
         }
         .await;
