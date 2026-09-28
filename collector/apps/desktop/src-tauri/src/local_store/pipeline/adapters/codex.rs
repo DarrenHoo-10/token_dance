@@ -656,13 +656,46 @@ impl CodexStrategy {
 
 fn literal_wrapped_patch(input: &str) -> Option<String> {
     let source = input.trim();
-    let argument = source.strip_prefix("text(await tools.apply_patch(")?;
+    if let Some(argument) = source.strip_prefix("text(await tools.apply_patch(") {
+        let mut values = serde_json::Deserializer::from_str(argument).into_iter::<String>();
+        let patch = values.next()?.ok()?;
+        return matches!(argument[values.byte_offset()..].trim(), "));" | "))")
+            .then_some(patch);
+    }
+    // Code-mode calls commonly assign a JSON string to a local variable and
+    // pass it once to apply_patch. Keep this an exact, single-call grammar so
+    // arbitrary JavaScript or shell commands cannot become inferred code edits.
+    let declaration = source
+        .strip_prefix("const ")
+        .or_else(|| source.strip_prefix("let "))?;
+    let identifier_end = declaration
+        .bytes()
+        .enumerate()
+        .take_while(|(index, byte)| {
+            byte.is_ascii_alphabetic()
+                || *byte == b'_'
+                || *byte == b'$'
+                || (*index > 0 && byte.is_ascii_digit())
+        })
+        .count();
+    if identifier_end == 0 {
+        return None;
+    }
+    let identifier = &declaration[..identifier_end];
+    let argument = declaration[identifier_end..]
+        .trim_start()
+        .strip_prefix('=')?
+        .trim_start();
     if !argument.starts_with('"') {
         return None;
     }
     let mut values = serde_json::Deserializer::from_str(argument).into_iter::<String>();
     let patch = values.next()?.ok()?;
-    (argument[values.byte_offset()..].trim() == "));").then_some(patch)
+    let remainder = argument[values.byte_offset()..].trim_start();
+    let remainder = remainder.strip_prefix(';').unwrap_or(remainder).trim_start();
+    let call = remainder.strip_prefix("text(await tools.apply_patch(")?;
+    let tail = call.strip_prefix(identifier)?.trim_start();
+    matches!(tail, "));" | "))").then_some(patch)
 }
 
 fn successful_patch_output(output: &Value) -> bool {
@@ -696,6 +729,17 @@ mod patch_wrapper_tests {
             serde_json::to_string(patch).unwrap()
         );
         assert_eq!(literal_wrapped_patch(&input).as_deref(), Some(patch));
+        let assigned = format!(
+            "const patch = {};\ntext(await tools.apply_patch(patch))",
+            serde_json::to_string(patch).unwrap()
+        );
+        assert_eq!(literal_wrapped_patch(&assigned).as_deref(), Some(patch));
+        assert!(literal_wrapped_patch(&assigned.replace("(patch)", "(other)"))
+            .is_none());
+        assert!(literal_wrapped_patch(&format!("{assigned}; text('extra')"))
+            .is_none());
+        assert!(literal_wrapped_patch("const patch = `dynamic`; text(await tools.apply_patch(patch))")
+            .is_none());
         assert!(literal_wrapped_patch("text(await tools.apply_patch(variable));").is_none());
         assert!(literal_wrapped_patch(&format!("{input} text('extra');")).is_none());
         assert!(successful_patch_output(&json!([
