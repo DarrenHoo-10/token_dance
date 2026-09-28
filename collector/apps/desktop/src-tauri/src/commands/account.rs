@@ -747,22 +747,26 @@ pub(crate) async fn authorize_saved_credentials(website: Option<String>) -> Resu
     if crate::local_test::enabled() || !platform_credentials::uses_login_keychain() {
         return Ok(());
     }
-    let mut accounts = vec![
-        platform_credentials::WAL_KEY_ACCOUNT.to_owned(),
-        platform_credentials::DEVICE_SEED_ACCOUNT.to_owned(),
-    ];
-    let saved_origin = website.or_else(|| {
-        let bytes = fs::read(index_path()).ok()?;
-        let index: SessionIndex = serde_json::from_slice(&bytes).ok()?;
-        Some(index.origin)
-    });
-    if let Some(origin) = saved_origin.and_then(|value| account_origin(&value).ok()) {
-        accounts.push(session_account(origin.as_str()));
-    }
+    let accounts = authorization_accounts(website.as_deref())?;
     tokio::task::spawn_blocking(move || platform_credentials::authorize_login_keychain(&accounts))
         .await
         .map_err(|error| error.to_string())?
         .map_err(|error| error.to_string())
+}
+
+fn authorization_accounts(website: Option<&str>) -> Result<Vec<String>, String> {
+    match website {
+        // Recover only the key needed to open the local store. The device seed
+        // and saved session have separate Keychain ACLs and would each prompt.
+        None => Ok(vec![platform_credentials::WAL_KEY_ACCOUNT.to_owned()]),
+        Some(website) => {
+            let origin = account_origin(website)?;
+            Ok(vec![
+                platform_credentials::DEVICE_SEED_ACCOUNT.to_owned(),
+                session_account(origin.as_str()),
+            ])
+        }
+    }
 }
 
 #[tauri::command]
@@ -1020,6 +1024,22 @@ mod tests {
     use super::*;
     use std::io::{Read, Write};
     use std::net::TcpListener;
+
+    #[test]
+    fn startup_authorizes_only_the_key_needed_to_open_the_app() {
+        assert_eq!(
+            authorization_accounts(None).unwrap(),
+            vec![platform_credentials::WAL_KEY_ACCOUNT]
+        );
+        let login = authorization_accounts(Some("https://example.test/token-dance"))
+            .unwrap();
+        assert_eq!(login.len(), 2);
+        assert_eq!(login[0], platform_credentials::DEVICE_SEED_ACCOUNT);
+        assert_eq!(
+            login[1],
+            session_account("https://example.test/token-dance/")
+        );
+    }
 
     #[test]
     fn missing_device_key_requires_explicit_recovery_without_masking_other_failures() {
