@@ -1675,6 +1675,7 @@ func (m *MemoryStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 	for _, existing := range m.installations {
 		if existing.DevicePublicKey == inst.DevicePublicKey {
 			if existing.InstallationStatus == domain.InstallationStatusActive || existing.InstallationStatus == domain.InstallationStatusRevoked {
+				sameOwner := existing.UserID == challenge.UserID
 				if existing.InstallationStatus != domain.InstallationStatusRevoked && existing.UserID != challenge.UserID {
 					return nil, domain.ErrPublicKeyConflict
 				}
@@ -1687,8 +1688,8 @@ func (m *MemoryStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 					existing.UserID = challenge.UserID
 					existing.StatusVersion++
 					existing.UpdatedAt = now
-					if inst.DeviceName != nil {
-						existing.DeviceName = inst.DeviceName
+					if !sameOwner || domain.IsAutoDeviceName(existing.DeviceName, existing.OSType, existing.InstallationID) {
+						existing.DeviceName = domain.InitialDeviceName(inst.DeviceName, existing.OSType, existing.InstallationID)
 					}
 					if inst.OSVersion != nil {
 						existing.OSVersion = inst.OSVersion
@@ -1701,6 +1702,13 @@ func (m *MemoryStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 					}
 					if inst.CollectorVersion != "" {
 						existing.CollectorVersion = inst.CollectorVersion
+					}
+				}
+				if domain.IsAutoDeviceName(existing.DeviceName, existing.OSType, existing.InstallationID) {
+					name := domain.InitialDeviceName(inst.DeviceName, existing.OSType, existing.InstallationID)
+					if existing.DeviceName == nil || *existing.DeviceName != *name {
+						existing.DeviceName = name
+						existing.UpdatedAt = now
 					}
 				}
 				challenge.ChallengeStatus = domain.ChallengeStatusConsumed
@@ -1716,6 +1724,7 @@ func (m *MemoryStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 
 	instCopy := inst
 	instCopy.UserID = challenge.UserID
+	instCopy.DeviceName = domain.InitialDeviceName(inst.DeviceName, inst.OSType, inst.InstallationID)
 	m.installations[inst.InstallationID] = &instCopy
 
 	challenge.ChallengeStatus = domain.ChallengeStatusConsumed
@@ -1738,6 +1747,7 @@ func (m *MemoryStore) RegisterInstallationTx(ctx context.Context, inst domain.In
 	for _, existing := range m.installations {
 		if existing.DevicePublicKey == inst.DevicePublicKey {
 			if existing.InstallationStatus == domain.InstallationStatusActive || existing.InstallationStatus == domain.InstallationStatusRevoked {
+				sameOwner := existing.UserID == inst.UserID
 				if existing.InstallationStatus != domain.InstallationStatusRevoked && existing.UserID != inst.UserID {
 					return nil, domain.ErrPublicKeyConflict
 				}
@@ -1750,8 +1760,8 @@ func (m *MemoryStore) RegisterInstallationTx(ctx context.Context, inst domain.In
 					existing.UserID = inst.UserID
 					existing.StatusVersion++
 					existing.UpdatedAt = now
-					if inst.DeviceName != nil {
-						existing.DeviceName = inst.DeviceName
+					if !sameOwner || domain.IsAutoDeviceName(existing.DeviceName, existing.OSType, existing.InstallationID) {
+						existing.DeviceName = domain.InitialDeviceName(inst.DeviceName, existing.OSType, existing.InstallationID)
 					}
 					if inst.OSVersion != nil {
 						existing.OSVersion = inst.OSVersion
@@ -1766,6 +1776,13 @@ func (m *MemoryStore) RegisterInstallationTx(ctx context.Context, inst domain.In
 						existing.CollectorVersion = inst.CollectorVersion
 					}
 				}
+				if domain.IsAutoDeviceName(existing.DeviceName, existing.OSType, existing.InstallationID) {
+					name := domain.InitialDeviceName(inst.DeviceName, existing.OSType, existing.InstallationID)
+					if existing.DeviceName == nil || *existing.DeviceName != *name {
+						existing.DeviceName = name
+						existing.UpdatedAt = now
+					}
+				}
 				eCopy := *existing
 				return &eCopy, nil
 			}
@@ -1774,6 +1791,7 @@ func (m *MemoryStore) RegisterInstallationTx(ctx context.Context, inst domain.In
 	}
 
 	instCopy := inst
+	instCopy.DeviceName = domain.InitialDeviceName(inst.DeviceName, inst.OSType, inst.InstallationID)
 	m.installations[inst.InstallationID] = &instCopy
 	return &instCopy, nil
 }

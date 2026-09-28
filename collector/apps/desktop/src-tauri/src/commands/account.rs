@@ -19,6 +19,8 @@ use tauri::{Manager, State, Url};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::Mutex;
 
+mod device_name;
+
 // Passwords are never saved. Native session cookies are scoped to one website
 // origin and are never returned across the WebView IPC boundary.
 #[derive(Default)]
@@ -276,6 +278,11 @@ impl Connection {
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
+        let hostname = hostname::get()
+            .ok()
+            .and_then(|name| name.into_string().ok());
+        let device_name =
+            device_name::initial_device_name(hostname.as_deref(), std::env::consts::OS, &public_key);
         let proof_timestamp = chrono::Utc::now().timestamp().to_string();
         let proof_message = format!(
             "tokendance-device-binding\nregister:{user_id}\n{public_key}\n{proof_timestamp}"
@@ -295,7 +302,7 @@ impl Connection {
             )
             .bearer_auth(grant)
             .json(&json!({
-                "publicKey": public_key, "proofTimestamp": proof_timestamp, "proofSignature": proof_signature, "deviceName": "TokenDance Desktop",
+                "publicKey": public_key, "proofTimestamp": proof_timestamp, "proofSignature": proof_signature, "deviceName": device_name,
                 "osType": std::env::consts::OS, "architecture": std::env::consts::ARCH,
                 "collectorVersion": env!("CARGO_PKG_VERSION")
             }))
@@ -1319,6 +1326,12 @@ mod tests {
         let requests = server.join().unwrap();
         assert!(requests[0].starts_with("POST /token-dance/api/v1/me/device-grants "));
         assert!(requests[1].starts_with("POST /token-dance/v1/installations/register "));
+        let registration: Value = serde_json::from_str(
+            requests[1].split("\r\n\r\n").nth(1).expect("request body"),
+        )
+        .unwrap();
+        let name = registration["deviceName"].as_str().unwrap();
+        assert!(!name.is_empty() && name != "TokenDance Desktop");
         assert!(requests[2].starts_with("GET /token-dance/api/v1/auth/session "));
         assert!(requests
             .iter()

@@ -609,15 +609,29 @@ func TestUSR018_DeviceRevocationRejectsIngestMySQL(t *testing.T) {
 		RegisteredAt:       now,
 		UpdatedAt:          now,
 	}
-	if _, err := dev.RegisterInstallationTx(ctx, inst, now); err != nil {
+	first, err := dev.RegisterInstallationTx(ctx, inst, now)
+	if err != nil {
 		t.Fatalf("failed to register installation: %v", err)
+	}
+	if first.DeviceName == nil || *first.DeviceName != *domain.InitialDeviceName(nil, "windows", instID) {
+		t.Fatalf("missing stable initial device name: %+v", first)
 	}
 	retry := inst
 	retry.InstallationID = "ins_never_persisted"
 	retry.CollectorVersion = "2.0.0"
+	machineName := "Office PC"
+	retry.DeviceName = &machineName
 	registered, err := dev.RegisterInstallationTx(ctx, retry, now.Add(time.Minute))
-	if err != nil || registered.InstallationID != instID || registered.CollectorVersion != inst.CollectorVersion {
+	if err != nil || registered.InstallationID != instID || registered.CollectorVersion != inst.CollectorVersion || *registered.DeviceName != machineName {
 		t.Fatalf("re-registration must return stored installation: %+v, %v", registered, err)
+	}
+	if _, err := dev.UpdateInstallationName(ctx, instID, userID, "Custom PC", now.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	machineName = "Changed hostname"
+	registered, err = dev.RegisterInstallationTx(ctx, retry, now.Add(3*time.Minute))
+	if err != nil || *registered.DeviceName != "Custom PC" {
+		t.Fatalf("custom device name must survive registration: %+v, %v", registered, err)
 	}
 	if _, err := st.Ingest().GetIngestInstallation(ctx, registered.InstallationID); err != nil {
 		t.Fatalf("re-registered identity must authenticate: %v", err)
