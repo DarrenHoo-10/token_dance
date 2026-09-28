@@ -155,7 +155,16 @@ func (s *Service) ValidateDeviceGrant(ctx context.Context, grantToken string) (s
 }
 
 func (s *Service) ListDevices(ctx context.Context, userID string) ([]domain.Installation, error) {
-	return s.store.ListInstallations(ctx, userID)
+	devices, err := s.store.ListInstallations(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range devices {
+		if domain.IsGenericDeviceName(devices[i].DeviceName) {
+			devices[i].DeviceName = domain.InitialDeviceName(nil, devices[i].OSType, devices[i].InstallationID)
+		}
+	}
+	return devices, nil
 }
 
 type CreateBindingResult struct {

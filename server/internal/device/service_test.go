@@ -125,6 +125,64 @@ func TestUSR023_DevicePauseResumeRevokeLifecycle(t *testing.T) {
 	}
 }
 
+func TestRegistrationReplacesOnlyGenericDeviceNames(t *testing.T) {
+	ctx := context.Background()
+	st := memory.NewMemoryStore()
+	clk := clock.NewMockClock(time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC))
+	svc := NewService(st, config.DefaultConfig(), clk)
+	userID := "usr_device_names"
+	_, _, _ = st.SeedUserForTest(userID, "device_names", "names@tokendance.dev", clk.Now())
+	legacy := "TokenDance Desktop"
+	input := ClaimInput{
+		PublicKey:        hex.EncodeToString([]byte("32-bytes-ed25519-public-key-here")),
+		DeviceName:       &legacy,
+		OSType:           "macos",
+		Architecture:     "arm64",
+		CollectorVersion: "1.0.0",
+	}
+	first, err := svc.RegisterInstallation(ctx, userID, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFallback := domain.InitialDeviceName(nil, "macos", first.InstallationID)
+	if *first.DeviceName != *wantFallback {
+		t.Fatalf("legacy registration label = %q, want %q", *first.DeviceName, *wantFallback)
+	}
+
+	machine := "Darren's MacBook Pro"
+	input.DeviceName = &machine
+	second, err := svc.RegisterInstallation(ctx, userID, input)
+	if err != nil || second.InstallationID != first.InstallationID || *second.DeviceName != machine {
+		t.Fatalf("machine name did not replace generic label: %+v, %v", second, err)
+	}
+	if _, err := svc.UpdateDeviceName(ctx, first.InstallationID, userID, "Work Mac"); err != nil {
+		t.Fatal(err)
+	}
+	machine = "Renamed hostname"
+	third, err := svc.RegisterInstallation(ctx, userID, input)
+	if err != nil || *third.DeviceName != "Work Mac" {
+		t.Fatalf("registration overwrote custom label: %+v, %v", third, err)
+	}
+	if _, err := svc.RevokeDevice(ctx, first.InstallationID, userID); err != nil {
+		t.Fatal(err)
+	}
+	rebinding := *third
+	rebinding.BindingProofVerified = true
+	rebinding.DeviceName = &machine
+	rebound, err := st.RegisterInstallationTx(ctx, rebinding, clk.Now())
+	if err != nil || *rebound.DeviceName != "Work Mac" {
+		t.Fatalf("same-user rebind overwrote custom label: %+v, %v", rebound, err)
+	}
+
+	if _, err := svc.UpdateDeviceName(ctx, first.InstallationID, userID, legacy); err != nil {
+		t.Fatal(err)
+	}
+	listed, err := svc.ListDevices(ctx, userID)
+	if err != nil || len(listed) != 1 || *listed[0].DeviceName != *wantFallback {
+		t.Fatalf("legacy device list fallback = %+v, %v", listed, err)
+	}
+}
+
 func TestAggregateRejectsCollectorsOlderThanFloor(t *testing.T) {
 	ctx := context.Background()
 	st := memory.NewMemoryStore()

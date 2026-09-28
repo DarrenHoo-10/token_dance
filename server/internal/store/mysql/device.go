@@ -289,6 +289,15 @@ func (s *deviceStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 				}
 				existing = *rebound
 			}
+			if domain.IsAutoDeviceName(existing.DeviceName, existing.OSType, existing.InstallationID) {
+				name := domain.InitialDeviceName(inst.DeviceName, existing.OSType, existing.InstallationID)
+				if existing.DeviceName == nil || *existing.DeviceName != *name {
+					if _, err := tx.ExecContext(ctx, "UPDATE installations SET device_name = ?, updated_at = ? WHERE installation_id = ?", *name, now, existing.InstallationID); err != nil {
+						return nil, err
+					}
+				}
+				existing.DeviceName = name
+			}
 			consumeSQL := `
 				UPDATE device_binding_challenges
 				SET challenge_status = 'consumed', consumed_installation_id = ?, consumed_at = ?,
@@ -309,6 +318,7 @@ func (s *deviceStore) ClaimInstallationTx(ctx context.Context, codeHash [32]byte
 	if osType != "windows" && osType != "macos" {
 		osType = "windows"
 	}
+	inst.DeviceName = domain.InitialDeviceName(inst.DeviceName, osType, inst.InstallationID)
 
 	// Insert installation
 	insertInstSQL := `
@@ -391,6 +401,15 @@ func (s *deviceStore) RegisterInstallationTx(ctx context.Context, inst domain.In
 				}
 				return rebound, nil
 			}
+			if domain.IsAutoDeviceName(existing.DeviceName, existing.OSType, existing.InstallationID) {
+				name := domain.InitialDeviceName(inst.DeviceName, existing.OSType, existing.InstallationID)
+				if existing.DeviceName == nil || *existing.DeviceName != *name {
+					if _, err := tx.ExecContext(ctx, "UPDATE installations SET device_name = ?, updated_at = ? WHERE installation_id = ?", *name, now, existing.InstallationID); err != nil {
+						return nil, err
+					}
+				}
+				existing.DeviceName = name
+			}
 			// Re-registration must return the persisted identity, not the fresh
 			// candidate ID, which was never inserted and cannot authenticate.
 			if err := tx.Commit(); err != nil {
@@ -407,6 +426,7 @@ func (s *deviceStore) RegisterInstallationTx(ctx context.Context, inst domain.In
 	if osType != "windows" && osType != "macos" {
 		osType = "windows"
 	}
+	inst.DeviceName = domain.InitialDeviceName(inst.DeviceName, osType, inst.InstallationID)
 
 	insertInstSQL := `
 		INSERT INTO installations (
@@ -491,7 +511,8 @@ func (s *deviceStore) RebindInstallationTx(ctx context.Context, installationID, 
 // optionalMeta, when non-nil, refreshes device metadata from the claim/register input.
 func (s *deviceStore) rebindInstallationInTx(ctx context.Context, tx *sql.Tx, installationID, newUserID string, optionalMeta *domain.Installation, now time.Time) (*domain.Installation, error) {
 	var oldUser, oldStatus string
-	if err := tx.QueryRowContext(ctx, "SELECT user_id, installation_status FROM installations WHERE installation_id=? FOR UPDATE", installationID).Scan(&oldUser, &oldStatus); err != nil {
+	var oldName sql.NullString
+	if err := tx.QueryRowContext(ctx, "SELECT user_id, installation_status, device_name FROM installations WHERE installation_id=? FOR UPDATE", installationID).Scan(&oldUser, &oldStatus, &oldName); err != nil {
 		return nil, err
 	}
 	if oldStatus != "revoked" && oldUser != newUserID {
@@ -509,7 +530,11 @@ func (s *deviceStore) rebindInstallationInTx(ctx context.Context, tx *sql.Tx, in
 		}
 		architecture = optionalMeta.Architecture
 		collectorVersion = optionalMeta.CollectorVersion
-		deviceName = nullStringFromPtr(optionalMeta.DeviceName)
+		name := domain.InitialDeviceName(optionalMeta.DeviceName, osType, installationID)
+		if oldUser == newUserID && !domain.IsAutoDeviceName(ptrFromNullString(oldName), osType, installationID) {
+			name = ptrFromNullString(oldName)
+		}
+		deviceName = nullStringFromPtr(name)
 		osVersion = nullStringFromPtr(optionalMeta.OSVersion)
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE installations
