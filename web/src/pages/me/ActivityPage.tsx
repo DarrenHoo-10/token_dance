@@ -81,7 +81,7 @@ export const ActivityPage: React.FC = () => {
           >
             <option value="all">{t('dashboard.allAgents')}</option>
             <option value="codex">Codex</option>
-            <option value="claude-code">Claude Code</option>
+            <option value="claude-code">Claude</option>
             <option value="cursor">Cursor</option>
           </select>
 

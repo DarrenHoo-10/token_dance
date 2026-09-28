@@ -43,6 +43,10 @@ self-replace = "1"
 semver = "1"
 tempfile = "3"
 notify = "8"
+leveldb-core = "0.1"
+forensicnomicon-core = "1.5"
+blob-decoder = { version = "0.2", default-features = false }
+snap = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Security", "Win32_System_Threading"] }
@@ -63,3 +67,7 @@ tauri-build = "2"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["test-util"] }
+
+[patch.crates-io]
+# Upstream 0.2.2 rejects V8 kPadding in Claude Desktop's IndexedDB values.
+blob-decoder = { path = "../../../crates/blob-decoder-v8" }

@@ -51,7 +51,7 @@ func (s *searchStore) Search(ctx context.Context, query string, limit int, now t
 	}
 
 	agentCatalog := []domain.SearchAgentResult{
-		{AgentID: "claude-code", Name: "Claude Code", Description: "Anthropic's terminal coding agent"},
+		{AgentID: "claude-code", Name: "Claude", Description: "Anthropic's Code and Cowork agents"},
 		{AgentID: "cursor", Name: "Cursor", Description: "AI-first code editor"},
 		{AgentID: "codex", Name: "Codex CLI", Description: "OpenAI terminal agent"},
 	}

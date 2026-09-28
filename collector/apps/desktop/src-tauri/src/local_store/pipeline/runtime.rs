@@ -29,6 +29,24 @@ fn fingerprint(path: &str, kind: SourceKind) -> Fingerprint {
         // SQLite WAL writes may leave the main database's metadata unchanged.
         paths.push(PathBuf::from(format!("{path}-wal")));
     }
+    if kind == SourceKind::Other && Path::new(path).is_dir() {
+        // IndexedDB changes its active .log and compacts into .ldb files while
+        // the directory inode itself can retain the same timestamp.
+        if let Ok(entries) = std::fs::read_dir(path) {
+            let mut children = entries
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| {
+                    path.extension()
+                        .and_then(|ext| ext.to_str())
+                        .is_some_and(|ext| matches!(ext, "log" | "ldb" | "sst"))
+                })
+                .collect::<Vec<_>>();
+            children.sort();
+            children.truncate(1024);
+            paths.extend(children);
+        }
+    }
     Fingerprint(
         paths
             .iter()
@@ -140,6 +158,7 @@ impl PipelineRuntime {
             let mut paths: Vec<_> = roots.codex_roots.iter().map(|(_, p)| p.clone()).collect();
             paths.extend([
                 roots.claude_projects.clone(),
+                roots.claude_desktop_leveldb.clone(),
                 roots.cursor_transcripts.clone(),
                 roots.zcode_db.clone(),
                 roots.opencode_db.clone(),
@@ -585,6 +604,9 @@ pub fn adapter_roots_from_detection(
         }),
         claude_projects: source_path(detection, OfficialAgent::ClaudeCode)
             .unwrap_or_else(|| home.join(".claude").join("projects")),
+        claude_desktop_leveldb: collector_service::platform::PathResolver::production()
+            .claude_desktop_store()
+            .unwrap_or_else(|| home.join(".claude-desktop-unavailable")),
         cursor_transcripts: source_path(detection, OfficialAgent::Cursor)
             .unwrap_or_else(|| home.join(".cursor").join("projects")),
         zcode_db: source_path(detection, OfficialAgent::Zcode)
@@ -647,6 +669,7 @@ pub fn adapter_roots_for_fixture(identity_secret: Vec<u8>, root: &Path) -> Adapt
         identity_secret,
         codex_roots: vec![("codex-sessions".into(), root.join("codex"))],
         claude_projects: root.join("claude"),
+        claude_desktop_leveldb: root.join("claude-desktop.indexeddb.leveldb"),
         cursor_transcripts: root.join("cursor"),
         zcode_db: root.join("zcode.sqlite"),
         opencode_db: root.join("opencode.sqlite"),

@@ -3,11 +3,7 @@ use chrono::{Duration, Utc};
 use protocol::Accuracy;
 
 fn event(id: &str, age: i64, n: u64) -> EventEnvelope {
-    let at = (Utc::now().date_naive() - Duration::days(age))
-        .and_hms_opt(12, 0, 0)
-        .unwrap()
-        .and_utc()
-        .to_rfc3339();
+    let at = (Utc::now() - Duration::days(age)).to_rfc3339();
     test_envelope_at("codex", id, &at, n, Accuracy::Exact)
 }
 

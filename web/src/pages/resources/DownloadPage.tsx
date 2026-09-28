@@ -58,7 +58,7 @@ export function DownloadPage() {
       <div className="resource-app-preview">
         <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" />
         <strong>TokenDance</strong><span>{t('过去 24h Token', 'Past 24h tokens')}</span><b>1.12<small>M</small></b>
-        <div><span>Codex</span><span>Claude Code</span><span>Cursor</span></div>
+        <div><span>Codex</span><span>Claude Code / Cowork</span><span>Cursor</span></div>
       </div>
 
       <div className="resource-platform-tabs" role="tablist" aria-label={t('选择你的平台', 'Choose your platform')}>

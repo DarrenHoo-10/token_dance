@@ -27,7 +27,7 @@ impl TodayUsage for crate::local_store::LocalStore {
 
 pub const CATALOG_AGENTS: &[(&str, &str)] = &[
     ("codex", "Codex"),
-    ("claude-code", "Claude Code"),
+    ("claude-code", "Claude"),
     ("grok-build", "Grok Build"),
     ("cursor", "Cursor"),
     ("zcode", "ZCode"),

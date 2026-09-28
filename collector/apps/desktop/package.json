@@ -12,7 +12,7 @@
     "test:macos": "node scripts/local-test-macos.mjs",
     "preview": "vite preview",
     "test": "node scripts/verify-desktop.mjs",
-    "test:usage": "node --experimental-strip-types --test scripts/weekly-usage.test.mjs scripts/website.test.mjs scripts/sync-status.test.mjs scripts/usage-analytics.test.mjs scripts/orb-color.test.mjs scripts/orb-format.test.mjs"
+    "test:usage": "node --experimental-strip-types --test scripts/weekly-usage.test.mjs scripts/website.test.mjs scripts/sync-status.test.mjs scripts/usage-analytics.test.mjs scripts/orb-color.test.mjs scripts/orb-format.test.mjs && vitest run scripts/quota-rings.test.tsx --environment jsdom"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

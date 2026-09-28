@@ -11,7 +11,7 @@ use std::time::Instant;
 use acquisition::SecretResolver;
 use adapter_grok_build::{hook_auth_token, write_session_end_hook};
 use adapter_sdk::{ConfigMutation, SetupPlan};
-use chrono::{Local, Utc};
+use chrono::Utc;
 use collector_service::{
     detect_local, grok_user_home, start_listener, AppPaths, DetectionSnapshot, InstanceLock,
     ProductionService,
@@ -30,6 +30,31 @@ use crate::local_store::{LeasedBatch, LocalStore, PipelineRuntime, PipelineStore
 use crate::usage_ledger::{AgentUsageSnapshot, DayUsage, HourUsage, DISPLAY_DAYS};
 
 const COLLECTOR_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub(crate) fn beijing_today() -> chrono::NaiveDate {
+    beijing_date_at(Utc::now())
+}
+
+fn beijing_date_at(now: chrono::DateTime<Utc>) -> chrono::NaiveDate {
+    now
+        .with_timezone(&chrono::FixedOffset::east_opt(8 * 3600).expect("UTC+8"))
+        .date_naive()
+}
+
+#[cfg(test)]
+mod beijing_day_tests {
+    use super::beijing_date_at;
+
+    #[test]
+    fn desktop_today_rolls_over_at_the_collector_day_boundary() {
+        let before = chrono::DateTime::parse_from_rfc3339("2026-09-27T15:59:59Z")
+            .unwrap().to_utc();
+        let after = chrono::DateTime::parse_from_rfc3339("2026-09-27T16:00:00Z")
+            .unwrap().to_utc();
+        assert_eq!(beijing_date_at(before).to_string(), "2026-09-27");
+        assert_eq!(beijing_date_at(after).to_string(), "2026-09-28");
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -800,7 +825,7 @@ impl AppState {
         let service = self.service.lock().await;
         let pipeline_enabled = event_pipeline_v2_client_enabled();
         let pipeline = self.pipeline_writer();
-        let today = Local::now().date_naive();
+        let today = beijing_today();
         let legacy = if pipeline_enabled {
             None
         } else {
@@ -917,13 +942,13 @@ impl AppState {
     pub fn orb_today_sources(&self) -> Vec<crate::orb::TodaySourceTotal> {
         if event_pipeline_v2_client_enabled() {
             let writer = self.pipeline_writer();
-            let today = chrono::Local::now().date_naive();
+            let today = beijing_today();
             return pipeline_orb_today_sources(writer.as_deref(), today);
         }
         let ledger = self.lock_store();
         crate::orb::today_source_totals(
             &*ledger,
-            chrono::Local::now().date_naive(),
+            beijing_today(),
             crate::orb::CATALOG_AGENTS,
         )
     }
@@ -1495,7 +1520,7 @@ fn load_control(root: &Path) -> Result<Option<PersistedControl>, String> {
 fn agent_metadata() -> [(&'static str, &'static str, &'static str); 10] {
     [
         ("codex", "Codex", "dev.tokenshow.adapter.codex"),
-        ("claude-code", "Claude Code", "dev.tokenshow.adapter.claude"),
+        ("claude-code", "Claude", "dev.tokenshow.adapter.claude"),
         (
             "grok-build",
             "Grok Build",
