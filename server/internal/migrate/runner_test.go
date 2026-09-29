@@ -189,7 +189,7 @@ func TestMigrationRunnerIntegration_CleanInstall(t *testing.T) {
 	// Verify all migrations recorded in schema_migrations
 	var count int
 	err := db.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations").Scan(&count)
-	if err != nil || count != 18 {
+	if err != nil || count != 19 {
 		t.Fatalf("expected 19 applied migrations, got %d (err: %v)", count, err)
 	}
 
