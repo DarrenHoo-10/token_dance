@@ -115,7 +115,7 @@ export function PersonalAnalyticsDialog({
         </button>
       </div>
       <div className="dialog-inner analytics-dialog-scroll">
-        <PersonalAnalytics key={publicHandle || 'own'} publicHandle={publicHandle} onLeave={onClose} active={ready || open} />
+        <PersonalAnalytics key={publicHandle || 'own'} publicHandle={publicHandle} onLeave={onClose} active={open} />
       </div>
     </dialog>
   );
