@@ -1,5 +1,4 @@
-use std::fs::{self, OpenOptions};
-use std::io::Read;
+use std::fs;
 
 use serde::Serialize;
 use serde_json::json;
@@ -213,24 +212,19 @@ fn database(ctx: &Ctx) -> Check {
     }
 }
 
-/// Probe without taking the lock: a shared try-lock on a read-only handle.
 fn lock(ctx: &Ctx) -> Check {
-    let path = ctx.paths.lock_path();
-    let mut file = match OpenOptions::new().read(true).open(&path) {
-        Ok(f) => f,
-        Err(_) => return Check::ok("collector_process", "no collector has run here yet"),
-    };
-    match file.try_lock_shared() {
-        Ok(()) => {
-            let _ = file.unlock();
-            Check::ok("collector_process", "not running")
-        }
-        Err(fs::TryLockError::WouldBlock) => {
-            let mut pid = String::new();
-            let _ = file.read_to_string(&mut pid);
-            Check::ok("collector_process", format!("running (pid {})", pid.trim()))
-        }
-        Err(_) => Check::unknown("collector_process", "cannot probe the instance lock"),
+    let process = crate::status::probe(&ctx.paths);
+    match process.state {
+        "never_started" => Check::ok("collector_process", "no collector has run here yet"),
+        "stopped" => Check::ok("collector_process", "not running"),
+        "running" => Check::ok(
+            "collector_process",
+            format!(
+                "running (pid {})",
+                process.pid.map(|p| p.to_string()).unwrap_or_default()
+            ),
+        ),
+        _ => Check::unknown("collector_process", "cannot probe the instance lock"),
     }
 }
 
