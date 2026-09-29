@@ -20,7 +20,7 @@ function safeReturnTo(value: string | null): string | undefined {
 }
 
 export const LoginPage: React.FC = () => {
-  const { login, authenticated, loading: sessionLoading } = useAuth();
+  const { login, authenticated, user, loading: sessionLoading } = useAuth();
   const { t } = useLocale();
   const { showToast } = useNotification();
   const navigate = useNavigate();
@@ -40,8 +40,15 @@ export const LoginPage: React.FC = () => {
     if (sessionLoading || !authenticated) {
       return;
     }
-    navigate(safeReturnTo(rawReturnTo) || '/', { replace: true });
-  }, [authenticated, navigate, rawReturnTo, sessionLoading]);
+    // Same rule as after submitting: people who still need onboarding go there first, so whichever
+    // navigation runs first (this effect or handleSubmit) lands on the same page.
+    const target = safeReturnTo(rawReturnTo) || '/';
+    if (user?.onboardingRequired || user?.productState === 'new') {
+      navigate(`/onboarding?return_to=${encodeURIComponent(target)}`, { replace: true });
+    } else {
+      navigate(target, { replace: true });
+    }
+  }, [authenticated, navigate, rawReturnTo, sessionLoading, user?.onboardingRequired, user?.productState]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
