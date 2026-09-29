@@ -23,6 +23,7 @@ members = [
     "adapters/workbuddy",
     "adapters/doubao-work",
     "apps/service",
+    "apps/cli",
 ]
 
 [workspace.package]
