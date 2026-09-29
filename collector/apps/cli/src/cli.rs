@@ -42,6 +42,24 @@ pub enum Command {
     Run(RunArgs),
     /// Read-only diagnostics of paths, permissions, credentials and the database.
     Doctor,
+    /// Serve the read-only local dashboard, or print one JSON snapshot with `--json`.
+    Dashboard(DashboardArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct DashboardArgs {
+    /// `local` (this machine's recorded usage). `account` needs `tokendance login`, which this build lacks.
+    #[arg(long, default_value = "local", value_name = "SCOPE")]
+    pub scope: String,
+    /// Time window: 24h (rolling), day (UTC+8 calendar day), 7d, 30d or all. Used by `--json`; the page has its own selector.
+    #[arg(long, default_value = "24h", value_name = "RANGE")]
+    pub range: String,
+    /// Do not open a browser; only print the address.
+    #[arg(long)]
+    pub no_open: bool,
+    /// Listen on this loopback port (default: let the system choose a free one).
+    #[arg(long, default_value_t = 0, value_name = "PORT")]
+    pub port: u16,
 }
 
 #[derive(Args, Debug)]

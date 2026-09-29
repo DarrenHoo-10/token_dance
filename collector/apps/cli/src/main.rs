@@ -8,8 +8,11 @@ mod engine;
 mod error;
 mod keys;
 mod localdb;
+mod server;
 mod signals;
+mod snapshot;
 mod sources;
+mod status;
 
 use std::process::ExitCode;
 
@@ -81,6 +84,8 @@ fn fail(json: bool, error: CliError, clap_text: Option<String>) -> ExitCode {
         );
     } else if let Some(text) = clap_text {
         eprint!("{text}");
+    } else if error.kind == crate::error::Kind::Interrupted && error.message.is_empty() {
+        // A deliberate Ctrl+C on a foreground server needs no error text.
     } else {
         eprintln!("error: {}", error.message);
         if let Some(hint) = &error.hint {
@@ -95,6 +100,7 @@ fn fail(json: bool, error: CliError, clap_text: Option<String>) -> ExitCode {
 
 fn run(cli: Cli) -> CliResult<Outcome> {
     let ctx = Ctx::resolve(Overrides {
+        json: cli.json,
         data_dir: cli.data_dir,
         config: cli.config,
     })?;
@@ -104,5 +110,6 @@ fn run(cli: Cli) -> CliResult<Outcome> {
         Command::Collect(args) => commands::collect::run(&ctx, args),
         Command::Run(args) => commands::run::run(&ctx, args),
         Command::Doctor => commands::doctor::run(&ctx),
+        Command::Dashboard(args) => commands::dashboard::run(&ctx, args),
     }
 }
