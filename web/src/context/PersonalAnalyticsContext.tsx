@@ -1,8 +1,8 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, createContext, lazy, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
-import { PersonalAnalytics } from '@/pages/me/PersonalAnalytics';
+import { LoadingState } from '@/components/states/LoadingState';
 import '@/personal-analytics.css';
 
 interface PersonalAnalyticsContextValue {
@@ -11,6 +11,9 @@ interface PersonalAnalyticsContextValue {
   showPublic: (handle: string) => void;
   hide: () => void;
 }
+
+// The dashboard is large; it is fetched the first time the dialog opens.
+const PersonalAnalytics = lazy(() => import('@/pages/me/PersonalAnalytics').then((m) => ({ default: m.PersonalAnalytics })));
 
 const PersonalAnalyticsContext = createContext<PersonalAnalyticsContextValue | null>(null);
 
@@ -70,7 +73,12 @@ export function PersonalAnalyticsDialog({
   const { locale } = useLocale();
   const dialogRef = useRef<HTMLDialogElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
+  const [everOpened, setEverOpened] = useState(open);
   const zh = locale === 'zh-CN';
+
+  useEffect(() => {
+    if (open) setEverOpened(true);
+  }, [open]);
 
   useEffect(() => {
     const node = dialogRef.current;
@@ -115,7 +123,11 @@ export function PersonalAnalyticsDialog({
         </button>
       </div>
       <div className="dialog-inner analytics-dialog-scroll">
-        <PersonalAnalytics key={publicHandle || 'own'} publicHandle={publicHandle} onLeave={onClose} active={open} />
+        {(open || everOpened) && (
+          <Suspense fallback={<LoadingState />}>
+            <PersonalAnalytics key={publicHandle || 'own'} publicHandle={publicHandle} onLeave={onClose} active={open} />
+          </Suspense>
+        )}
       </div>
     </dialog>
   );
