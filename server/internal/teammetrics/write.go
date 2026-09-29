@@ -207,7 +207,7 @@ func ListDayMetrics(ctx context.Context, q interface {
 		WHERE team_id = ? AND delete_at IS NULL
 		  AND metric_date >= ? AND metric_date < ?
 		ORDER BY metric_date ASC, contributor_key ASC, row_key ASC`,
-		teamID, calendarDate(from), calendarDate(toExclusive),
+		teamID, calendarDate(from), coveringEndDate(toExclusive),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list team day metrics: %w", err)

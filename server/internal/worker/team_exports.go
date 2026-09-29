@@ -16,6 +16,7 @@ import (
 
 	"tokendance/internal/domain"
 	"tokendance/internal/teammetrics"
+	"tokendance/internal/teams"
 )
 
 const (
@@ -296,21 +297,29 @@ func (w *Worker) buildTeamExportCSV(ctx context.Context, claim *teamExportClaim)
 	var snapshotAuth uint64
 	var snapshotStatus string
 	var fromDate, toExclusive time.Time
+	var fromAt, toAt sql.NullTime
+	var rangeKey string
 	if err := w.db.QueryRowContext(ctx, `
-		SELECT auth_revision, status, from_date, to_date_exclusive
+		SELECT auth_revision, status, from_date, to_date_exclusive, from_at, to_at_exclusive, range_key
 		FROM team_analysis_snapshots
 		WHERE snapshot_id = ? AND team_id = ? AND rule_version = ?`, claim.snapshotID, claim.teamID, domain.TeamAnalysisRuleVersion,
-	).Scan(&snapshotAuth, &snapshotStatus, &fromDate, &toExclusive); err != nil {
+	).Scan(&snapshotAuth, &snapshotStatus, &fromDate, &toExclusive, &fromAt, &toAt, &rangeKey); err != nil {
 		return nil, fmt.Errorf("load export snapshot: %w", err)
 	}
 	if snapshotStatus != string(domain.SnapshotReady) || snapshotAuth != claim.authRevision {
 		return nil, fmt.Errorf("export snapshot is not a ready match for auth_revision")
+	}
+	if fromAt.Valid && toAt.Valid {
+		fromDate, toExclusive = fromAt.Time.UTC(), toAt.Time.UTC()
 	}
 
 	filters := parseTeamExportFilters(claim.filterJSON)
 	days, err := teammetrics.ListDayMetrics(ctx, w.db, claim.teamID, fromDate, toExclusive)
 	if err != nil {
 		return nil, fmt.Errorf("read static export rows: %w", err)
+	}
+	if rangeKey == "today" {
+		days = clipTeamExportRows(days, fromDate, toExclusive)
 	}
 	contribs, err := teammetrics.ListContributors(ctx, w.db, claim.teamID)
 	if err != nil {
@@ -388,6 +397,26 @@ func (w *Worker) buildTeamExportCSV(ctx context.Context, claim *teamExportClaim)
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+func clipTeamExportRows(days []teammetrics.DayRow, from, toExclusive time.Time) []teammetrics.DayRow {
+	rows := make([]domain.TeamAnalysisRow, 0, len(days))
+	byKey := make(map[string]teammetrics.DayRow, len(days))
+	for _, day := range days {
+		rows = append(rows, domain.TeamAnalysisRow{
+			RowKey: day.RowKey, MetricKind: day.MetricKind, TokenExactTotal: day.TokenExact,
+			TokenDerivedTotal: day.TokenDerived, ActivityJSON: day.Activity, HourlyJSON: day.Hourly,
+		})
+		byKey[day.RowKey] = day
+	}
+	clipped, _ := teams.ClipTeamRowsToRollingHours(rows, from, toExclusive)
+	out := make([]teammetrics.DayRow, 0, len(clipped))
+	for _, row := range clipped {
+		day := byKey[row.RowKey]
+		day.TokenExact, day.TokenDerived, day.UsageEventCount = row.TokenExactTotal, row.TokenDerivedTotal, row.UsageEventCount
+		out = append(out, day)
+	}
+	return out
 }
 
 func qualityLegacy(raw json.RawMessage) bool {

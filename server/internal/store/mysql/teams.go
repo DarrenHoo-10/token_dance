@@ -2501,13 +2501,13 @@ func (s *teamsStore) ListStaticDayMetrics(ctx context.Context, teamID string, fr
 	return rows, outC, nil
 }
 
-func (s *teamsStore) EnsureStaticAnalysisHandle(ctx context.Context, teamID string, from, toExclusive time.Time, authRevision, sourceRevision uint64, asOf, now time.Time) (*domain.TeamAnalysisSnapshot, error) {
+func (s *teamsStore) EnsureStaticAnalysisHandle(ctx context.Context, teamID, rangeKey string, from, toExclusive time.Time, authRevision, sourceRevision uint64, asOf, now time.Time) (*domain.TeamAnalysisSnapshot, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
-	snap, err := teammetrics.EnsureHandleTx(ctx, tx, teamID, from, toExclusive, authRevision, sourceRevision, asOf, now)
+	snap, err := teammetrics.EnsureHandleTx(ctx, tx, teamID, rangeKey, from, toExclusive, authRevision, sourceRevision, asOf, now)
 	if err != nil {
 		return nil, err
 	}

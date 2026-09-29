@@ -35,7 +35,7 @@ const (
 
 	uploadSelectSQL = `SELECT object_id, team_id, uploader_user_id, object_key, content_type, byte_size, image_width, image_height, sha256, status, expires_at FROM team_upload_objects`
 
-	snapshotSelectSQL = `SELECT snapshot_id, team_id, from_date, to_date_exclusive, auth_revision, source_revision, rule_version, status, active_request_key, as_of, lease_token, lease_generation, published_generation, lease_expires_at, attempt_count, next_attempt_at, error_code, expires_at FROM team_analysis_snapshots`
+	snapshotSelectSQL = `SELECT snapshot_id, team_id, from_date, to_date_exclusive, from_at, to_at_exclusive, range_key, auth_revision, source_revision, rule_version, status, active_request_key, as_of, lease_token, lease_generation, published_generation, lease_expires_at, attempt_count, next_attempt_at, error_code, expires_at FROM team_analysis_snapshots`
 )
 
 func scanTeam(row rowScanner) (*domain.Team, error) {
@@ -172,13 +172,19 @@ func scanUploadObject(row rowScanner) (*domain.TeamUploadObject, error) {
 func scanSnapshot(row rowScanner) (*domain.TeamAnalysisSnapshot, error) {
 	var snap domain.TeamAnalysisSnapshot
 	var activeKey, leaseToken, errCode sql.NullString
-	var leaseExp sql.NullTime
+	var leaseExp, fromAt, toAt sql.NullTime
 	if err := row.Scan(
-		&snap.SnapshotID, &snap.TeamID, &snap.FromDate, &snap.ToDateExclusive, &snap.AuthRevision, &snap.SourceRevision,
+		&snap.SnapshotID, &snap.TeamID, &snap.FromDate, &snap.ToDateExclusive, &fromAt, &toAt, &snap.RangeKey, &snap.AuthRevision, &snap.SourceRevision,
 		&snap.RuleVersion, &snap.Status, &activeKey, &snap.AsOf, &leaseToken, &snap.LeaseGeneration, &snap.PublishedGeneration,
 		&leaseExp, &snap.AttemptCount, &snap.NextAttemptAt, &errCode, &snap.ExpiresAt,
 	); err != nil {
 		return nil, err
+	}
+	if fromAt.Valid {
+		snap.FromDate = fromAt.Time.UTC()
+	}
+	if toAt.Valid {
+		snap.ToDateExclusive = toAt.Time.UTC()
 	}
 	snap.ActiveRequestKey = ptrFromNullString(activeKey)
 	snap.LeaseToken = ptrFromNullString(leaseToken)

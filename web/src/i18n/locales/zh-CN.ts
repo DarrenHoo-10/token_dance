@@ -459,13 +459,14 @@ export const zhCN = {
       alwaysOnHint: 'Token、分类、费用和成员贡献随加入一并共享，无需再单独打开。',
     },
     range: {
+      past24h: '过去 24 小时',
       from: '开始日期',
       to: '结束日期',
       timezone: '团队时区 {timezone}',
       days7: '近 7 天',
       days30: '近 30 天',
       tooLong: '自定义范围最多 90 天。',
-      showingPrevious: '日期尚未选齐，图表保留当前统计；首次打开显示今天。',
+      showingPrevious: '日期尚未选齐，图表保留当前统计；首次打开显示过去 24 小时。',
       chooseDates: '选齐日期后自动更新',
     },
     overview: {
@@ -486,6 +487,7 @@ export const zhCN = {
       activity: '团队活动',
       selectedPeriod: '较上一周期',
       noCompare: '上期记录不足，暂无对比',
+      hourlyCoverageNote: '过去 24 小时按小时记录统计；暂无小时记录的费用、消息等指标显示为 —。',
       uncoveredEstimate: '未覆盖用量预估',
       creating: '创作中',
       sharingBasic: '人共享基础用量',
