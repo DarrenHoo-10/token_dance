@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import type { SessionUser, LoginRequest, RegisterRequest, AuthResponse } from '@/types/api';
-import { api, ApiError } from '@/api/client';
+import { api, ApiError, SESSION_EXPIRED_EVENT } from '@/api/client';
 import { useLocale } from './LocaleContext';
 
 interface AuthContextType {
@@ -56,6 +56,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     refreshSession();
   }, [refreshSession]);
+
+  // A 401 from any signed-in request means the session ended; drop to the signed-out state
+  // so pages show the login prompt instead of an unexplained error.
+  const authenticatedRef = useRef(false);
+  authenticatedRef.current = authenticated;
+  useEffect(() => {
+    const onExpired = () => {
+      if (!authenticatedRef.current) return;
+      api.setCsrfToken(null);
+      setUser(null);
+      setAuthenticated(false);
+    };
+    window.addEventListener(SESSION_EXPIRED_EVENT, onExpired);
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, onExpired);
+  }, []);
 
   const login = async (data: LoginRequest): Promise<AuthResponse> => {
     setError(null);

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowDownRight, ArrowRight, ArrowUpRight, BarChart3, CheckCheck, Download, Flame, Layers3, Link2, LockKeyhole, RefreshCw, ShieldCheck, Sparkles, Trophy } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
@@ -205,13 +205,19 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
   const [trendError, setTrendError] = useState<ApiError | Error | null>(null);
   const [trendsReady, setTrendsReady] = useState(false);
 
+  // Only the latest request may write state; a slow response for an earlier period must not overwrite a newer one.
+  const boardSeq = useRef(0);
+  const trendSeq = useRef(0);
+
   const periodName = PERIODS.find((item) => item.key === range);
   const periodLabel = periodName ? (zh ? periodName.zh : periodName.en) : range;
 
   const fetchBoard = useCallback(async () => {
+    const seq = ++boardSeq.current;
     if (publicHandle) {
       const profile = await api.getPublicProfile(publicHandle);
       const publicSkills = profile.showSkillRanking === false ? null : await api.getPublicSkills(publicHandle, range).catch(() => null);
+      if (seq !== boardSeq.current) return;
       setPublicProfile(profile);
       setAgentBreakdowns(profile.showAgentBreakdown === false ? [] : profile.agentBreakdown || []);
       setSkills(publicSkills?.skills || publicSkills?.items || []);
@@ -227,6 +233,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
       api.getAgentBreakdowns(range),
       api.getPersonalSkills(range),
     ]);
+    if (seq !== boardSeq.current) return;
     setSummary(summaryRes);
     setAgentBreakdowns(agentsRes.items || []);
     setSkills(skillsRes.skills || (skillsRes as unknown as { items: SkillItem[] }).items || []);
@@ -234,6 +241,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
   }, [range, publicHandle]);
 
   const fetchTrends = useCallback(async () => {
+    const seq = ++trendSeq.current;
     setTrendError(null);
     if (publicHandle && publicProfile?.showTrends === false) {
       setTrends({ points: [] });
@@ -246,6 +254,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
       model: selectedModel !== 'all' ? selectedModel : undefined,
     };
     const trendsRes = publicHandle ? await api.getPublicTokenTrends(publicHandle, params) : await api.getTokenTrends(params);
+    if (seq !== trendSeq.current) return;
     setTrends(trendsRes);
     setTrendsReady(true);
   }, [range, selectedAgent, selectedModel, publicHandle, publicProfile?.handle, publicProfile?.showTrends]);
@@ -285,6 +294,13 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
     fetchStatic().catch(() => setCalendarDays([]));
   }, [authenticated, active, fetchStatic, publicHandle]);
 
+  const needsOnboarding = !publicHandle && Boolean(user?.onboardingRequired || user?.productState === 'new');
+  useEffect(() => {
+    if (!needsOnboarding || !active) return;
+    if (onLeave) onLeave();
+    else navigate('/onboarding');
+  }, [needsOnboarding, active, onLeave, navigate]);
+
   const toggleDevices = async () => {
     const next = !showDevices;
     setShowDevices(next);
@@ -318,11 +334,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
 
   if (!publicHandle && authLoading && !user) return <LoadingState />;
   if (!publicHandle && !authenticated) return <UnauthorizedState />;
-  if (!publicHandle && (user?.onboardingRequired || user?.productState === 'new')) {
-    if (onLeave) onLeave();
-    else navigate('/onboarding');
-    return null;
-  }
+  if (needsOnboarding) return null;
   if (publicHandle && !publicProfile && !error) return <LoadingState />;
   if (error && !summary && !publicProfile) {
     if (publicHandle && error instanceof ApiError && error.status === 404) {
@@ -374,6 +386,13 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
           <Download size={15} />{t('dashboard.exportAction')}
         </button>}
       </div>
+
+      {error && (summary || publicProfile) && (
+        <p className="filter-status analytics-refresh-error" role="alert">
+          {zh ? '刷新失败，下面显示的可能是上一次加载的数据。' : 'Refresh failed. The figures below may be from an earlier load.'}{' '}
+          <button type="button" className="text-link" onClick={retryBoard}>{t('common.retry')}</button>
+        </p>
+      )}
 
       <div className="analytics-metrics" aria-label={zh ? '10 项核心指标' : '10 core metrics'}>
         {metrics.map((metric) => (

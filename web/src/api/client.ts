@@ -41,6 +41,15 @@ import type {
   CommunityStatsResponse,
 } from '@/types/api';
 
+/** Fired when an authenticated-area request comes back 401, i.e. the session expired mid-use. */
+export const SESSION_EXPIRED_EVENT = 'tokendance:session-expired';
+
+function notifySessionExpired(path: string) {
+  // /auth/* answers 401 for ordinary failures (wrong password, no session yet); those are handled by their callers.
+  if (path.startsWith('/auth/') || typeof window === 'undefined') return;
+  window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+}
+
 export class ApiError extends Error {
   public readonly status: number;
   public readonly code: string;
@@ -153,6 +162,7 @@ class ApiHttpClient {
     const isJson = contentType.includes('application/json');
 
     if (!response.ok) {
+      if (response.status === 401) notifySessionExpired(path);
       throw await this.parseError(response);
     }
 
@@ -189,6 +199,7 @@ class ApiHttpClient {
     });
 
     if (!response.ok) {
+      if (response.status === 401) notifySessionExpired(path);
       throw await this.parseError(response);
     }
 
