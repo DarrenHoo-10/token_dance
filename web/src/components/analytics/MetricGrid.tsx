@@ -3,6 +3,7 @@ import { useLocale } from '@/context/LocaleContext';
 import type { PersonalSummaryMetrics } from '@/types/api';
 import { formatPersonalCost } from '@/utils/cost';
 import { MetricCard } from './MetricCard';
+import { compactNumber, formatRatioPercent } from '@/utils/formatNumber';
 
 export interface MetricGridProps {
   metrics: PersonalSummaryMetrics;
@@ -14,10 +15,8 @@ function formatNumber(val: string | null | undefined): string | null {
   if (val === null || val === undefined) return null;
   const num = parseFloat(val);
   if (isNaN(num)) return val;
-  if (num >= 1_000_000_000) return (num / 1_000_000_000).toFixed(1) + 'B';
-  if (num >= 1_000_000) return (num / 1_000_000).toFixed(1) + 'M';
-  if (num >= 1_000) return (num / 1_000).toFixed(1) + 'K';
-  return num.toLocaleString();
+  const compact = compactNumber(num);
+  return compact ? `${compact.value}${compact.unit}` : num.toLocaleString();
 }
 
 function formatDurationHours(msStr: string | null | undefined): string | null {
@@ -29,11 +28,7 @@ function formatDurationHours(msStr: string | null | undefined): string | null {
 }
 
 function formatPercentage(val: string | null | undefined): string | null {
-  if (!val) return null;
-  const num = parseFloat(val);
-  if (isNaN(num)) return null;
-  const pct = num <= 1 ? (num * 100).toFixed(1) : num.toFixed(1);
-  return `${pct}%`;
+  return formatRatioPercent(val);
 }
 
 export const MetricGrid: React.FC<MetricGridProps> = ({ metrics, compact = false, tokenHidden = false }) => {

@@ -20,6 +20,8 @@ import { ChangeBadge } from '@/components/common/ChangeBadge';
 import { api, ApiError } from '@/api/client';
 import { getApiErrorMessage } from '@/i18n';
 import { formatPersonalCost } from '@/utils/cost';
+import { copyText } from '@/utils/clipboard';
+import { compactNumber, formatRatioPercent } from '@/utils/formatNumber';
 import type {
   PersonalSummary,
   PersonalSummaryMetrics,
@@ -57,9 +59,8 @@ function formatContextDate(value?: string | null) {
 
 function formatSelectionTokens(total: number, locale: string) {
   if (!Number.isFinite(total) || total <= 0) return null;
-  if (total >= 1_000_000) return `${(total / 1_000_000).toFixed(2)}M`;
-  if (total >= 1_000) return `${(total / 1_000).toFixed(1)}K`;
-  return total.toLocaleString(locale);
+  const compact = compactNumber(total, { decimals: 2, kDecimals: 1 });
+  return compact ? `${compact.value}${compact.unit}` : total.toLocaleString(locale);
 }
 
 function trendsHourly(trends: TokenTrendsResponse | null, points: { date: string }[]) {
@@ -82,9 +83,8 @@ function formatTokensParts(raw: string | null | undefined): { value: string; uni
   if (raw == null || raw === '') return null;
   const num = parseFloat(raw);
   if (!Number.isFinite(num)) return null;
-  if (num >= 1_000_000_000) return { value: (num / 1_000_000_000).toFixed(2), unit: 'B' };
-  if (num >= 1_000_000) return { value: (num / 1_000_000).toFixed(2), unit: 'M' };
-  if (num >= 1_000) return { value: `${(num / 1_000).toFixed(1)}K`, unit: '' };
+  const compact = compactNumber(num, { decimals: 2, kDecimals: 1 });
+  if (compact) return compact.unit === 'K' ? { value: `${compact.value}K`, unit: '' } : compact;
   return { value: Math.round(num).toLocaleString(), unit: '' };
 }
 
@@ -97,9 +97,8 @@ function formatHoursParts(raw: string | null | undefined): { value: string; unit
 
 function formatPercentParts(raw: string | null | undefined): { value: string; unit: string } | null {
   if (!raw) return null;
-  const num = parseFloat(raw);
-  if (!Number.isFinite(num)) return null;
-  return { value: (num <= 1 ? num * 100 : num).toFixed(1), unit: '%' };
+  const percent = formatRatioPercent(raw);
+  return percent ? { value: percent.slice(0, -1), unit: '%' } : null;
 }
 
 function formatLineParts(raw: string | null | undefined): { value: string; unit: string } | null {
@@ -382,7 +381,10 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
             </button>
           ))}
         </div>
-        {publicHandle ? <button className="button secondary analytics-export" type="button" onClick={() => { navigator.clipboard.writeText(publicUrl); showToast(t('publicProfile.linkCopied'), 'success'); }}><Link2 size={15} />{zh ? '复制链接' : 'Copy link'}</button> : <button className="button secondary analytics-export" type="button" disabled={exporting} onClick={exportCurrentPeriod}>
+        {publicHandle ? <button className="button secondary analytics-export" type="button" onClick={async () => {
+          if (await copyText(publicUrl)) showToast(t('publicProfile.linkCopied'), 'success');
+          else showToast(zh ? `复制失败，请手动复制：${publicUrl}` : `Copy failed. Copy it manually: ${publicUrl}`, 'error');
+        }}><Link2 size={15} />{zh ? '复制链接' : 'Copy link'}</button> : <button className="button secondary analytics-export" type="button" disabled={exporting} onClick={exportCurrentPeriod}>
           <Download size={15} />{t('dashboard.exportAction')}
         </button>}
       </div>

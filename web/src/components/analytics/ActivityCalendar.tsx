@@ -2,20 +2,15 @@ import React, { useState } from 'react';
 import { CalendarDays, ChevronLeft, ChevronRight, Flame, Sparkles } from 'lucide-react';
 import { useLocale } from '@/context/LocaleContext';
 import type { ActivityCalendarDay } from '@/types/api';
+import { compactNumber } from '@/utils/formatNumber';
 
 export interface ActivityCalendarProps { days: ActivityCalendarDay[]; streakDays?: number }
-
-function scaleCompact(value: number, suffix: string) {
-  return `${value.toFixed(1).replace(/\.0$/, '')}${suffix}`;
-}
 
 /** Compact token label used on calendar cells, matching product totals such as 1.2M / 373K. */
 export function formatCalendarCompact(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return '';
-  if (value >= 1_000_000_000) return scaleCompact(value / 1_000_000_000, 'B');
-  if (value >= 1_000_000) return scaleCompact(value / 1_000_000, 'M');
-  if (value >= 1_000) return scaleCompact(value / 1_000, 'K');
-  return String(Math.round(value));
+  const compact = compactNumber(value);
+  return compact ? `${compact.value.replace(/\.0$/, '')}${compact.unit}` : String(Math.round(value));
 }
 
 function formatCalendarTokens(value: number) {

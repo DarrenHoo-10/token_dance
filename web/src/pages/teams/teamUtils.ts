@@ -1,6 +1,7 @@
 import type { MetricValue, MetricValueState, SharingFlags } from '@/api/teams';
 import { EMPTY_SHARING } from '@/api/teams';
 import { safeSessionStorage } from '@/utils/safeStorage';
+import { formatRatioPercent } from '@/utils/formatNumber';
 
 export const TEAM_NAME_MIN = 2;
 export const TEAM_NAME_MAX = 40;
@@ -97,11 +98,7 @@ export function formatDurationHours(msStr: string | null | undefined): string | 
 }
 
 export function formatRatePercent(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const num = Number(value);
-  if (!Number.isFinite(num)) return null;
-  const pct = num <= 1 ? num * 100 : num;
-  return `${pct.toFixed(1)}%`;
+  return formatRatioPercent(value);
 }
 
 export function formatTokenCompact(value: string): string {

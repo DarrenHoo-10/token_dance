@@ -4,6 +4,7 @@ import { resolveHarnessBrand } from '@/components/common/harnessBrand';
 import { usageColor } from '@/utils/usageColors';
 import { useLocale } from '@/context/LocaleContext';
 import type { AgentBreakdownItem } from '@/types/api';
+import { compactNumber } from '@/utils/formatNumber';
 
 export interface AgentBreakdownProps {
   items: AgentBreakdownItem[];
@@ -12,10 +13,8 @@ export interface AgentBreakdownProps {
 
 function formatTokens(tokenTotal: string, decimals = 1): string {
   const num = parseFloat(tokenTotal) || 0;
-  if (num >= 1_000_000_000) return (num / 1_000_000_000).toFixed(decimals) + 'B';
-  if (num >= 1_000_000) return (num / 1_000_000).toFixed(decimals) + 'M';
-  if (num >= 1_000) return (num / 1_000).toFixed(1) + 'K';
-  return num.toLocaleString();
+  const compact = compactNumber(num, { decimals, kDecimals: 1 });
+  return compact ? `${compact.value}${compact.unit}` : num.toLocaleString();
 }
 
 export const AgentBreakdown: React.FC<AgentBreakdownProps> = ({ items, variant = 'bars' }) => {
