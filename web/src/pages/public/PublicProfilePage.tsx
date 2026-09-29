@@ -26,7 +26,7 @@ export const PublicProfilePage: React.FC = () => {
   if (user?.handle && user.handle.toLowerCase() === handle?.toLowerCase()) {
     return <OwnAnalyticsOpener show={personalAnalytics.show} />;
   }
-  return <PublicProfileContent />;
+  return <PublicProfileContent handle={handle} />;
 };
 
 const OwnAnalyticsOpener: React.FC<{ show: () => void }> = ({ show }) => {
@@ -38,8 +38,7 @@ const OwnAnalyticsOpener: React.FC<{ show: () => void }> = ({ show }) => {
   return null;
 };
 
-const PublicProfileContent: React.FC = () => {
-  const { handle } = useParams<{ handle: string }>();
+export const PublicProfileContent: React.FC<{ handle?: string }> = ({ handle }) => {
   const { locale, t } = useLocale();
   const { showToast } = useNotification();
   const zh = locale === 'zh-CN';
@@ -124,7 +123,7 @@ const PublicProfileContent: React.FC = () => {
           <div className="public-avatar">{profile.avatarUrl ? <img src={avatarUrl(profile.avatarUrl)} alt={profile.displayName} /> : <span>{initials}</span>}</div>
           <div><span>{zh ? '个人数据页' : 'Personal Data'}</span><h1 id="public-data-title">{profile.displayName}</h1><p>@{profile.handle}{profile.bio ? `  ${profile.bio}` : ''}</p></div>
         </div>
-        <Button variant="outline" onClick={() => { navigator.clipboard.writeText(window.location.href); showToast(t('publicProfile.linkCopied'), 'success'); }}><Link2 size={16} aria-hidden="true" />{zh ? '复制链接' : 'Copy link'}</Button>
+        <Button variant="outline" onClick={() => { navigator.clipboard.writeText(new URL(`${import.meta.env.BASE_URL}u/${encodeURIComponent(profile.handle)}`, window.location.origin).href); showToast(t('publicProfile.linkCopied'), 'success'); }}><Link2 size={16} aria-hidden="true" />{zh ? '复制链接' : 'Copy link'}</Button>
       </div>
 
       <MetricGrid metrics={metrics} compact tokenHidden={profile.showTokenTotal === false} />
@@ -135,8 +134,8 @@ const PublicProfileContent: React.FC = () => {
       </div>
 
       <div className="public-data-secondary-grid">
-        <article className="panel"><div className="panel-header"><div><h2>{zh ? 'Agent 构成' : 'Agent Breakdown'}</h2><p className="text-muted">{zh ? '按 Token 占比' : 'By token share'}</p></div></div><AgentBreakdown items={displayAgents} /></article>
-        <article className="panel"><div className="panel-header"><div><h2>{zh ? '活跃日历' : 'Activity Calendar'}</h2><p className="text-muted">{zh ? '近 10 周活跃轨迹' : 'Activity across the last 10 weeks'}</p></div></div><ActivityCalendar days={displayCalendar} streakDays={profile.currentStreak ?? 0} /></article>
+        <article className="panel"><div className="panel-header"><div><h2>{zh ? 'Agent 构成' : 'Agent Breakdown'}</h2><p className="text-muted">{zh ? '按 Token 占比' : 'By token share'}</p></div></div>{profile.showAgentBreakdown === false ? <p className="text-muted">{zh ? '用户未公开 Agent 构成' : 'Agent breakdown is private'}</p> : <AgentBreakdown items={displayAgents} />}</article>
+        <article className="panel"><div className="panel-header"><div><h2>{zh ? '活跃日历' : 'Activity Calendar'}</h2><p className="text-muted">{zh ? '近 10 周活跃轨迹' : 'Activity across the last 10 weeks'}</p></div></div>{profile.showActivityCalendar === false ? <p className="text-muted">{zh ? '用户未公开活跃日历' : 'Activity calendar is private'}</p> : <ActivityCalendar days={displayCalendar} streakDays={profile.currentStreak ?? 0} />}</article>
         <article className="panel"><div className="panel-header"><div><h2>{zh ? 'Skill 排行榜' : 'Skill Ranking'}</h2><p className="text-muted">{zh ? '按调用次数排序' : 'Ranked by call count'}</p></div></div><SkillRanking skills={displaySkills} /></article>
       </div>
     </section>

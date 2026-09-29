@@ -6,6 +6,7 @@ import { LocaleProvider } from '@/context/LocaleContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { PersonalAnalyticsProvider, usePersonalAnalytics } from '@/context/PersonalAnalyticsContext';
 import { api } from '@/api/client';
+import { LeaderboardTable } from '@/components/analytics/LeaderboardTable';
 
 function LocationLabel() {
   const { pathname } = useLocation();
@@ -18,7 +19,7 @@ function Openers() {
     <>
       <LocationLabel />
       <Routes>
-        <Route path="/leaderboard" element={<><h1>平台排行榜</h1><button type="button" onClick={show}>个人数据</button></>} />
+        <Route path="/leaderboard" element={<><h1>平台排行榜</h1><button type="button" onClick={show}>个人数据</button><LeaderboardTable entries={[{ rankNo: 1, handle: 'ada', displayName: 'Ada', avatarUrl: null, metricValue: '200' }]} /></>} />
         <Route path="/teams/:teamId" element={<><h1>团队面板</h1><button type="button" onClick={show}>个人数据</button></>} />
         <Route path="/me" element={<h1>独立个人页</h1>} />
       </Routes>
@@ -110,6 +111,27 @@ afterEach(() => {
 });
 
 describe('Personal analytics overlay', () => {
+  it('opens another user from the leaderboard in the same dialog shell', async () => {
+    renderOverlay('/leaderboard');
+    vi.spyOn(api, 'getPublicProfile').mockResolvedValue({
+      handle: 'ada', displayName: 'Ada', avatarUrl: null,
+      generatedAt: '2026-09-19T00:00:00Z', projectionVersion: 1,
+      showAgentBreakdown: true, showActivityCalendar: true,
+      agentBreakdown: [{ key: 'codex', label: 'Codex CLI', tokenTotal: '200', percentage: 100 }],
+      activityCalendar: [{ date: '2026-09-19', tokenTotal: '200', level: 1, active: true }],
+    });
+    vi.spyOn(api, 'getPublicTokenTrends').mockResolvedValue({ points: [] });
+    vi.spyOn(api, 'getPublicSkills').mockResolvedValue({ skills: [] });
+    fireEvent.click(screen.getByRole('link', { name: 'Ada' }));
+    const dialog = await screen.findByRole('dialog', { name: '个人数据' });
+    expect(await within(dialog).findByRole('heading', { name: 'Ada' })).toBeInTheDocument();
+    expect(within(dialog).getByText('Codex CLI')).toBeInTheDocument();
+    expect(screen.getByTestId('path')).toHaveTextContent('/leaderboard');
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByRole('heading', { name: '平台排行榜' })).toBeInTheDocument();
+  });
+
   it('does not show a rank or rank movement before positive usage is synced', async () => {
     renderOverlay('/leaderboard');
     await act(async () => {

@@ -2083,6 +2083,14 @@ components:
         tokenTotal:
           type: string
           nullable: true
+        agentBreakdown:
+          type: array
+          items:
+            $ref: '#/components/schemas/BreakdownItem'
+        activityCalendar:
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarDay'
         activeDays:
           type: integer
           nullable: true

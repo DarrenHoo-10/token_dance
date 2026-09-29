@@ -1,28 +1,40 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { PersonalAnalytics } from '@/pages/me/PersonalAnalytics';
 import '@/personal-analytics.css';
 
+const PublicProfileContent = React.lazy(() => import('@/pages/public/PublicProfilePage').then(module => ({ default: module.PublicProfileContent })));
+
 interface PersonalAnalyticsContextValue {
   open: boolean;
   show: () => void;
+  showPublic: (handle: string) => void;
   hide: () => void;
 }
 
 const PersonalAnalyticsContext = createContext<PersonalAnalyticsContextValue | null>(null);
 
 export function usePersonalAnalytics(): PersonalAnalyticsContextValue {
-  return useContext(PersonalAnalyticsContext) ?? { open: false, show() {}, hide() {} };
+  return useContext(PersonalAnalyticsContext) ?? { open: false, show() {}, showPublic() {}, hide() {} };
 }
 
 export const PersonalAnalyticsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { authenticated } = useAuth();
+  const { authenticated, user } = useAuth();
   const [open, setOpen] = useState(false);
-  const show = useCallback(() => setOpen(true), []);
-  const hide = useCallback(() => setOpen(false), []);
-  const value = useMemo(() => ({ open, show, hide }), [open, show, hide]);
+  const [publicHandle, setPublicHandle] = useState<string | null>(null);
+  const show = useCallback(() => { setPublicHandle(null); setOpen(true); }, []);
+  const showPublic = useCallback((handle: string) => {
+    if (user?.handle?.toLowerCase() === handle.toLowerCase()) {
+      show();
+      return;
+    }
+    setPublicHandle(handle);
+    setOpen(true);
+  }, [show, user?.handle]);
+  const hide = useCallback(() => { setOpen(false); setPublicHandle(null); }, []);
+  const value = useMemo(() => ({ open, show, showPublic, hide }), [open, show, showPublic, hide]);
 
   useEffect(() => {
     if (!authenticated) setOpen(false);
@@ -31,7 +43,7 @@ export const PersonalAnalyticsProvider: React.FC<{ children: React.ReactNode }> 
   return (
     <PersonalAnalyticsContext.Provider value={value}>
       {children}
-      <PersonalAnalyticsDialog open={open} onClose={hide} ready={authenticated} />
+      <PersonalAnalyticsDialog open={open} onClose={hide} ready={authenticated || open} publicHandle={publicHandle} />
     </PersonalAnalyticsContext.Provider>
   );
 };
@@ -50,10 +62,12 @@ export function PersonalAnalyticsDialog({
   open,
   onClose,
   ready = open,
+  publicHandle = null,
 }: {
   open: boolean;
   onClose: () => void;
   ready?: boolean;
+  publicHandle?: string | null;
 }) {
   const { locale } = useLocale();
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -93,7 +107,8 @@ export function PersonalAnalyticsDialog({
       className="dialog wide-dialog analytics-dialog"
       onCancel={(event) => { event.preventDefault(); onClose(); }}
       onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
-      aria-labelledby="personal-analytics-heading"
+      aria-labelledby={publicHandle ? undefined : 'personal-analytics-heading'}
+      aria-label={publicHandle ? (zh ? '个人数据' : 'Personal analytics') : undefined}
       aria-hidden={open ? undefined : 'true'}
     >
       <div className="analytics-dialog-toolbar">
@@ -103,7 +118,7 @@ export function PersonalAnalyticsDialog({
         </button>
       </div>
       <div className="dialog-inner analytics-dialog-scroll">
-        <PersonalAnalytics onLeave={onClose} active={ready || open} />
+        {publicHandle && open ? <Suspense fallback={<div role="status">{zh ? '加载中…' : 'Loading…'}</div>}><PublicProfileContent handle={publicHandle} /></Suspense> : <PersonalAnalytics onLeave={onClose} active={ready || open} />}
       </div>
     </dialog>
   );

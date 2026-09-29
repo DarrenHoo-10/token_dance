@@ -1536,10 +1536,17 @@ func (h *Handlers) GetPublicProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if pub.ShowActivityCalendar {
-		cal, errCal := h.analytics.GetActivityCalendar(r.Context(), pub.UserID, "30d")
+		cal, errCal := h.analytics.GetActivityCalendar(r.Context(), pub.UserID, "10w")
 		if errCal == nil && cal != nil {
+			dto.ActivityCalendar = cal.Days
 			dto.ActiveDays = &cal.TotalActiveDays
 			dto.CurrentStreak = &cal.CurrentStreak
+		}
+	}
+	if pub.ShowAgentBreakdown {
+		breakdown, errBreakdown := h.analytics.GetAgentBreakdown(r.Context(), pub.UserID, "30d")
+		if errBreakdown == nil && breakdown != nil {
+			dto.AgentBreakdown = breakdown.Items
 		}
 	}
 

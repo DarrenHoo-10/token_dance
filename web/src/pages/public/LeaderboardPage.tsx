@@ -100,10 +100,11 @@ function PersonAvatar({ entry, className = '' }: { entry: LeaderboardEntry; clas
   return <UserAvatar url={entry.avatarUrl} name={name} className={`leader-avatar ${className}`} fallbackClassName={`leader-avatar ${className} avatar-fallback`} alt={`${name} profile`} fetchPriority="high" />;
 }
 
-function PodiumCard({ entry, selected, onSelect, zh }: {
+function PodiumCard({ entry, selected, onSelect, onOpenProfile, zh }: {
   entry: LeaderboardEntry;
   selected: boolean;
   onSelect: (entry: LeaderboardEntry) => void;
+  onOpenProfile: (handle: string) => void;
   zh: boolean;
 }) {
   const winner = entry.rankNo === 1;
@@ -117,7 +118,7 @@ function PodiumCard({ entry, selected, onSelect, zh }: {
       onClick={() => onSelect(entry)}
     >
       <div className={`rank-medal rank-${entry.rankNo}`}>{entry.rankNo}</div>
-      <div className="podium-avatar-wrap">
+      <div className="podium-avatar-wrap" onClick={(event) => { event.stopPropagation(); onOpenProfile(entry.handle); }} title={zh ? `查看 ${name} 的个人数据` : `View ${name}'s personal data`}>
         <PersonAvatar entry={entry} className="podium-avatar" />
         {winner && <Crown className="crown" size={28} aria-hidden="true" />}
       </div>
@@ -348,7 +349,7 @@ export const LeaderboardPage: React.FC = () => {
             {podium.length > 0 && (
               <div className="podium-grid">
                 {podium.map((entry) => (
-                  <PodiumCard key={entry.rankNo} entry={entry} selected={entry.handle === selectedHandle} onSelect={(next) => setSelectedHandle(next.handle)} zh={zh} />
+                  <PodiumCard key={entry.rankNo} entry={entry} selected={entry.handle === selectedHandle} onSelect={(next) => setSelectedHandle(next.handle)} onOpenProfile={personalAnalytics.showPublic} zh={zh} />
                 ))}
               </div>
             )}
