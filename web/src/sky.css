@@ -604,3 +604,14 @@
 @media(min-width:375px) and (max-width:760px){.product-sky .navbar .nav-brand span{display:block;font-size:20px}}
 
 .sky-harness-caption{margin-top:18px;font-size:11px;color:var(--text-muted)}
+
+/* Mobile header: search, personal data and language move into the menu so the header stays on one row. */
+.nav-mobile-extras{display:none}
+@media(max-width:760px){
+.product-sky .navbar .nav-actions .nav-document,.product-sky .navbar .nav-actions .nav-analytics,.product-sky .navbar .nav-actions .sky-language{display:none}
+.product-sky .navbar .nav-links{z-index:40;background:#fff;backdrop-filter:none}
+.product-sky .nav-mobile-extras{display:flex;flex-basis:100%;flex-wrap:wrap;align-items:center;justify-content:space-around;gap:10px;margin-top:2px;padding-top:11px;border-top:1px solid #e7edde}
+.product-sky .nav-mobile-action{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;color:inherit;font:inherit;font-size:12px;cursor:pointer;padding:4px 2px}
+.product-sky .navbar .nav-actions{flex-wrap:nowrap}
+.product-sky .navbar.floating-nav{flex-wrap:nowrap}
+}

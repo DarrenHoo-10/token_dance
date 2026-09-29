@@ -4,6 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { PersonalAnalytics } from '@/pages/me/PersonalAnalytics';
 import '@/personal-analytics.css';
+import { BackdropDialog } from '@/components/common/BackdropDialog';
 
 interface PersonalAnalyticsContextValue {
   open: boolean;
@@ -100,11 +101,11 @@ export function PersonalAnalyticsDialog({
   if (!ready && !open) return null;
 
   return (
-    <dialog
+    <BackdropDialog
       ref={dialogRef}
       className="dialog wide-dialog analytics-dialog"
       onCancel={(event) => { event.preventDefault(); onClose(); }}
-      onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
+      onClose={onClose}
       aria-labelledby="personal-analytics-heading"
       aria-hidden={open ? undefined : 'true'}
     >
@@ -117,6 +118,6 @@ export function PersonalAnalyticsDialog({
       <div className="dialog-inner analytics-dialog-scroll">
         <PersonalAnalytics key={publicHandle || 'own'} publicHandle={publicHandle} onLeave={onClose} active={open} />
       </div>
-    </dialog>
+    </BackdropDialog>
   );
 }

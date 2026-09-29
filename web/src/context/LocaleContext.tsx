@@ -9,6 +9,13 @@ interface LocaleContextType {
   t: (key: string, params?: Record<string, string | number>) => string;
 }
 
+// First visit: follow the browser language, keep the product default (Chinese) when it is unknown.
+export function localeFromBrowser(languages: readonly string[] = typeof navigator === 'undefined' ? [] : navigator.languages?.length ? navigator.languages : [navigator.language]): Locale {
+  const first = languages.find(Boolean)?.toLowerCase();
+  if (!first) return defaultLocale;
+  return first.startsWith('zh') ? 'zh-CN' : 'en-US';
+}
+
 const LocaleContext = createContext<LocaleContextType | undefined>(undefined);
 
 export const LocaleProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -17,7 +24,7 @@ export const LocaleProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (saved === 'zh-CN' || saved === 'en-US') {
       return saved;
     }
-    return defaultLocale;
+    return localeFromBrowser();
   });
 
   const setLocale = useCallback((newLocale: Locale) => {

@@ -4,6 +4,7 @@ import { Check, Crown, Globe2, Layers3, LockKeyhole, Settings2, Trash2, Upload }
 import { ApiError } from '@/api/client';
 import { teamsApi, type TeamMember } from '@/api/teams';
 import { ErrorState } from '@/components/states/ErrorState';
+import { BackdropDialog } from '@/components/common/BackdropDialog';
 import { LoadingState } from '@/components/states/LoadingState';
 import { useLocale } from '@/context/LocaleContext';
 import { useNotification } from '@/context/NotificationContext';
@@ -112,7 +113,7 @@ export const TeamSettingsPage: React.FC = () => {
 
   const confirmDialog = (open: boolean, onClose: () => void, title: string, lead: string, danger: boolean, onConfirm: () => Promise<void>, extra?: React.ReactNode) => (
     open ? (
-      <dialog className="tw-dialog" open onCancel={onClose} onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <BackdropDialog className="tw-dialog" open onClose={onClose}>
         <div className="tw-dialog-inner">
           <h2>{title}</h2>
           <p className="tw-dialog-lead">{lead}</p>
@@ -124,7 +125,7 @@ export const TeamSettingsPage: React.FC = () => {
             </div>
           </form>
         </div>
-      </dialog>
+      </BackdropDialog>
     ) : null
   );
 

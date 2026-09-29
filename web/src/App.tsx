@@ -5,6 +5,7 @@ import { LocaleProvider } from '@/context/LocaleContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { AuthProvider } from '@/context/AuthContext';
 import { AppLayout } from '@/components/layout/AppLayout';
+import { useRouteTitle } from '@/hooks/useRouteTitle';
 import { SettingsLayout } from '@/components/layout/SettingsLayout';
 
 // Auth Pages
@@ -45,6 +46,11 @@ import { NotFoundPage } from '@/pages/system/NotFoundPage';
 import { DownloadPage } from '@/pages/resources/DownloadPage';
 import { DocsPage } from '@/pages/resources/DocsPage';
 
+export const RouteTitle: React.FC = () => {
+  useRouteTitle();
+  return null;
+};
+
 const PreserveSearchRedirect: React.FC<{ to: string }> = ({ to }) => {
   const { search } = useLocation();
   return <Navigate to={{ pathname: to, search }} relative="path" replace />;
@@ -62,6 +68,7 @@ export const App: React.FC = () => {
           <BrowserRouter basename={import.meta.env.BASE_URL} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <TeamProvider>
             <PersonalAnalyticsProvider>
+            <RouteTitle />
             <Routes>
               {/* Standalone Auth & Onboarding */}
               <Route path="/login" element={<LoginPage />} />
