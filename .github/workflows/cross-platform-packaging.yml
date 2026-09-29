@@ -29,6 +29,18 @@ permissions:
   contents: read
 
 jobs:
+  linux-collector-tests:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'workflow_dispatch' || !inputs.sign_release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: collector -> target
+      - name: Shared collector kernel tests (used by the desktop app and the CLI)
+        run: cargo test --locked --manifest-path collector/Cargo.toml -p collector-service
+
   windows-tests:
     runs-on: windows-latest
     if: github.event_name != 'workflow_dispatch' || !inputs.sign_release
@@ -83,6 +95,7 @@ jobs:
       - name: Cross-platform collection discovery regressions
         run: |
           cargo test --locked --manifest-path collector/Cargo.toml -p collector-service detect::tests
+          cargo test --locked --manifest-path collector/Cargo.toml -p collector-service doubao --lib
           cargo test --locked --manifest-path collector/apps/desktop/src-tauri/Cargo.toml doubao --lib
       - name: PowerShell syntax and fail-closed Authenticode tests
         shell: pwsh
@@ -340,7 +353,7 @@ jobs:
         if: matrix.architecture == 'arm64'
         run: |
           cargo test --locked --manifest-path collector/Cargo.toml -p platform-credentials --features login-keychain
-          cargo test --locked --manifest-path collector/Cargo.toml -p collector-service detect::tests
+          cargo test --locked --manifest-path collector/Cargo.toml -p collector-service --lib
           cargo test --locked --manifest-path collector/apps/desktop/src-tauri/Cargo.toml --features unnotarized-distribution --lib
       - name: Selected macOS architecture compiles
         run: |

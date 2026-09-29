@@ -443,7 +443,7 @@ impl AccountState {
         }
         let runtime = app.pipeline_runtime().ok_or("PIPELINE_UNAVAILABLE")?;
         app.set_rebuilding(true);
-        let result = tauri::async_runtime::spawn_blocking(move || runtime.rebuild())
+        let result = tauri::async_runtime::spawn_blocking(move || runtime.rebuild(env!("CARGO_PKG_VERSION")))
             .await
             .map_err(|e| e.to_string())
             .and_then(|result| result);

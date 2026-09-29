@@ -1361,7 +1361,7 @@ fn review2_cumulative_token_components_are_differenced() {
 #[test]
 fn review2_codex_keeps_sessions_and_archived_roots() {
     use crate::local_store::pipeline::runtime::adapter_roots_from_detection;
-    use collector_service::{DetectedSourceConfig, DetectionSnapshot, OfficialAgent};
+    use crate::{DetectedSourceConfig, DetectionSnapshot, OfficialAgent};
 
     let mut snap = DetectionSnapshot::default();
     // archived sorts before sessions in BTreeMap — must not replace live sessions.
