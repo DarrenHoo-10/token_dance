@@ -99,7 +99,7 @@
 .sky-home-shell .leaderboard-data-table .rank-1{color:#be9940}.sky-home-shell .leaderboard-data-table .rank-2{color:#778888}.sky-home-shell .leaderboard-data-table .rank-3{color:#9890ac}
 .sky-home-shell .leaderboard-person{gap:13px}
 .sky-home-shell .leaderboard-person strong{font-size:13px;font-weight:600;color:#151b13}
-.sky-home-shell .leaderboard-person>img,.sky-home-shell .leaderboard-person>.list-avatar{width:36px;height:36px;border-radius:50%;background:#f1f4ed;padding:2px}
+.sky-home-shell .leaderboard-avatar-button>img,.sky-home-shell .leaderboard-avatar-button>.list-avatar{width:36px;height:36px;border-radius:50%;background:#f1f4ed;padding:2px}
 .sky-home-shell .leaderboard-table-scroll{padding:0;margin:0}
 .sky-home-shell .rank-change{background:none;border:0;box-shadow:none}
 .sky-board-actions{display:flex;justify-content:center;gap:22px;border-top:1px solid #edf1e8;margin-top:10px;min-height:57px}

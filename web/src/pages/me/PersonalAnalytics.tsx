@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowDownRight, ArrowRight, ArrowUpRight, BarChart3, CheckCheck, Download, Flame, Layers3, RefreshCw, ShieldCheck, Sparkles, Trophy } from 'lucide-react';
+import { ArrowDownRight, ArrowRight, ArrowUpRight, BarChart3, CheckCheck, Download, Flame, Layers3, Link2, LockKeyhole, RefreshCw, ShieldCheck, Sparkles, Trophy } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { useNotification } from '@/context/NotificationContext';
 import { LoadingState } from '@/components/states/LoadingState';
 import { ErrorState } from '@/components/states/ErrorState';
 import { UnauthorizedState } from '@/components/states/UnauthorizedState';
+import { EmptyState } from '@/components/states/EmptyState';
 import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
 import { personalTokenRank } from '@/components/analytics/tokenRanking';
 import { FilterSelect } from '@/components/common/FilterSelect';
@@ -29,6 +30,7 @@ import type {
   FilterOptionsResponse,
   CollectorDevice,
   MetricValue,
+  PublicUserProfile,
 } from '@/types/api';
 import '@/personal-analytics.css';
 
@@ -150,20 +152,42 @@ function overlayMetrics(metrics: PersonalSummaryMetrics | undefined, zh: boolean
   ];
 }
 
-export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolean }> = ({ onLeave, active = true }) => {
+function publicMetrics(profile: PublicUserProfile | null): PersonalSummaryMetrics | undefined {
+  if (!profile) return undefined;
+  const unavailable: MetricValue = { value: null, supported: false };
+  const tokenTotal = profile.showTokenTotal === false ? null : profile.tokenTotal ?? null;
+  const codeLines = profile.codeLinesTotal ?? null;
+  const estimatedCost = profile.estimatedCostTotal ?? null;
+  return {
+    estimatedCost: { amount: estimatedCost, currency: 'USD', supported: estimatedCost != null },
+    totalTokens: { value: tokenTotal, supported: tokenTotal != null },
+    generatedCodeLines: { value: codeLines, supported: codeLines != null },
+    tokensPerCodeLine: tokenTotal && codeLines && Number(codeLines) > 0
+      ? { value: String(Number(tokenTotal) / Number(codeLines)), supported: true } : unavailable,
+    inputContextTokens: unavailable,
+    outputTokens: unavailable,
+    cacheHitRate: unavailable,
+    activeDurationMs: unavailable,
+    messageCount: unavailable,
+    userMessageCount: unavailable,
+  };
+}
+
+export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolean; publicHandle?: string | null }> = ({ onLeave, active = true, publicHandle = null }) => {
   const { user, authenticated, loading: authLoading } = useAuth();
   const { t, locale } = useLocale();
   const { showToast } = useNotification();
   const navigate = useNavigate();
   const zh = locale === 'zh-CN';
 
-  const [range, setRange] = useState('today');
+  const [range, setRange] = useState(publicHandle ? '30d' : 'today');
   const [selectedAgent, setSelectedAgent] = useState('all');
   const [selectedModel, setSelectedModel] = useState('all');
   const [showDevices, setShowDevices] = useState(false);
   const [exporting, setExporting] = useState(false);
 
   const [summary, setSummary] = useState<PersonalSummary | null>(null);
+  const [publicProfile, setPublicProfile] = useState<PublicUserProfile | null>(null);
   const [trends, setTrends] = useState<TokenTrendsResponse | null>(null);
   const [agentBreakdowns, setAgentBreakdowns] = useState<BreakdownItem[]>([]);
   const [skills, setSkills] = useState<SkillItem[]>([]);
@@ -185,6 +209,19 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
   const periodLabel = periodName ? (zh ? periodName.zh : periodName.en) : range;
 
   const fetchBoard = useCallback(async () => {
+    if (publicHandle) {
+      const profile = await api.getPublicProfile(publicHandle);
+      const publicSkills = profile.showSkillRanking === false ? null : await api.getPublicSkills(publicHandle, range).catch(() => null);
+      setPublicProfile(profile);
+      setAgentBreakdowns(profile.showAgentBreakdown === false ? [] : profile.agentBreakdown || []);
+      setSkills(publicSkills?.skills || publicSkills?.items || []);
+      setCalendarDays(profile.showActivityCalendar === false ? [] : profile.activityCalendar || []);
+      setCalendarStreak(profile.showActivityCalendar === false ? 0 : profile.currentStreak || 0);
+      setFilterOptions({ agents: profile.showAgentBreakdown === false ? [] : (profile.agentBreakdown || []).map(agent => ({ id: agent.key, name: agent.label })), providers: [], models: [] });
+      setFilterStatus('ready');
+      setError(null);
+      return;
+    }
     const [summaryRes, agentsRes, skillsRes] = await Promise.all([
       api.getPersonalSummary(range),
       api.getAgentBreakdowns(range),
@@ -194,18 +231,24 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
     setAgentBreakdowns(agentsRes.items || []);
     setSkills(skillsRes.skills || (skillsRes as unknown as { items: SkillItem[] }).items || []);
     setError(null);
-  }, [range]);
+  }, [range, publicHandle]);
 
   const fetchTrends = useCallback(async () => {
     setTrendError(null);
-    const trendsRes = await api.getTokenTrends({
+    if (publicHandle && publicProfile?.showTrends === false) {
+      setTrends({ points: [] });
+      setTrendsReady(true);
+      return;
+    }
+    const params = {
       range,
       agent: selectedAgent !== 'all' ? selectedAgent : undefined,
       model: selectedModel !== 'all' ? selectedModel : undefined,
-    });
+    };
+    const trendsRes = publicHandle ? await api.getPublicTokenTrends(publicHandle, params) : await api.getTokenTrends(params);
     setTrends(trendsRes);
     setTrendsReady(true);
-  }, [range, selectedAgent, selectedModel]);
+  }, [range, selectedAgent, selectedModel, publicHandle, publicProfile?.handle, publicProfile?.showTrends]);
 
   const fetchStatic = useCallback(async () => {
     setFilterStatus('loading');
@@ -216,16 +259,16 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
   }, []);
 
   useEffect(() => {
-    if (!authenticated || !active) return;
+    if ((!authenticated && !publicHandle) || !active) return;
     let ignore = false;
     fetchBoard().catch((err) => {
       if (!ignore) setError(err instanceof ApiError ? err : new Error(String(err)));
     });
     return () => { ignore = true; };
-  }, [authenticated, active, fetchBoard]);
+  }, [authenticated, active, fetchBoard, publicHandle]);
 
   useEffect(() => {
-    if (!authenticated || !active) return;
+    if ((!authenticated && !publicHandle) || !active || (publicHandle && !publicProfile)) return;
     let ignore = false;
     fetchTrends().catch((err) => {
       if (!ignore) {
@@ -235,12 +278,12 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
       }
     });
     return () => { ignore = true; };
-  }, [authenticated, active, fetchTrends]);
+  }, [authenticated, active, fetchTrends, publicHandle]);
 
   useEffect(() => {
-    if (!authenticated || !active) return;
+    if (!authenticated || !active || publicHandle) return;
     fetchStatic().catch(() => setCalendarDays([]));
-  }, [authenticated, active, fetchStatic]);
+  }, [authenticated, active, fetchStatic, publicHandle]);
 
   const toggleDevices = async () => {
     const next = !showDevices;
@@ -269,14 +312,24 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
     }
   };
 
-  if (authLoading && !user) return <LoadingState />;
-  if (!authenticated) return <UnauthorizedState />;
-  if (user?.onboardingRequired || user?.productState === 'new') {
+  const retryBoard = () => {
+    fetchBoard().catch((err) => setError(err instanceof ApiError ? err : new Error(String(err))));
+  };
+
+  if (!publicHandle && authLoading && !user) return <LoadingState />;
+  if (!publicHandle && !authenticated) return <UnauthorizedState />;
+  if (!publicHandle && (user?.onboardingRequired || user?.productState === 'new')) {
     if (onLeave) onLeave();
     else navigate('/onboarding');
     return null;
   }
-  if (error && !summary) return <ErrorState error={error} onRetry={fetchBoard} />;
+  if (publicHandle && !publicProfile && !error) return <LoadingState />;
+  if (error && !summary && !publicProfile) {
+    if (publicHandle && error instanceof ApiError && error.status === 404) {
+      return <EmptyState icon={<LockKeyhole size={32} aria-hidden="true" />} title={t('publicProfile.unavailableTitle')} description={t('publicProfile.unavailableDesc')} />;
+    }
+    return <ErrorState error={error} onRetry={retryBoard} />;
+  }
 
   const displayTrends = trends?.points || trends?.trends || [];
   const filtered = selectedAgent !== 'all' || selectedModel !== 'all';
@@ -285,22 +338,23 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
   const selectionLabel = formatSelectionTokens(selectionTotal, locale);
   const hourly = trendsHourly(trends, displayTrends);
   const syncStatus = summary?.sync.status || (summary?.sync.lastCommittedAt ? 'healthy' : 'unknown');
-  const name = user?.displayName || user?.handle || (zh ? '开发者' : 'Builder');
-  const rank = personalTokenRank(summary);
-  const rankDelta = rank != null ? summary?.ranking.delta : null;
+  const name = publicHandle ? publicProfile?.displayName || publicHandle : user?.displayName || user?.handle || (zh ? '开发者' : 'Builder');
+  const rank = publicHandle ? publicProfile?.rank ?? null : personalTokenRank(summary);
+  const rankDelta = rank != null ? (publicHandle ? publicProfile?.rankDelta : summary?.ranking.delta) : null;
   const RankIcon = rankDelta != null && rankDelta < 0 ? ArrowDownRight : ArrowUpRight;
-  const metrics = overlayMetrics(summary?.metrics, zh, locale);
+  const metrics = overlayMetrics(publicHandle ? publicMetrics(publicProfile) : summary?.metrics, zh, locale);
+  const publicUrl = publicHandle ? new URL(`${import.meta.env.BASE_URL}u/${encodeURIComponent(publicHandle)}`, window.location.origin).href : '';
 
   return (
     <div className="personal-analytics personal-analytics-page">
-      <div className="dialog-eyebrow"><BarChart3 size={19} />{zh ? '个人数据' : 'My analytics'}</div>
+      <div className="dialog-eyebrow"><BarChart3 size={19} />{zh ? '个人数据' : publicHandle ? 'Personal analytics' : 'My analytics'}</div>
       <div className="analytics-heading">
         <div>
-          <h2 id="personal-analytics-heading">{zh ? `${name}，你的创造正在发生。` : `${name}, your ideas are taking shape.`}</h2>
-          <p className="dialog-lead">{zh ? '从每一次协作，看见你的投入与创造。' : 'See the effort and creativity behind every collaboration.'}</p>
+          <h2 id="personal-analytics-heading">{publicHandle ? (zh ? `${name} 的创造正在发生。` : `${name}'s ideas are taking shape.`) : (zh ? `${name}，你的创造正在发生。` : `${name}, your ideas are taking shape.`)}</h2>
+          <p className="dialog-lead">{publicHandle ? `@${publicProfile?.handle || publicHandle}${publicProfile?.bio ? ` · ${publicProfile.bio}` : ''}` : (zh ? '从每一次协作，看见你的投入与创造。' : 'See the effort and creativity behind every collaboration.')}</p>
         </div>
         <UserAvatar
-          url={user?.avatarUrl}
+          url={publicHandle ? publicProfile?.avatarUrl : user?.avatarUrl}
           name={name}
           alt={name}
           className="personal-heading-avatar"
@@ -316,9 +370,9 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
             </button>
           ))}
         </div>
-        <button className="button secondary analytics-export" type="button" disabled={exporting} onClick={exportCurrentPeriod}>
+        {publicHandle ? <button className="button secondary analytics-export" type="button" onClick={() => { navigator.clipboard.writeText(publicUrl); showToast(t('publicProfile.linkCopied'), 'success'); }}><Link2 size={15} />{zh ? '复制链接' : 'Copy link'}</button> : <button className="button secondary analytics-export" type="button" disabled={exporting} onClick={exportCurrentPeriod}>
           <Download size={15} />{t('dashboard.exportAction')}
-        </button>
+        </button>}
       </div>
 
       <div className="analytics-metrics" aria-label={zh ? '10 项核心指标' : '10 core metrics'}>
@@ -333,7 +387,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
                   <span>{zh ? (range === 'today' ? '较前 24h' : '较上期') : (range === 'today' ? 'vs prior 24h' : 'vs prior period')}</span>
                 </>
               ) : (
-                <span>{!summary?.sync.lastCommittedAt && metric.value === '—' ? (zh ? '等待首次同步' : 'Waiting for first sync') : !metric.supported ? (zh ? '当前来源暂无此项数据' : 'Unavailable from current sources') : metric.value === '—' ? (zh ? '本周期暂无记录' : 'No records in this period') : metric.hint}</span>
+                  <span>{publicHandle ? (!metric.supported ? (zh ? '未公开或暂无此项数据' : 'Private or unavailable') : metric.key === 'totalTokens' ? (zh ? '累计公开用量' : 'Public all-time usage') : metric.hint) : !summary?.sync.lastCommittedAt && metric.value === '—' ? (zh ? '等待首次同步' : 'Waiting for first sync') : !metric.supported ? (zh ? '当前来源暂无此项数据' : 'Unavailable from current sources') : metric.value === '—' ? (zh ? '本周期暂无记录' : 'No records in this period') : metric.hint}</span>
               )}
             </div>
           </div>
@@ -342,15 +396,15 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
 
       <div className="analytics-context">
         <span>
-          <Trophy size={14} />{zh ? '过去 24h 排名' : 'Past 24h rank'}{' '}
+          <Trophy size={14} />{publicHandle ? (zh ? '公开排名' : 'Public rank') : (zh ? '过去 24h 排名' : 'Past 24h rank')}{' '}
           <b>{rank != null ? `#${rank}` : summary ? (zh ? '暂未上榜' : 'Not ranked yet') : '—'}</b>
           {rankDelta != null && rankDelta !== 0 && (
             <span className={rankDelta < 0 ? 'rank-down' : 'rank-up'}><RankIcon size={13} />{Math.abs(rankDelta)}</span>
           )}
         </span>
-        <span><Flame size={14} />{zh ? '连续活跃' : 'Day streak'} <b>{calendarStreak} {zh ? '天' : 'days'}</b></span>
-        <span><ShieldCheck size={14} />{summary?.sync.lastCommittedAt ? (zh ? '已同步至网站' : 'Synced to website') : (zh ? '等待首次同步' : 'Waiting for first sync')}</span>
-        <span className="context-time">{formatContextDate(summary?.range.to)} · UTC+8</span>
+        <span><Flame size={14} />{zh ? '连续活跃' : 'Day streak'} <b>{publicHandle && publicProfile?.showActivityCalendar === false ? (zh ? '未公开' : 'Private') : `${calendarStreak} ${zh ? '天' : 'days'}`}</b></span>
+        <span><ShieldCheck size={14} />{publicHandle ? (zh ? '公开数据' : 'Public data') : summary?.sync.lastCommittedAt ? (zh ? '已同步至网站' : 'Synced to website') : (zh ? '等待首次同步' : 'Waiting for first sync')}</span>
+        <span className="context-time">{formatContextDate(publicHandle ? publicProfile?.dataWatermarkAt || publicProfile?.generatedAt : summary?.range.to)} · UTC+8</span>
       </div>
 
       <div className="analytics-middle">
@@ -360,7 +414,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
               <h3>{zh ? 'Token 用量趋势' : 'Token usage trend'}</h3>
               <p>{zh ? `${periodLabel}的创作节奏` : `${periodLabel} of creativity`}</p>
             </div>
-            <span className="source-counter"><span />{zh ? '已同步用量' : 'Synced usage'}</span>
+            <span className="source-counter"><span />{publicHandle ? (zh ? '公开用量' : 'Public usage') : (zh ? '已同步用量' : 'Synced usage')}</span>
           </div>
           <div className="analytics-filter-row">
             <FilterSelect label={zh ? '趋势 Agent 筛选' : 'Trend agent filter'} value={selectedAgent} onChange={setSelectedAgent} disabled={filterStatus !== 'ready' || !filterOptions.agents.length} options={[
@@ -373,8 +427,10 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
             ]} />
             <small>{zh ? '仅筛选趋势图' : 'Chart filters only'}</small>
           </div>
-          {filterStatus === 'error' ? <p className="filter-status" role="status">{zh ? '筛选选项加载失败。' : 'Filters could not be loaded. '}<button type="button" className="text-link" onClick={fetchStatic}>{t('common.retry')}</button></p> : filterStatus === 'loading' ? <p className="filter-status">{zh ? '正在加载筛选选项…' : 'Loading filters…'}</p> : (!filterOptions.agents.length || !filterOptions.models.length) && <p className="filter-status">{zh ? '尚未同步的来源或模型暂不可筛选。' : 'Sources and models become available after sync.'}</p>}
-          {!trendsReady && !displayTrends.length ? (
+          {publicHandle ? null : filterStatus === 'error' ? <p className="filter-status" role="status">{zh ? '筛选选项加载失败。' : 'Filters could not be loaded. '}<button type="button" className="text-link" onClick={fetchStatic}>{t('common.retry')}</button></p> : filterStatus === 'loading' ? <p className="filter-status">{zh ? '正在加载筛选选项…' : 'Loading filters…'}</p> : (!filterOptions.agents.length || !filterOptions.models.length) && <p className="filter-status">{zh ? '尚未同步的来源或模型暂不可筛选。' : 'Sources and models become available after sync.'}</p>}
+          {publicHandle && publicProfile?.showTrends === false ? (
+            <div className="analytics-chart-empty"><LockKeyhole size={28} /><strong>{zh ? '用户未公开 Token 趋势' : 'Token trend is private'}</strong></div>
+          ) : !trendsReady && !displayTrends.length ? (
             <div className="analytics-chart-empty" aria-busy="true">
               <Layers3 size={28} />
               <strong>{t('common.loading')}</strong>
@@ -406,38 +462,38 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
           <div className="analytics-section-title">
             <div>
               <h3>{zh ? 'Agent 构成' : 'Agent breakdown'}</h3>
-              <p>{zh ? '了解 Token 花在了哪里' : 'Where your tokens go'}</p>
+              <p>{publicHandle ? (zh ? '近 30 天 Token 花在了哪里' : 'Where tokens went in the last 30 days') : (zh ? '了解 Token 花在了哪里' : 'Where your tokens go')}</p>
             </div>
-            <span className="source-count">{agentBreakdowns.length} {zh ? '个来源' : 'sources'}</span>
+            <span className="source-count">{publicHandle && publicProfile?.showAgentBreakdown === false ? (zh ? '未公开' : 'Private') : `${agentBreakdowns.length} ${zh ? '个来源' : 'sources'}`}</span>
           </div>
-          <AgentBreakdown items={agentBreakdowns} variant="donut" />
+          {publicHandle && publicProfile?.showAgentBreakdown === false ? <p className="filter-status">{zh ? '用户未公开 Agent 构成' : 'Agent breakdown is private'}</p> : <AgentBreakdown items={agentBreakdowns} variant="donut" />}
         </section>
       </div>
 
       <div className="analytics-lower">
         <section className="analytics-section calendar-section">
-          <ActivityCalendar days={calendarDays} streakDays={calendarStreak} />
+          {publicHandle && publicProfile?.showActivityCalendar === false ? <p className="filter-status">{zh ? '用户未公开活跃日历' : 'Activity calendar is private'}</p> : <ActivityCalendar days={calendarDays} streakDays={calendarStreak} />}
         </section>
         <div className="analytics-lower-stack">
           <section className="analytics-section skills-section">
             <div className="analytics-section-title">
               <div>
                 <h3><Sparkles size={17} />{zh ? 'Skill 排行' : 'Skill ranking'}</h3>
-                <p>{zh ? '你常用的创作能力' : 'Skills behind your work'}</p>
+                <p>{publicHandle ? (zh ? '公开的创作能力' : 'Shared creative skills') : (zh ? '你常用的创作能力' : 'Skills behind your work')}</p>
               </div>
               <span className="source-count">Top 4</span>
             </div>
-            <SkillRanking skills={skills} />
+            {publicHandle && publicProfile?.showSkillRanking === false ? <p className="filter-status">{zh ? '用户未公开 Skill 排行' : 'Skill ranking is private'}</p> : <SkillRanking skills={skills} />}
           </section>
           <section className="analytics-section sync-section">
             <div className="analytics-section-title">
-              <h3><RefreshCw size={16} />{t('dashboard.syncStatus')}</h3>
-              <span className={`sync-healthy sync-${syncStatus}`}>
+              <h3>{publicHandle ? <ShieldCheck size={16} /> : <RefreshCw size={16} />}{publicHandle ? (zh ? '公开资料' : 'Public profile') : t('dashboard.syncStatus')}</h3>
+              {!publicHandle && <span className={`sync-healthy sync-${syncStatus}`}>
                 <CheckCheck size={13} />
                 {syncStatus === 'healthy' ? t('common.healthy') : syncStatus === 'warning' ? t('common.warning') : t('common.unknown')}
-              </span>
+              </span>}
             </div>
-            <SyncStatusCard
+            {publicHandle ? <p className="filter-status">{zh ? '此页只展示用户选择公开的统计信息。' : 'This page shows only statistics the user chose to share.'}</p> : <SyncStatusCard
               lastCommittedAt={summary?.sync.lastCommittedAt ?? null}
               status={syncStatus}
               pendingLocalCount={summary?.sync.pendingLocalCount}
@@ -445,15 +501,15 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
               devicesOpen={showDevices}
               devicesLoading={showDevices && devices === null}
               onToggleDevices={toggleDevices}
-            />
+            />}
           </section>
         </div>
       </div>
       <div className="analytics-footnote">
-        <span>{zh ? '未知或不支持的指标不会按 0 计入。' : 'Unknown metrics are not counted as zero.'}</span>
-        <button type="button" className="text-link" onClick={() => { onLeave?.(); navigate('/settings/privacy'); }}>
+        <span>{publicHandle ? (zh ? '未公开或不支持的指标不会按 0 计入。' : 'Private or unsupported metrics are not counted as zero.') : (zh ? '未知或不支持的指标不会按 0 计入。' : 'Unknown metrics are not counted as zero.')}</span>
+        {!publicHandle && <button type="button" className="text-link" onClick={() => { onLeave?.(); navigate('/settings/privacy'); }}>
           {zh ? '管理公开设置' : 'Manage sharing'}<ArrowUpRight size={14} />
-        </button>
+        </button>}
       </div>
     </div>
   );

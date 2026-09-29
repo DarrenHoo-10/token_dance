@@ -16,7 +16,8 @@ describe('Approved homepage interactions', () => {
     expect(screen.getAllByRole('row')).toHaveLength(9);
     fireEvent.change(screen.getByRole('textbox'),{target:{value:'BUILDER_7'}});
     expect(screen.getAllByRole('row')).toHaveLength(2);
-    expect(screen.getByRole('link',{name:/创作者 7/})).toHaveAttribute('href','/u/builder_7');
+    expect(screen.getByText('创作者 7')).toBeInTheDocument();
+    expect(screen.getByRole('button',{name:'查看 创作者 7 的个人数据'})).toBeInTheDocument();
     fireEvent.change(screen.getByRole('textbox'),{target:{value:'absent'}});
     expect(screen.getByText('当前榜单没有匹配的开发者')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button',{name:'清除搜索'}));

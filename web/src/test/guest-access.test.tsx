@@ -87,7 +87,7 @@ describe('Guest access without a site-wide login wall', () => {
     const avatar = document.querySelector('.podium-card.winner .podium-avatar-wrap');
     expect(avatar).not.toBeNull();
     fireEvent.click(avatar!);
-    expect(await screen.findByRole('dialog', { name: '个人数据' })).toBeInTheDocument();
+    expect(await screen.findByRole('dialog', { name: 'Ada 的创造正在发生。' })).toBeInTheDocument();
     expect(screen.getByTestId('current-path')).toHaveTextContent('/leaderboard');
   });
 

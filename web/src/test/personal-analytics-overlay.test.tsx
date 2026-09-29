@@ -120,16 +120,43 @@ describe('Personal analytics overlay', () => {
       agentBreakdown: [{ key: 'codex', label: 'Codex CLI', tokenTotal: '200', percentage: 100 }],
       activityCalendar: [{ date: '2026-09-19', tokenTotal: '200', level: 1, active: true }],
     });
-    vi.spyOn(api, 'getPublicTokenTrends').mockResolvedValue({ points: [] });
-    vi.spyOn(api, 'getPublicSkills').mockResolvedValue({ skills: [] });
-    fireEvent.click(screen.getByRole('link', { name: 'Ada' }));
-    const dialog = await screen.findByRole('dialog', { name: '个人数据' });
-    expect(await within(dialog).findByRole('heading', { name: 'Ada' })).toBeInTheDocument();
-    expect(within(dialog).getByText('Codex CLI')).toBeInTheDocument();
+    const publicTrends = vi.spyOn(api, 'getPublicTokenTrends').mockResolvedValue({ points: [] });
+    const publicSkills = vi.spyOn(api, 'getPublicSkills').mockResolvedValue({ skills: [] });
+    fireEvent.click(screen.getByText('Ada'));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '查看 Ada 的个人数据' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ada 的创造正在发生。' });
+    expect(await within(dialog).findByRole('heading', { name: 'Ada 的创造正在发生。' })).toBeInTheDocument();
+    for (const section of ['.analytics-heading', '.analytics-toolbar', '.analytics-metrics', '.analytics-context', '.analytics-middle', '.analytics-lower']) {
+      expect(dialog.querySelector(section)).not.toBeNull();
+    }
+    expect(within(dialog).getAllByText('Codex CLI').length).toBeGreaterThan(0);
+    fireEvent.click(within(dialog).getByRole('button', { name: '近 7 天' }));
+    await waitFor(() => expect(publicTrends).toHaveBeenCalledWith('ada', { range: '7d', agent: undefined, model: undefined }));
+    await waitFor(() => expect(publicSkills).toHaveBeenCalledWith('ada', '7d'));
     expect(screen.getByTestId('path')).toHaveTextContent('/leaderboard');
     fireEvent.click(within(dialog).getByRole('button', { name: '关闭' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(screen.getByRole('heading', { name: '平台排行榜' })).toBeInTheDocument();
+  });
+
+  it('does not request sections that another user kept private', async () => {
+    renderOverlay('/leaderboard');
+    vi.spyOn(api, 'getPublicProfile').mockResolvedValue({
+      handle: 'ada', displayName: 'Ada', avatarUrl: null,
+      generatedAt: '2026-09-19T00:00:00Z', projectionVersion: 1,
+      showTrends: false, showAgentBreakdown: false, showActivityCalendar: false, showSkillRanking: false,
+    });
+    const trends = vi.spyOn(api, 'getPublicTokenTrends');
+    const skills = vi.spyOn(api, 'getPublicSkills');
+    fireEvent.click(screen.getByRole('button', { name: '查看 Ada 的个人数据' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ada 的创造正在发生。' });
+    expect(within(dialog).getByText('用户未公开 Token 趋势')).toBeInTheDocument();
+    expect(within(dialog).getByText('用户未公开 Agent 构成')).toBeInTheDocument();
+    expect(within(dialog).getByText('用户未公开活跃日历')).toBeInTheDocument();
+    expect(within(dialog).getByText('用户未公开 Skill 排行')).toBeInTheDocument();
+    expect(trends).not.toHaveBeenCalled();
+    expect(skills).not.toHaveBeenCalled();
   });
 
   it('does not show a rank or rank movement before positive usage is synced', async () => {

@@ -1,11 +1,9 @@
-import React, { Suspense, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useLocale } from '@/context/LocaleContext';
 import { PersonalAnalytics } from '@/pages/me/PersonalAnalytics';
 import '@/personal-analytics.css';
-
-const PublicProfileContent = React.lazy(() => import('@/pages/public/PublicProfilePage').then(module => ({ default: module.PublicProfileContent })));
 
 interface PersonalAnalyticsContextValue {
   open: boolean;
@@ -107,8 +105,7 @@ export function PersonalAnalyticsDialog({
       className="dialog wide-dialog analytics-dialog"
       onCancel={(event) => { event.preventDefault(); onClose(); }}
       onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
-      aria-labelledby={publicHandle ? undefined : 'personal-analytics-heading'}
-      aria-label={publicHandle ? (zh ? '个人数据' : 'Personal analytics') : undefined}
+      aria-labelledby="personal-analytics-heading"
       aria-hidden={open ? undefined : 'true'}
     >
       <div className="analytics-dialog-toolbar">
@@ -118,7 +115,7 @@ export function PersonalAnalyticsDialog({
         </button>
       </div>
       <div className="dialog-inner analytics-dialog-scroll">
-        {publicHandle && open ? <Suspense fallback={<div role="status">{zh ? '加载中…' : 'Loading…'}</div>}><PublicProfileContent handle={publicHandle} /></Suspense> : <PersonalAnalytics onLeave={onClose} active={ready || open} />}
+        <PersonalAnalytics key={publicHandle || 'own'} publicHandle={publicHandle} onLeave={onClose} active={ready || open} />
       </div>
     </dialog>
   );
