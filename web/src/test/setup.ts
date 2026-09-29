@@ -22,3 +22,7 @@ Object.defineProperty(navigator, 'clipboard', {
   },
   writable: true,
 });
+
+// The app picks its default language from the browser; keep tests on Chinese.
+Object.defineProperty(navigator, 'languages', { value: ['zh-CN'], configurable: true });
+Object.defineProperty(navigator, 'language', { value: 'zh-CN', configurable: true });

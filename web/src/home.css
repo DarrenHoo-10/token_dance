@@ -209,3 +209,13 @@
 .metric-help p{position:absolute;z-index:8;top:100%;right:0;width:230px;padding:12px;border:1px solid #dce5d5;border-radius:10px;background:#fff;box-shadow:0 8px 24px #24331e20;font-size:12px;line-height:1.7;color:#35452b}
 @media(max-width:1000px){.sky-home-shell .sky-share-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.sky-home-shell .sky-share-board-wide{grid-column:1/-1}}
 @media(max-width:760px){.sky-home-shell .sky-share-grid{grid-template-columns:1fr}.sky-home-shell .sky-share-board-wide{grid-column:auto}.metric-help p{left:0;right:auto;width:190px}}
+
+/* Podium: the card is a plain container; two real buttons sit inside it. */
+.sky-home .podium-card{cursor:pointer}
+.sky-home .podium-select{position:absolute;inset:0;z-index:1;margin:0;padding:0;border:0;background:none;border-radius:18px;cursor:pointer;font:inherit}
+.sky-home .podium-select:focus-visible,.sky-home .podium-avatar-wrap:focus-visible{outline:3px solid #668718;outline-offset:2px}
+.sky-home .podium-avatar-wrap{position:relative;z-index:2;padding:0;border:0;background:none;border-radius:50%;cursor:pointer;font:inherit;color:inherit}
+
+/* Cards that overlap the hero picture: opaque frosted glass, so the picture's bottom edge does not show through as a seam. */
+.sky-home-shell .sky-home .panel{background:#fffffffa;backdrop-filter:blur(20px) saturate(115%)}
+.sky-home-shell .sky-metrics{background:linear-gradient(105deg,#fffffffa,#fbfff7f5)}

@@ -116,24 +116,33 @@ function PodiumCard({ entry, selected, onSelect, onOpenProfile, zh }: {
   const winner = entry.rankNo === 1;
   const name = publicLeaderboardName(entry);
   return (
-    <button
-      type="button"
-      className={`podium-card ${winner ? 'winner' : ''} ${selected ? 'selected' : ''}`}
-      aria-pressed={selected}
-      aria-label={zh ? `查看 ${name} 的公开创作轨迹` : `Show ${name}'s public creative rhythm`}
-      onClick={() => onSelect(entry)}
-    >
+    // Two sibling buttons instead of a button inside a button: the card-sized one switches the rhythm chart,
+    // the avatar one opens personal data. Both are reachable by keyboard.
+    <div className={`podium-card ${winner ? 'winner' : ''} ${selected ? 'selected' : ''}`}>
+      <button
+        type="button"
+        className="podium-select"
+        aria-pressed={selected}
+        aria-label={zh ? `查看 ${name} 的公开创作轨迹` : `Show ${name}'s public creative rhythm`}
+        onClick={() => onSelect(entry)}
+      />
       <div className={`rank-medal rank-${entry.rankNo}`}>{entry.rankNo}</div>
-      <div className="podium-avatar-wrap" onClick={(event) => { event.stopPropagation(); onOpenProfile(entry.handle); }} title={zh ? `查看 ${name} 的个人数据` : `View ${name}'s personal data`}>
+      <button
+        type="button"
+        className="podium-avatar-wrap"
+        onClick={() => onOpenProfile(entry.handle)}
+        aria-label={zh ? `查看 ${name} 的个人数据` : `View ${name}'s personal data`}
+        title={zh ? `查看 ${name} 的个人数据` : `View ${name}'s personal data`}
+      >
         <PersonAvatar entry={entry} className="podium-avatar" />
         {winner && <Crown className="crown" size={28} aria-hidden="true" />}
-      </div>
+      </button>
       <div className="podium-id">
         <strong>{name}</strong>
       </div>
       <div className="podium-score-row"><span>{formatTokens(entry.metricValue)}</span></div>
       <small className="sky-podium-unit">Token</small>
-    </button>
+    </div>
   );
 }
 
