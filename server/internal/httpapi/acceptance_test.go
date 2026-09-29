@@ -1105,6 +1105,8 @@ func TestUSR021_PublicProfileProjectionAndSameTransactionHidden(t *testing.T) {
 		"leaderboardVisibility": "public",
 		"showBio":               true,
 		"showTokenTotal":        true,
+		"showActivityCalendar":  true,
+		"showAgentBreakdown":    true,
 	})
 	reqEnable := httptest.NewRequest(http.MethodPatch, "/api/v1/me/privacy", bytes.NewReader(enablePrivBody))
 	reqEnable.Header.Set("Content-Type", "application/json")
@@ -1128,6 +1130,13 @@ func TestUSR021_PublicProfileProjectionAndSameTransactionHidden(t *testing.T) {
 
 	if recPub.Code != http.StatusOK {
 		t.Fatalf("expected 200 on published public profile, got %d: %s", recPub.Code, recPub.Body.String())
+	}
+	var publicDTO domain.PublicProfileDTO
+	if err := json.Unmarshal(recPub.Body.Bytes(), &publicDTO); err != nil {
+		t.Fatalf("decode public profile: %v", err)
+	}
+	if len(publicDTO.ActivityCalendar) != 70 {
+		t.Fatalf("expected 10 weeks of public calendar days, got %d", len(publicDTO.ActivityCalendar))
 	}
 	var pub1 domain.PublicUserProfile
 	_ = json.Unmarshal(recPub.Body.Bytes(), &pub1)

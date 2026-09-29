@@ -5,9 +5,11 @@ import type { LeaderboardEntry } from '@/types/api';
 import { publicLeaderboardName } from './leaderboardName';
 import { RankChange } from './RankChange';
 import { hasRankedTokens } from './tokenRanking';
+import { usePersonalAnalytics } from '@/context/PersonalAnalyticsContext';
 
 export function LeaderboardTable({ entries, ownEntry, window: period }: { entries: LeaderboardEntry[]; ownEntry?: LeaderboardEntry | null; window?: string }) {
   const { locale } = useLocale(); const zh = locale === 'zh-CN';
+  const personalAnalytics = usePersonalAnalytics();
   const rows = ownEntry && ownEntry.rankNo > 1000 ? [...entries, ownEntry] : entries;
   const comparisonTitle = period === 'today'
     ? (zh ? '与前一个 24 小时周期比较 · 北京时间' : 'Compared with the prior 24-hour window · Beijing time')
@@ -17,7 +19,12 @@ export function LeaderboardTable({ entries, ownEntry, window: period }: { entrie
     <thead><tr><th scope="col">{zh ? '排名' : 'Rank'}</th><th scope="col">{zh ? '开发者' : 'Developer'}</th><th scope="col">Token</th><th scope="col" title={comparisonTitle}>{comparisonLabel}</th></tr></thead>
     <tbody>{rows.map(entry => <tr key={entry.handle} className={entry === ownEntry ? 'leaderboard-own-row' : undefined} aria-label={entry === ownEntry ? (zh ? '我的排名' : 'My rank') : undefined}>
       <td><span className={hasRankedTokens(entry.metricValue) ? `list-rank rank-${entry.rankNo}` : 'list-unranked'}>{hasRankedTokens(entry.metricValue) ? entry.rankNo : (zh ? '暂未上榜' : 'Not ranked yet')}</span></td>
-      <td><Link className="leaderboard-person" to={`/u/${encodeURIComponent(entry.handle)}`}>
+      <td><Link className="leaderboard-person" to={`/u/${encodeURIComponent(entry.handle)}`} onClick={event => {
+        if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+          event.preventDefault();
+          personalAnalytics.showPublic(entry.handle);
+        }
+      }}>
         <UserAvatar url={entry.avatarUrl} name={publicLeaderboardName(entry)} fallbackClassName="list-avatar" loading={entry.rankNo <= 3 ? 'eager' : 'lazy'} />
         <span className="leaderboard-person-name"><strong>{publicLeaderboardName(entry)}{entry === ownEntry && <span className="leaderboard-me-badge">{zh ? '我' : 'You'}</span>}</strong></span>
       </Link></td>

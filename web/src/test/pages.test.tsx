@@ -143,6 +143,9 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         tokenTotal: '325700000',
         activeDays: 28,
         currentStreak: 23,
+        showAgentBreakdown: true,
+        showActivityCalendar: true,
+        agentBreakdown: [{ key: 'codex', label: 'Codex CLI', tokenTotal: '240000000', percentage: 73.7 }],
         dataWatermarkAt: '2026-08-30T10:00:00Z',
         generatedAt: '2026-08-30T10:00:00Z',
         projectionVersion: 1,
@@ -189,6 +192,7 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         expect(screen.getByText('#1')).toBeInTheDocument();
         expect(screen.getByText('325.7M')).toBeInTheDocument();
         expect(screen.getByText('test-runner')).toBeInTheDocument();
+        expect(screen.getByText('Codex CLI')).toBeInTheDocument();
         expect(screen.getByText('连续 23 天')).toBeInTheDocument();
         expect(screen.getByRole('button', { name: /2026-08-15/ })).toHaveTextContent('1.2M');
         expect(screen.getByRole('button', { name: /2026-08-16/ })).toHaveTextContent('373K');
