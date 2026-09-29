@@ -3,9 +3,11 @@ package teammetrics
 import (
 	"encoding/json"
 	"time"
+
+	"tokendance/internal/domain"
 )
 
-const RuleVersion = "6"
+const RuleVersion = domain.TeamAnalysisRuleVersion
 
 const (
 	KindUsage    = "usage"

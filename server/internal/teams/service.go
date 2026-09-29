@@ -1317,9 +1317,15 @@ func (s *Service) GetAnalysis(ctx context.Context, userID, teamID string, q Anal
 		return nil, 0, err
 	}
 	now := s.clk.Now()
-	from, toEx, err := ResolveTeamRange(team.TimezoneName, q.RangeKey, q.From, q.To, now)
-	if err != nil {
-		return nil, 0, err
+	if strings.TrimSpace(q.RangeKey) == "" {
+		q.RangeKey = "today"
+	}
+	var from, toEx time.Time
+	if q.SnapshotID == "" {
+		from, toEx, err = ResolveTeamRange(team.TimezoneName, q.RangeKey, q.From, q.To, now)
+		if err != nil {
+			return nil, 0, err
+		}
 	}
 	blocked, err := s.teams.HasOpenDeletionBarrier(ctx, teamID)
 	if err != nil {
@@ -1340,8 +1346,11 @@ func (s *Service) GetAnalysis(ctx context.Context, userID, teamID string, q Anal
 		if snap.AuthRevision != team.AuthRevision {
 			return nil, 0, domain.NewAppError(409, "TEAM_SNAPSHOT_OBSOLETE", "teams.snapshotObsolete", "analysis snapshot is obsolete", nil, domain.ErrConflict)
 		}
+		// A snapshot-backed read (including pagination) must retain its exact
+		// hour window even after the current clock hour advances.
+		q.RangeKey, from, toEx = snap.RangeKey, snap.FromDate, snap.ToDateExclusive
 	} else {
-		snap, err = s.teams.EnsureStaticAnalysisHandle(ctx, teamID, from, toEx, team.AuthRevision, 0, now, now)
+		snap, err = s.teams.EnsureStaticAnalysisHandle(ctx, teamID, q.RangeKey, from, toEx, team.AuthRevision, 0, now, now)
 		if err != nil {
 			return nil, 0, mapStoreError(err, "TEAM_NOT_FOUND")
 		}
@@ -1349,6 +1358,10 @@ func (s *Service) GetAnalysis(ctx context.Context, userID, teamID string, q Anal
 	rows, _, err := s.teams.ListStaticDayMetrics(ctx, teamID, from, toEx)
 	if err != nil {
 		return nil, 0, mapStoreError(err, "TEAM_NOT_FOUND")
+	}
+	rollingPartial := false
+	if q.RangeKey == "today" {
+		rows, rollingPartial = ClipTeamRowsToRollingHours(rows, from, toEx)
 	}
 	members, users, _, err := s.teams.ListMembers(ctx, teamID, "", "", 100)
 	if err != nil {
@@ -1366,6 +1379,7 @@ func (s *Service) GetAnalysis(ctx context.Context, userID, teamID string, q Anal
 		filters.Model = &q.Model
 	}
 	dto := assembleAnalysis(team, snap, rows, members, users, sharingCount, from, toEx, filters, q)
+	dto.HourlyTrendPartial = dto.HourlyTrendPartial || rollingPartial
 	dto.SchemaVersion = 2
 	hist := "0"
 	named := "0"
@@ -1878,6 +1892,9 @@ func (s *Service) rowsForSnapshot(ctx context.Context, team *domain.Team, snapsh
 	if err != nil {
 		return nil, mapStoreError(err, "RESOURCE_NOT_FOUND")
 	}
+	if snap.RangeKey == "today" {
+		rows, _ = ClipTeamRowsToRollingHours(rows, snap.FromDate, snap.ToDateExclusive)
+	}
 	return rows, nil
 }
 
@@ -1988,8 +2005,10 @@ func ResolveTeamRange(timezone, rangeKey, from, to string, now time.Time) (time.
 	var start, endExclusive time.Time
 	switch strings.TrimSpace(rangeKey) {
 	case "", "today":
-		start = today
-		endExclusive = today.AddDate(0, 0, 1)
+		// Keep the first team period aligned with the personal and leaderboard
+		// rolling window: the current Beijing hour and the preceding 23 hours.
+		start, _ = domain.Rolling24HourBuckets(now)
+		endExclusive = start.Add(24 * time.Hour)
 	case "7d":
 		start = today.AddDate(0, 0, -6)
 		endExclusive = today.AddDate(0, 0, 1)

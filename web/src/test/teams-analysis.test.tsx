@@ -77,6 +77,16 @@ describe('Team cost card', () => {
     const label = await screen.findByText(/未覆盖用量预估/);
     expect(label.closest('.tw-kpi')).toHaveTextContent('$1.25');
   });
+
+  it('explains missing hourly metrics on the rolling 24-hour view', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    const result = readyAnalysis('1', '350');
+    result.trendGrain = 'hour';
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
+    renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop');
+    expect(await screen.findByText(/过去 24 小时按小时记录统计/)).toBeInTheDocument();
+  });
 });
 
 describe('Team analysis updating state', () => {
@@ -350,9 +360,9 @@ describe('Team analysis updating state', () => {
     renderTeamWorkspace('/teams/tem_0123456789abcdefghijklmnop');
 
     expect(await screen.findByTestId('analysis-skeleton')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '今天' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: '过去 24 小时' })).toHaveAttribute('aria-selected', 'true');
     expect(teamsApi.getAnalysis).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ range: 'today' }), expect.any(AbortSignal));
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['今天', '近 7 天', '近 30 天', '自定义']);
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['过去 24 小时', '近 7 天', '近 30 天', '自定义']);
     expect(screen.queryByLabelText('开始日期')).not.toBeInTheDocument();
     expect(screen.getByText('正在汇总团队数据，请稍候…')).toBeInTheDocument();
     expect(screen.queryByText('0')).not.toBeInTheDocument();
