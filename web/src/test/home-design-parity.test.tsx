@@ -10,7 +10,7 @@ import { usageColor } from '@/utils/usageColors';
 describe('Approved homepage interactions', () => {
   it('expands six entries, searches loaded names and handles, and keeps the full-board route', () => {
     const entries = Array.from({length:8}, (_,i) => ({rankNo:i+1,handle:`builder_${i}`,displayName:`创作者 ${i}`,avatarUrl:null,metricValue:'100'}));
-    render(<LocaleProvider><MemoryRouter><HomeLeaderboard entries={entries} window="7d" /></MemoryRouter></LocaleProvider>);
+    render(<LocaleProvider><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><HomeLeaderboard entries={entries} window="7d" /></MemoryRouter></LocaleProvider>);
     expect(screen.getAllByRole('row')).toHaveLength(7);
     fireEvent.click(screen.getByRole('button',{name:'展开当前榜单'}));
     expect(screen.getAllByRole('row')).toHaveLength(9);
@@ -36,7 +36,7 @@ describe('Approved homepage interactions', () => {
   it('renders community share boards and keeps the empty caption', () => {
     const { rerender } = render(
       <LocaleProvider>
-        <MemoryRouter>
+        <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <CommunityShareBoard
             title="社区模型排行榜"
             helpTo="/docs/sources"
@@ -55,7 +55,7 @@ describe('Approved homepage interactions', () => {
     expect(usageColor('gpt-5')).toBe('#8B5CF6');
     rerender(
       <LocaleProvider>
-        <MemoryRouter>
+        <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
           <CommunityShareBoard
             title="社区 Skill 排行榜"
             helpTo="/docs/sources"

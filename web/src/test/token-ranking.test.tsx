@@ -23,7 +23,7 @@ describe('Ranking requires positive usage', () => {
   });
 
   it('keeps zero-usage developers discoverable without giving them ranks or movements', () => {
-    render(<LocaleProvider><MemoryRouter><LeaderboardTable entries={[
+    render(<LocaleProvider><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><LeaderboardTable entries={[
       { handle: 'active', displayName: 'Active', avatarUrl: null, rankNo: 1, metricValue: '5', rankDelta: 2 },
       { handle: 'new', displayName: 'New', avatarUrl: null, rankNo: 2, metricValue: '0', rankDelta: 7 },
     ]} /></MemoryRouter></LocaleProvider>);

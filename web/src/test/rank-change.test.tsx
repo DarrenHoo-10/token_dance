@@ -6,7 +6,7 @@ import { LeaderboardTable } from '@/components/analytics/LeaderboardTable';
 
 describe('leaderboard rank comparisons', () => {
   it('shows arrows only for real rank movement and leaves ties or missing baselines empty', () => {
-    render(<LocaleProvider><MemoryRouter><LeaderboardTable entries={[
+    render(<LocaleProvider><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><LeaderboardTable entries={[
       { rankNo: 1, handle: 'up', displayName: 'Up', avatarUrl: null, metricValue: '100', rankDelta: 2 },
       { rankNo: 2, handle: 'down', displayName: 'Down', avatarUrl: null, metricValue: '90', rankDelta: -1 },
       { rankNo: 3, handle: 'same', displayName: 'Same', avatarUrl: null, metricValue: '80', rankDelta: 0 },
@@ -29,7 +29,7 @@ describe('leaderboard rank comparisons', () => {
   });
 
   it('labels the rolling leaderboard comparison as the prior 24 hours', () => {
-    render(<LocaleProvider><MemoryRouter><LeaderboardTable window="today" entries={[
+    render(<LocaleProvider><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><LeaderboardTable window="today" entries={[
       { rankNo: 1, handle: 'ada', displayName: 'Ada', avatarUrl: null, metricValue: '100', rankDelta: 1 },
     ]} /></MemoryRouter></LocaleProvider>);
     expect(screen.getByRole('columnheader', { name: '较前 24h' })).toHaveAttribute('title', '与前一个 24 小时周期比较 · 北京时间');
