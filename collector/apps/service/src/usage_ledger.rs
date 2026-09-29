@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 // Keep recorded history and deduplication IDs across acknowledgements/restarts.
 // Only the IPC daily series is limited to a year; All time sums the full ledger.
-pub(crate) const DISPLAY_DAYS: i64 = 366;
+pub const DISPLAY_DAYS: i64 = 366;
 const LEDGER_FILE: &str = "usage-ledger.json";
 
 pub(crate) fn accuracy_rank(accuracy: &Accuracy) -> u8 {

@@ -6,7 +6,7 @@ use super::runner::{
 };
 use super::types::{Consumer, CursorKind, RegisterSource, SourceKind, DEFAULT_LEASE_MS};
 use super::PipelineWriter;
-use collector_service::{DetectionSnapshot, OfficialAgent};
+use crate::{DetectionSnapshot, OfficialAgent};
 use notify::{EventKind, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -129,7 +129,7 @@ impl PipelineRuntime {
         )
     }
 
-    pub(crate) fn from_roots(writer: Arc<PipelineWriter>, roots: AdapterRoots) -> Self {
+    pub fn from_roots(writer: Arc<PipelineWriter>, roots: AdapterRoots) -> Self {
         let scan_dirty = Arc::new(AtomicBool::new(true));
         let metadata_dirty = Arc::new(AtomicBool::new(true));
         let scan_signal = Arc::clone(&scan_dirty);
@@ -604,7 +604,7 @@ pub fn adapter_roots_from_detection(
         }),
         claude_projects: source_path(detection, OfficialAgent::ClaudeCode)
             .unwrap_or_else(|| home.join(".claude").join("projects")),
-        claude_desktop_leveldb: collector_service::platform::PathResolver::production()
+        claude_desktop_leveldb: crate::platform::PathResolver::production()
             .claude_desktop_store()
             .unwrap_or_else(|| home.join(".claude-desktop-unavailable")),
         cursor_transcripts: source_path(detection, OfficialAgent::Cursor)

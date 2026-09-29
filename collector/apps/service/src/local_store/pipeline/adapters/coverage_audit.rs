@@ -112,7 +112,7 @@ fn fixture(root: &Path, harness: &str, file: &str) -> Vec<Value> {
 }
 #[test]
 fn audit_all_harness_native_formats() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../adapters");
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../adapters");
     let allocator = Arc::new(|_key: [u8; 32], _name: &str| 1i64);
     let secret = b"audit-fixture-secret".to_vec();
     let codex = codex::CodexStrategy::new(
