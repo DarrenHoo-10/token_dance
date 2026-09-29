@@ -20,7 +20,7 @@ vi.mock('@/pages/teams/TeamShared', () => ({ persistTeamAvatar: vi.fn(), teamErr
 vi.mock('@/pages/teams/TeamSharingCard', () => ({ TeamSharingCard: () => null }));
 
 function showSettings() {
-  return render(<LocaleProvider><MemoryRouter><TeamSettingsPage /></MemoryRouter></LocaleProvider>);
+  return render(<LocaleProvider><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><TeamSettingsPage /></MemoryRouter></LocaleProvider>);
 }
 
 describe('Team avatar preview', () => {

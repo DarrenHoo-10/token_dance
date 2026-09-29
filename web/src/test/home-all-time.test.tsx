@@ -29,7 +29,7 @@ function summary(range: string | undefined, tokens: string): PersonalSummary {
 }
 
 function renderHome() {
-  return render(<LocaleProvider><MemoryRouter><LeaderboardPage /></MemoryRouter></LocaleProvider>);
+  return render(<LocaleProvider><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><LeaderboardPage /></MemoryRouter></LocaleProvider>);
 }
 
 function allTimeBlock() {

@@ -15,7 +15,7 @@ describe('publicLeaderboardName', () => {
 
 describe('LeaderboardTable names', () => {
   it('shows names as text and opens personal data only from avatar buttons', () => {
-    render(<LocaleProvider><MemoryRouter><LeaderboardTable entries={[
+    render(<LocaleProvider><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><LeaderboardTable entries={[
       { rankNo: 1, handle: 'dancer_uss9', displayName: '桂林仔', avatarUrl: null, metricValue: '16500000' },
       { rankNo: 2, handle: 'empty_handle', displayName: '', avatarUrl: null, metricValue: '10' },
     ]} /></MemoryRouter></LocaleProvider>);
