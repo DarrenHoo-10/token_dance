@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom';
 import { useLocale } from '@/context/LocaleContext';
 import { UserAvatar } from '@/components/common/UserAvatar';
 import type { LeaderboardEntry } from '@/types/api';
@@ -19,15 +18,12 @@ export function LeaderboardTable({ entries, ownEntry, window: period }: { entrie
     <thead><tr><th scope="col">{zh ? '排名' : 'Rank'}</th><th scope="col">{zh ? '开发者' : 'Developer'}</th><th scope="col">Token</th><th scope="col" title={comparisonTitle}>{comparisonLabel}</th></tr></thead>
     <tbody>{rows.map(entry => <tr key={entry.handle} className={entry === ownEntry ? 'leaderboard-own-row' : undefined} aria-label={entry === ownEntry ? (zh ? '我的排名' : 'My rank') : undefined}>
       <td><span className={hasRankedTokens(entry.metricValue) ? `list-rank rank-${entry.rankNo}` : 'list-unranked'}>{hasRankedTokens(entry.metricValue) ? entry.rankNo : (zh ? '暂未上榜' : 'Not ranked yet')}</span></td>
-      <td><Link className="leaderboard-person" to={`/u/${encodeURIComponent(entry.handle)}`} onClick={event => {
-        if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
-          event.preventDefault();
-          personalAnalytics.showPublic(entry.handle);
-        }
-      }}>
-        <UserAvatar url={entry.avatarUrl} name={publicLeaderboardName(entry)} fallbackClassName="list-avatar" loading={entry.rankNo <= 3 ? 'eager' : 'lazy'} />
+      <td><div className="leaderboard-person">
+        <button type="button" className="leaderboard-avatar-button" onClick={() => personalAnalytics.showPublic(entry.handle)} aria-label={zh ? `查看 ${publicLeaderboardName(entry)} 的个人数据` : `View ${publicLeaderboardName(entry)}'s personal data`}>
+          <UserAvatar url={entry.avatarUrl} name={publicLeaderboardName(entry)} fallbackClassName="list-avatar" loading={entry.rankNo <= 3 ? 'eager' : 'lazy'} />
+        </button>
         <span className="leaderboard-person-name"><strong>{publicLeaderboardName(entry)}{entry === ownEntry && <span className="leaderboard-me-badge">{zh ? '我' : 'You'}</span>}</strong></span>
-      </Link></td>
+      </div></td>
       <td className="mono-num" title={Number(entry.metricValue).toLocaleString()}>{new Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(Number(entry.metricValue))}</td>
       <td>{hasRankedTokens(entry.metricValue) ? <RankChange value={entry.rankDelta} isNew={entry.isNew} /> : '—'}</td>
     </tr>)}</tbody>
