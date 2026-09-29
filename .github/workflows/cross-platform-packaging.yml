@@ -38,8 +38,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: collector -> target
-      - name: Shared collector kernel tests (used by the desktop app and the CLI)
-        run: cargo test --locked --manifest-path collector/Cargo.toml -p collector-service
+      - name: Shared collector kernel and CLI tests
+        run: cargo test --locked --manifest-path collector/Cargo.toml -p collector-service -p tokendance-cli
 
   windows-tests:
     runs-on: windows-latest
@@ -97,6 +97,8 @@ jobs:
           cargo test --locked --manifest-path collector/Cargo.toml -p collector-service detect::tests
           cargo test --locked --manifest-path collector/Cargo.toml -p collector-service doubao --lib
           cargo test --locked --manifest-path collector/apps/desktop/src-tauri/Cargo.toml doubao --lib
+      - name: CLI builds and unit-tests on Windows
+        run: cargo test --locked --manifest-path collector/Cargo.toml -p tokendance-cli --bins
       - name: PowerShell syntax and fail-closed Authenticode tests
         shell: pwsh
         run: |
@@ -354,6 +356,7 @@ jobs:
         run: |
           cargo test --locked --manifest-path collector/Cargo.toml -p platform-credentials --features login-keychain
           cargo test --locked --manifest-path collector/Cargo.toml -p collector-service --lib
+          cargo test --locked --manifest-path collector/Cargo.toml -p tokendance-cli
           cargo test --locked --manifest-path collector/apps/desktop/src-tauri/Cargo.toml --features unnotarized-distribution --lib
       - name: Selected macOS architecture compiles
         run: |

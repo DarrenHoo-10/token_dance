@@ -291,7 +291,7 @@ pub async fn run_headless() -> Result<(), String> {
     Ok(())
 }
 
-fn load_or_create_installation_id(root: &Path) -> Result<String, String> {
+pub fn load_or_create_installation_id(root: &Path) -> Result<String, String> {
     let path = root.join("installation-id");
     if path.exists() {
         return fs::read_to_string(path)
