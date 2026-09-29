@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>TokenDance · 本地 Dashboard 设计预览</title>
+  <link rel="icon" href="assets/logo.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip" href="#content">跳转到内容</a>
+  <aside class="sidebar">
+    <a class="brand" href="#overview" aria-label="TokenDance 总览"><img src="assets/logo.png" alt=""><span>TokenDance<small>你的 AI 使用工作台</small></span></a>
+    <div class="workspace"><span class="workspace-icon" data-icon="terminal"></span><div><b>本地工作台</b><span>MacBook Pro <i class="dot"></i></span></div><span class="tag">CLI</span></div>
+    <div class="nav-label">工作台</div>
+    <nav aria-label="主导航">
+      <a href="#overview" data-view="overview"><span data-icon="grid"></span>总览</a>
+      <a href="#agents" data-view="agents"><span data-icon="layers"></span>用量与额度<span class="nav-count">4</span></a>
+      <a href="#activity" data-view="activity"><span data-icon="activity"></span>活动与技能</a>
+      <a href="#devices" data-view="devices"><span data-icon="monitor"></span>设备与同步<span class="notice-dot"></span></a>
+    </nav>
+    <div class="sidebar-bottom">
+      <div class="local-note"><span data-icon="shield"></span><div><b>数据留在你的掌控中</b><p>本机采集，按需同步。<br>关闭网页不影响后台采集。</p></div></div>
+      <button class="help-link" id="help-button"><span data-icon="help"></span>使用说明<span data-icon="arrow-up-right"></span></button>
+      <div class="user"><span class="avatar">A</span><div><b>Alex</b><small>个人账号 · 已登录</small></div><span class="dot"></span></div>
+    </div>
+  </aside>
+  <div class="app">
+    <header class="topbar"><div class="breadcrumb">工作台<span>/</span><b id="breadcrumb">总览</b></div><div class="topbar-actions"><span class="preview-tag">设计预览 · 示例数据</span><span class="today">2026 年 9 月 29 日</span><button class="icon-button" id="refresh" aria-label="刷新数据" title="刷新示例数据"><span data-icon="refresh"></span></button></div></header>
+    <main id="content" tabindex="-1">
+      <div class="page-heading"><div><div class="eyebrow" id="eyebrow">YOUR AI, IN PERSPECTIVE</div><h1 id="page-title">用量总览</h1><p id="page-subtitle">每一次与 AI 的协作，都在这里留下足迹。</p></div><div class="scope-block"><div class="segmented scope-switch" aria-label="数据范围"><button data-scope="account" aria-pressed="true"><span data-icon="cloud"></span>全部设备</button><button data-scope="local" aria-pressed="false"><span data-icon="monitor"></span>本机</button></div><span id="scope-note">账号已同步数据 · 3 台设备</span></div></div>
+      <div class="toolbar"><div class="periods" aria-label="统计周期"><button data-range="24h" aria-pressed="true">过去 24 小时</button><button data-range="today" aria-pressed="false">今日</button><button data-range="7d" aria-pressed="false">近 7 天</button><button data-range="30d" aria-pressed="false">近 30 天</button><button data-range="all" aria-pressed="false">全部时间</button></div><span class="window-note"><span data-icon="clock"></span><span id="date-range">09.28 14:00 — 09.29 14:00</span><span class="timezone">UTC+8</span></span></div>
+      <div id="view"></div>
+      <footer class="page-footer"><span><span class="dot"></span>本地网页面板 <span class="footer-divider">/</span> 只采集用量，不采集对话正文</span><span>Let Token Dance.</span></footer>
+    </main>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <dialog id="detail-dialog" aria-labelledby="dialog-title"><div class="dialog-top"><span class="eyebrow" id="dialog-eyebrow">DETAILS</span><button class="icon-button" id="close-dialog" aria-label="关闭详情"><span data-icon="x"></span></button></div><h2 id="dialog-title"></h2><div id="dialog-content"></div></dialog>
+  <script src="app.js"></script>
+</body>
+</html>

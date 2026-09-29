@@ -13,3 +13,5 @@
 - [重建、统计与上传解耦](rebuild-sync-decoupling/README.md)：SQLite 游标推进、独立统计消费者和同步接口错误修复。
 
 - [全工具采集缺口修复](harness-coverage-audit/README.md)：原生格式、Skill、缓存口径及统计修订；豆包接入 IndexedDB 活动与 Skill，Token 保持未知。
+
+- [TokenDance CLI](cli-tool/README.md)：开发方案提案，以本地网页 dashboard 复用 Web 个人页、login 统一授权，覆盖共享 v2 内核与 Linux/SSH 采集。
