@@ -549,12 +549,12 @@ impl PipelineRuntime {
             .and_then(|s| s.collection_status())
     }
 
-    pub fn rebuild(&self) -> Result<super::reconstruction::RebuildStatus, String> {
+    pub fn rebuild(&self, version: &str) -> Result<super::reconstruction::RebuildStatus, String> {
         let _lifecycle = self.lifecycle.write().map_err(|_| "pipeline lifecycle")?;
         let status = self
             .writer
             .rebuild(super::reconstruction::RebuildAction::Begin(
-                env!("CARGO_PKG_VERSION").into(),
+                version.into(),
             ))
             .map_err(|e| e.to_string())?;
         *self.queue.lock().expect("source queue") = WorkQueue::default();
