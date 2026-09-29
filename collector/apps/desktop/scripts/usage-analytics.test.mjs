@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { collectionStatusText, usageTokens, usageCosts, annualUsage, usageTrend, quotaStale, quotaStatusText, quotaWindowLabel } from '../src/usage-analytics.ts';
+import { collectionStatusText, usageTokens, usageCosts, annualUsage, usageTrend, quotaStale, quotaStatusText, quotaWindowLabel, cloudUsageHint } from '../src/usage-analytics.ts';
 import { lastSevenDays } from '../src/weekly-usage.ts';
 const now = new Date('2026-09-05T04:00:00Z');
 const dates = lastSevenDays(now);
@@ -155,4 +155,15 @@ test('Doubao activity does not imply known Token usage', () => {
   assert.equal(collectionStatusText(item, 'today', false, true), '活动采集中，Token 不可用');
   assert.equal(collectionStatusText(item, 'today', true, true), '已暂停');
   assert.equal(usageTokens(item, 'today', now), null);
+});
+
+test('Claude with quota but no local usage explains that cloud usage is not counted', () => {
+  const quota = { agentId: 'claude-code', windows: [{ usedPercent: 40, windowMinutes: 300, resetsAt: null }] };
+  assert.equal(cloudUsageHint('claude-code', quota, 0, true), '云端用量暂不统计，额度已含云端消耗');
+  assert.ok(cloudUsageHint('claude-code', quota, 0, false).includes('Cloud usage'));
+  assert.equal(cloudUsageHint('claude-code', quota, 12, true), null);
+  assert.equal(cloudUsageHint('claude-code', quota, null, true), null);
+  assert.equal(cloudUsageHint('claude-code', { ...quota, windows: [] }, 0, true), null);
+  assert.equal(cloudUsageHint('claude-code', undefined, 0, true), null);
+  assert.equal(cloudUsageHint('codex', { ...quota, agentId: 'codex' }, 0, true), null);
 });
