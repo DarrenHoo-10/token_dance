@@ -322,7 +322,7 @@ export const LeaderboardPage: React.FC = () => {
         </div>
         <div className="sky-metrics">
           <HeroMiniCard icon={<UsersRound />} label={zh ? '活跃开发者' : 'Active devs'} value={community?.developers != null ? formatTokens(String(community.developers)).replace('.0K', 'K') : '—'} delta={community?.deltas?.developers} />
-          <HeroMiniCard icon={<Code2 />} label={zh ? '生成代码行' : 'Code lines'} value={formatTokens(community?.codeLines)} delta={community?.deltas?.codeLines} />
+          <HeroMiniCard icon={<Code2 />} label={zh ? '已记录代码行' : 'Recorded code lines'} value={formatTokens(community?.codeLines)} delta={community?.deltas?.codeLines} help={zh ? '仅累计已同步且工具能确认的代码行。Codex 目前主要按成功应用补丁的新增行计数，未确认的终端修改不计入。涨跌幅与前一个同长度周期比较，基数很小时百分比会很大。' : 'Counts synced lines the tools can verify. Codex primarily counts added lines in successfully applied patches; unverified terminal edits are excluded. The change compares with the previous equal-length period, so a small baseline can produce a large percentage.'} />
           <HeroMiniCard icon={<Zap />} label={zh ? '模型请求' : 'Model requests'} value={formatTokens(community?.interactions)} delta={community?.deltas?.interactions} unit={zh ? '次' : 'requests'} help={zh ? '统计当前周期内已同步的模型请求次数，与用户消息数、工具调用次数不同。仅覆盖已采集的来源。' : 'Synced model requests in this period, distinct from user messages and tool calls. Covers collected sources only.'} />
           <HeroMiniCard icon={<Wallet />} label={zh ? '预估费用' : 'Est. cost'} value={formatCommunityCost(community ?? {})} delta={community?.deltas?.costAmount} />
         </div>
