@@ -31,7 +31,7 @@ export function AuthLayout({ mode, returnTo, mood, errorMessage, children }: Aut
       <aside className="login-brand">
         <TokenScene paused={pageHidden} />
         <NavLink to="/" className="login-brand__logo" aria-label="TokenDance">
-          <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" />
+          <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2-128.png`} alt="" />
           <span>TokenDance</span>
         </NavLink>
         <div className="login-brand__body">

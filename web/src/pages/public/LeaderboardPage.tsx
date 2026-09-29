@@ -497,7 +497,7 @@ export const LeaderboardPage: React.FC = () => {
           <Link className="btn btn-primary" to="/download"><Download size={17} />{zh ? '下载 TokenDance' : 'Get TokenDance'}</Link>
         </section>
         <footer className="sky-home-footer">
-          <Link to="/leaderboard"><img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" />TokenDance</Link>
+          <Link to="/leaderboard"><img src={`${import.meta.env.BASE_URL}logo-tokendance-v2-128.png`} alt="" />TokenDance</Link>
           <span>{zh ? '每一个 Token，都是更好明天的开始。' : 'Small tokens. A brighter tomorrow.'}</span>
           <Link to="/docs/privacy"><ShieldCheck size={14} />{zh ? '数据与隐私' : 'Data & privacy'}</Link>
         </footer>
