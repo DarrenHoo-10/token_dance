@@ -64,7 +64,7 @@ export function DownloadPage() {
       <h1 id="download-heading">{t('让每一次创造，都被看见。', 'Make every day of creating visible.')}</h1>
 
       <div className="resource-app-preview">
-        <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" />
+        <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2-128.png`} alt="" />
         <strong>TokenDance</strong><span>{t('过去 24h Token · 示例', 'Past 24h tokens · sample')}</span><b>1.12<small>M</small></b>
         <div><span>Codex</span><span>Claude Code / Cowork</span><span>Cursor</span></div>
       </div>

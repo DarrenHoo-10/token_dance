@@ -15,13 +15,14 @@ import { useAuth } from '@/context/AuthContext';
 import { usePersonalAnalytics } from '@/context/PersonalAnalyticsContext';
 import { usePublicHomeResource } from '@/hooks/usePublicHomeResource';
 import { useVisibleRefresh } from '@/hooks/useVisibleRefresh';
-import { readHomeBoard, readHomeCommunity, writeHomeBoard, writeHomeCommunity } from '@/utils/publicHomeCache';
+import { readHomeBoard, readHomeBoardTotal, readHomeCommunity, writeHomeBoard, writeHomeCommunity } from '@/utils/publicHomeCache';
 import { api, ApiError } from '@/api/client';
 import type {
   LeaderboardEntry, LeaderboardResponse, PersonalSummary, CalendarDay, CommunityStatsResponse,
   PublicUserProfile, TimeRange, TokenTrendItem, TokenTrendsResponse,
 } from '@/types/api';
 import { formatCommunityCost } from '@/utils/cost';
+import { compactNumber } from '@/utils/formatNumber';
 import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
 import { calendarPeriodChange } from '@/components/analytics/calendarPeriodChange';
 import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
@@ -34,11 +35,11 @@ const windowByRange: Record<Range, 'today' | '7d' | '30d' | 'all'> = { Today: 't
 
 function readHomeBoardView(key: string): Partial<LeaderboardResponse> | null {
   const entries = readHomeBoard(key);
-  return entries ? { entries, totalParticipants: entries.length } : null;
+  return entries ? { entries, totalParticipants: readHomeBoardTotal(key) ?? undefined } : null;
 }
 
 function writeHomeBoardView(key: string, board: Partial<LeaderboardResponse>) {
-  writeHomeBoard(key, board.entries ?? []);
+  writeHomeBoard(key, board.entries ?? [], board.totalParticipants);
 }
 
 function formatTokens(raw: string | null | undefined): string {
@@ -46,10 +47,13 @@ function formatTokens(raw: string | null | undefined): string {
   const value = Number(raw);
   if (!Number.isFinite(value) || value < 0) return '—';
   if (value === 0) return '0';
-  if (value >= 1e9) return `${(value / 1e9).toFixed(1)}B`;
-  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
-  if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
-  return String(Math.round(value));
+  const compact = compactNumber(value);
+  return compact ? `${compact.value}${compact.unit}` : String(Math.round(value));
+}
+
+function formatDevelopers(count: number): string {
+  // Whole numbers below 1K stay exact; larger counts drop a trailing ".0" (1.0K → 1K).
+  return formatTokens(String(count)).replace(/\.0(?=[KMB]$)/, '');
 }
 
 function formatPercentile(value: number | string): string {
@@ -63,12 +67,14 @@ function publicTrendPoints(res: TokenTrendsResponse | null): TokenTrendItem[] {
   return res.points || res.trends || [];
 }
 
-function DeltaChip({ value, suffix }: { value?: number | null; suffix?: string }) {
+export function DeltaChip({ value, suffix }: { value?: number | null; suffix?: string }) {
   if (value == null || !Number.isFinite(value)) return null;
-  const positive = value >= 0;
+  // Direction follows the displayed (one-decimal) value so "+0.0%" never shows an arrow.
+  const rounded = Math.round(value * 10) / 10;
+  const direction = rounded === 0 ? 'flat' : rounded > 0 ? 'up' : 'down';
   return (
-    <span className={`hero-delta ${value === 0 ? 'flat' : positive ? 'up' : 'down'}`}>
-      {positive ? '↑' : '↓'} {positive ? '+' : '−'}{Math.abs(value).toFixed(1)}%{suffix && <span className="sky-delta-suffix"> {suffix}</span>}
+    <span className={`hero-delta ${direction}`}>
+      {direction === 'flat' ? '0.0%' : <>{direction === 'up' ? '↑ +' : '↓ −'}{Math.abs(rounded).toFixed(1)}%</>}{suffix && <span className="sky-delta-suffix"> {suffix}</span>}
     </span>
   );
 }
@@ -331,7 +337,7 @@ export const LeaderboardPage: React.FC = () => {
           <small>SMALL TOKENS<br />BIG CHANGES</small>
         </div>
         <div className="sky-metrics">
-          <HeroMiniCard icon={<UsersRound />} label={zh ? '活跃开发者' : 'Active devs'} value={community?.developers != null ? formatTokens(String(community.developers)).replace('.0K', 'K') : '—'} delta={community?.deltas?.developers} />
+          <HeroMiniCard icon={<UsersRound />} label={zh ? '活跃开发者' : 'Active devs'} value={community?.developers != null ? formatDevelopers(community.developers) : '—'} delta={community?.deltas?.developers} />
           <HeroMiniCard icon={<Code2 />} label={zh ? '生成代码行' : 'Code lines'} value={formatTokens(community?.codeLines)} delta={community?.deltas?.codeLines} />
           <HeroMiniCard icon={<Zap />} label={zh ? '模型请求' : 'Model requests'} value={formatTokens(community?.interactions)} delta={community?.deltas?.interactions} unit={zh ? '次' : 'requests'} help={zh ? '统计当前周期内已同步的模型请求次数，与用户消息数、工具调用次数不同。仅覆盖已采集的来源。' : 'Synced model requests in this period, distinct from user messages and tool calls. Covers collected sources only.'} />
           <HeroMiniCard icon={<Wallet />} label={zh ? '预估费用' : 'Est. cost'} value={formatCommunityCost(community ?? {})} delta={community?.deltas?.costAmount} />
@@ -506,7 +512,7 @@ export const LeaderboardPage: React.FC = () => {
           <Link className="btn btn-primary" to="/download"><Download size={17} />{zh ? '下载 TokenDance' : 'Get TokenDance'}</Link>
         </section>
         <footer className="sky-home-footer">
-          <Link to="/leaderboard"><img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" />TokenDance</Link>
+          <Link to="/leaderboard"><img src={`${import.meta.env.BASE_URL}logo-tokendance-v2-128.png`} alt="" />TokenDance</Link>
           <span>{zh ? '每一个 Token，都是更好明天的开始。' : 'Small tokens. A brighter tomorrow.'}</span>
           <Link to="/docs/privacy"><ShieldCheck size={14} />{zh ? '数据与隐私' : 'Data & privacy'}</Link>
         </footer>

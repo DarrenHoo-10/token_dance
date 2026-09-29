@@ -154,7 +154,7 @@ export const TeamLayout: React.FC = () => {
 
       <div className="tw-footer">
         <span>
-          <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" />
+          <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2-128.png`} alt="" />
           TokenDance <i>/</i> BETTER TOGETHER
         </span>
         <span>{t('teams.footerTag')}</span>

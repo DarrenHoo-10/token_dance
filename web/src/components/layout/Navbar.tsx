@@ -7,6 +7,7 @@ import { useLocale } from '@/context/LocaleContext';
 import { usePersonalAnalytics } from '@/context/PersonalAnalyticsContext';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
 import { Button } from '@/components/common/Button';
+import { preloadRoute } from '@/routes';
 
 export const Navbar: React.FC = () => {
   const { user, authenticated, logout } = useAuth();
@@ -81,7 +82,7 @@ export const Navbar: React.FC = () => {
   return (
     <header className="navbar floating-nav">
       <NavLink to="/" className="nav-brand">
-        <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="TokenDance" />
+        <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2-128.png`} alt="TokenDance" />
         <span>TokenDance</span>
       </NavLink>
 
@@ -94,13 +95,13 @@ export const Navbar: React.FC = () => {
         >
           TokenBoard
         </NavLink>
-        <NavLink to="/teams" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+        <NavLink to="/teams" onMouseEnter={() => preloadRoute("/teams")} onFocus={() => preloadRoute("/teams")} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           {t('teams.label')}
         </NavLink>
-        <NavLink to="/download" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+        <NavLink to="/download" onMouseEnter={() => preloadRoute("/download")} onFocus={() => preloadRoute("/download")} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           {locale === 'zh-CN' ? '客户端下载' : 'Download'}
         </NavLink>
-        <NavLink to="/docs" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+        <NavLink to="/docs" onMouseEnter={() => preloadRoute("/docs")} onFocus={() => preloadRoute("/docs")} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           {locale === 'zh-CN' ? '使用文档' : 'Docs'}
         </NavLink>
         {/* Phones: search, personal data and language live in the menu so the header stays on one row. */}
