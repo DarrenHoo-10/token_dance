@@ -244,6 +244,32 @@ fn finish_call(
         }
     }
 }
+/// Claude Code writes one transcript line per content block (thinking, text, tool_use) and
+/// repeats the message's `usage` on every line, each with its own top-level `uuid`. Usage
+/// belongs to the API message, so only the first line seen for a `message.id` may emit it.
+/// The identity stays `uuid`-based: a later line has a different timestamp, so keying it by
+/// `message.id` would hit `IdentityContentConflict` instead of deduplicating.
+fn claude_repeats_message_usage(c: &Context, message: &Value, state: &mut DecoderState) -> bool {
+    const SEEN_CAP: usize = 256;
+    if c.harness != "claude-code" {
+        return false;
+    }
+    let Some(message_id) = text(message, &["id"]) else {
+        return false;
+    };
+    if !state.json["native_usage_seen"].is_array() {
+        state.json["native_usage_seen"] = json!([]);
+    }
+    let seen = state.json["native_usage_seen"].as_array_mut().unwrap();
+    if seen.iter().any(|v| v.as_str() == Some(message_id.as_str())) {
+        return true;
+    }
+    if seen.len() >= SEEN_CAP {
+        seen.remove(0);
+    }
+    seen.push(json!(message_id));
+    false
+}
 /// None means this is a legacy profile record, so keep its existing identity path.
 pub fn decode(c: &Context, value: &Value, state: &mut DecoderState) -> Option<Vec<FactDraft>> {
     if let Some(facts) = decode_compat(c, value, state) {
@@ -309,7 +335,10 @@ pub fn decode(c: &Context, value: &Value, state: &mut DecoderState) -> Option<Ve
         state.json["native_model"] = json!({"model":value.get("model").or_else(||value.get("modelId")),"provider":value.get("provider")});
         return Some(out);
     }
-    if let Some(u) = message.get("usage") {
+    if let Some(u) = message
+        .get("usage")
+        .filter(|_| !claude_repeats_message_usage(c, message, state))
+    {
         // Existing Claude primary facts used top-level uuid. Keep it on correction.
         let revision = if c.harness == "claude-code" { 2 } else { 1 };
         if let Some(f) = usage(
@@ -690,10 +719,95 @@ mod tests {
     }
 
     #[test]
+    fn claude_counts_usage_once_per_message_id_across_content_block_lines() {
+        let line = |uuid: &str, message_id: &str, block: Value| {
+            json!({"type":"assistant","uuid":uuid,"sessionId":"s1","message":{
+                "id":message_id,"role":"assistant","model":"claude-sonnet-5-5",
+                "content":[block],
+                "usage":{"input_tokens":2,"output_tokens":7,"cache_read_input_tokens":100,"cache_creation_input_tokens":10}}})
+        };
+        let facts = native_facts(
+            "claude-code",
+            vec![
+                line("u1", "msg_a", json!({"type":"thinking","thinking":""})),
+                line("u2", "msg_a", json!({"type":"text","text":"x"})),
+                line(
+                    "u3",
+                    "msg_a",
+                    json!({"type":"tool_use","id":"t1","name":"Bash","input":{}}),
+                ),
+                line("u4", "msg_b", json!({"type":"text","text":"y"})),
+            ],
+        );
+        let usage: Vec<_> = facts
+            .iter()
+            .filter(|f| f.event_type == "model_usage_recorded")
+            .collect();
+        assert_eq!(
+            usage.len(),
+            2,
+            "one usage fact per message.id, not per line"
+        );
+        assert_eq!(usage[0].payload_sections["usage"]["token_total"], 119);
+        assert_eq!(usage[0].occurred_at, 1789257600000);
+    }
+
+    #[test]
+    fn claude_usage_dedup_survives_batch_boundary_and_keeps_lines_without_message_id() {
+        fn alloc(_: [u8; 32], _: &str) -> i64 {
+            1
+        }
+        let book = SkillBook::new();
+        let secret = vec![7; 32];
+        let mut state = DecoderState {
+            version: 1,
+            json: json!({}),
+        };
+        let mut count = |v: Value, i: u64, state: &mut DecoderState| {
+            let row = RawRecord {
+                ordinal: i,
+                byte_start: Some(i),
+                byte_end: Some(i + 1),
+                native_rowid: None,
+                payload: v.to_string().into_bytes(),
+                file_mtime_ms: Some(1789257600000),
+            };
+            let ctx = Context {
+                harness: "claude-code",
+                secret: &secret,
+                scope: "fixture-session",
+                now: 1789257600000 + i as i64,
+                time_source: TimeSource::SourceRecord,
+                record: &row,
+                book: &book,
+                allocator: &alloc,
+            };
+            decode(&ctx, &v, state)
+                .unwrap()
+                .iter()
+                .filter(|f| f.event_type == "model_usage_recorded")
+                .count()
+        };
+        let with_id = |uuid: &str| json!({"type":"assistant","uuid":uuid,"sessionId":"s1","message":{"id":"msg_a","model":"m","usage":{"input_tokens":1,"output_tokens":1}}});
+        let no_id = |uuid: &str| json!({"type":"assistant","uuid":uuid,"sessionId":"s1","message":{"model":"m","usage":{"input_tokens":1,"output_tokens":1}}});
+        assert_eq!(count(with_id("u1"), 0, &mut state), 1);
+        // The runner persists decoder state between batches as JSON; the next batch must still dedup.
+        let mut resumed = DecoderState {
+            version: state.version,
+            json: serde_json::from_str(&state.json.to_string()).unwrap(),
+        };
+        assert_eq!(count(with_id("u2"), 1, &mut resumed), 0);
+        assert_eq!(count(no_id("u3"), 2, &mut resumed), 1);
+        assert_eq!(count(no_id("u4"), 3, &mut resumed), 1);
+    }
+
+    #[test]
     fn claude_tool_use_waits_for_tool_result() {
         let pending = native_facts(
             "claude-code",
-            vec![json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"call-write-1","name":"Write","input":{"content":"a\nb\n"}}]}})],
+            vec![
+                json!({"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"call-write-1","name":"Write","input":{"content":"a\nb\n"}}]}}),
+            ],
         );
         assert!(pending.iter().all(|f| f.event_type != "code_changed"));
         let completed = native_facts(

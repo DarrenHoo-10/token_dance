@@ -58,7 +58,8 @@ fn probe(strategy: &dyn HarnessStrategy, label: &str, records: Vec<Value>, sqlit
     }
     assert_eq!(errors, 0, "{} {label} must decode", strategy.harness_id());
     let expected = match (strategy.harness_id(), label) {
-        ("claude-code", "session.jsonl") => Some((77, 0)),
+        // msg-usage-1 is written on two lines (one per content block); usage counts once per message.id.
+        ("claude-code", "session.jsonl") => Some((42, 0)),
         ("claude-code" | "grok-build", "history.jsonl") => Some((35, 1)),
         ("deepseek-harness", "history.jsonl") => Some((35, 1)),
         ("grok-build", "session-updates.jsonl") => Some((170, 0)),
