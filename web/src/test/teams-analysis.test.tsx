@@ -20,11 +20,27 @@ const shanghaiToday = () => calendarDateInTimeZone(new Date(), 'Asia/Shanghai');
 
 function pickIsoDate(label: string, iso: string) {
   fireEvent.click(screen.getByLabelText(label));
-  const day = String(Number(iso.slice(8, 10)));
   const dialog = screen.getByRole('dialog', { name: label });
-  const match = within(dialog).getAllByRole('button').filter((el) => el.textContent === day);
-  const enabled = match.find((el) => el.getAttribute('aria-disabled') !== 'true' && !(el as HTMLButtonElement).disabled);
-  fireEvent.click(enabled || match[0]);
+  const [year, month, day] = iso.split('-').map(Number);
+  const needle = `${year}年${month}月${day}日`;
+  const target = year * 12 + month;
+  for (let step = 0; step < 24; step += 1) {
+    const buttons = within(dialog).getAllByRole('button');
+    const dayButton = buttons.find((el) => (el.getAttribute('aria-label') || '').includes(needle));
+    if (dayButton) {
+      fireEvent.click(dayButton);
+      return;
+    }
+    const shown = buttons
+      .map((el) => (el.getAttribute('aria-label') || '').match(/(\d+)年(\d+)月/))
+      .filter((match): match is RegExpMatchArray => Boolean(match))
+      .map((match) => Number(match[1]) * 12 + Number(match[2]));
+    const goBack = (shown.length ? Math.max(...shown) : target + 1) > target;
+    const nav = buttons.find((el) => (el.getAttribute('aria-label') || '').includes(goBack ? '上个月' : '下个月'));
+    if (!nav || nav.getAttribute('aria-disabled') === 'true') break;
+    fireEvent.click(nav);
+  }
+  throw new Error(`calendar cannot reach ${iso}`);
 }
 
 const readyAnalysis = (authRevision: string, tokenValue: string): TeamAnalysisReady => ({

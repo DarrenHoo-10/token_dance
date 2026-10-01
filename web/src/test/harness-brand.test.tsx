@@ -83,7 +83,7 @@ describe('harness brand identity', () => {
             },
             models: { items: [] },
             skills: { items: [] },
-          } as TeamAnalysisReady}
+          } as unknown as TeamAnalysisReady}
         />
       </LocaleProvider>,
     );
