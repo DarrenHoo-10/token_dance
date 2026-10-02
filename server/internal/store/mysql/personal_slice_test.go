@@ -199,19 +199,14 @@ func TestPersonalSliceFollowsRangeHarnessAndModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if metricValue(t, byModel.Metrics.TotalTokens) != "100" {
-		t.Fatalf("gpt-4o tokens: %s", metricValue(t, byModel.Metrics.TotalTokens))
+	if metricValue(t, byModel.Metrics.TotalTokens) != "100" || metricValue(t, byModel.Metrics.GeneratedCodeLines) != "10" || metricValue(t, byModel.Metrics.MessageCount) != "2" || metricValue(t, byModel.Metrics.UserMessageCount) != "1" || metricValue(t, byModel.Metrics.ActiveDurationMs) != "10000" {
+		t.Fatalf("gpt-4o exclusive harness summary: %+v", byModel.Metrics)
+	}
+	if byModel.Metrics.TokensPerCodeLine.Value == nil || *byModel.Metrics.TokensPerCodeLine.Value != "10.00" {
+		t.Fatalf("gpt-4o tokens per line: %+v", byModel.Metrics.TokensPerCodeLine)
 	}
 	if byModel.Metrics.EstimatedCost.Amount == nil || *byModel.Metrics.EstimatedCost.Amount != "1.00000000" {
 		t.Fatalf("gpt-4o cost: %+v", byModel.Metrics.EstimatedCost)
-	}
-	for _, metric := range []domain.MetricBigInt{byModel.Metrics.GeneratedCodeLines, byModel.Metrics.MessageCount, byModel.Metrics.UserMessageCount, byModel.Metrics.ActiveDurationMs} {
-		if metric.Supported || metric.Value != nil {
-			t.Fatalf("harness-only metric must stay unsupported for a model slice: %+v", metric)
-		}
-	}
-	if byModel.Metrics.TokensPerCodeLine.Supported {
-		t.Fatalf("tokens per line is not model-scoped: %+v", byModel.Metrics.TokensPerCodeLine)
 	}
 
 	breakdown, err := analytics.GetAgentBreakdownFiltered(ctx, userID, r7, nil, &gptID)
@@ -243,6 +238,37 @@ func TestPersonalSliceFollowsRangeHarnessAndModel(t *testing.T) {
 	}
 	if len(allSkills.Skills) != 1 || allSkills.Skills[0].UseCount != "11" {
 		t.Fatalf("unfiltered skills: %+v", allSkills.Skills)
+	}
+
+	extra := ensureModel("openai", "extra")
+	insertModel("day", day29, "pi", gpt, 50)
+	insertModel("day", day29, "pi", extra, 20)
+	insertHarness(day29, "pi", 99, 5, 2)
+	mixed, err := analytics.GetPersonalSummaryFiltered(ctx, userID, r7, nil, &gptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metricValue(t, mixed.Metrics.TotalTokens) != "150" || metricValue(t, mixed.Metrics.GeneratedCodeLines) != "10" || metricValue(t, mixed.Metrics.MessageCount) != "2" {
+		t.Fatalf("mixed harness lines must stay with the exclusive harness: %+v", mixed.Metrics)
+	}
+	if mixed.Metrics.TokensPerCodeLine.Value == nil || *mixed.Metrics.TokensPerCodeLine.Value != "10.00" {
+		t.Fatalf("tokens per line must ignore the mixed harness tokens: %+v", mixed.Metrics.TokensPerCodeLine)
+	}
+	extraID := "extra"
+	onlyMixed, err := analytics.GetPersonalSummaryFiltered(ctx, userID, r7, nil, &extraID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metricValue(t, onlyMixed.Metrics.TotalTokens) != "20" {
+		t.Fatalf("extra tokens: %s", metricValue(t, onlyMixed.Metrics.TotalTokens))
+	}
+	for _, metric := range []domain.MetricBigInt{onlyMixed.Metrics.GeneratedCodeLines, onlyMixed.Metrics.MessageCount, onlyMixed.Metrics.UserMessageCount, onlyMixed.Metrics.ActiveDurationMs} {
+		if metric.Supported || metric.Value != nil {
+			t.Fatalf("mixed-only model must not reuse harness activity: %+v", metric)
+		}
+	}
+	if onlyMixed.Metrics.TokensPerCodeLine.Supported {
+		t.Fatalf("mixed-only tokens per line: %+v", onlyMixed.Metrics.TokensPerCodeLine)
 	}
 }
 

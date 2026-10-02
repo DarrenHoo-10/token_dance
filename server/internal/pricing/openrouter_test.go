@@ -29,6 +29,17 @@ func TestRatesCacheTiersAndUnknown(t *testing.T) {
 	if _, ok := c.Match("test-high"); ok {
 		t.Fatal("unverified alias matched")
 	}
+	var grok Catalog
+	if err := json.Unmarshal([]byte(`{"data":[{"id":"x-ai/grok-4.7","pricing":{"prompt":"0.000002","completion":"0.000006"}}]}`), &grok); err != nil {
+		t.Fatal(err)
+	}
+	matched, ok := grok.Match("grok-4.7-build-fast")
+	if !ok || matched.ID != "x-ai/grok-4.7" {
+		t.Fatalf("grok-4.7-build-fast alias: %+v ok=%v", matched, ok)
+	}
+	if _, ok := grok.Match("grok-4.7-build"); ok {
+		t.Fatal("unlisted grok-4.7 variant matched")
+	}
 	if _, ok := Estimate(m, Usage{Input: 1, CacheRead: 2, InputIncludesCache: true}); ok {
 		t.Fatal("invalid cache count")
 	}

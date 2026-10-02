@@ -76,6 +76,50 @@ func appendDim(query string, args []any, column, value string, ok bool) (string,
 	return query + " AND " + column + " = ?", append(args, value)
 }
 
+// exclusiveModelHarnessFilter keeps harness activity for a model slice only when
+// that harness's model rows in the same range are exactly the selected model.
+// Code, turns and duration are not stored per model, so a harness that used two
+// models stays out of the slice.
+func exclusiveModelHarnessFilter(grain, column string, hasAgent bool, userID string, fromMs, toMs int64, agent, model string) (string, []any) {
+	query := ` AND ` + column + ` IN (
+		SELECT m.harness_id
+		FROM bound_telemetry_model_metrics m
+		JOIN telemetry_models tm ON tm.id = m.model_key
+		WHERE m.user_id = ? AND m.grain = '` + grain + `' AND m.delete_at IS NULL
+		  AND m.bucket_start >= ? AND m.bucket_start <= ?`
+	args := []any{userID, fromMs, toMs}
+	if hasAgent {
+		query += ` AND m.harness_id = ?`
+		args = append(args, agent)
+	}
+	query += `
+		GROUP BY m.harness_id
+		HAVING COUNT(DISTINCT tm.model_id) = 1 AND MIN(tm.model_id) = ?)`
+	return query, append(args, model)
+}
+
+// exclusiveModelTokens is the token total of harnesses that used only this model.
+// Tokens per line uses this total, so a mixed harness does not inflate the ratio.
+func (s *analyticsStore) exclusiveModelTokens(ctx context.Context, userID, grain string, fromMs, toMs int64, agent string, hasAgent bool, model string) (uint64, error) {
+	query := `
+		SELECT CAST(COALESCE(SUM(m.exact_token_total + m.derived_token_total), 0) AS UNSIGNED)
+		FROM bound_telemetry_model_metrics m
+		JOIN telemetry_models tm ON tm.id = m.model_key
+		WHERE m.user_id = ? AND m.grain = '` + grain + `' AND m.delete_at IS NULL
+		  AND m.bucket_start >= ? AND m.bucket_start <= ?
+		  AND tm.model_id = ?`
+	args := []any{userID, fromMs, toMs, model}
+	query, args = appendDim(query, args, "m.harness_id", agent, hasAgent)
+	filter, filterArgs := exclusiveModelHarnessFilter(grain, "m.harness_id", hasAgent, userID, fromMs, toMs, agent, model)
+	query += filter
+	args = append(args, filterArgs...)
+	var tokens uint64
+	if err := s.db.QueryRowContext(ctx, query, args...).Scan(&tokens); err != nil {
+		return 0, fmt.Errorf("query exclusive model tokens: %w", err)
+	}
+	return tokens, nil
+}
+
 func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, r domain.TimeRange) (*domain.PersonalSummary, error) {
 	return s.personalSummary(ctx, userID, r, nil, nil)
 }
@@ -147,12 +191,11 @@ func (s *analyticsStore) personalSummary(ctx context.Context, userID string, r d
 		return nil, fmt.Errorf("failed to query personal summary tokens: %w", err)
 	}
 
-	// Harness activity: code lines, duration, messages. These rows have no model
-	// dimension, so a model slice must not reuse the harness-wide totals.
+	// Harness activity has no model column. A model slice includes a harness only
+	// when every model row for that harness in this range is the selected model.
 	var harnessRows int
 	var harnessWatermark sql.NullTime
-	if !hasModel {
-		harnessQuery := `
+	harnessQuery := `
 		SELECT
 			COUNT(*),
 			COALESCE(SUM(code_generated_lines), 0),
@@ -163,17 +206,21 @@ func (s *analyticsStore) personalSummary(ctx context.Context, userID string, r d
 		FROM bound_telemetry_harness_metrics
 		WHERE user_id = ? AND grain = '` + grain + `' AND delete_at IS NULL
 		  AND bucket_start >= ? AND bucket_start <= ?`
-		harnessArgs := []any{userID, fromMs, toMs}
-		harnessQuery, harnessArgs = appendDim(harnessQuery, harnessArgs, "harness_id", agent, hasAgent)
-		err = s.db.QueryRowContext(ctx, harnessQuery, harnessArgs...).Scan(&harnessRows, &codeLines, &activeDurationNull, &messageCountNull, &userMsgNull, &harnessWatermark)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("failed to query personal summary harness: %w", err)
-		}
-		if harnessRows > rowCount {
-			rowCount = harnessRows
-		}
-		maxNullTime(&maxComputedAtNull, harnessWatermark)
+	harnessArgs := []any{userID, fromMs, toMs}
+	harnessQuery, harnessArgs = appendDim(harnessQuery, harnessArgs, "harness_id", agent, hasAgent)
+	if hasModel {
+		filter, filterArgs := exclusiveModelHarnessFilter(grain, "harness_id", hasAgent, userID, fromMs, toMs, agent, model)
+		harnessQuery += filter
+		harnessArgs = append(harnessArgs, filterArgs...)
 	}
+	err = s.db.QueryRowContext(ctx, harnessQuery, harnessArgs...).Scan(&harnessRows, &codeLines, &activeDurationNull, &messageCountNull, &userMsgNull, &harnessWatermark)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("failed to query personal summary harness: %w", err)
+	}
+	if harnessRows > rowCount {
+		rowCount = harnessRows
+	}
+	maxNullTime(&maxComputedAtNull, harnessWatermark)
 
 	// Costs grouped by currency — never silently SUM across currencies as USD.
 	// sqlc-dynamic-reviewed: optional harness/model predicates are bound parameters.
@@ -246,8 +293,7 @@ func (s *analyticsStore) personalSummary(ctx context.Context, userID string, r d
 	maxNullTime(&maxComputedAtNull, raw.maxReceivedAt)
 
 	var codeRecords, durationRecords, messageRecords int
-	if !hasModel {
-		coverageQuery := `
+	coverageQuery := `
 		SELECT
 			CAST(COALESCE(SUM(code_known_count), 0) AS UNSIGNED),
 			CAST(COALESCE(SUM(duration_known_count), 0) AS UNSIGNED),
@@ -255,19 +301,31 @@ func (s *analyticsStore) personalSummary(ctx context.Context, userID string, r d
 		FROM bound_telemetry_harness_metrics
 		WHERE user_id = ? AND grain = '` + grain + `' AND delete_at IS NULL
 		  AND bucket_start >= ? AND bucket_start <= ?`
-		coverageArgs := []any{userID, fromMs, toMs}
-		coverageQuery, coverageArgs = appendDim(coverageQuery, coverageArgs, "harness_id", agent, hasAgent)
-		err = s.db.QueryRowContext(ctx, coverageQuery, coverageArgs...).Scan(&codeRecords, &durationRecords, &messageRecords)
-		if err != nil {
-			return nil, fmt.Errorf("query metric coverage: %w", err)
-		}
+	coverageArgs := []any{userID, fromMs, toMs}
+	coverageQuery, coverageArgs = appendDim(coverageQuery, coverageArgs, "harness_id", agent, hasAgent)
+	if hasModel {
+		filter, filterArgs := exclusiveModelHarnessFilter(grain, "harness_id", hasAgent, userID, fromMs, toMs, agent, model)
+		coverageQuery += filter
+		coverageArgs = append(coverageArgs, filterArgs...)
+	}
+	err = s.db.QueryRowContext(ctx, coverageQuery, coverageArgs...).Scan(&codeRecords, &durationRecords, &messageRecords)
+	if err != nil {
+		return nil, fmt.Errorf("query metric coverage: %w", err)
 	}
 	totTokensStr := fmt.Sprintf("%d", totalTokens)
 	codeLinesStr := fmt.Sprintf("%d", codeLines)
 
+	ratioTokens := totalTokens
+	if hasModel {
+		exclusiveTokens, tokenErr := s.exclusiveModelTokens(ctx, userID, grain, fromMs, toMs, agent, hasAgent, model)
+		if tokenErr != nil {
+			return nil, tokenErr
+		}
+		ratioTokens = exclusiveTokens + raw.tokens
+	}
 	var tokensPerCodeLineStr *string
 	if codeLines > 0 {
-		str := fmt.Sprintf("%.2f", float64(totalTokens)/float64(codeLines))
+		str := fmt.Sprintf("%.2f", float64(ratioTokens)/float64(codeLines))
 		tokensPerCodeLineStr = &str
 	}
 
