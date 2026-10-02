@@ -88,7 +88,7 @@ func (c *Client) Load(ctx context.Context) (Catalog, time.Time, error) {
 }
 
 // Explicit runtime aliases. Unknown variants are deliberately not fuzzy-matched.
-var aliases = map[string]string{"grok-4.6-build": "x-ai/grok-4.6", "gemini-3.7-flash-high": "google/gemini-3.7-flash", "claude-opus-4-6-thinking": "anthropic/claude-opus-4.6"}
+var aliases = map[string]string{"grok-4.6-build": "x-ai/grok-4.6", "grok-4.7-build-fast": "x-ai/grok-4.7", "gemini-3.7-flash-high": "google/gemini-3.7-flash", "claude-opus-4-6-thinking": "anthropic/claude-opus-4.6"}
 
 func (c Catalog) Match(name string) (Model, bool) {
 	name = strings.ToLower(strings.TrimSpace(name))
