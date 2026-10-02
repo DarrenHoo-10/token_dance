@@ -114,6 +114,31 @@ describe('ApiHttpClient Contract Tests against OpenAPI & Backend Fixtures', () =
 
     await api.getPersonalSummary('30d');
     expect(urls[1]).toContain('/api/v1/me/summary?range=30d');
+    expect(urls[1]).not.toContain('agent=');
+  });
+
+  it('sends the selected harness and model on personal analytics reads', async () => {
+    const urls: string[] = [];
+    global.fetch = vi.fn().mockImplementation((url) => {
+      urls.push(String(url));
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'Content-Type': 'application/json' }),
+        json: () => Promise.resolve({}),
+      });
+    });
+
+    await api.getPersonalSummary('7d', { agent: 'cursor', model: 'gpt-4o' });
+    await api.getAgentBreakdowns('7d', { agent: 'cursor', model: 'gpt-4o' });
+    await api.getPersonalSkills('7d', { agent: 'cursor' });
+    await api.getFilterOptions('today');
+
+    expect(urls[0]).toContain('/api/v1/me/summary?range=7d&agent=cursor&model=gpt-4o');
+    expect(urls[1]).toContain('/api/v1/me/breakdowns/agents?range=7d&agent=cursor&model=gpt-4o');
+    expect(urls[2]).toContain('/api/v1/me/skills?range=7d&agent=cursor');
+    expect(urls[2]).not.toContain('model=');
+    expect(urls[3]).toContain('/api/v1/me/filter-options?range=today');
   });
 
   it('sends the OpenAPI byteSize field for avatar upload intents', async () => {

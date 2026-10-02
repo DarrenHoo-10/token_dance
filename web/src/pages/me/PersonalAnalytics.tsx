@@ -51,6 +51,19 @@ function optionLabel(item: string | { id: string; name: string }) {
   return typeof item === 'string' ? item : item.name;
 }
 
+function optionIncluded(items: Array<string | { id: string; name: string }>, value: string) {
+  return value === 'all' || items.some((item) => optionKey(item) === value);
+}
+
+function usageSlice(agent: string, model: string) {
+  return {
+    agent: agent !== 'all' ? agent : undefined,
+    model: model !== 'all' ? model : undefined,
+  };
+}
+
+const HARNESS_ONLY_METRICS = new Set(['generatedCodeLines', 'messageCount', 'activeDurationMs', 'tokensPerCodeLine', 'userMessageCount']);
+
 function formatContextDate(value?: string | null) {
   if (!value) return '—';
   const match = value.match(/(\d{4})-(\d{2})-(\d{2})/);
@@ -184,6 +197,8 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
   const [selectedModel, setSelectedModel] = useState('all');
   const [showDevices, setShowDevices] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [filterRetry, setFilterRetry] = useState(0);
+  const [filtersRange, setFiltersRange] = useState<string | null>(null);
 
   const [summary, setSummary] = useState<PersonalSummary | null>(null);
   const [publicProfile, setPublicProfile] = useState<PublicUserProfile | null>(null);
@@ -227,17 +242,18 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
       setError(null);
       return;
     }
+    const slice = usageSlice(selectedAgent, selectedModel);
     const [summaryRes, agentsRes, skillsRes] = await Promise.all([
-      api.getPersonalSummary(range),
-      api.getAgentBreakdowns(range),
-      api.getPersonalSkills(range),
+      api.getPersonalSummary(range, slice),
+      api.getAgentBreakdowns(range, slice),
+      api.getPersonalSkills(range, { agent: slice.agent }),
     ]);
     if (seq !== boardSeq.current) return;
     setSummary(summaryRes);
     setAgentBreakdowns(agentsRes.items || []);
     setSkills(skillsRes.skills || (skillsRes as unknown as { items: SkillItem[] }).items || []);
     setError(null);
-  }, [range, publicHandle]);
+  }, [range, publicHandle, selectedAgent, selectedModel]);
 
   const fetchTrends = useCallback(async () => {
     const seq = ++trendSeq.current;
@@ -258,25 +274,49 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
     setTrendsReady(true);
   }, [range, selectedAgent, selectedModel, publicHandle, publicProfile?.handle, publicProfile?.showTrends]);
 
-  const fetchStatic = useCallback(async () => {
+  useEffect(() => {
+    if (!authenticated || !active || publicHandle) return;
+    let ignore = false;
+    api.getActivityCalendar('10w').then(calRes => {
+      if (ignore) return;
+      setCalendarDays(calRes.days || []);
+      setCalendarStreak(calRes.currentStreak || 0);
+    }).catch(() => { if (!ignore) setCalendarDays([]); });
+    return () => { ignore = true; };
+  }, [authenticated, active, publicHandle]);
+
+  useEffect(() => {
+    if (!authenticated || !active || publicHandle) return;
+    let ignore = false;
     setFilterStatus('loading');
-    await Promise.all([
-      api.getActivityCalendar('10w').then(calRes => { setCalendarDays(calRes.days || []); setCalendarStreak(calRes.currentStreak || 0); }).catch(() => setCalendarDays([])),
-      api.getFilterOptions().then(filterRes => { setFilterOptions(filterRes); setFilterStatus('ready'); }).catch(() => setFilterStatus('error')),
-    ]);
-  }, []);
+    api.getFilterOptions(range).then(filterRes => {
+      if (ignore) return;
+      setFilterOptions(filterRes);
+      setSelectedAgent(current => optionIncluded(filterRes.agents, current) ? current : 'all');
+      setSelectedModel(current => optionIncluded(filterRes.models, current) ? current : 'all');
+      setFiltersRange(range);
+      setFilterStatus('ready');
+    }).catch(() => {
+      if (ignore) return;
+      setFiltersRange(range);
+      setFilterStatus('error');
+    });
+    return () => { ignore = true; };
+  }, [authenticated, active, publicHandle, range, filterRetry]);
 
   useEffect(() => {
     if ((!authenticated && !publicHandle) || !active) return;
+    if (!publicHandle && (filterStatus === 'loading' || filtersRange !== range)) return;
     let ignore = false;
     fetchBoard().catch((err) => {
       if (!ignore) setError(err instanceof ApiError ? err : new Error(String(err)));
     });
     return () => { ignore = true; };
-  }, [authenticated, active, fetchBoard, publicHandle]);
+  }, [authenticated, active, fetchBoard, publicHandle, filterStatus, filtersRange, range]);
 
   useEffect(() => {
     if ((!authenticated && !publicHandle) || !active || (publicHandle && !publicProfile)) return;
+    if (!publicHandle && (filterStatus === 'loading' || filtersRange !== range)) return;
     let ignore = false;
     fetchTrends().catch((err) => {
       if (!ignore) {
@@ -286,12 +326,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
       }
     });
     return () => { ignore = true; };
-  }, [authenticated, active, fetchTrends, publicHandle]);
-
-  useEffect(() => {
-    if (!authenticated || !active || publicHandle) return;
-    fetchStatic().catch(() => setCalendarDays([]));
-  }, [authenticated, active, fetchStatic, publicHandle]);
+  }, [authenticated, active, fetchTrends, publicHandle, filterStatus, filtersRange, range, publicProfile]);
 
   const needsOnboarding = !publicHandle && Boolean(user?.onboardingRequired || user?.productState === 'new');
   useEffect(() => {
@@ -408,7 +443,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
                   <span>{zh ? (range === 'today' ? '较前 24h' : '较上期') : (range === 'today' ? 'vs prior 24h' : 'vs prior period')}</span>
                 </>
               ) : (
-                  <span>{publicHandle ? (!metric.supported ? (zh ? '未公开或暂无此项数据' : 'Private or unavailable') : metric.key === 'totalTokens' ? (zh ? '累计公开用量' : 'Public all-time usage') : metric.hint) : !summary?.sync.lastCommittedAt && metric.value === '—' ? (zh ? '等待首次同步' : 'Waiting for first sync') : !metric.supported ? (zh ? '当前来源暂无此项数据' : 'Unavailable from current sources') : metric.value === '—' ? (zh ? '本周期暂无记录' : 'No records in this period') : metric.hint}</span>
+                  <span>{publicHandle ? (!metric.supported ? (zh ? '未公开或暂无此项数据' : 'Private or unavailable') : metric.key === 'totalTokens' ? (zh ? '累计公开用量' : 'Public all-time usage') : metric.hint) : !summary?.sync.lastCommittedAt && metric.value === '—' ? (zh ? '等待首次同步' : 'Waiting for first sync') : !metric.supported ? (selectedModel !== 'all' && HARNESS_ONLY_METRICS.has(metric.key) ? (zh ? '不按模型拆分' : 'Not split by model') : (zh ? '当前来源暂无此项数据' : 'Unavailable from current sources')) : metric.value === '—' ? (zh ? '本周期暂无记录' : 'No records in this period') : metric.hint}</span>
               )}
             </div>
           </div>
@@ -438,17 +473,16 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
             <span className="source-counter"><span />{publicHandle ? (zh ? '公开用量' : 'Public usage') : (zh ? '已同步用量' : 'Synced usage')}</span>
           </div>
           <div className="analytics-filter-row">
-            <FilterSelect label={zh ? '趋势 Agent 筛选' : 'Trend agent filter'} value={selectedAgent} onChange={setSelectedAgent} disabled={filterStatus !== 'ready' || !filterOptions.agents.length} options={[
+            <FilterSelect label={zh ? 'Agent 筛选' : 'Agent filter'} value={selectedAgent} onChange={setSelectedAgent} disabled={filterStatus !== 'ready' || !filterOptions.agents.length} options={[
               { value: 'all', label: filterOptions.agents.length ? (zh ? '全部 Agent' : 'All agents') : (zh ? '暂无 Agent' : 'No agents') },
               ...filterOptions.agents.map(agent => ({ value: optionKey(agent), label: optionLabel(agent) })),
             ]} />
-            <FilterSelect label={zh ? '趋势模型筛选' : 'Trend model filter'} value={selectedModel} onChange={setSelectedModel} disabled={filterStatus !== 'ready' || !filterOptions.models.length} options={[
+            <FilterSelect label={zh ? '模型筛选' : 'Model filter'} value={selectedModel} onChange={setSelectedModel} disabled={filterStatus !== 'ready' || !filterOptions.models.length} options={[
               { value: 'all', label: filterOptions.models.length ? (zh ? '全部模型' : 'All models') : (zh ? '暂无模型' : 'No models') },
               ...filterOptions.models.map(model => ({ value: optionKey(model), label: optionLabel(model) })),
             ]} />
-            <small>{zh ? '仅筛选趋势图' : 'Chart filters only'}</small>
           </div>
-          {publicHandle ? null : filterStatus === 'error' ? <p className="filter-status" role="status">{zh ? '筛选选项加载失败。' : 'Filters could not be loaded. '}<button type="button" className="text-link" onClick={fetchStatic}>{t('common.retry')}</button></p> : filterStatus === 'loading' ? <p className="filter-status">{zh ? '正在加载筛选选项…' : 'Loading filters…'}</p> : (!filterOptions.agents.length || !filterOptions.models.length) && <p className="filter-status">{zh ? '尚未同步的来源或模型暂不可筛选。' : 'Sources and models become available after sync.'}</p>}
+          {publicHandle ? null : filterStatus === 'error' ? <p className="filter-status" role="status">{zh ? '筛选选项加载失败。' : 'Filters could not be loaded. '}<button type="button" className="text-link" onClick={() => setFilterRetry(count => count + 1)}>{t('common.retry')}</button></p> : filterStatus === 'loading' ? <p className="filter-status">{zh ? '正在加载筛选选项…' : 'Loading filters…'}</p> : (!filterOptions.agents.length || !filterOptions.models.length) && <p className="filter-status">{zh ? '这段时间还没有可筛选的 Agent 或模型。' : 'No agents or models in this period yet.'}</p>}
           {publicHandle && publicProfile?.showTrends === false ? (
             <div className="analytics-chart-empty"><LockKeyhole size={28} /><strong>{zh ? '用户未公开 Token 趋势' : 'Token trend is private'}</strong></div>
           ) : !trendsReady && !displayTrends.length ? (

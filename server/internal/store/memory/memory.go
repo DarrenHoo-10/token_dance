@@ -1255,6 +1255,10 @@ func (m *MemoryStore) ExecuteDeletionPhase(ctx context.Context, requestID string
 
 // --- AnalyticsStore Implementation ---
 
+func (m *MemoryStore) GetPersonalSummaryFiltered(ctx context.Context, userID string, r domain.TimeRange, agentID, modelID *string) (*domain.PersonalSummary, error) {
+	return m.GetPersonalSummary(ctx, userID, r)
+}
+
 func (m *MemoryStore) GetPersonalSummary(ctx context.Context, userID string, r domain.TimeRange) (*domain.PersonalSummary, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1488,11 +1492,19 @@ func (m *MemoryStore) GetTokenTrend(ctx context.Context, userID string, r domain
 }
 
 func (m *MemoryStore) GetAgentBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error) {
+	return m.GetAgentBreakdownFiltered(ctx, userID, r, nil, nil)
+}
+
+func (m *MemoryStore) GetAgentBreakdownFiltered(ctx context.Context, userID string, r domain.TimeRange, agentID, modelID *string) (*domain.BreakdownResponse, error) {
 	return &domain.BreakdownResponse{Range: r, Items: []domain.BreakdownItem{}}, nil
 }
 
 func (m *MemoryStore) GetModelBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error) {
 	return &domain.BreakdownResponse{Range: r, Items: []domain.BreakdownItem{}}, nil
+}
+
+func (m *MemoryStore) GetSkillRankingFiltered(ctx context.Context, userID string, r domain.TimeRange, agentID *string) (*domain.SkillsResponse, error) {
+	return m.GetSkillRanking(ctx, userID, r)
 }
 
 func (m *MemoryStore) GetSkillRanking(ctx context.Context, userID string, r domain.TimeRange) (*domain.SkillsResponse, error) {
@@ -1573,6 +1585,10 @@ func (m *MemoryStore) GetFilterOptions(ctx context.Context, userID string) (*dom
 		Providers: []string{},
 		Models:    []string{},
 	}, nil
+}
+
+func (m *MemoryStore) GetFilterOptionsInRange(ctx context.Context, userID string, r domain.TimeRange) (*domain.FilterOptions, error) {
+	return m.GetFilterOptions(ctx, userID)
 }
 
 // --- DeviceStore Implementation ---

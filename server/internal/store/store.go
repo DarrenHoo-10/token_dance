@@ -71,13 +71,20 @@ type PrivacyStore interface {
 
 type AnalyticsStore interface {
 	GetPersonalSummary(ctx context.Context, userID string, r domain.TimeRange) (*domain.PersonalSummary, error)
+	// GetPersonalSummaryFiltered applies optional harness and model slices. Nil, blank, or "all" means unfiltered.
+	GetPersonalSummaryFiltered(ctx context.Context, userID string, r domain.TimeRange, agentID, modelID *string) (*domain.PersonalSummary, error)
 	GetTokenTrend(ctx context.Context, userID string, r domain.TimeRange, mode string, agentID, providerID, modelID *string) (*domain.TrendResponse, error)
 	GetAgentBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error)
+	GetAgentBreakdownFiltered(ctx context.Context, userID string, r domain.TimeRange, agentID, modelID *string) (*domain.BreakdownResponse, error)
 	GetModelBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error)
 	GetSkillRanking(ctx context.Context, userID string, r domain.TimeRange) (*domain.SkillsResponse, error)
+	// GetSkillRankingFiltered filters by harness. Skill rows have no model dimension, so model is not applied here.
+	GetSkillRankingFiltered(ctx context.Context, userID string, r domain.TimeRange, agentID *string) (*domain.SkillsResponse, error)
 	GetActivityCalendar(ctx context.Context, userID string, r domain.TimeRange) (*domain.CalendarResponse, error)
 	GetActivity(ctx context.Context, userID string, q domain.ActivityQuery) ([]domain.ActivityRow, error)
 	GetFilterOptions(ctx context.Context, userID string) (*domain.FilterOptions, error)
+	// GetFilterOptionsInRange lists harnesses and models that actually occurred inside r.
+	GetFilterOptionsInRange(ctx context.Context, userID string, r domain.TimeRange) (*domain.FilterOptions, error)
 }
 
 type DeviceStore interface {

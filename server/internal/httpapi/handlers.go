@@ -646,11 +646,19 @@ func (h *Handlers) ClearAvatar(w http.ResponseWriter, r *http.Request) {
 
 // --- Analytics Handlers ---
 
+func queryFilterID(r *http.Request, key string) *string {
+	value := strings.TrimSpace(r.URL.Query().Get(key))
+	if value == "" || value == "all" {
+		return nil
+	}
+	return &value
+}
+
 func (h *Handlers) GetSummary(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	rangeKey := r.URL.Query().Get("range")
 
-	summary, err := h.analytics.GetPersonalSummaryRange(r.Context(), user.UserID, rangeKey, r.URL.Query().Get("from"), r.URL.Query().Get("to"))
+	summary, err := h.analytics.GetPersonalSummaryFiltered(r.Context(), user.UserID, rangeKey, r.URL.Query().Get("from"), r.URL.Query().Get("to"), queryFilterID(r, "agent"), queryFilterID(r, "model"))
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -686,7 +694,7 @@ func (h *Handlers) GetAgentBreakdowns(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	rangeKey := r.URL.Query().Get("range")
 
-	resp, err := h.analytics.GetAgentBreakdownRange(r.Context(), user.UserID, rangeKey, r.URL.Query().Get("from"), r.URL.Query().Get("to"))
+	resp, err := h.analytics.GetAgentBreakdownFiltered(r.Context(), user.UserID, rangeKey, r.URL.Query().Get("from"), r.URL.Query().Get("to"), queryFilterID(r, "agent"), queryFilterID(r, "model"))
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -710,7 +718,7 @@ func (h *Handlers) GetSkills(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	rangeKey := r.URL.Query().Get("range")
 
-	resp, err := h.analytics.GetSkillRankingRange(r.Context(), user.UserID, rangeKey, r.URL.Query().Get("from"), r.URL.Query().Get("to"))
+	resp, err := h.analytics.GetSkillRankingFiltered(r.Context(), user.UserID, rangeKey, r.URL.Query().Get("from"), r.URL.Query().Get("to"), queryFilterID(r, "agent"))
 	if err != nil {
 		WriteError(w, r, err)
 		return
@@ -754,7 +762,14 @@ func (h *Handlers) GetActivity(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handlers) GetFilterOptions(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
-	opts, err := h.analytics.GetFilterOptions(r.Context(), user.UserID)
+	rangeKey := r.URL.Query().Get("range")
+	var opts *domain.FilterOptions
+	var err error
+	if rangeKey == "" {
+		opts, err = h.analytics.GetFilterOptions(r.Context(), user.UserID)
+	} else {
+		opts, err = h.analytics.GetFilterOptionsRange(r.Context(), user.UserID, rangeKey, r.URL.Query().Get("from"), r.URL.Query().Get("to"))
+	}
 	if err != nil {
 		WriteError(w, r, err)
 		return

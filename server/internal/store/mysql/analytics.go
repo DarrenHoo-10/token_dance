@@ -57,7 +57,34 @@ func analyticsMetricBucketRange(r domain.TimeRange) (string, int64, int64, error
 	return domain.TelemetryGrainDay, fromMs, toMs, err
 }
 
+// dimensionID treats nil, blank, and "all" as an unfiltered dimension.
+func dimensionID(id *string) (string, bool) {
+	if id == nil {
+		return "", false
+	}
+	value := strings.TrimSpace(*id)
+	if value == "" || value == "all" {
+		return "", false
+	}
+	return value, true
+}
+
+func appendDim(query string, args []any, column, value string, ok bool) (string, []any) {
+	if !ok {
+		return query, args
+	}
+	return query + " AND " + column + " = ?", append(args, value)
+}
+
 func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, r domain.TimeRange) (*domain.PersonalSummary, error) {
+	return s.personalSummary(ctx, userID, r, nil, nil)
+}
+
+func (s *analyticsStore) GetPersonalSummaryFiltered(ctx context.Context, userID string, r domain.TimeRange, agentID, modelID *string) (*domain.PersonalSummary, error) {
+	return s.personalSummary(ctx, userID, r, agentID, modelID)
+}
+
+func (s *analyticsStore) personalSummary(ctx context.Context, userID string, r domain.TimeRange, agentID, modelID *string) (*domain.PersonalSummary, error) {
 	uAuth := &authStore{db: s.db}
 	u, err := uAuth.FindUserByID(ctx, userID)
 	if err != nil {
@@ -69,6 +96,8 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 	if err != nil {
 		return nil, err
 	}
+	agent, hasAgent := dimensionID(agentID)
+	model, hasModel := dimensionID(modelID)
 
 	var rowCount int
 	var totalTokens, codeLines uint64
@@ -81,27 +110,34 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 
 	// Tokens + token structure from telemetry_model_metrics (trusted = exact+derived).
 	// Cache hit rate uses paired cache_eligible_* columns, not unpaired totals.
-	err = s.db.QueryRowContext(ctx, `
+	// sqlc-dynamic-reviewed: optional harness/model predicates are bound parameters.
+	modelQuery := `
 		SELECT
 			COUNT(*),
-			CAST(COALESCE(SUM(exact_token_total + derived_token_total), 0) AS UNSIGNED),
-			SUM(input_context_tokens),
-			SUM(output_tokens),
-			SUM(cache_read_tokens),
-			SUM(cache_write_tokens),
-			SUM(reasoning_tokens),
-			SUM(cache_eligible_input_tokens),
-			SUM(cache_eligible_read_tokens),
-			CAST(COALESCE(SUM(cache_pair_known_count), 0) AS SIGNED),
-			CAST(COALESCE(SUM(usage_observed_count), 0) AS SIGNED),
-			MIN(metric_semantics_version),
-			MAX(metric_semantics_version),
-			`+telemetryWatermarkSQL+`
-		FROM bound_telemetry_model_metrics
-		WHERE user_id = ? AND grain = '`+grain+`' AND delete_at IS NULL
-		  AND bucket_start >= ? AND bucket_start <= ?`,
-		userID, fromMs, toMs,
-	).Scan(
+			CAST(COALESCE(SUM(m.exact_token_total + m.derived_token_total), 0) AS UNSIGNED),
+			SUM(m.input_context_tokens),
+			SUM(m.output_tokens),
+			SUM(m.cache_read_tokens),
+			SUM(m.cache_write_tokens),
+			SUM(m.reasoning_tokens),
+			SUM(m.cache_eligible_input_tokens),
+			SUM(m.cache_eligible_read_tokens),
+			CAST(COALESCE(SUM(m.cache_pair_known_count), 0) AS SIGNED),
+			CAST(COALESCE(SUM(m.usage_observed_count), 0) AS SIGNED),
+			MIN(m.metric_semantics_version),
+			MAX(m.metric_semantics_version),
+			FROM_UNIXTIME(MAX(m.updated_at) / 1000)
+		FROM bound_telemetry_model_metrics m`
+	modelArgs := []any{userID, fromMs, toMs}
+	if hasModel {
+		modelQuery += ` JOIN telemetry_models tm ON tm.id = m.model_key`
+	}
+	modelQuery += `
+		WHERE m.user_id = ? AND m.grain = '` + grain + `' AND m.delete_at IS NULL
+		  AND m.bucket_start >= ? AND m.bucket_start <= ?`
+	modelQuery, modelArgs = appendDim(modelQuery, modelArgs, "m.harness_id", agent, hasAgent)
+	modelQuery, modelArgs = appendDim(modelQuery, modelArgs, "tm.model_id", model, hasModel)
+	err = s.db.QueryRowContext(ctx, modelQuery, modelArgs...).Scan(
 		&rowCount, &totalTokens,
 		&inputTokensNull, &outputTokensNull, &cacheReadNull, &cacheWriteNull, &reasoningNull,
 		&eligibleInputNull, &eligibleReadNull, &cachePairKnown, &usageObserved,
@@ -111,45 +147,57 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 		return nil, fmt.Errorf("failed to query personal summary tokens: %w", err)
 	}
 
-	// Harness activity: code lines, duration, messages.
+	// Harness activity: code lines, duration, messages. These rows have no model
+	// dimension, so a model slice must not reuse the harness-wide totals.
 	var harnessRows int
 	var harnessWatermark sql.NullTime
-	err = s.db.QueryRowContext(ctx, `
+	if !hasModel {
+		harnessQuery := `
 		SELECT
 			COUNT(*),
 			COALESCE(SUM(code_generated_lines), 0),
 			SUM(active_duration_ms),
 			SUM(turn_started_count + turn_completed_count),
 			SUM(user_turn_started_count),
-			`+telemetryWatermarkSQL+`
+			` + telemetryWatermarkSQL + `
 		FROM bound_telemetry_harness_metrics
-		WHERE user_id = ? AND grain = '`+grain+`' AND delete_at IS NULL
-		  AND bucket_start >= ? AND bucket_start <= ?`,
-		userID, fromMs, toMs,
-	).Scan(&harnessRows, &codeLines, &activeDurationNull, &messageCountNull, &userMsgNull, &harnessWatermark)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("failed to query personal summary harness: %w", err)
+		WHERE user_id = ? AND grain = '` + grain + `' AND delete_at IS NULL
+		  AND bucket_start >= ? AND bucket_start <= ?`
+		harnessArgs := []any{userID, fromMs, toMs}
+		harnessQuery, harnessArgs = appendDim(harnessQuery, harnessArgs, "harness_id", agent, hasAgent)
+		err = s.db.QueryRowContext(ctx, harnessQuery, harnessArgs...).Scan(&harnessRows, &codeLines, &activeDurationNull, &messageCountNull, &userMsgNull, &harnessWatermark)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("failed to query personal summary harness: %w", err)
+		}
+		if harnessRows > rowCount {
+			rowCount = harnessRows
+		}
+		maxNullTime(&maxComputedAtNull, harnessWatermark)
 	}
-	if harnessRows > rowCount {
-		rowCount = harnessRows
-	}
-	maxNullTime(&maxComputedAtNull, harnessWatermark)
 
 	// Costs grouped by currency — never silently SUM across currencies as USD.
-	costRows, err := s.db.QueryContext(ctx, `
+	// sqlc-dynamic-reviewed: optional harness/model predicates are bound parameters.
+	costQuery := `
 		SELECT
-			currency,
-			CAST(COALESCE(SUM(reported_cost_units + estimated_cost_units), 0) AS CHAR),
-			CAST(COALESCE(SUM(cost_known_count), 0) AS UNSIGNED),
-			CAST(COALESCE(SUM(reported_request_count + estimated_request_count), 0) AS UNSIGNED),
-			CAST(COALESCE(SUM(reported_request_count + estimated_request_count + unpriced_request_count), 0) AS UNSIGNED)
-		FROM bound_telemetry_cost_metrics
-		WHERE user_id = ? AND grain = '`+grain+`' AND delete_at IS NULL
-		  AND bucket_start >= ? AND bucket_start <= ?
-		GROUP BY currency
-		ORDER BY currency`,
-		userID, fromMs, toMs,
-	)
+			c.currency,
+			CAST(COALESCE(SUM(c.reported_cost_units + c.estimated_cost_units), 0) AS CHAR),
+			CAST(COALESCE(SUM(c.cost_known_count), 0) AS UNSIGNED),
+			CAST(COALESCE(SUM(c.reported_request_count + c.estimated_request_count), 0) AS UNSIGNED),
+			CAST(COALESCE(SUM(c.reported_request_count + c.estimated_request_count + c.unpriced_request_count), 0) AS UNSIGNED)
+		FROM bound_telemetry_cost_metrics c`
+	costArgs := []any{userID, fromMs, toMs}
+	if hasModel {
+		costQuery += ` JOIN telemetry_models tm ON tm.id = c.model_key`
+	}
+	costQuery += `
+		WHERE c.user_id = ? AND c.grain = '` + grain + `' AND c.delete_at IS NULL
+		  AND c.bucket_start >= ? AND c.bucket_start <= ?`
+	costQuery, costArgs = appendDim(costQuery, costArgs, "c.harness_id", agent, hasAgent)
+	costQuery, costArgs = appendDim(costQuery, costArgs, "tm.model_id", model, hasModel)
+	costQuery += `
+		GROUP BY c.currency
+		ORDER BY c.currency`
+	costRows, err := s.db.QueryContext(ctx, costQuery, costArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query personal summary cost: %w", err)
 	}
@@ -177,7 +225,7 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 		return nil, fmt.Errorf("failed to iterate personal summary cost: %w", err)
 	}
 
-	raw, err := s.queryRawSummary(ctx, userID, plan.raw)
+	raw, err := s.queryRawSummary(ctx, userID, plan.raw, agentID, modelID)
 	if err != nil {
 		return nil, err
 	}
@@ -198,18 +246,21 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 	maxNullTime(&maxComputedAtNull, raw.maxReceivedAt)
 
 	var codeRecords, durationRecords, messageRecords int
-	err = s.db.QueryRowContext(ctx, `
+	if !hasModel {
+		coverageQuery := `
 		SELECT
 			CAST(COALESCE(SUM(code_known_count), 0) AS UNSIGNED),
 			CAST(COALESCE(SUM(duration_known_count), 0) AS UNSIGNED),
 			CAST(COALESCE(SUM(message_known_count), 0) AS UNSIGNED)
 		FROM bound_telemetry_harness_metrics
-		WHERE user_id = ? AND grain = '`+grain+`' AND delete_at IS NULL
-		  AND bucket_start >= ? AND bucket_start <= ?`,
-		userID, fromMs, toMs,
-	).Scan(&codeRecords, &durationRecords, &messageRecords)
-	if err != nil {
-		return nil, fmt.Errorf("query metric coverage: %w", err)
+		WHERE user_id = ? AND grain = '` + grain + `' AND delete_at IS NULL
+		  AND bucket_start >= ? AND bucket_start <= ?`
+		coverageArgs := []any{userID, fromMs, toMs}
+		coverageQuery, coverageArgs = appendDim(coverageQuery, coverageArgs, "harness_id", agent, hasAgent)
+		err = s.db.QueryRowContext(ctx, coverageQuery, coverageArgs...).Scan(&codeRecords, &durationRecords, &messageRecords)
+		if err != nil {
+			return nil, fmt.Errorf("query metric coverage: %w", err)
+		}
 	}
 	totTokensStr := fmt.Sprintf("%d", totalTokens)
 	codeLinesStr := fmt.Sprintf("%d", codeLines)
@@ -313,6 +364,20 @@ func (s *analyticsStore) GetPersonalSummary(ctx context.Context, userID string, 
 	if messageRecords == 0 && (!userMsgNull.Valid || userMsgNull.Int64 == 0) {
 		userMessageMetric = domain.MetricBigInt{Supported: false}
 	}
+	// An empty slice must not look like the account has never synced.
+	if (hasAgent || hasModel) && !maxComputedAtNull.Valid {
+		for _, table := range []string{"bound_telemetry_model_metrics", "bound_telemetry_harness_metrics"} {
+			wm, wmErr := s.metricRangeWatermark(ctx, table, userID, grain, fromMs, toMs)
+			if wmErr != nil {
+				return nil, wmErr
+			}
+			maxNullTime(&maxComputedAtNull, wm)
+			if maxComputedAtNull.Valid {
+				break
+			}
+		}
+	}
+
 	var dataWatermarkAt *time.Time
 	if maxComputedAtNull.Valid {
 		tVal := maxComputedAtNull.Time
@@ -592,25 +657,44 @@ func trendGranularityForRange(key domain.TimeRangeKey) string {
 }
 
 func (s *analyticsStore) GetAgentBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error) {
+	return s.agentBreakdown(ctx, userID, r, nil, nil)
+}
+
+func (s *analyticsStore) GetAgentBreakdownFiltered(ctx context.Context, userID string, r domain.TimeRange, agentID, modelID *string) (*domain.BreakdownResponse, error) {
+	return s.agentBreakdown(ctx, userID, r, agentID, modelID)
+}
+
+func (s *analyticsStore) agentBreakdown(ctx context.Context, userID string, r domain.TimeRange, agentID, modelID *string) (*domain.BreakdownResponse, error) {
 	plan := planUTCAggregates(r)
 	grain, fromMs, toMs, err := analyticsMetricBucketRange(r)
 	if err != nil {
 		return nil, err
 	}
+	agent, hasAgent := dimensionID(agentID)
+	model, hasModel := dimensionID(modelID)
 
+	// sqlc-dynamic-reviewed: optional harness/model predicates are bound parameters.
 	query := `
 		SELECT
-			harness_id,
-			CAST(COALESCE(SUM(exact_token_total + derived_token_total), 0) AS UNSIGNED) AS total_tokens,
-			` + telemetryWatermarkSQL + ` AS max_computed_at,
-			MAX(metric_semantics_version) AS max_agg_ver
-		FROM bound_telemetry_model_metrics
-		WHERE user_id = ? AND grain = '` + grain + `' AND delete_at IS NULL
-		  AND bucket_start >= ? AND bucket_start <= ?
-		GROUP BY harness_id
+			m.harness_id,
+			CAST(COALESCE(SUM(m.exact_token_total + m.derived_token_total), 0) AS UNSIGNED) AS total_tokens,
+			FROM_UNIXTIME(MAX(m.updated_at) / 1000) AS max_computed_at,
+			MAX(m.metric_semantics_version) AS max_agg_ver
+		FROM bound_telemetry_model_metrics m`
+	args := []any{userID, fromMs, toMs}
+	if hasModel {
+		query += ` JOIN telemetry_models tm ON tm.id = m.model_key`
+	}
+	query += `
+		WHERE m.user_id = ? AND m.grain = '` + grain + `' AND m.delete_at IS NULL
+		  AND m.bucket_start >= ? AND m.bucket_start <= ?`
+	query, args = appendDim(query, args, "m.harness_id", agent, hasAgent)
+	query, args = appendDim(query, args, "tm.model_id", model, hasModel)
+	query += `
+		GROUP BY m.harness_id
 		ORDER BY total_tokens DESC`
 
-	rows, err := s.db.QueryContext(ctx, query, userID, fromMs, toMs)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query agent breakdown: %w", err)
 	}
@@ -654,7 +738,7 @@ func (s *analyticsStore) GetAgentBreakdown(ctx context.Context, userID string, r
 		return nil, fmt.Errorf("agent breakdown rows iteration error: %w", err)
 	}
 
-	rawBoundaryItems, err := s.queryRawBreakdown(ctx, userID, plan.raw, "agent_id")
+	rawBoundaryItems, err := s.queryRawBreakdown(ctx, userID, plan.raw, "agent_id", agentID, modelID)
 	if err != nil {
 		return nil, err
 	}
@@ -775,7 +859,7 @@ func (s *analyticsStore) GetModelBreakdown(ctx context.Context, userID string, r
 		return nil, fmt.Errorf("model breakdown rows iteration error: %w", err)
 	}
 
-	rawBoundaryItems, err := s.queryRawBreakdown(ctx, userID, plan.raw, "model_id")
+	rawBoundaryItems, err := s.queryRawBreakdown(ctx, userID, plan.raw, "model_id", nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -833,6 +917,14 @@ func (s *analyticsStore) GetModelBreakdown(ctx context.Context, userID string, r
 }
 
 func (s *analyticsStore) GetSkillRanking(ctx context.Context, userID string, r domain.TimeRange) (*domain.SkillsResponse, error) {
+	return s.skillRanking(ctx, userID, r, nil)
+}
+
+func (s *analyticsStore) GetSkillRankingFiltered(ctx context.Context, userID string, r domain.TimeRange, agentID *string) (*domain.SkillsResponse, error) {
+	return s.skillRanking(ctx, userID, r, agentID)
+}
+
+func (s *analyticsStore) skillRanking(ctx context.Context, userID string, r domain.TimeRange, agentID *string) (*domain.SkillsResponse, error) {
 	grain, fromMs, toMs, err := analyticsMetricBucketRange(r)
 	if err != nil {
 		return nil, err
@@ -841,7 +933,9 @@ func (s *analyticsStore) GetSkillRanking(ctx context.Context, userID string, r d
 	if grain == domain.TelemetryGrainHour {
 		activeDaysSQL = "COUNT(DISTINCT DATE_FORMAT(CONVERT_TZ(FROM_UNIXTIME(m.bucket_start / 1000), '+00:00', '+08:00'), '%Y-%m-%d'))"
 	}
+	agent, hasAgent := dimensionID(agentID)
 
+	// sqlc-dynamic-reviewed: optional harness predicate is a bound parameter. Skill rows have no model column.
 	query := `
 		SELECT
 			HEX(s.skill_key) AS skill_hex,
@@ -855,11 +949,14 @@ func (s *analyticsStore) GetSkillRanking(ctx context.Context, userID string, r d
 		FROM bound_telemetry_skill_metrics m
 		JOIN telemetry_skills s ON s.id = m.skill_id
 		WHERE m.user_id = ? AND m.grain = '` + grain + `' AND m.delete_at IS NULL
-		  AND m.bucket_start >= ? AND m.bucket_start <= ?
+		  AND m.bucket_start >= ? AND m.bucket_start <= ?`
+	args := []any{userID, fromMs, toMs}
+	query, args = appendDim(query, args, "m.harness_id", agent, hasAgent)
+	query += `
 		GROUP BY s.skill_key, s.public_name
 		ORDER BY total_use_count DESC`
 
-	rows, err := s.db.QueryContext(ctx, query, userID, fromMs, toMs)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query skill ranking: %w", err)
 	}
@@ -1250,4 +1347,128 @@ func (s *analyticsStore) GetFilterOptions(ctx context.Context, userID string) (*
 		Providers: providers,
 		Models:    models,
 	}, nil
+}
+
+func (s *analyticsStore) GetFilterOptionsInRange(ctx context.Context, userID string, r domain.TimeRange) (*domain.FilterOptions, error) {
+	grain, fromMs, toMs, err := analyticsMetricBucketRange(r)
+	if err != nil {
+		return nil, err
+	}
+	agents, err := s.distinctHarnesses(ctx, userID, grain, fromMs, toMs)
+	if err != nil {
+		return nil, err
+	}
+	providers, models, err := s.distinctProvidersAndModels(ctx, userID, grain, fromMs, toMs)
+	if err != nil {
+		return nil, err
+	}
+	return &domain.FilterOptions{Agents: agents, Providers: providers, Models: models}, nil
+}
+
+func (s *analyticsStore) metricRangeWatermark(ctx context.Context, table, userID, grain string, fromMs, toMs int64) (sql.NullTime, error) {
+	switch table {
+	case "bound_telemetry_model_metrics", "bound_telemetry_harness_metrics":
+	default:
+		return sql.NullTime{}, fmt.Errorf("unsupported watermark table %s", table)
+	}
+	var wm sql.NullTime
+	err := s.db.QueryRowContext(ctx, `
+		SELECT `+telemetryWatermarkSQL+`
+		FROM `+table+`
+		WHERE user_id = ? AND grain = ? AND delete_at IS NULL
+		  AND bucket_start >= ? AND bucket_start <= ?`,
+		userID, grain, fromMs, toMs).Scan(&wm)
+	if errors.Is(err, sql.ErrNoRows) {
+		return sql.NullTime{}, nil
+	}
+	return wm, err
+}
+
+func (s *analyticsStore) distinctHarnesses(ctx context.Context, userID, grain string, fromMs, toMs int64) ([]string, error) {
+	// sqlc-dynamic-reviewed: table names come from this fixed list, not request input.
+	tables := []string{
+		"bound_telemetry_model_metrics",
+		"bound_telemetry_harness_metrics",
+		"bound_telemetry_cost_metrics",
+		"bound_telemetry_skill_metrics",
+	}
+	seen := make(map[string]struct{})
+	agents := make([]string, 0)
+	for _, table := range tables {
+		rows, err := s.db.QueryContext(ctx, `
+			SELECT DISTINCT harness_id
+			FROM `+table+`
+			WHERE user_id = ? AND grain = ? AND delete_at IS NULL
+			  AND bucket_start >= ? AND bucket_start <= ?
+			  AND harness_id <> ''`, userID, grain, fromMs, toMs)
+		if err != nil {
+			return nil, fmt.Errorf("failed to query harness filter options: %w", err)
+		}
+		for rows.Next() {
+			var harness string
+			if err := rows.Scan(&harness); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("failed to scan harness filter option: %w", err)
+			}
+			if _, ok := seen[harness]; ok {
+				continue
+			}
+			seen[harness] = struct{}{}
+			agents = append(agents, harness)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("harness filter options iteration error: %w", err)
+		}
+		rows.Close()
+	}
+	sort.Strings(agents)
+	return agents, nil
+}
+
+func (s *analyticsStore) distinctProvidersAndModels(ctx context.Context, userID, grain string, fromMs, toMs int64) ([]string, []string, error) {
+	// sqlc-dynamic-reviewed: table names come from this fixed list, not request input.
+	tables := []string{"bound_telemetry_model_metrics", "bound_telemetry_cost_metrics"}
+	seenProviders := make(map[string]struct{})
+	seenModels := make(map[string]struct{})
+	providers := make([]string, 0)
+	models := make([]string, 0)
+	for _, table := range tables {
+		rows, err := s.db.QueryContext(ctx, `
+			SELECT DISTINCT tm.provider_id, tm.model_id
+			FROM `+table+` m
+			JOIN telemetry_models tm ON tm.id = m.model_key
+			WHERE m.user_id = ? AND m.grain = ? AND m.delete_at IS NULL
+			  AND m.bucket_start >= ? AND m.bucket_start <= ?`, userID, grain, fromMs, toMs)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to query model filter options: %w", err)
+		}
+		for rows.Next() {
+			var provider, model string
+			if err := rows.Scan(&provider, &model); err != nil {
+				rows.Close()
+				return nil, nil, fmt.Errorf("failed to scan model filter option: %w", err)
+			}
+			if provider != "" {
+				if _, ok := seenProviders[provider]; !ok {
+					seenProviders[provider] = struct{}{}
+					providers = append(providers, provider)
+				}
+			}
+			if model != "" {
+				if _, ok := seenModels[model]; !ok {
+					seenModels[model] = struct{}{}
+					models = append(models, model)
+				}
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, nil, fmt.Errorf("model filter options iteration error: %w", err)
+		}
+		rows.Close()
+	}
+	sort.Strings(providers)
+	sort.Strings(models)
+	return providers, models, nil
 }
