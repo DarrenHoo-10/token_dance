@@ -362,8 +362,10 @@ class ApiHttpClient {
   }
 
   // --- Personal Analytics ---
-  public async getPersonalSummary(range = '30d'): Promise<PersonalSummary> {
+  public async getPersonalSummary(range = '30d', filter: { agent?: string; model?: string } = {}): Promise<PersonalSummary> {
     const params = new URLSearchParams({ range });
+    if (filter.agent) params.set('agent', filter.agent);
+    if (filter.model) params.set('model', filter.model);
     return this.request<PersonalSummary>(`/me/summary?${params.toString()}`, { method: 'GET' });
   }
 
@@ -388,8 +390,10 @@ class ApiHttpClient {
     return this.request<TokenTrendsResponse>(`/me/trends/tokens?${searchParams.toString()}`, { method: 'GET' });
   }
 
-  public async getAgentBreakdowns(range = '30d'): Promise<BreakdownResponse> {
+  public async getAgentBreakdowns(range = '30d', filter: { agent?: string; model?: string } = {}): Promise<BreakdownResponse> {
     const params = new URLSearchParams({ range });
+    if (filter.agent) params.set('agent', filter.agent);
+    if (filter.model) params.set('model', filter.model);
     return this.request<BreakdownResponse>(`/me/breakdowns/agents?${params.toString()}`, { method: 'GET' });
   }
 
@@ -398,8 +402,9 @@ class ApiHttpClient {
     return this.request<BreakdownResponse>(`/me/breakdowns/models?${params.toString()}`, { method: 'GET' });
   }
 
-  public async getPersonalSkills(range = '30d'): Promise<SkillsResponse> {
+  public async getPersonalSkills(range = '30d', filter: { agent?: string } = {}): Promise<SkillsResponse> {
     const params = new URLSearchParams({ range });
+    if (filter.agent) params.set('agent', filter.agent);
     return this.request<SkillsResponse>(`/me/skills?${params.toString()}`, { method: 'GET' });
   }
 
@@ -425,8 +430,11 @@ class ApiHttpClient {
     return this.request<ActivityResponse>(`/me/activity?${searchParams.toString()}`, { method: 'GET' });
   }
 
-  public async getFilterOptions(): Promise<FilterOptionsResponse> {
-    return this.request<FilterOptionsResponse>('/me/filter-options', { method: 'GET' });
+  public async getFilterOptions(range?: string): Promise<FilterOptionsResponse> {
+    const params = new URLSearchParams();
+    if (range) params.set('range', range);
+    const query = params.toString();
+    return this.request<FilterOptionsResponse>(`/me/filter-options${query ? `?${query}` : ''}`, { method: 'GET' });
   }
 
   // --- Collector Devices ---

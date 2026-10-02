@@ -141,8 +141,10 @@ describe('personal analytics period switching', () => {
     render(withProviders(<PersonalAnalytics />, '/me'));
     await screen.findByText('1.00');
     fireEvent.click(screen.getByRole('button', { name: '近 7 天' }));
+    await waitFor(() => expect(pending.has('7d')).toBe(true));
     fireEvent.click(screen.getByRole('button', { name: '近 30 天' }));
-    await waitFor(() => expect(pending.size).toBe(2));
+    await waitFor(() => expect(pending.has('30d')).toBe(true));
+    expect(pending.size).toBe(2);
     await act(async () => { pending.get('30d')!(summaryFor('3000000')); });
     await act(async () => { pending.get('7d')!(summaryFor('7000000')); });
     const total = document.querySelector('[data-metric="totalTokens"]')!;
