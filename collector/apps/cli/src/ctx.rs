@@ -9,11 +9,14 @@ use crate::error::{lock_error, CliError, CliResult};
 use crate::keys::Backend;
 
 pub struct Ctx {
+    /// `--json`: structured output; `dashboard` prints a snapshot instead of serving.
+    pub json: bool,
     pub paths: AppPaths,
     pub config_path: PathBuf,
 }
 
 pub struct Overrides {
+    pub json: bool,
     pub data_dir: Option<PathBuf>,
     pub config: Option<PathBuf>,
 }
@@ -30,6 +33,7 @@ impl Ctx {
             }
         };
         Ok(Self {
+            json: o.json,
             config_path: o.config.unwrap_or(default_config),
             paths,
         })
