@@ -79,6 +79,18 @@ afterEach(() => {
 });
 
 describe('Guest access without a site-wide login wall', () => {
+  it('opens a podium avatar in the public data dialog without signing in', async () => {
+    mockPublicHome();
+    vi.spyOn(api, 'getPublicSkills').mockResolvedValue({ skills: [] });
+    renderGuest(<Routes><Route path="/leaderboard" element={<LeaderboardPage />} /></Routes>, '/leaderboard');
+    expect(await screen.findByRole('heading', { name: 'Ada的创作轨迹' })).toBeInTheDocument();
+    const avatar = document.querySelector('.podium-card.winner .podium-avatar-wrap');
+    expect(avatar).not.toBeNull();
+    fireEvent.click(avatar!);
+    expect(await screen.findByRole('dialog', { name: 'Ada 的创造正在发生。' })).toBeInTheDocument();
+    expect(screen.getByTestId('current-path')).toHaveTextContent('/leaderboard');
+  });
+
   it('keeps /me on the page and shows the shared login prompt', async () => {
     renderGuest(
       <Routes>

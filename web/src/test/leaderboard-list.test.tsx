@@ -10,10 +10,11 @@ const board={snapshotId:'',boardKey:'global',window:'today',metric:'tokens',entr
 function showList(route='/leaderboard/list') {render(<LocaleProvider><MemoryRouter initialEntries={[route]} future={{v7_startTransition:true,v7_relativeSplatPath:true}}><LeaderboardListPage /></MemoryRouter></LocaleProvider>);}
 beforeEach(()=>{vi.restoreAllMocks();vi.useRealTimers();localStorage.clear();vi.spyOn(api,'getLeaderboard').mockResolvedValue(board);});
 describe('Leaderboard list',()=>{
-  it('renders a table even for a single first-place user with a profile link',async()=>{
+  it('renders a table even for a single first-place user with an avatar action',async()=>{
     showList();const table=await screen.findByRole('table',{name:'排行榜列表'});
     expect(within(table).getAllByRole('row')).toHaveLength(2);
-    expect(within(table).getByRole('link',{name:/Only User/})).toHaveAttribute('href','/u/only_user');
+    expect(within(table).getByText('Only User')).toBeInTheDocument();
+    expect(within(table).getByRole('button',{name:'查看 Only User 的个人数据'})).toBeInTheDocument();
     expect(within(table).queryByText('@only_user')).not.toBeInTheDocument();
     expect(within(table).queryByText('only_user')).not.toBeInTheDocument();
     expect(screen.getByRole('button',{name:'下一页'})).toBeDisabled();

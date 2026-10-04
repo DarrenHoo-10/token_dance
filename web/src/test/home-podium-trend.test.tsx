@@ -11,7 +11,7 @@ vi.mock('@/context/AuthContext', () => ({ useAuth: () => auth }));
 function showHome() {
   return render(
     <LocaleProvider>
-      <MemoryRouter>
+      <MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <LeaderboardPage />
       </MemoryRouter>
     </LocaleProvider>,

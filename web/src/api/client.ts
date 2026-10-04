@@ -41,6 +41,15 @@ import type {
   CommunityStatsResponse,
 } from '@/types/api';
 
+/** Fired when an authenticated-area request comes back 401, i.e. the session expired mid-use. */
+export const SESSION_EXPIRED_EVENT = 'tokendance:session-expired';
+
+function notifySessionExpired(path: string) {
+  // /auth/* answers 401 for ordinary failures (wrong password, no session yet); those are handled by their callers.
+  if (path.startsWith('/auth/') || typeof window === 'undefined') return;
+  window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
+}
+
 export class ApiError extends Error {
   public readonly status: number;
   public readonly code: string;
@@ -153,6 +162,7 @@ class ApiHttpClient {
     const isJson = contentType.includes('application/json');
 
     if (!response.ok) {
+      if (response.status === 401) notifySessionExpired(path);
       throw await this.parseError(response);
     }
 
@@ -189,6 +199,7 @@ class ApiHttpClient {
     });
 
     if (!response.ok) {
+      if (response.status === 401) notifySessionExpired(path);
       throw await this.parseError(response);
     }
 
@@ -351,8 +362,10 @@ class ApiHttpClient {
   }
 
   // --- Personal Analytics ---
-  public async getPersonalSummary(range = '30d'): Promise<PersonalSummary> {
+  public async getPersonalSummary(range = '30d', filter: { agent?: string; model?: string } = {}): Promise<PersonalSummary> {
     const params = new URLSearchParams({ range });
+    if (filter.agent) params.set('agent', filter.agent);
+    if (filter.model) params.set('model', filter.model);
     return this.request<PersonalSummary>(`/me/summary?${params.toString()}`, { method: 'GET' });
   }
 
@@ -377,8 +390,10 @@ class ApiHttpClient {
     return this.request<TokenTrendsResponse>(`/me/trends/tokens?${searchParams.toString()}`, { method: 'GET' });
   }
 
-  public async getAgentBreakdowns(range = '30d'): Promise<BreakdownResponse> {
+  public async getAgentBreakdowns(range = '30d', filter: { agent?: string; model?: string } = {}): Promise<BreakdownResponse> {
     const params = new URLSearchParams({ range });
+    if (filter.agent) params.set('agent', filter.agent);
+    if (filter.model) params.set('model', filter.model);
     return this.request<BreakdownResponse>(`/me/breakdowns/agents?${params.toString()}`, { method: 'GET' });
   }
 
@@ -387,8 +402,9 @@ class ApiHttpClient {
     return this.request<BreakdownResponse>(`/me/breakdowns/models?${params.toString()}`, { method: 'GET' });
   }
 
-  public async getPersonalSkills(range = '30d'): Promise<SkillsResponse> {
+  public async getPersonalSkills(range = '30d', filter: { agent?: string } = {}): Promise<SkillsResponse> {
     const params = new URLSearchParams({ range });
+    if (filter.agent) params.set('agent', filter.agent);
     return this.request<SkillsResponse>(`/me/skills?${params.toString()}`, { method: 'GET' });
   }
 
@@ -414,8 +430,11 @@ class ApiHttpClient {
     return this.request<ActivityResponse>(`/me/activity?${searchParams.toString()}`, { method: 'GET' });
   }
 
-  public async getFilterOptions(): Promise<FilterOptionsResponse> {
-    return this.request<FilterOptionsResponse>('/me/filter-options', { method: 'GET' });
+  public async getFilterOptions(range?: string): Promise<FilterOptionsResponse> {
+    const params = new URLSearchParams();
+    if (range) params.set('range', range);
+    const query = params.toString();
+    return this.request<FilterOptionsResponse>(`/me/filter-options${query ? `?${query}` : ''}`, { method: 'GET' });
   }
 
   // --- Collector Devices ---

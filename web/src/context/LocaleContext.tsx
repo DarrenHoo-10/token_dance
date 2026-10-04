@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import type { Locale } from '@/types/api';
 import { getTranslation, defaultLocale } from '@/i18n';
+import { safeLocalStorage } from '@/utils/safeStorage';
 
 interface LocaleContextType {
   locale: Locale;
@@ -8,20 +9,27 @@ interface LocaleContextType {
   t: (key: string, params?: Record<string, string | number>) => string;
 }
 
+// First visit: follow the browser language, keep the product default (Chinese) when it is unknown.
+export function localeFromBrowser(languages: readonly string[] = typeof navigator === 'undefined' ? [] : navigator.languages?.length ? navigator.languages : [navigator.language]): Locale {
+  const first = languages.find(Boolean)?.toLowerCase();
+  if (!first) return defaultLocale;
+  return first.startsWith('zh') ? 'zh-CN' : 'en-US';
+}
+
 const LocaleContext = createContext<LocaleContextType | undefined>(undefined);
 
 export const LocaleProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [locale, setLocaleState] = useState<Locale>(() => {
-    const saved = localStorage.getItem('tokendance_locale');
+    const saved = safeLocalStorage.getItem('tokendance_locale');
     if (saved === 'zh-CN' || saved === 'en-US') {
       return saved;
     }
-    return defaultLocale;
+    return localeFromBrowser();
   });
 
   const setLocale = useCallback((newLocale: Locale) => {
     setLocaleState(newLocale);
-    localStorage.setItem('tokendance_locale', newLocale);
+    safeLocalStorage.setItem('tokendance_locale', newLocale);
     document.documentElement.lang = newLocale === 'en-US' ? 'en' : 'zh-CN';
   }, []);
 

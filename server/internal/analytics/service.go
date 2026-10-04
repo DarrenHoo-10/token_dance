@@ -99,11 +99,14 @@ func (s *Service) GetPersonalSummary(ctx context.Context, userID, rangeKey strin
 	return s.GetPersonalSummaryRange(ctx, userID, rangeKey, "", "")
 }
 func (s *Service) GetPersonalSummaryRange(ctx context.Context, userID, rangeKey, from, to string) (*domain.PersonalSummary, error) {
+	return s.GetPersonalSummaryFiltered(ctx, userID, rangeKey, from, to, nil, nil)
+}
+func (s *Service) GetPersonalSummaryFiltered(ctx context.Context, userID, rangeKey, from, to string, agentID, modelID *string) (*domain.PersonalSummary, error) {
 	r, err := s.profileRange(ctx, userID, rangeKey, from, to)
 	if err != nil {
 		return nil, err
 	}
-	return s.store.GetPersonalSummary(ctx, userID, r)
+	return s.store.GetPersonalSummaryFiltered(ctx, userID, r, agentID, modelID)
 }
 
 func (s *Service) GetTokenTrend(ctx context.Context, userID, rangeKey, mode string, agentID, providerID, modelID *string) (*domain.TrendResponse, error) {
@@ -124,11 +127,14 @@ func (s *Service) GetAgentBreakdown(ctx context.Context, userID, rangeKey string
 	return s.GetAgentBreakdownRange(ctx, userID, rangeKey, "", "")
 }
 func (s *Service) GetAgentBreakdownRange(ctx context.Context, userID, rangeKey, from, to string) (*domain.BreakdownResponse, error) {
+	return s.GetAgentBreakdownFiltered(ctx, userID, rangeKey, from, to, nil, nil)
+}
+func (s *Service) GetAgentBreakdownFiltered(ctx context.Context, userID, rangeKey, from, to string, agentID, modelID *string) (*domain.BreakdownResponse, error) {
 	r, err := s.profileRange(ctx, userID, rangeKey, from, to)
 	if err != nil {
 		return nil, err
 	}
-	return s.store.GetAgentBreakdown(ctx, userID, r)
+	return s.store.GetAgentBreakdownFiltered(ctx, userID, r, agentID, modelID)
 }
 
 func (s *Service) GetModelBreakdown(ctx context.Context, userID, rangeKey string) (*domain.BreakdownResponse, error) {
@@ -146,11 +152,14 @@ func (s *Service) GetSkillRanking(ctx context.Context, userID, rangeKey string) 
 	return s.GetSkillRankingRange(ctx, userID, rangeKey, "", "")
 }
 func (s *Service) GetSkillRankingRange(ctx context.Context, userID, rangeKey, from, to string) (*domain.SkillsResponse, error) {
+	return s.GetSkillRankingFiltered(ctx, userID, rangeKey, from, to, nil)
+}
+func (s *Service) GetSkillRankingFiltered(ctx context.Context, userID, rangeKey, from, to string, agentID *string) (*domain.SkillsResponse, error) {
 	r, err := s.profileRange(ctx, userID, rangeKey, from, to)
 	if err != nil {
 		return nil, err
 	}
-	return s.store.GetSkillRanking(ctx, userID, r)
+	return s.store.GetSkillRankingFiltered(ctx, userID, r, agentID)
 }
 
 func (s *Service) GetActivityCalendar(ctx context.Context, userID, rangeKey string) (*domain.CalendarResponse, error) {
@@ -166,6 +175,14 @@ func (s *Service) GetActivityCalendarRange(ctx context.Context, userID, rangeKey
 
 func (s *Service) GetFilterOptions(ctx context.Context, userID string) (*domain.FilterOptions, error) {
 	return s.store.GetFilterOptions(ctx, userID)
+}
+
+func (s *Service) GetFilterOptionsRange(ctx context.Context, userID, rangeKey, from, to string) (*domain.FilterOptions, error) {
+	r, err := s.profileRange(ctx, userID, rangeKey, from, to)
+	if err != nil {
+		return nil, err
+	}
+	return s.store.GetFilterOptionsInRange(ctx, userID, r)
 }
 
 type activityCursor struct {

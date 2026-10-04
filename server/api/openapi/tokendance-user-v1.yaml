@@ -714,6 +714,16 @@ paths:
         schema:
           type: string
           format: date
+      - name: agent
+        in: query
+        description: Harness that occurred in the selected range. Omit or all for every harness.
+        schema:
+          type: string
+      - name: model
+        in: query
+        description: Model that occurred in the selected range. Omit or all for every model. Harness-only metrics are unsupported when this is set.
+        schema:
+          type: string
       responses:
         '200':
           description: Personal summary
@@ -801,6 +811,16 @@ paths:
         schema:
           type: string
           format: date
+      - name: agent
+        in: query
+        description: Limit the composition to one harness that occurred in the selected range.
+        schema:
+          type: string
+      - name: model
+        in: query
+        description: Limit the composition to harnesses that used this model in the selected range.
+        schema:
+          type: string
       responses:
         '200':
           description: Agent breakdown
@@ -869,6 +889,11 @@ paths:
         schema:
           type: string
           format: date
+      - name: agent
+        in: query
+        description: Harness that occurred in the selected range. Skill rows have no model dimension.
+        schema:
+          type: string
       responses:
         '200':
           description: Skill rankings
@@ -981,9 +1006,34 @@ paths:
       tags:
       - Analytics
       operationId: getFilterOptions
-      summary: Get available filter options for user
+      summary: Get harness and model values that occurred for the user
       security:
       - CookieAuth: []
+      parameters:
+      - name: range
+        in: query
+        description: When set, options are harnesses and models that occurred in this window. Omit for every day-grain value ever recorded.
+        schema:
+          type: string
+          enum:
+          - today
+          - 7d
+          - 30d
+          - 10w
+          - all
+          - custom
+      - name: from
+        in: query
+        description: Used when range=custom.
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        description: Used when range=custom.
+        schema:
+          type: string
+          format: date
       responses:
         '200':
           description: Filter options
@@ -2083,6 +2133,14 @@ components:
         tokenTotal:
           type: string
           nullable: true
+        agentBreakdown:
+          type: array
+          items:
+            $ref: '#/components/schemas/BreakdownItem'
+        activityCalendar:
+          type: array
+          items:
+            $ref: '#/components/schemas/CalendarDay'
         activeDays:
           type: integer
           nullable: true

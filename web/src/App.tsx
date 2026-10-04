@@ -1,49 +1,33 @@
-import { LeaderboardListPage } from '@/pages/public/LeaderboardListPage';
-import React from 'react';
+import React, { Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { LocaleProvider } from '@/context/LocaleContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { AuthProvider } from '@/context/AuthContext';
 import { AppLayout } from '@/components/layout/AppLayout';
-import { SettingsLayout } from '@/components/layout/SettingsLayout';
+import { useRouteTitle } from '@/hooks/useRouteTitle';
 
-// Auth Pages
-import { LoginPage } from '@/pages/auth/LoginPage';
-import { DesktopLoginPage } from '@/pages/auth/DesktopLoginPage';
-import { RegisterPage } from '@/pages/auth/RegisterPage';
-import { ForgotPasswordPage } from '@/pages/auth/ForgotPasswordPage';
-import { ResetPasswordPage } from '@/pages/auth/ResetPasswordPage';
-
-// Onboarding
-import { OnboardingPage } from '@/pages/onboarding/OnboardingPage';
-
-// Personal Analytics & Dashboard
-import { PersonalDashboardPage } from '@/pages/me/PersonalDashboardPage';
-import { ActivityPage } from '@/pages/me/ActivityPage';
-
-// Settings
-import { ProfileSettingsPage } from '@/pages/settings/ProfileSettingsPage';
-import { PrivacySettingsPage } from '@/pages/settings/PrivacySettingsPage';
-import { DevicesSettingsPage } from '@/pages/settings/DevicesSettingsPage';
-import { ExportsSettingsPage } from '@/pages/settings/ExportsSettingsPage';
-
-// Public & Community
-import { PublicProfilePage } from '@/pages/public/PublicProfilePage';
 import { LeaderboardPage } from '@/pages/public/LeaderboardPage';
-import { CommunityPage } from '@/pages/public/CommunityPage';
 import { TeamProvider } from '@/context/TeamContext';
 import { PersonalAnalyticsProvider } from '@/context/PersonalAnalyticsContext';
-import { TeamDashboardPage } from '@/pages/teams/TeamDashboardPage';
-import { CreateTeamPage } from '@/pages/teams/CreateTeamPage';
-import { InvitationPage } from '@/pages/teams/InvitationPage';
-import { JoinTeamPage } from '@/pages/teams/JoinTeamPage';
-import { TeamLayout } from '@/pages/teams/TeamLayout';
-import { TeamMembersPage } from '@/pages/teams/TeamMembersPage';
-import { TeamAnalyticsPage } from '@/pages/teams/TeamAnalyticsPage';
-import { TeamSettingsPage } from '@/pages/teams/TeamSettingsPage';
-import { NotFoundPage } from '@/pages/system/NotFoundPage';
-import { DownloadPage } from '@/pages/resources/DownloadPage';
-import { DocsPage } from '@/pages/resources/DocsPage';
+import { LoadingState } from '@/components/states/LoadingState';
+import {
+  LoginPage, DesktopLoginPage, RegisterPage, ForgotPasswordPage, ResetPasswordPage, OnboardingPage,
+  PersonalDashboardPage, ActivityPage,
+  SettingsLayout, ProfileSettingsPage, PrivacySettingsPage, DevicesSettingsPage, ExportsSettingsPage,
+  PublicProfilePage, CommunityPage, LeaderboardListPage,
+  TeamDashboardPage, CreateTeamPage, InvitationPage, JoinTeamPage, TeamLayout, TeamMembersPage, TeamAnalyticsPage, TeamSettingsPage,
+  NotFoundPage, DownloadPage, DocsPage,
+} from '@/routes';
+
+// Standalone pages (outside AppLayout) load their chunk behind their own fallback.
+const Standalone: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <Suspense fallback={<LoadingState />}>{children}</Suspense>
+);
+
+export const RouteTitle: React.FC = () => {
+  useRouteTitle();
+  return null;
+};
 
 const PreserveSearchRedirect: React.FC<{ to: string }> = ({ to }) => {
   const { search } = useLocation();
@@ -62,14 +46,15 @@ export const App: React.FC = () => {
           <BrowserRouter basename={import.meta.env.BASE_URL} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
             <TeamProvider>
             <PersonalAnalyticsProvider>
+            <RouteTitle />
             <Routes>
               {/* Standalone Auth & Onboarding */}
-              <Route path="/login" element={<LoginPage />} />
-              <Route path="/desktop-login" element={<DesktopLoginPage />} />
-              <Route path="/register" element={<RegisterPage />} />
-              <Route path="/forgot-password" element={<ForgotPasswordPage />} />
-              <Route path="/reset-password" element={<ResetPasswordPage />} />
-              <Route path="/onboarding" element={<OnboardingPage />} />
+              <Route path="/login" element={<Standalone><LoginPage /></Standalone>} />
+              <Route path="/desktop-login" element={<Standalone><DesktopLoginPage /></Standalone>} />
+              <Route path="/register" element={<Standalone><RegisterPage /></Standalone>} />
+              <Route path="/forgot-password" element={<Standalone><ForgotPasswordPage /></Standalone>} />
+              <Route path="/reset-password" element={<Standalone><ResetPasswordPage /></Standalone>} />
+              <Route path="/onboarding" element={<Standalone><OnboardingPage /></Standalone>} />
 
               {/* Main Application Layout */}
               <Route element={<AppLayout />}>

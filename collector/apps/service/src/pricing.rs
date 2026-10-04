@@ -92,6 +92,7 @@ impl Catalog {
             | "cursor-grok-4.6-xhigh"
             | "cursor-grok-4.6-xhigh-fast" => "x-ai/grok-4.6",
             "grok-4.6-build" => "x-ai/grok-4.6",
+            "grok-4.7-build-fast" => "x-ai/grok-4.7",
             "gemini-3.7-flash-high" => "google/gemini-3.7-flash",
             "claude-opus-4-6-thinking" => "anthropic/claude-opus-4.6",
             other => other,
@@ -541,6 +542,15 @@ mod tests {
             pricing: Rates::default(),
         });
         assert_eq!(c.model("grok-4.6-build").unwrap().id, "x-ai/grok-4.6");
+        c.data.push(Model {
+            id: "x-ai/grok-4.7".into(),
+            pricing: Rates::default(),
+        });
+        assert_eq!(
+            c.model("grok-4.7-build-fast").unwrap().id,
+            "x-ai/grok-4.7"
+        );
+        assert!(c.model("grok-4.7-build").is_none());
     }
 
     #[test]

@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { ApiError } from '@/api/client';
 import { isTeamScope, teamsApi, type TeamScope } from '@/api/teams';
 import { useAuth } from '@/context/AuthContext';
@@ -18,6 +19,8 @@ const TeamContext = createContext<TeamContextValue | undefined>(undefined);
 
 export const TeamProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { authenticated, user } = useAuth();
+  // Team data is only read by /teams pages, so nothing is fetched or polled elsewhere.
+  const onTeamRoute = useLocation().pathname.startsWith('/teams');
   const [scope, setScope] = useState<TeamScope | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
@@ -89,15 +92,18 @@ export const TeamProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return;
     }
 
+    if (!onTeamRoute) return;
+
     const controller = new AbortController();
     void refresh(controller.signal);
     return () => controller.abort();
-  }, [authenticated, refresh, userId]);
+  }, [authenticated, onTeamRoute, refresh, userId]);
 
   useEffect(() => {
-    if (!authenticated) return undefined;
+    if (!authenticated || !onTeamRoute) return undefined;
 
     const tick = () => {
+      if (document.visibilityState === 'hidden') return;
       void refresh(undefined, { silent: true });
     };
     const interval = window.setInterval(tick, 15_000);
@@ -106,7 +112,7 @@ export const TeamProvider: React.FC<{ children: React.ReactNode }> = ({ children
       window.clearInterval(interval);
       window.removeEventListener('focus', tick);
     };
-  }, [authenticated, refresh]);
+  }, [authenticated, onTeamRoute, refresh]);
 
   const value = useMemo<TeamContextValue>(
     () => ({

@@ -9,7 +9,7 @@ vi.mock('@/context/AuthContext',()=>({useAuth:()=>auth}));
 vi.mock('@/api/client',()=>({api:{getLeaderboard:vi.fn(),getMyLeaderboard:vi.fn(),getLeaderboardView:vi.fn()}}));
 const own = {rankNo:1432,handle:'me',displayName:'Me',avatarUrl:null,metricValue:'8620000',rankDelta:26};
 const publicBoard = {entries:[{...own,rankNo:1,handle:'leader',displayName:'Leader'}],totalEntries:12486,totalParticipants:12486,nextCursor:'20',ownEntry:null};
-function page() { return render(<LocaleProvider><MemoryRouter><LeaderboardListPage /></MemoryRouter></LocaleProvider>); }
+function page() { return render(<LocaleProvider><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><LeaderboardListPage /></MemoryRouter></LocaleProvider>); }
 describe('personal leaderboard footer',()=>{
   beforeEach(()=>{
     vi.clearAllMocks();auth.authenticated=true;

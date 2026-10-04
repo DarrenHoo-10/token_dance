@@ -804,24 +804,26 @@ type CompareResponse struct {
 
 // Public DTO Whitelist (USR-016)
 type PublicProfileDTO struct {
-	Handle               string     `json:"handle"`
-	DisplayName          string     `json:"displayName"`
-	AvatarURL            *string    `json:"avatarUrl"`
-	Bio                  *string    `json:"bio,omitempty"`
-	Rank                 *int       `json:"rank,omitempty"`
-	RankDelta            *int       `json:"rankDelta,omitempty"`
-	Percentile           *float64   `json:"percentile,omitempty"`
-	TokenTotal           *string    `json:"tokenTotal,omitempty"`
-	ActiveDays           *int       `json:"activeDays,omitempty"`
-	CurrentStreak        *int       `json:"currentStreak,omitempty"`
-	DataWatermarkAt      *time.Time `json:"dataWatermarkAt,omitempty"`
-	GeneratedAt          time.Time  `json:"generatedAt"`
-	ProjectionVersion    uint64     `json:"projectionVersion"`
-	ShowBio              bool       `json:"showBio"`
-	ShowTokenTotal       bool       `json:"showTokenTotal"`
-	ShowTrends           bool       `json:"showTrends"`
-	ShowActivityCalendar bool       `json:"showActivityCalendar"`
-	ShowAgentBreakdown   bool       `json:"showAgentBreakdown"`
-	ShowSkillRanking     bool       `json:"showSkillRanking"`
-	ShowAchievements     bool       `json:"showAchievements"`
+	Handle               string          `json:"handle"`
+	DisplayName          string          `json:"displayName"`
+	AvatarURL            *string         `json:"avatarUrl"`
+	Bio                  *string         `json:"bio,omitempty"`
+	Rank                 *int            `json:"rank,omitempty"`
+	RankDelta            *int            `json:"rankDelta,omitempty"`
+	Percentile           *float64        `json:"percentile,omitempty"`
+	TokenTotal           *string         `json:"tokenTotal,omitempty"`
+	AgentBreakdown       []BreakdownItem `json:"agentBreakdown,omitempty"`
+	ActivityCalendar     []CalendarDay   `json:"activityCalendar,omitempty"`
+	ActiveDays           *int            `json:"activeDays,omitempty"`
+	CurrentStreak        *int            `json:"currentStreak,omitempty"`
+	DataWatermarkAt      *time.Time      `json:"dataWatermarkAt,omitempty"`
+	GeneratedAt          time.Time       `json:"generatedAt"`
+	ProjectionVersion    uint64          `json:"projectionVersion"`
+	ShowBio              bool            `json:"showBio"`
+	ShowTokenTotal       bool            `json:"showTokenTotal"`
+	ShowTrends           bool            `json:"showTrends"`
+	ShowActivityCalendar bool            `json:"showActivityCalendar"`
+	ShowAgentBreakdown   bool            `json:"showAgentBreakdown"`
+	ShowSkillRanking     bool            `json:"showSkillRanking"`
+	ShowAchievements     bool            `json:"showAchievements"`
 }

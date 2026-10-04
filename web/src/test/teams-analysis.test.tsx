@@ -20,11 +20,27 @@ const shanghaiToday = () => calendarDateInTimeZone(new Date(), 'Asia/Shanghai');
 
 function pickIsoDate(label: string, iso: string) {
   fireEvent.click(screen.getByLabelText(label));
-  const day = String(Number(iso.slice(8, 10)));
   const dialog = screen.getByRole('dialog', { name: label });
-  const match = within(dialog).getAllByRole('button').filter((el) => el.textContent === day);
-  const enabled = match.find((el) => el.getAttribute('aria-disabled') !== 'true' && !(el as HTMLButtonElement).disabled);
-  fireEvent.click(enabled || match[0]);
+  const [year, month, day] = iso.split('-').map(Number);
+  const needle = `${year}年${month}月${day}日`;
+  const target = year * 12 + month;
+  for (let step = 0; step < 24; step += 1) {
+    const buttons = within(dialog).getAllByRole('button');
+    const dayButton = buttons.find((el) => (el.getAttribute('aria-label') || '').includes(needle));
+    if (dayButton) {
+      fireEvent.click(dayButton);
+      return;
+    }
+    const shown = buttons
+      .map((el) => (el.getAttribute('aria-label') || '').match(/(\d+)年(\d+)月/))
+      .filter((match): match is RegExpMatchArray => Boolean(match))
+      .map((match) => Number(match[1]) * 12 + Number(match[2]));
+    const goBack = (shown.length ? Math.max(...shown) : target + 1) > target;
+    const nav = buttons.find((el) => (el.getAttribute('aria-label') || '').includes(goBack ? '上个月' : '下个月'));
+    if (!nav || nav.getAttribute('aria-disabled') === 'true') break;
+    fireEvent.click(nav);
+  }
+  throw new Error(`calendar cannot reach ${iso}`);
 }
 
 const readyAnalysis = (authRevision: string, tokenValue: string): TeamAnalysisReady => ({
@@ -76,6 +92,16 @@ describe('Team cost card', () => {
     renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop?range=7d');
     const label = await screen.findByText(/未覆盖用量预估/);
     expect(label.closest('.tw-kpi')).toHaveTextContent('$1.25');
+  });
+
+  it('explains missing hourly metrics on the rolling 24-hour view', async () => {
+    vi.spyOn(api, 'getSession').mockResolvedValue(signedInUser);
+    vi.spyOn(teamsApi, 'getMyTeam').mockResolvedValue(sampleScope());
+    const result = readyAnalysis('1', '350');
+    result.trendGrain = 'hour';
+    vi.spyOn(teamsApi, 'getAnalysis').mockResolvedValue(result);
+    renderTeams(<TeamAnalyticsPage />, '/teams/tem_0123456789abcdefghijklmnop');
+    expect(await screen.findByText(/过去 24 小时按小时记录统计/)).toBeInTheDocument();
   });
 });
 
@@ -350,9 +376,9 @@ describe('Team analysis updating state', () => {
     renderTeamWorkspace('/teams/tem_0123456789abcdefghijklmnop');
 
     expect(await screen.findByTestId('analysis-skeleton')).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: '今天' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: '过去 24 小时' })).toHaveAttribute('aria-selected', 'true');
     expect(teamsApi.getAnalysis).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ range: 'today' }), expect.any(AbortSignal));
-    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['今天', '近 7 天', '近 30 天', '自定义']);
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual(['过去 24 小时', '近 7 天', '近 30 天', '自定义']);
     expect(screen.queryByLabelText('开始日期')).not.toBeInTheDocument();
     expect(screen.getByText('正在汇总团队数据，请稍候…')).toBeInTheDocument();
     expect(screen.queryByText('0')).not.toBeInTheDocument();

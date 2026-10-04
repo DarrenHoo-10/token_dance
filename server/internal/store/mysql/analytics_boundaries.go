@@ -55,9 +55,11 @@ type rawSummary struct {
 	maxReceivedAt sql.NullTime
 }
 
-func (s *analyticsStore) queryRawSummary(ctx context.Context, userID string, intervals []rawInterval) (rawSummary, error) {
+func (s *analyticsStore) queryRawSummary(ctx context.Context, userID string, intervals []rawInterval, agentID, modelID *string) (rawSummary, error) {
 	var total rawSummary
-	const query = `
+	agent, hasAgent := dimensionID(agentID)
+	model, hasModel := dimensionID(modelID)
+	query := `
 		SELECT COUNT(*), COALESCE(SUM(CASE WHEN JSON_EXTRACT(e.safe_extension_json,'$.openrouter') IS NOT NULL
  AND e.turn_hash IS NOT NULL AND EXISTS(SELECT 1 FROM usage_events reported WHERE reported.user_id=e.user_id
  AND reported.agent_id=e.agent_id AND reported.turn_hash=e.turn_hash AND reported.occurred_date=e.occurred_date
@@ -79,9 +81,22 @@ func (s *analyticsStore) queryRawSummary(ctx context.Context, userID string, int
 		FROM usage_events e
 		WHERE user_id = ? AND occurred_at >= ? AND occurred_at < ?
 		  AND accuracy IN ('exact', 'derived')`
+	if hasAgent {
+		query += ` AND e.agent_id = ?`
+	}
+	if hasModel {
+		query += ` AND e.model_id = ?`
+	}
 	for _, interval := range intervals {
+		args := []any{userID, interval.from, interval.to}
+		if hasAgent {
+			args = append(args, agent)
+		}
+		if hasModel {
+			args = append(args, model)
+		}
 		var part rawSummary
-		if err := s.db.QueryRowContext(ctx, query, userID, interval.from, interval.to).Scan(
+		if err := s.db.QueryRowContext(ctx, query, args...).Scan(
 			&part.rowCount, &part.cost, &part.tokens, &part.codeLines,
 			&part.input, &part.output, &part.cacheRead, &part.cacheWrite, &part.reasoning,
 			&part.duration, &part.messages, &part.userMessages, &part.maxReceivedAt,
@@ -197,14 +212,26 @@ type rawBreakdownItem struct {
 	watermark sql.NullTime
 }
 
-func (s *analyticsStore) queryRawBreakdown(ctx context.Context, userID string, intervals []rawInterval, dimension string) ([]rawBreakdownItem, error) {
+func (s *analyticsStore) queryRawBreakdown(ctx context.Context, userID string, intervals []rawInterval, dimension string, agentID, modelID *string) ([]rawBreakdownItem, error) {
 	if dimension != "agent_id" && dimension != "model_id" {
 		return nil, domain.ErrInvalidArgument
 	}
+	agent, hasAgent := dimensionID(agentID)
+	model, hasModel := dimensionID(modelID)
 	items := make(map[string]*rawBreakdownItem)
 	for _, interval := range intervals {
-		query := "SELECT COALESCE(" + dimension + ", ''), COALESCE(SUM(COALESCE(token_total, COALESCE(token_input, 0) + COALESCE(token_output, 0) + COALESCE(token_cache_read, 0) + COALESCE(token_cache_write, 0) + COALESCE(token_reasoning, 0))), 0), MAX(received_at) FROM usage_events WHERE user_id = ? AND occurred_at >= ? AND occurred_at < ? AND accuracy IN ('exact', 'derived') GROUP BY " + dimension
-		rows, err := s.db.QueryContext(ctx, query, userID, interval.from, interval.to)
+		query := "SELECT COALESCE(" + dimension + ", ''), COALESCE(SUM(COALESCE(token_total, COALESCE(token_input, 0) + COALESCE(token_output, 0) + COALESCE(token_cache_read, 0) + COALESCE(token_cache_write, 0) + COALESCE(token_reasoning, 0))), 0), MAX(received_at) FROM usage_events WHERE user_id = ? AND occurred_at >= ? AND occurred_at < ? AND accuracy IN ('exact', 'derived')"
+		args := []any{userID, interval.from, interval.to}
+		if hasAgent {
+			query += " AND agent_id = ?"
+			args = append(args, agent)
+		}
+		if hasModel {
+			query += " AND model_id = ?"
+			args = append(args, model)
+		}
+		query += " GROUP BY " + dimension
+		rows, err := s.db.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query usage event boundary breakdown: %w", err)
 		}

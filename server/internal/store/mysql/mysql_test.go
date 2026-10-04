@@ -1183,6 +1183,16 @@ func TestUSR016_PublicDTOWhitelistMySQL(t *testing.T) {
 		!strings.Contains(bodyStr, `"tokenTotal":"3000000"`) {
 		t.Errorf("missing expected whitelisted public fields in response: %s", bodyStr)
 	}
+	var visibleDTO domain.PublicProfileDTO
+	if err := json.Unmarshal(rec.Body.Bytes(), &visibleDTO); err != nil {
+		t.Fatalf("failed to unmarshal visible public profile: %v", err)
+	}
+	if len(visibleDTO.AgentBreakdown) != 1 || visibleDTO.AgentBreakdown[0].TokenTotal != "3000000" {
+		t.Errorf("expected published agent token share, got %+v", visibleDTO.AgentBreakdown)
+	}
+	if len(visibleDTO.ActivityCalendar) != 70 || visibleDTO.ActivityCalendar[len(visibleDTO.ActivityCalendar)-2].TokenTotal != "3000000" {
+		t.Errorf("expected 10 weeks of published calendar days with recorded tokens, got %+v", visibleDTO.ActivityCalendar)
+	}
 
 	// Whitelist verification: must NEVER leak internal or sensitive fields
 	if strings.Contains(bodyStr, userID) ||
@@ -1220,6 +1230,9 @@ func TestUSR016_PublicDTOWhitelistMySQL(t *testing.T) {
 	}
 	if pubDTO.TokenTotal != nil {
 		t.Errorf("expected TokenTotal to be null/omitted when ShowTokenTotal is false, got %v", *pubDTO.TokenTotal)
+	}
+	if len(pubDTO.AgentBreakdown) != 0 || len(pubDTO.ActivityCalendar) != 0 {
+		t.Errorf("expected unpublished agent and calendar data to be omitted, got %+v", pubDTO)
 	}
 }
 

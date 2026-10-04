@@ -7,6 +7,7 @@ import { useLocale } from '@/context/LocaleContext';
 import { usePersonalAnalytics } from '@/context/PersonalAnalyticsContext';
 import { LocaleSwitcher } from '@/components/common/LocaleSwitcher';
 import { Button } from '@/components/common/Button';
+import { preloadRoute } from '@/routes';
 
 export const Navbar: React.FC = () => {
   const { user, authenticated, logout } = useAuth();
@@ -64,10 +65,24 @@ export const Navbar: React.FC = () => {
         .toUpperCase()
     : 'TD';
 
+  const openSearch = () => {
+    setMobileOpen(false);
+    if (home) {
+      const input = document.querySelector<HTMLInputElement>('.sky-board-search input');
+      input?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
+      input?.focus({ preventScroll: true });
+    } else navigate('/leaderboard?search=1');
+  };
+  const openAnalytics = () => {
+    setMobileOpen(false);
+    if (authenticated) personalAnalytics.show();
+    else navigate('/login?return_to=%2Fme');
+  };
+
   return (
     <header className="navbar floating-nav">
       <NavLink to="/" className="nav-brand">
-        <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="TokenDance" />
+        <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2-128.png`} alt="TokenDance" />
         <span>TokenDance</span>
       </NavLink>
 
@@ -80,34 +95,40 @@ export const Navbar: React.FC = () => {
         >
           TokenBoard
         </NavLink>
-        <NavLink to="/teams" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+        <NavLink to="/teams" onMouseEnter={() => preloadRoute("/teams")} onFocus={() => preloadRoute("/teams")} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           {t('teams.label')}
         </NavLink>
-        <NavLink to="/download" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+        <NavLink to="/download" onMouseEnter={() => preloadRoute("/download")} onFocus={() => preloadRoute("/download")} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           {locale === 'zh-CN' ? '客户端下载' : 'Download'}
         </NavLink>
-        <NavLink to="/docs" className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
+        <NavLink to="/docs" onMouseEnter={() => preloadRoute("/docs")} onFocus={() => preloadRoute("/docs")} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
           {locale === 'zh-CN' ? '使用文档' : 'Docs'}
         </NavLink>
+        {/* Phones: search, personal data and language live in the menu so the header stays on one row. */}
+        {mobileOpen && (
+          <div className="nav-mobile-extras">
+            <button type="button" className="nav-mobile-action" onClick={openSearch}>
+              <Search size={16} aria-hidden="true" />{locale === 'zh-CN' ? '搜索开发者' : 'Find a developer'}
+            </button>
+            <button type="button" className="nav-mobile-action" onClick={openAnalytics}>
+              <BarChart3 size={16} aria-hidden="true" />{locale === 'zh-CN' ? '我的数据' : 'My analytics'}
+            </button>
+            <LocaleSwitcher />
+          </div>
+        )}
       </nav>
 
       <div className="nav-actions">
         <button
           type="button"
           className="nav-document"
-          onClick={() => {
-            if (home) {
-              const input = document.querySelector<HTMLInputElement>('.sky-board-search input');
-              input?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
-              input?.focus({ preventScroll: true });
-            } else navigate('/leaderboard?search=1');
-          }}
+          onClick={openSearch}
           aria-label={locale === 'zh-CN' ? '搜索开发者' : 'Find a developer'}
           title={locale === 'zh-CN' ? '搜索开发者' : 'Find a developer'}
         >
           <Search size={21} aria-hidden="true" />
         </button>
-        <button type="button" className="nav-analytics" onClick={() => authenticated ? personalAnalytics.show() : navigate('/login?return_to=%2Fme')} aria-label={locale === 'zh-CN' ? '我的数据' : 'My analytics'} title={locale === 'zh-CN' ? '我的数据' : 'My analytics'}>
+        <button type="button" className="nav-analytics" onClick={openAnalytics} aria-label={locale === 'zh-CN' ? '我的数据' : 'My analytics'} title={locale === 'zh-CN' ? '我的数据' : 'My analytics'}>
           <BarChart3 size={21} aria-hidden="true" /><span>{locale === 'zh-CN' ? '我的数据' : 'My analytics'}</span>
         </button>
 
