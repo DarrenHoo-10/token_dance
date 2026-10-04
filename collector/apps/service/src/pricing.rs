@@ -396,8 +396,17 @@ mod tests {
     fn catalog() -> Catalog {
         serde_json::from_str(r#"{"fetched_at":1,"data":[{"id":"openai/test","pricing":{"prompt":"0.000002","completion":"0.00001","input_cache_read":"0.0000002","overrides":[{"min_prompt_tokens":1500,"prompt":"0.000004"}]}}]}"#).unwrap()
     }
+    fn base_event(marker: char) -> EventEnvelope {
+        serde_json::from_value(serde_json::json!({
+            "schemaVersion":"1.0", "eventId":marker.to_string().repeat(43),
+            "adapterId":"dev.tokenshow.adapter.mock", "adapterVersion":"1.0.0", "agentId":"mock-agent",
+            "installationId":format!("ins_{}", "0".repeat(26)), "occurredAt":"2026-09-05T00:00:00Z",
+            "source":{"kind":"jsonl_tail", "cursorHmac":format!("hmac-sha256:{}", "A".repeat(43)), "rawFingerprintHmac":format!("hmac-sha256:{}", "A".repeat(43))},
+            "accuracy":"exact", "payload":{"type":"model_usage_recorded", "providerId":"mock-provider", "modelId":"mock-model", "tokens":{"inputTokens":"10","outputTokens":"5","totalTokens":"15"}}
+        })).unwrap()
+    }
     fn event(marker: char) -> EventEnvelope {
-        let mut e = crate::auto_sync::tests::event(marker);
+        let mut e = base_event(marker);
         e.agent_id = "codex".into();
         e.occurred_at = chrono::Local::now().to_rfc3339();
         e.turn_hash = Some(format!("hmac-sha256:{}", "T".repeat(43)));

@@ -46,7 +46,7 @@ impl DoubaoStrategy {
         }
     }
     fn profiles(&self) -> Vec<PathBuf> {
-        collector_service::detect::doubao_activity_profiles(&self.legacy.root)
+        crate::detect::doubao_activity_profiles(&self.legacy.root)
     }
 }
 fn string(v: &Value) -> Option<String> {
@@ -207,7 +207,7 @@ impl HarnessStrategy for DoubaoStrategy {
             .lock()
             .map_err(|_| RunnerError::Io("cache lock".into()))?;
         let mut files = Vec::new();
-        for db in collector_service::detect::DOUBAO_ACTIVITY_DATABASES {
+        for db in crate::detect::DOUBAO_ACTIVITY_DATABASES {
             let dir = Path::new(locator).join("IndexedDB").join(db);
             if let Ok(entries) = std::fs::read_dir(dir) {
                 for e in entries.flatten() {

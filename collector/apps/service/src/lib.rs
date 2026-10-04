@@ -2,9 +2,13 @@
 
 pub mod detect;
 pub mod grok_hook;
+pub mod local_store;
 pub mod platform;
+pub mod pricing;
 pub mod runtime;
 pub mod upload;
+pub mod upload_pipeline;
+pub mod usage_ledger;
 
 pub use detect::{
     detect_from_home, detect_local, enumerate_all_source_files, EnumeratedSourceFile,

@@ -2,12 +2,10 @@ pub mod auto_sync;
 pub mod autostart;
 pub mod commands;
 pub mod daemon;
-pub mod local_store;
 pub mod local_test;
 #[cfg(target_os = "macos")]
 pub mod macos_tray;
 pub mod orb;
-pub mod pricing;
 pub mod rebuild;
 mod single_instance;
 pub mod state;
@@ -16,8 +14,10 @@ mod startup_recovery;
 mod reopen_smoke;
 pub mod tray_state;
 pub mod updates;
-pub mod upload_pipeline;
-pub mod usage_ledger;
+
+// The v2 pipeline now lives in `collector-service` so the CLI can share it.
+// Re-exported under the old paths so desktop modules stay unchanged.
+pub use collector_service::{local_store, pricing, upload_pipeline, usage_ledger};
 
 use std::fs;
 use std::panic;
