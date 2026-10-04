@@ -15,6 +15,14 @@ type Package = {
   retry: () => void;
 };
 
+// Best guess from the browser; Intel and Apple Silicon Macs cannot be told apart from JavaScript.
+export function detectDefaultPlatform(nav: Pick<Navigator, 'userAgent' | 'platform' | 'maxTouchPoints'> = navigator): 'windows' | 'mac-arm64' {
+  const ua = nav.userAgent || '';
+  const touch = (nav.maxTouchPoints ?? 0) > 1; // iPadOS reports a Mac UA
+  const isMac = /Mac/i.test(nav.platform || '') || /Macintosh|Mac OS X/i.test(ua);
+  return isMac && !touch && !/iPhone|iPad|iPod|Android/i.test(ua) ? 'mac-arm64' : 'windows';
+}
+
 function PlatformIcon({ platform }: { platform: Package['platform'] }) {
   return <svg className="download-platform-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
     {platform === 'windows'
@@ -48,7 +56,7 @@ export function DownloadPage() {
     { id: 'mac-arm64', platform: 'mac', name: 'macOS', architecture: 'Apple Silicon', format: 'DMG', label: t('下载 Apple Silicon DMG', 'Download Apple Silicon DMG'), url: mac.arm64.release?.dmgUrl, ...mac.arm64, retry: mac.retry },
     { id: 'mac-intel', platform: 'mac', name: 'macOS', architecture: 'Intel', format: 'DMG', label: t('下载 Intel DMG', 'Download Intel DMG'), url: mac.x64.release?.dmgUrl, ...mac.x64, retry: mac.retry },
   ];
-  const [platform, setPlatform] = useState('windows');
+  const [platform, setPlatform] = useState<string>(() => detectDefaultPlatform());
   const selected = packages.find(item => item.id === platform) || packages[0];
   return <div className="resource-stage resource-download-stage">
     <section className="resource-dialog resource-download-dialog" aria-labelledby="download-heading">
@@ -56,8 +64,8 @@ export function DownloadPage() {
       <h1 id="download-heading">{t('让每一次创造，都被看见。', 'Make every day of creating visible.')}</h1>
 
       <div className="resource-app-preview">
-        <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" />
-        <strong>TokenDance</strong><span>{t('过去 24h Token', 'Past 24h tokens')}</span><b>1.12<small>M</small></b>
+        <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2-128.png`} alt="" />
+        <strong>TokenDance</strong><span>{t('过去 24h Token · 示例', 'Past 24h tokens · sample')}</span><b>1.12<small>M</small></b>
         <div><span>Codex</span><span>Claude Code / Cowork</span><span>Cursor</span></div>
       </div>
 
@@ -65,6 +73,7 @@ export function DownloadPage() {
         {packages.map(item => <button key={item.id} type="button" role="tab" aria-selected={platform === item.id} onClick={() => setPlatform(item.id)}><PlatformIcon platform={item.platform} /><span>{item.id === 'windows' ? 'Windows' : item.id === 'mac-arm64' ? 'Apple Silicon' : 'Intel Mac'}</span></button>)}
       </div>
       <div className="resource-selected-package"><PackageCard item={selected} zh={zh} /></div>
+      {selected.platform === 'mac' && <p className="download-chip-hint">{t('不确定芯片？点左上角苹果菜单 → 关于本机：显示 Apple 芯片选 Apple Silicon，显示 Intel 选 Intel Mac。', 'Not sure which chip? Apple menu → About This Mac: choose Apple Silicon for Apple chips, Intel Mac for Intel.')}</p>}
 
       <footer className="download-page-footer">
         <Link to="/docs/install"><ArrowLeft size={14} />{t('安装指南', 'Installation guide')}</Link>

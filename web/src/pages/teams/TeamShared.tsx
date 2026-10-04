@@ -184,7 +184,7 @@ export const TeamDateRangeBar: React.FC<{ timezone: string }> = ({ timezone }) =
     <>
       <div className="tw-periods" role="tablist" aria-label={t('dashboard.timeRangeSelector')}>
         {[
-          { key: 'today', label: t('common.today') },
+          { key: 'today', label: t('teams.range.past24h') },
           { key: '7d', label: t('teams.range.days7') },
           { key: '30d', label: t('teams.range.days30') },
           { key: 'custom', label: t('common.custom') },

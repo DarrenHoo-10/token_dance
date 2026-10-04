@@ -1,5 +1,7 @@
 import type { MetricValue, MetricValueState, SharingFlags } from '@/api/teams';
 import { EMPTY_SHARING } from '@/api/teams';
+import { safeSessionStorage } from '@/utils/safeStorage';
+import { formatRatioPercent } from '@/utils/formatNumber';
 
 export const TEAM_NAME_MIN = 2;
 export const TEAM_NAME_MAX = 40;
@@ -96,11 +98,7 @@ export function formatDurationHours(msStr: string | null | undefined): string | 
 }
 
 export function formatRatePercent(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const num = Number(value);
-  if (!Number.isFinite(num)) return null;
-  const pct = num <= 1 ? num * 100 : num;
-  return `${pct.toFixed(1)}%`;
+  return formatRatioPercent(value);
 }
 
 export function formatTokenCompact(value: string): string {
@@ -174,36 +172,33 @@ function joinStorageKey(linkId: string): string {
 
 export function writeJoinToken(linkId: string, token: string, now = Date.now()): void {
   const payload: StoredJoinToken = { linkId, token, expiresAt: now + JOIN_TOKEN_TTL_MS };
-  sessionStorage.setItem(joinStorageKey(linkId), JSON.stringify(payload));
+  safeSessionStorage.setItem(joinStorageKey(linkId), JSON.stringify(payload));
 }
 
 export function readJoinToken(linkId: string, now = Date.now()): string | null {
-  const raw = sessionStorage.getItem(joinStorageKey(linkId));
+  const raw = safeSessionStorage.getItem(joinStorageKey(linkId));
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as StoredJoinToken;
     if (!parsed.token || parsed.linkId !== linkId || parsed.expiresAt <= now) {
-      sessionStorage.removeItem(joinStorageKey(linkId));
+      safeSessionStorage.removeItem(joinStorageKey(linkId));
       return null;
     }
     return parsed.token;
   } catch {
-    sessionStorage.removeItem(joinStorageKey(linkId));
+    safeSessionStorage.removeItem(joinStorageKey(linkId));
     return null;
   }
 }
 
 export function clearJoinToken(linkId: string): void {
-  sessionStorage.removeItem(joinStorageKey(linkId));
+  safeSessionStorage.removeItem(joinStorageKey(linkId));
 }
 
 export function clearAllJoinTokens(): void {
-  const keys: string[] = [];
-  for (let i = 0; i < sessionStorage.length; i += 1) {
-    const key = sessionStorage.key(i);
-    if (key && key.startsWith(JOIN_TOKEN_PREFIX)) keys.push(key);
-  }
-  keys.forEach((key) => sessionStorage.removeItem(key));
+  safeSessionStorage.keys()
+    .filter((key) => key.startsWith(JOIN_TOKEN_PREFIX))
+    .forEach((key) => safeSessionStorage.removeItem(key));
 }
 
 export function captureJoinToken(linkId: string, hash = typeof window !== 'undefined' ? window.location.hash : ''): string | null {
@@ -241,27 +236,27 @@ export interface CreateDraft {
 }
 
 export function readCreateDraft(userId: string): CreateDraft | null {
-  const raw = sessionStorage.getItem(CREATE_DRAFT_KEY);
+  const raw = safeSessionStorage.getItem(CREATE_DRAFT_KEY);
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw) as CreateDraft;
     if (!parsed || parsed.userId !== userId) {
-      sessionStorage.removeItem(CREATE_DRAFT_KEY);
+      safeSessionStorage.removeItem(CREATE_DRAFT_KEY);
       return null;
     }
     return parsed;
   } catch {
-    sessionStorage.removeItem(CREATE_DRAFT_KEY);
+    safeSessionStorage.removeItem(CREATE_DRAFT_KEY);
     return null;
   }
 }
 
 export function writeCreateDraft(draft: CreateDraft): void {
-  sessionStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify(draft));
+  safeSessionStorage.setItem(CREATE_DRAFT_KEY, JSON.stringify(draft));
 }
 
 export function clearCreateDraft(): void {
-  sessionStorage.removeItem(CREATE_DRAFT_KEY);
+  safeSessionStorage.removeItem(CREATE_DRAFT_KEY);
 }
 
 export function calendarDateInTimeZone(now: Date, timeZone: string): string {

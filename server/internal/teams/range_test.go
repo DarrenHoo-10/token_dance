@@ -9,8 +9,8 @@ func TestTeamTodayDefaultAndCustomBoundaries(t *testing.T) {
 	now := time.Date(2026, 9, 6, 18, 0, 0, 0, time.UTC)
 	for _, key := range []string{"", "today"} {
 		from, to, err := ResolveTeamRange("Asia/Shanghai", key, "", "", now)
-		if err != nil || !from.Equal(time.Date(2026, 9, 6, 16, 0, 0, 0, time.UTC)) || to.Sub(from) != 24*time.Hour {
-			t.Fatalf("today must follow team timezone: %s %s %v", from, to, err)
+		if err != nil || !from.Equal(time.Date(2026, 9, 5, 19, 0, 0, 0, time.UTC)) || !to.Equal(time.Date(2026, 9, 6, 19, 0, 0, 0, time.UTC)) {
+			t.Fatalf("today must match the personal rolling hour buckets: %s %s %v", from, to, err)
 		}
 	}
 	for _, tc := range []struct {
@@ -29,9 +29,9 @@ func TestTeamTodayDefaultAndCustomBoundaries(t *testing.T) {
 			t.Fatalf("range %s..%s valid=%v: %v", tc.from, tc.to, tc.valid, err)
 		}
 	}
-	// A local day is not always 24 hours.
+	// A rolling window remains 24 hours across the team's DST transition.
 	from, to, err := ResolveTeamRange("America/New_York", "today", "", "", time.Date(2026, 3, 8, 18, 0, 0, 0, time.UTC))
-	if err != nil || to.Sub(from) != 23*time.Hour {
-		t.Fatalf("DST day: %s %s %v", from, to, err)
+	if err != nil || to.Sub(from) != 24*time.Hour {
+		t.Fatalf("rolling DST window: %s %s %v", from, to, err)
 	}
 }

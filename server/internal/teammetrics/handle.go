@@ -16,8 +16,14 @@ func calendarDate(t time.Time) string {
 	return t.In(domain.DayTZ).Format("2006-01-02")
 }
 
-func HandleID(teamID string, from, toExclusive time.Time, authRevision uint64) string {
-	key := teamID + "|" + calendarDate(from) + "|" + calendarDate(toExclusive) + "|" + strconv.FormatUint(authRevision, 10) + "|" + RuleVersion
+// Day rows use an exclusive date upper bound. A rolling window that ends in
+// the middle of a day must still load that day's rows before hour filtering.
+func coveringEndDate(toExclusive time.Time) string {
+	return domain.StartOfDay(toExclusive.Add(-time.Nanosecond)).AddDate(0, 0, 1).Format("2006-01-02")
+}
+
+func HandleID(teamID, rangeKey string, from, toExclusive time.Time, authRevision uint64) string {
+	key := teamID + "|" + rangeKey + "|" + from.UTC().Format(time.RFC3339) + "|" + toExclusive.UTC().Format(time.RFC3339) + "|" + strconv.FormatUint(authRevision, 10) + "|" + RuleVersion
 	sum := sha256.Sum256([]byte(key))
 	return domain.SnapshotIDPrefix + hex.EncodeToString(sum[:])[:26]
 }
@@ -43,11 +49,11 @@ func lastStaticCommit(ctx context.Context, tx *sql.Tx, teamID string) (time.Time
 	return time.Time{}, nil
 }
 
-func EnsureHandleTx(ctx context.Context, tx *sql.Tx, teamID string, from, toExclusive time.Time, authRevision, sourceRevision uint64, asOf, now time.Time) (*domain.TeamAnalysisSnapshot, error) {
-	id := HandleID(teamID, from, toExclusive, authRevision)
+func EnsureHandleTx(ctx context.Context, tx *sql.Tx, teamID, rangeKey string, from, toExclusive time.Time, authRevision, sourceRevision uint64, asOf, now time.Time) (*domain.TeamAnalysisSnapshot, error) {
+	id := HandleID(teamID, rangeKey, from, toExclusive, authRevision)
 	expires := now.Add(48 * time.Hour)
 	fromDate := calendarDate(from)
-	toDate := calendarDate(toExclusive)
+	toDate := coveringEndDate(toExclusive)
 	commitAt, err := lastStaticCommit(ctx, tx, teamID)
 	if err != nil {
 		return nil, err
@@ -65,23 +71,26 @@ func EnsureHandleTx(ctx context.Context, tx *sql.Tx, teamID string, from, toExcl
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO team_analysis_snapshots (
-			snapshot_id, team_id, from_date, to_date_exclusive, auth_revision, source_revision,
+			snapshot_id, team_id, from_date, to_date_exclusive, from_at, to_at_exclusive, range_key, auth_revision, source_revision,
 			rule_version, status, active_request_key, as_of, lease_generation, published_generation,
 			attempt_count, next_attempt_at, expires_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, 'ready', NULL, ?, 0, 1, 0, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', NULL, ?, 0, 1, 0, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			status = 'ready',
 			active_request_key = NULL,
 			source_revision = VALUES(source_revision),
+			from_at = VALUES(from_at),
+			to_at_exclusive = VALUES(to_at_exclusive),
+			range_key = VALUES(range_key),
 			as_of = VALUES(as_of),
 			expires_at = VALUES(expires_at),
 			error_code = NULL`,
-		id, teamID, fromDate, toDate, authRevision, sourceRevision, RuleVersion, asOf, now, expires,
+		id, teamID, fromDate, toDate, from.UTC(), toExclusive.UTC(), rangeKey, authRevision, sourceRevision, RuleVersion, asOf, now, expires,
 	); err != nil {
 		return nil, fmt.Errorf("upsert analysis handle: %w", err)
 	}
 	return &domain.TeamAnalysisSnapshot{
-		SnapshotID: id, TeamID: teamID, FromDate: from, ToDateExclusive: toExclusive,
+		SnapshotID: id, TeamID: teamID, RangeKey: rangeKey, FromDate: from, ToDateExclusive: toExclusive,
 		AuthRevision: authRevision, SourceRevision: sourceRevision, RuleVersion: RuleVersion,
 		Status: domain.SnapshotReady, AsOf: asOf, PublishedGeneration: 1, NextAttemptAt: now, ExpiresAt: expires,
 	}, nil

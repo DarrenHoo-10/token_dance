@@ -14,14 +14,17 @@ describe('publicLeaderboardName', () => {
 });
 
 describe('LeaderboardTable names', () => {
-  it('shows the nickname as the only visible name and keeps the handle in the profile URL', () => {
-    render(<LocaleProvider><MemoryRouter><LeaderboardTable entries={[
+  it('shows names as text and opens personal data only from avatar buttons', () => {
+    render(<LocaleProvider><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><LeaderboardTable entries={[
       { rankNo: 1, handle: 'dancer_uss9', displayName: '桂林仔', avatarUrl: null, metricValue: '16500000' },
       { rankNo: 2, handle: 'empty_handle', displayName: '', avatarUrl: null, metricValue: '10' },
     ]} /></MemoryRouter></LocaleProvider>);
     const table = screen.getByRole('table', { name: '排行榜列表' });
-    expect(within(table).getByRole('link', { name: /桂林仔/ })).toHaveAttribute('href', '/u/dancer_uss9');
-    expect(within(table).getByRole('link', { name: 'empty_handle' })).toHaveAttribute('href', '/u/empty_handle');
+    expect(within(table).getByText('桂林仔')).toBeInTheDocument();
+    expect(within(table).getByText('empty_handle')).toBeInTheDocument();
+    expect(within(table).queryByRole('link')).not.toBeInTheDocument();
+    expect(within(table).getByRole('button', { name: '查看 桂林仔 的个人数据' })).toBeInTheDocument();
+    expect(within(table).getByRole('button', { name: '查看 empty_handle 的个人数据' })).toBeInTheDocument();
     expect(within(table).queryByText('@dancer_uss9')).not.toBeInTheDocument();
     expect(within(table).queryByText('dancer_uss9')).not.toBeInTheDocument();
     expect(within(table).queryByText('@empty_handle')).not.toBeInTheDocument();

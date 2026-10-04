@@ -14,7 +14,7 @@ const params = new URLSearchParams({ redirect_uri: request.redirectUri, code_cha
 const returnTo = `/desktop-login?${params}`;
 const user = { userId: 'desktop-user', handle: 'desktop', displayName: 'Desktop User', avatarUrl: null, locale: 'zh-CN' as const, onboardingRequired: false, productState: 'active_private' as const };
 function show(initial = `/login?return_to=${encodeURIComponent(returnTo)}`) {
-  return render(<StrictMode><LocaleProvider><NotificationProvider><AuthProvider><MemoryRouter initialEntries={[initial]}>
+  return render(<StrictMode><LocaleProvider><NotificationProvider><AuthProvider><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }} initialEntries={[initial]}>
     <Routes><Route path="/login" element={<LoginPage />} /><Route path="/desktop-login" element={<DesktopLoginPage />} /></Routes>
   </MemoryRouter></AuthProvider></NotificationProvider></LocaleProvider></StrictMode>);
 }

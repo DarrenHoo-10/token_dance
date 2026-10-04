@@ -38,6 +38,13 @@ export function quotaStatusText(quota: AgentQuota | undefined, zh: boolean): str
   }
 }
 
+// Claude's quota is account-level (it already counts claude.ai and Cowork cloud sessions), while token usage is only
+// read from this computer. Without a note, "quota 40% used, usage 0" looks like a bug.
+export function cloudUsageHint(agentId: string, quota: AgentQuota | undefined, tokens: number | null, zh: boolean): string | null {
+  if (agentId !== 'claude-code' || tokens !== 0 || !quota?.windows.length) return null;
+  return zh ? '云端用量暂不统计，额度已含云端消耗' : 'Cloud usage is not counted here; the quota already includes it';
+}
+
 export function usageTokens(agent: AgentConfig, range: UsageRange, now = new Date()): number | null {
   if (agent.accuracy === 'unknown') return null;
   if (range !== 'week') {

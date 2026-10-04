@@ -6,6 +6,7 @@ import { LocaleProvider } from '@/context/LocaleContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { PersonalAnalyticsProvider, usePersonalAnalytics } from '@/context/PersonalAnalyticsContext';
 import { api } from '@/api/client';
+import { LeaderboardTable } from '@/components/analytics/LeaderboardTable';
 
 function LocationLabel() {
   const { pathname } = useLocation();
@@ -18,7 +19,7 @@ function Openers() {
     <>
       <LocationLabel />
       <Routes>
-        <Route path="/leaderboard" element={<><h1>平台排行榜</h1><button type="button" onClick={show}>个人数据</button></>} />
+        <Route path="/leaderboard" element={<><h1>平台排行榜</h1><button type="button" onClick={show}>个人数据</button><LeaderboardTable entries={[{ rankNo: 1, handle: 'ada', displayName: 'Ada', avatarUrl: null, metricValue: '200' }]} /></>} />
         <Route path="/teams/:teamId" element={<><h1>团队面板</h1><button type="button" onClick={show}>个人数据</button></>} />
         <Route path="/me" element={<h1>独立个人页</h1>} />
       </Routes>
@@ -110,6 +111,54 @@ afterEach(() => {
 });
 
 describe('Personal analytics overlay', () => {
+  it('opens another user from the leaderboard in the same dialog shell', async () => {
+    renderOverlay('/leaderboard');
+    vi.spyOn(api, 'getPublicProfile').mockResolvedValue({
+      handle: 'ada', displayName: 'Ada', avatarUrl: null,
+      generatedAt: '2026-09-19T00:00:00Z', projectionVersion: 1,
+      showAgentBreakdown: true, showActivityCalendar: true,
+      agentBreakdown: [{ key: 'codex', label: 'Codex CLI', tokenTotal: '200', percentage: 100 }],
+      activityCalendar: [{ date: '2026-09-19', tokenTotal: '200', level: 1, active: true }],
+    });
+    const publicTrends = vi.spyOn(api, 'getPublicTokenTrends').mockResolvedValue({ points: [] });
+    const publicSkills = vi.spyOn(api, 'getPublicSkills').mockResolvedValue({ skills: [] });
+    fireEvent.click(screen.getByText('Ada'));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '查看 Ada 的个人数据' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ada 的创造正在发生。' });
+    expect(await within(dialog).findByRole('heading', { name: 'Ada 的创造正在发生。' })).toBeInTheDocument();
+    for (const section of ['.analytics-heading', '.analytics-toolbar', '.analytics-metrics', '.analytics-context', '.analytics-middle', '.analytics-lower']) {
+      expect(dialog.querySelector(section)).not.toBeNull();
+    }
+    expect(within(dialog).getAllByText('Codex CLI').length).toBeGreaterThan(0);
+    fireEvent.click(within(dialog).getByRole('button', { name: '近 7 天' }));
+    await waitFor(() => expect(publicTrends).toHaveBeenCalledWith('ada', { range: '7d', agent: undefined, model: undefined }));
+    await waitFor(() => expect(publicSkills).toHaveBeenCalledWith('ada', '7d'));
+    expect(screen.getByTestId('path')).toHaveTextContent('/leaderboard');
+    fireEvent.click(within(dialog).getByRole('button', { name: '关闭' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByRole('heading', { name: '平台排行榜' })).toBeInTheDocument();
+  });
+
+  it('does not request sections that another user kept private', async () => {
+    renderOverlay('/leaderboard');
+    vi.spyOn(api, 'getPublicProfile').mockResolvedValue({
+      handle: 'ada', displayName: 'Ada', avatarUrl: null,
+      generatedAt: '2026-09-19T00:00:00Z', projectionVersion: 1,
+      showTrends: false, showAgentBreakdown: false, showActivityCalendar: false, showSkillRanking: false,
+    });
+    const trends = vi.spyOn(api, 'getPublicTokenTrends');
+    const skills = vi.spyOn(api, 'getPublicSkills');
+    fireEvent.click(screen.getByRole('button', { name: '查看 Ada 的个人数据' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ada 的创造正在发生。' });
+    expect(within(dialog).getByText('用户未公开 Token 趋势')).toBeInTheDocument();
+    expect(within(dialog).getByText('用户未公开 Agent 构成')).toBeInTheDocument();
+    expect(within(dialog).getByText('用户未公开活跃日历')).toBeInTheDocument();
+    expect(within(dialog).getByText('用户未公开 Skill 排行')).toBeInTheDocument();
+    expect(trends).not.toHaveBeenCalled();
+    expect(skills).not.toHaveBeenCalled();
+  });
+
   it('does not show a rank or rank movement before positive usage is synced', async () => {
     renderOverlay('/leaderboard');
     await act(async () => {
@@ -161,13 +210,105 @@ describe('Personal analytics overlay', () => {
     fireEvent.click(screen.getByRole('button', { name: '个人数据' }));
     const dialog = await screen.findByRole('dialog', { name: 'Test Dev，你的创造正在发生。' });
     fireEvent.click(within(dialog).getByRole('button', { name: '近 7 天' }));
-    await waitFor(() => expect(api.getPersonalSummary).toHaveBeenCalledWith('7d'));
-    fireEvent.click(within(dialog).getByRole('combobox', { name: '趋势 Agent 筛选' }));
+    await waitFor(() => expect(api.getPersonalSummary).toHaveBeenCalledWith('7d', { agent: undefined, model: undefined }));
+    expect(api.getFilterOptions).toHaveBeenCalledWith('7d');
+    expect(within(dialog).queryByText('仅筛选趋势图')).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Agent 筛选' }));
     fireEvent.click(within(dialog).getByRole('option', { name: 'cursor' }));
     expect(await within(dialog).findByText('没有符合筛选的记录')).toBeInTheDocument();
+    await waitFor(() => expect(api.getPersonalSummary).toHaveBeenCalledWith('7d', { agent: 'cursor', model: undefined }));
+    await waitFor(() => expect(api.getAgentBreakdowns).toHaveBeenCalledWith('7d', { agent: 'cursor', model: undefined }));
+    await waitFor(() => expect(api.getPersonalSkills).toHaveBeenCalledWith('7d', { agent: 'cursor' }));
     fireEvent.click(within(dialog).getByRole('button', { name: /重置筛选/ }));
     await waitFor(() => expect(within(dialog).queryByText('没有符合筛选的记录')).not.toBeInTheDocument());
     expect(api.getPersonalSummary).toHaveBeenCalled();
+  });
+
+  it('applies the selected harness and model to cards and agent mix, and drops a selection that leaves the range', async () => {
+    renderOverlay('/leaderboard');
+    const summaryFor = (tokens: string, linesSupported = true) => ({
+      range: { key: 'today', from: '2026-09-19', to: '2026-09-19', timezone: 'Asia/Shanghai' },
+      metrics: {
+        estimatedCost: { amount: '1.00', currency: 'USD', supported: true },
+        totalTokens: { value: tokens, supported: true },
+        generatedCodeLines: { value: linesSupported ? '40' : null, supported: linesSupported },
+        tokensPerCodeLine: { value: linesSupported ? '10' : null, supported: linesSupported },
+        inputContextTokens: { value: tokens, supported: true },
+        outputTokens: { value: '20', supported: true },
+        cacheHitRate: { value: '0.5', supported: true },
+        activeDurationMs: { value: linesSupported ? '1000' : null, supported: linesSupported },
+        messageCount: { value: linesSupported ? '8' : null, supported: linesSupported },
+        userMessageCount: { value: linesSupported ? '3' : null, supported: linesSupported },
+      },
+      ranking: { rank: 6, delta: 4, percentile: 80 },
+      sync: { lastCommittedAt: new Date().toISOString(), pendingLocalCount: 0 },
+      aggregationVersion: 2,
+    });
+    vi.mocked(api.getFilterOptions).mockImplementation(async (range) => {
+      if (range === '30d') return { agents: ['codex'], providers: [], models: ['claude-sonnet'] };
+      return { agents: ['codex', 'cursor'], providers: [], models: ['gpt-5.4'] };
+    });
+    vi.mocked(api.getPersonalSummary).mockImplementation(async (_range, filter) => {
+      if (filter?.model === 'gpt-5.4') return summaryFor('800', false);
+      if (filter?.agent === 'cursor') return summaryFor('2400');
+      return summaryFor('1120000');
+    });
+    vi.mocked(api.getAgentBreakdowns).mockImplementation(async (_range, filter) => {
+      if (filter?.agent === 'cursor' || filter?.model === 'gpt-5.4') {
+        return { items: [{ key: 'cursor', label: 'Cursor', tokenTotal: '2400', percentage: 100 }], aggregationVersion: 1 };
+      }
+      return {
+        items: [
+          { key: 'codex', label: 'Codex', tokenTotal: '580000', percentage: 52 },
+          { key: 'cursor', label: 'Cursor', tokenTotal: '2400', percentage: 48 },
+        ],
+        aggregationVersion: 1,
+      };
+    });
+    vi.mocked(api.getPersonalSkills).mockImplementation(async (_range, filter) => ({
+      skills: [{ skillId: 'sk_1', skillPublicName: filter?.agent === 'cursor' ? 'cursor-skill' : 'codex-review', useCount: '4', activeDays: 1 }],
+      aggregationVersion: 1,
+    }));
+    vi.mocked(api.getTokenTrends).mockImplementation(async (params) => ({
+      points: [{ date: '2026-09-19 23:00', tokenTotal: params.model === 'gpt-5.4' ? '800' : params.agent === 'cursor' ? '2400' : '1120000' }],
+      granularity: 'hour',
+    }));
+
+    fireEvent.click(screen.getByRole('button', { name: '个人数据' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Test Dev，你的创造正在发生。' });
+    await waitFor(() => expect(api.getFilterOptions).toHaveBeenCalledWith('today'));
+    expect(within(dialog).queryByText('仅筛选趋势图')).not.toBeInTheDocument();
+    expect(within(dialog).queryByText('Chart filters only')).not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('combobox', { name: '模型筛选' }));
+    expect(within(dialog).getByRole('option', { name: 'gpt-5.4' })).toBeInTheDocument();
+    expect(within(dialog).queryByRole('option', { name: 'claude-sonnet' })).not.toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('option', { name: '全部模型' }));
+
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Agent 筛选' }));
+    fireEvent.click(within(dialog).getByRole('option', { name: 'cursor' }));
+    expect((await within(dialog).findAllByText('2.4K')).length).toBeGreaterThan(0);
+    expect(within(dialog).getByText('cursor-skill')).toBeInTheDocument();
+    expect(within(dialog).getAllByText('Cursor').length).toBeGreaterThan(0);
+    expect(within(dialog).queryByText('Codex')).not.toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole('combobox', { name: '模型筛选' }));
+    fireEvent.click(within(dialog).getByRole('option', { name: 'gpt-5.4' }));
+    expect((await within(dialog).findAllByText('不按模型拆分')).length).toBeGreaterThan(0);
+    await waitFor(() => expect(api.getPersonalSummary).toHaveBeenCalledWith('today', { agent: 'cursor', model: 'gpt-5.4' }));
+    await waitFor(() => expect(api.getAgentBreakdowns).toHaveBeenCalledWith('today', { agent: 'cursor', model: 'gpt-5.4' }));
+    expect(within(dialog).getAllByText('800').length).toBeGreaterThan(0);
+
+    vi.mocked(api.getPersonalSummary).mockClear();
+    fireEvent.click(within(dialog).getByRole('button', { name: '近 30 天' }));
+    await waitFor(() => expect(api.getPersonalSummary).toHaveBeenCalledWith('30d', { agent: undefined, model: undefined }));
+    const rangedCalls = vi.mocked(api.getPersonalSummary).mock.calls.filter((call) => call[0] === '30d');
+    expect(rangedCalls).toEqual([['30d', { agent: undefined, model: undefined }]]);
+    expect(within(dialog).getByRole('combobox', { name: 'Agent 筛选' })).toHaveTextContent('全部 Agent');
+    expect(within(dialog).getByRole('combobox', { name: '模型筛选' })).toHaveTextContent('全部模型');
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Agent 筛选' }));
+    expect(within(dialog).queryByRole('option', { name: 'cursor' })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole('option', { name: 'codex' })).toBeInTheDocument();
   });
 
   it('keeps export on the overlay and shows an error state when summary fails', async () => {

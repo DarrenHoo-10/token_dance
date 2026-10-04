@@ -2018,7 +2018,7 @@ func (m *MemoryStore) ClearTeamAvatar(ctx context.Context, teamID, actorUserID s
 }
 
 func memAnalysisKey(teamID string, from, to time.Time, authRevision uint64, ruleVersion, timezone string) string {
-	return teamID + "|" + domain.FormatTeamCalendarDate(from, timezone) + "|" + domain.FormatTeamCalendarDate(to, timezone) + "|" +
+	return teamID + "|" + from.UTC().Format(time.RFC3339) + "|" + to.UTC().Format(time.RFC3339) + "|" +
 		strconv.FormatUint(authRevision, 10) + "|" + ruleVersion
 }
 
@@ -2026,7 +2026,7 @@ func (m *MemoryStore) ListStaticDayMetrics(ctx context.Context, teamID string, f
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	fromKey := domain.DayDate(from)
-	toKey := domain.DayDate(toExclusive)
+	toKey := domain.StartOfDay(toExclusive.Add(-time.Nanosecond)).AddDate(0, 0, 1).Format("2006-01-02")
 	byUser := map[string]*domain.TeamUsageContributor{}
 	var contribs []domain.TeamUsageContributor
 	prefix := teamID + "|"
@@ -2057,20 +2057,22 @@ func (m *MemoryStore) ListStaticDayMetrics(ctx context.Context, teamID string, f
 	return rows, contribs, nil
 }
 
-func (m *MemoryStore) EnsureStaticAnalysisHandle(ctx context.Context, teamID string, from, toExclusive time.Time, authRevision, sourceRevision uint64, asOf, now time.Time) (*domain.TeamAnalysisSnapshot, error) {
-	snap, _, err := m.GetOrQueueAnalysis(ctx, teamID, from, toExclusive, authRevision, domain.TeamAnalysisRuleVersion, now)
-	if err != nil {
-		return nil, err
-	}
-	if snap == nil {
-		return nil, memErrTeamNotFound()
-	}
+func (m *MemoryStore) EnsureStaticAnalysisHandle(ctx context.Context, teamID, rangeKey string, from, toExclusive time.Time, authRevision, sourceRevision uint64, asOf, now time.Time) (*domain.TeamAnalysisSnapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	stored := m.teamSnapshots[snap.SnapshotID]
+	team := m.teams[teamID]
+	if team == nil || team.Status != domain.TeamStatusActive {
+		return nil, memErrTeamNotFound()
+	}
+	id := teammetrics.HandleID(teamID, rangeKey, from, toExclusive, authRevision)
+	stored := m.teamSnapshots[id]
 	if stored == nil {
-		stored = snap
-		m.teamSnapshots[snap.SnapshotID] = stored
+		stored = &domain.TeamAnalysisSnapshot{
+			SnapshotID: id, TeamID: teamID, RangeKey: rangeKey, FromDate: from, ToDateExclusive: toExclusive,
+			AuthRevision: authRevision, SourceRevision: sourceRevision, RuleVersion: domain.TeamAnalysisRuleVersion,
+			NextAttemptAt: now, ExpiresAt: now.Add(48 * time.Hour),
+		}
+		m.teamSnapshots[id] = stored
 	}
 	stored.Status = domain.SnapshotReady
 	stored.AsOf = asOf
@@ -2094,8 +2096,7 @@ func (m *MemoryStore) GetOrQueueAnalysis(ctx context.Context, teamID string, fro
 	for _, snap := range m.teamSnapshots {
 		if snap.TeamID == teamID && snap.AuthRevision == authRevision && snap.RuleVersion == ruleVersion &&
 			snap.Status == domain.SnapshotReady && snap.ExpiresAt.After(tNow) &&
-			domain.FormatTeamCalendarDate(snap.FromDate, team.TimezoneName) == domain.FormatTeamCalendarDate(from, team.TimezoneName) &&
-			domain.FormatTeamCalendarDate(snap.ToDateExclusive, team.TimezoneName) == domain.FormatTeamCalendarDate(toExclusive, team.TimezoneName) {
+			snap.FromDate.Equal(from) && snap.ToDateExclusive.Equal(toExclusive) {
 			if best == nil || snap.AsOf.After(best.AsOf) {
 				best = snap
 			}

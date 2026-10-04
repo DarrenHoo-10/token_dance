@@ -49,10 +49,7 @@ function bucketItems(items: AnalysisBucketItem[] | undefined): MixItem[] {
 
 function markContent(kind: MixKind, item: MixItem) {
   if (kind === 'skill') return <Sparkles size={17} />;
-  if (kind === 'harness') {
-    if (/claude code/i.test(item.label)) return '✳';
-    return <HarnessMark agentId={item.id} label={item.label} size="sm" />;
-  }
+  if (kind === 'harness') return <HarnessMark agentId={item.id} label={item.label} size="sm" />;
   return item.label.slice(0, 1).toUpperCase();
 }
 

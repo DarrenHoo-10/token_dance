@@ -21,7 +21,7 @@ export function useTeamAnalysis(input: {
       lastCompleteRange.current = { teamId, range: selectedRange, from: selectedFrom, to: selectedTo };
     }
   }, [teamId, selectedRange, selectedFrom, selectedTo, waitingForDates]);
-  // Draft dates never replace the last complete query. Deep links start with today.
+  // Draft dates never replace the last complete query. Deep links start with the rolling 24-hour period.
   const { range, from, to } = waitingForDates
     ? (lastCompleteRange.current?.teamId === teamId ? lastCompleteRange.current : undefined) || { range: 'today', from: undefined, to: undefined }
     : { range: selectedRange, from: selectedFrom, to: selectedTo };
