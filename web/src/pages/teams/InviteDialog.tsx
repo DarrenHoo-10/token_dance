@@ -6,6 +6,7 @@ import { useLocale } from '@/context/LocaleContext';
 import { useNotification } from '@/context/NotificationContext';
 import { createIdempotencyKey } from './teamUtils';
 import { teamErrorMessage } from './TeamShared';
+import { BackdropDialog } from '@/components/common/BackdropDialog';
 
 interface InviteDialogProps {
   isOpen: boolean;
@@ -108,11 +109,10 @@ export const InviteDialog: React.FC<InviteDialogProps> = ({ isOpen, onClose, tea
   };
 
   return (
-    <dialog
+    <BackdropDialog
       ref={dialogRef}
       className="tw-dialog"
-      onCancel={resetOnClose}
-      onClick={(event) => { if (event.target === event.currentTarget) resetOnClose(); }}
+      onClose={resetOnClose}
       aria-labelledby="team-dialog-title"
     >
       <div className="tw-dialog-inner">
@@ -191,6 +191,6 @@ export const InviteDialog: React.FC<InviteDialogProps> = ({ isOpen, onClose, tea
         {error && <p role="alert" className="tw-form-hint">{error}</p>}
         <p className="tw-preview-hint">{t('teams.invite.previewHint')}</p>
       </div>
-    </dialog>
+    </BackdropDialog>
   );
 };

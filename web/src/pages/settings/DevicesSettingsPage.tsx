@@ -11,6 +11,7 @@ import { EmptyState } from '@/components/states/EmptyState';
 import { api, ApiError } from '@/api/client';
 import { getApiErrorMessage } from '@/i18n';
 import type { CollectorDevice, DeviceBindingChallengeResponse } from '@/types/api';
+import { copyText } from '@/utils/clipboard';
 
 export const DevicesSettingsPage: React.FC = () => {
   const { refreshSession } = useAuth();
@@ -95,11 +96,10 @@ export const DevicesSettingsPage: React.FC = () => {
     }
   };
 
-  const copyCodeToClipboard = () => {
-    if (challenge?.code) {
-      navigator.clipboard.writeText(challenge.code);
-      showToast(t('common.copied'), 'success');
-    }
+  const copyCodeToClipboard = async () => {
+    if (!challenge?.code) return;
+    if (await copyText(challenge.code)) showToast(t('common.copied'), 'success');
+    else showToast(challenge.code, 'info');
   };
 
   if (loading && devices.length === 0) return <LoadingState />;

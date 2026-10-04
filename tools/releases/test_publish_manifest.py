@@ -76,7 +76,12 @@ class PublishTests(unittest.TestCase):
                  'teamIdentifier':None,'credentialStore':'login-keychain','dmg':asset}
         publisher.validate_manifest({'schemaVersion':1,'releases':[release]})
         publisher.validate_macos_build(build,release)
-        for change in [{'notarized':True},{'profile':'debug'},{'credentialStore':'plaintext'},{'branch':'feature/test'},{'dmgNotaryId':'fabricated'}]:
+        signed = {**build,'signingAuthority':'self-signed','signingIdentity':'TokenDance Self-Signed','certificateSha1':'A'*40}
+        publisher.validate_macos_build(signed,release)
+        for change in [{'certificateSha1':None},{'certificateSha1':'not-a-hash'}]:
+            with self.assertRaises(ValueError):
+                publisher.validate_macos_build({**signed,**change},release)
+        for change in [{'notarized':True},{'profile':'debug'},{'credentialStore':'plaintext'},{'branch':'feature/test'},{'dmgNotaryId':'fabricated'},{'signingAuthority':'unknown'}]:
             with self.assertRaises(ValueError):
                 publisher.validate_macos_build({**build,**change},release)
 

@@ -2,11 +2,29 @@ package worker
 
 import (
 	"database/sql"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"tokendance/internal/domain"
+	"tokendance/internal/teammetrics"
 )
+
+func TestTeamExportUsesSameRollingHoursAsDashboard(t *testing.T) {
+	from := time.Date(2026, 9, 28, 10, 0, 0, 0, time.UTC)
+	outside := strconv.FormatInt(from.Add(-time.Hour).UnixMilli(), 10)
+	inside := strconv.FormatInt(from.Add(time.Hour).UnixMilli(), 10)
+	days := []teammetrics.DayRow{
+		{RowKey: "usage", MetricKind: teammetrics.KindUsage, TokenExact: "900", TokenDerived: "0", UsageEventCount: "9",
+			Hourly: []byte(`{"schemaVersion":1,"coverage":"complete","unbucketedTokenTotal":"0","buckets":[{"startMs":"` + outside + `","exact":"600","derived":"0"},{"startMs":"` + inside + `","exact":"300","derived":"0"}]}`)},
+		{RowKey: "cost", MetricKind: teammetrics.KindCost, ReportedCost: "1.00"},
+	}
+	got := clipTeamExportRows(days, from, from.Add(24*time.Hour))
+	if len(got) != 1 || got[0].TokenExact != "300" || got[0].UsageEventCount != "0" {
+		t.Fatalf("export leaked full-day values: %+v", got)
+	}
+}
 
 func TestDecideTeamExportAuthRechecksRoleMembershipAndRevision(t *testing.T) {
 	claim := &teamExportClaim{

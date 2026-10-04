@@ -110,6 +110,7 @@ export const TeamOverviewBoard: React.FC<{
           <div key={label}><span>{label}</span><strong>{value}</strong></div>
         ))}
       </div>
+      {analysis.trendGrain === 'hour' && <p className="tw-muted">{t('teams.overview.hourlyCoverageNote')}</p>}
       {empty ? (
         <section className="tw-card tw-no-data">
           <BarChart3 size={36} />

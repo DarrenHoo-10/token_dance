@@ -763,12 +763,17 @@ pub(crate) async fn authorize_saved_credentials(website: Option<String>) -> Resu
 
 fn authorization_accounts(website: Option<&str>) -> Result<Vec<String>, String> {
     match website {
-        // Recover only the key needed to open the local store. The device seed
-        // and saved session have separate Keychain ACLs and would each prompt.
-        None => Ok(vec![platform_credentials::WAL_KEY_ACCOUNT.to_owned()]),
+        // Items written by a build with a different code identity (every ad-hoc
+        // release) each ask once. Take them together in this one authorization
+        // so the later login does not prompt again; missing items never prompt.
+        None => Ok(vec![
+            platform_credentials::WAL_KEY_ACCOUNT.to_owned(),
+            platform_credentials::DEVICE_SEED_ACCOUNT.to_owned(),
+        ]),
         Some(website) => {
             let origin = account_origin(website)?;
             Ok(vec![
+                platform_credentials::WAL_KEY_ACCOUNT.to_owned(),
                 platform_credentials::DEVICE_SEED_ACCOUNT.to_owned(),
                 session_account(origin.as_str()),
             ])
@@ -1033,17 +1038,20 @@ mod tests {
     use std::net::TcpListener;
 
     #[test]
-    fn startup_authorizes_only_the_key_needed_to_open_the_app() {
+    fn startup_authorizes_the_local_keys_together_and_login_adds_only_the_session() {
         assert_eq!(
             authorization_accounts(None).unwrap(),
-            vec![platform_credentials::WAL_KEY_ACCOUNT]
+            vec![
+                platform_credentials::WAL_KEY_ACCOUNT,
+                platform_credentials::DEVICE_SEED_ACCOUNT
+            ]
         );
         let login = authorization_accounts(Some("https://example.test/token-dance"))
             .unwrap();
-        assert_eq!(login.len(), 2);
-        assert_eq!(login[0], platform_credentials::DEVICE_SEED_ACCOUNT);
+        assert_eq!(login.len(), 3);
+        assert_eq!(login[..2], authorization_accounts(None).unwrap()[..]);
         assert_eq!(
-            login[1],
+            login[2],
             session_account("https://example.test/token-dance/")
         );
     }

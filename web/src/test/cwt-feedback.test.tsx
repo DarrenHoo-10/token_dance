@@ -19,7 +19,7 @@ describe('Product feedback regressions', () => {
     vi.useFakeTimers();
     let resolveOld!: (value: UserProfile) => void;
     const request = vi.spyOn(api, 'getProfile').mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; })).mockResolvedValue(profile);
-    render(<LocaleProvider><NotificationProvider><MemoryRouter><ProfileSettingsPage /></MemoryRouter></NotificationProvider></LocaleProvider>);
+    render(<LocaleProvider><NotificationProvider><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><ProfileSettingsPage /></MemoryRouter></NotificationProvider></LocaleProvider>);
     const signal = request.mock.calls[0][0]!;
     await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
     expect(signal.aborted).toBe(true);

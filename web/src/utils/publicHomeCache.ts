@@ -47,7 +47,16 @@ export function readHomeBoard(key: string): LeaderboardEntry[] | null {
   return value as LeaderboardEntry[];
 }
 
-export function writeHomeBoard(key: string, entries: LeaderboardEntry[]) {
+// The board only requests the top entries, so the real participant count is stored beside them.
+export function readHomeBoardTotal(key: string): number | null {
+  const value = read(`${key}:total`);
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+export function writeHomeBoard(key: string, entries: LeaderboardEntry[], totalParticipants?: number | null) {
+  if (typeof totalParticipants === 'number' && Number.isSafeInteger(totalParticipants) && totalParticipants >= 0) {
+    write(`${key}:total`, totalParticipants);
+  }
   // Explicit projection prevents accidental persistence of ownEntry or future private fields.
   write(key, entries.slice(0, 100).map(({ rankNo, handle, displayName, avatarUrl, metricValue, rankDelta, isNew }) =>
     ({ rankNo, handle, displayName, avatarUrl, metricValue, rankDelta, isNew })));

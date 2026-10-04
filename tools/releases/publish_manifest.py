@@ -96,10 +96,13 @@ def validate_macos_build(build, release):
                 or not str(build.get('signingAuthority', '')).startswith('Developer ID Application:')
                 or not all(isinstance(build.get(key), str) and re.fullmatch(r'[a-fA-F0-9-]{36}', build[key]) for key in ('appNotaryId','dmgNotaryId'))):
             raise ValueError('Notarized release requires Developer ID and both notarization records')
-    elif (build.get('distribution') != 'unnotarized' or build.get('signingAuthority') != 'adhoc'
+    elif (build.get('distribution') != 'unnotarized'
+            or build.get('signingAuthority') not in ('adhoc', 'self-signed')
+            or (build['signingAuthority'] == 'self-signed'
+                and not re.fullmatch(r'[A-F0-9]{40}', str(build.get('certificateSha1'))))
             or build.get('credentialStore') != 'login-keychain' or build.get('teamIdentifier') is not None
             or build.get('appNotaryId') is not None or build.get('dmgNotaryId') is not None):
-        raise ValueError('Free distribution must explicitly identify its ad-hoc signature and login Keychain')
+        raise ValueError('Free distribution must explicitly identify its ad-hoc or self-signed signature and login Keychain')
 
 
 def release_assets(release):

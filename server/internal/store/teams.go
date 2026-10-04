@@ -31,19 +31,19 @@ type CreateTeamTxInput struct {
 }
 
 type CreateTeamTxResult struct {
-	Outcome    TeamsTxOutcome
-	Context    *domain.TeamContext
-	Receipt    *domain.TeamCommandReceipt
+	Outcome TeamsTxOutcome
+	Context *domain.TeamContext
+	Receipt *domain.TeamCommandReceipt
 }
 
 type CreateInvitationTxInput struct {
-	ActorUserID   string
-	TeamID        string
-	InvitedRole   domain.TeamBaseRole
-	Invitation    domain.TeamInvitation
-	Outbox        domain.EmailOutbox
-	Idempotency   TeamsIdempotency
-	Now           time.Time
+	ActorUserID string
+	TeamID      string
+	InvitedRole domain.TeamBaseRole
+	Invitation  domain.TeamInvitation
+	Outbox      domain.EmailOutbox
+	Idempotency TeamsIdempotency
+	Now         time.Time
 }
 
 type CreateInvitationTxResult struct {
@@ -122,12 +122,12 @@ type UpdateSharingTxInput struct {
 }
 
 type ChangeMemberRoleTxInput struct {
-	ActorUserID         string
-	TeamID              string
-	MembershipID        string
-	NewRole             domain.TeamBaseRole
+	ActorUserID          string
+	TeamID               string
+	MembershipID         string
+	NewRole              domain.TeamBaseRole
 	ExpectedAuthRevision uint64
-	Now                 time.Time
+	Now                  time.Time
 }
 
 type RemoveMemberTxInput struct {
@@ -174,12 +174,12 @@ type QueueTeamExportTxInput struct {
 }
 
 type UpdateTeamProfileTxInput struct {
-	ActorUserID             string
-	TeamID                  string
-	Name                    *string
-	Description             *string
-	ExpectedProfileVersion  uint64
-	Now                     time.Time
+	ActorUserID            string
+	TeamID                 string
+	Name                   *string
+	Description            *string
+	ExpectedProfileVersion uint64
+	Now                    time.Time
 }
 
 type TeamsStore interface {
@@ -226,7 +226,7 @@ type TeamsStore interface {
 	GetReadySnapshot(ctx context.Context, teamID, snapshotID string) (*domain.TeamAnalysisSnapshot, error)
 	ListAnalysisRows(ctx context.Context, snapshotID string, generation uint64) ([]domain.TeamAnalysisRow, error)
 	ListStaticDayMetrics(ctx context.Context, teamID string, from, toExclusive time.Time) ([]domain.TeamAnalysisRow, []domain.TeamUsageContributor, error)
-	EnsureStaticAnalysisHandle(ctx context.Context, teamID string, from, toExclusive time.Time, authRevision, sourceRevision uint64, asOf, now time.Time) (*domain.TeamAnalysisSnapshot, error)
+	EnsureStaticAnalysisHandle(ctx context.Context, teamID, rangeKey string, from, toExclusive time.Time, authRevision, sourceRevision uint64, asOf, now time.Time) (*domain.TeamAnalysisSnapshot, error)
 	ClaimAnalysis(ctx context.Context, workerID string, lease time.Duration, now time.Time) (*domain.TeamAnalysisSnapshot, error)
 	PublishAnalysis(ctx context.Context, snapshotID, leaseToken string, leaseGeneration, capturedAuth, capturedSource, publishedGeneration uint64, now time.Time) error
 	MarkAnalysisFailed(ctx context.Context, snapshotID, leaseToken string, leaseGeneration uint64, errorCode string, now time.Time) error

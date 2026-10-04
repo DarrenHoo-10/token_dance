@@ -68,7 +68,7 @@ fn page(error: &str, nonce: &str, authorize: bool, auto_test: bool) -> String {
         .replace(
             "__HINT__",
             if authorize {
-                "点击后按系统提示允许访问；macOS 可能要求输入登录钥匙串密码。"
+                "点击后按系统提示允许访问；macOS 可能要求输入登录钥匙串密码。升级后只需这一次，之后更新不再询问。"
             } else {
                 "无需关闭应用，重试结果会显示在这里。"
             },

@@ -29,6 +29,7 @@ export const TeamLayout: React.FC = () => {
   const location = useLocation();
   const [inviteOpen, setInviteOpen] = useState(Boolean((location.state as { openInvite?: boolean } | null)?.openInvite));
   const [pageError, setPageError] = useState<ApiError | null>(null);
+  const [retryToken, setRetryToken] = useState(0);
   const [faces, setFaces] = useState<TeamMember[]>([]);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
 
@@ -54,7 +55,7 @@ export const TeamLayout: React.FC = () => {
         setPageError(err instanceof ApiError ? err : new ApiError(500, { code: 'UNKNOWN', messageKey: 'errors.unknown' }));
       });
     return () => controller.abort();
-  }, [applyScope, authenticated, navigate, refresh, scope?.team.id, teamId]);
+  }, [applyScope, authenticated, navigate, refresh, retryToken, scope?.team.id, teamId]);
 
   useEffect(() => {
     if (!authenticated || !teamId || !scope || scope.team.id !== teamId) return;
@@ -68,7 +69,7 @@ export const TeamLayout: React.FC = () => {
   if (authLoading) return <LoadingState />;
   if (!authenticated) return <UnauthorizedState />;
   if (loading && !scope) return <LoadingState />;
-  if (pageError) return <ErrorState error={pageError} description={teamErrorMessage(t, pageError)} onRetry={() => void refresh()} />;
+  if (pageError) return <ErrorState error={pageError} description={teamErrorMessage(t, pageError)} onRetry={() => { setPageError(null); setRetryToken((n) => n + 1); }} />;
   if (!scope || !teamId || scope.team.id !== teamId) return <LoadingState />;
 
   const { team, permissions } = scope;
@@ -153,7 +154,7 @@ export const TeamLayout: React.FC = () => {
 
       <div className="tw-footer">
         <span>
-          <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2.png`} alt="" />
+          <img src={`${import.meta.env.BASE_URL}logo-tokendance-v2-128.png`} alt="" />
           TokenDance <i>/</i> BETTER TOGETHER
         </span>
         <span>{t('teams.footerTag')}</span>

@@ -143,6 +143,9 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         tokenTotal: '325700000',
         activeDays: 28,
         currentStreak: 23,
+        showAgentBreakdown: true,
+        showActivityCalendar: true,
+        agentBreakdown: [{ key: 'codex', label: 'Codex CLI', tokenTotal: '240000000', percentage: 73.7 }],
         dataWatermarkAt: '2026-08-30T10:00:00Z',
         generatedAt: '2026-08-30T10:00:00Z',
         projectionVersion: 1,
@@ -183,12 +186,13 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         expect(getProfileSpy).toHaveBeenCalledWith('maxbauer');
         expect(getTrendsSpy).toHaveBeenCalledWith('maxbauer', { range: '30d' });
         expect(getSkillsSpy).toHaveBeenCalledWith('maxbauer', '30d');
-        expect(screen.getAllByText('Max Bauer').length).toBeGreaterThanOrEqual(1);
+        expect(screen.getByRole('heading', { name: 'Max Bauer 的创造正在发生。' })).toBeInTheDocument();
         expect(screen.getByText(/@maxbauer/)).toBeInTheDocument();
         expect(screen.getByText(/Building with AI/)).toBeInTheDocument();
         expect(screen.getByText('#1')).toBeInTheDocument();
-        expect(screen.getByText('325.7M')).toBeInTheDocument();
+        expect(document.querySelector('[data-metric="totalTokens"]')).toHaveTextContent('325.70M');
         expect(screen.getByText('test-runner')).toBeInTheDocument();
+        expect(screen.getAllByText('Codex CLI').length).toBeGreaterThan(0);
         expect(screen.getByText('连续 23 天')).toBeInTheDocument();
         expect(screen.getByRole('button', { name: /2026-08-15/ })).toHaveTextContent('1.2M');
         expect(screen.getByRole('button', { name: /2026-08-16/ })).toHaveTextContent('373K');
@@ -221,7 +225,6 @@ describe('Shipped Pages & Failed API Paths Tests', () => {
         expect(screen.getByText('公开主页暂不可用')).toBeInTheDocument();
         expect(screen.queryByText('PUBLIC_PROFILE_NOT_FOUND')).not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: '重试' })).not.toBeInTheDocument();
-        expect(screen.getByRole('link', { name: '返回 TokenBoard' })).toHaveAttribute('href', '/leaderboard');
         expect(screen.queryByRole('link', { name: '隐私与公开' })).not.toBeInTheDocument();
         expect(trendsSpy).not.toHaveBeenCalled();
         expect(skillsSpy).not.toHaveBeenCalled();

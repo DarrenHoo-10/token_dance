@@ -17,6 +17,7 @@ import { useTeam } from '@/context/TeamContext';
 import { createIdempotencyKey, formatDecimalAmount, formatDotDate, formatTokenCompact, metricDisplay } from './teamUtils';
 import { AnalysisSkeleton, MemberAvatar, memberContributionState, teamErrorMessage, useTeamSearchFilters } from './TeamShared';
 import { useTeamAnalysis } from './useTeamAnalysis';
+import { BackdropDialog } from '@/components/common/BackdropDialog';
 
 type MemberTab = 'joined' | 'pending' | 'links';
 
@@ -298,7 +299,7 @@ export const TeamMembersPage: React.FC = () => {
       )}
 
       {detail && (
-        <dialog className="tw-dialog" open onCancel={closeDetail} onClick={(event) => { if (event.target === event.currentTarget) closeDetail(); }} aria-labelledby="member-drawer-title">
+        <BackdropDialog className="tw-dialog" open onClose={closeDetail} aria-labelledby="member-drawer-title">
           <div className="tw-dialog-inner">
             <button type="button" className="icon-button tw-dialog-close" onClick={closeDetail} autoFocus aria-label={t('common.close')}><X size={20} /></button>
             <div className="tw-member-detail-id">
@@ -323,11 +324,11 @@ export const TeamMembersPage: React.FC = () => {
               ))}
             </div>
           </div>
-        </dialog>
+        </BackdropDialog>
       )}
 
       {removeTarget && (
-        <dialog className="tw-dialog" open onCancel={() => setRemoveTarget(null)} onClick={(event) => { if (event.target === event.currentTarget) setRemoveTarget(null); }}>
+        <BackdropDialog className="tw-dialog" open onClose={() => setRemoveTarget(null)}>
           <div className="tw-dialog-inner">
             <h2>{t('teams.members.removeTitle')}</h2>
             <p className="tw-dialog-lead">{t('teams.members.removeDesc', { name: removeTarget.displayName })}</p>
@@ -347,7 +348,7 @@ export const TeamMembersPage: React.FC = () => {
               </button>
             </div>
           </div>
-        </dialog>
+        </BackdropDialog>
       )}
 
     </section>

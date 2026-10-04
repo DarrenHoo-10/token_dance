@@ -6,7 +6,7 @@ import (
 )
 
 // TeamAnalysisRuleVersion invalidates snapshots and exports built under older disclosure rules.
-const TeamAnalysisRuleVersion = "6"
+const TeamAnalysisRuleVersion = "7"
 
 const (
 	TeamIDPrefix           = "tem_"
@@ -316,6 +316,7 @@ type TeamUsageContributor struct {
 type TeamAnalysisSnapshot struct {
 	SnapshotID          string         `json:"id"`
 	TeamID              string         `json:"teamId"`
+	RangeKey            string         `json:"-"`
 	FromDate            time.Time      `json:"fromDate"`
 	ToDateExclusive     time.Time      `json:"toDateExclusive"`
 	AuthRevision        uint64         `json:"authRevision"`
