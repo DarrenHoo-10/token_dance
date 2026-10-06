@@ -77,6 +77,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "adapter-droid"
+version = "0.1.0"
+dependencies = [
+ "adapter-sdk",
+ "async-trait",
+ "protocol",
+ "serde_json",
+]
+
+[[package]]
 name = "adapter-grok-build"
 version = "0.1.0"
 dependencies = [
@@ -624,6 +634,7 @@ dependencies = [
  "adapter-cursor",
  "adapter-deepseek-harness",
  "adapter-doubao-work",
+ "adapter-droid",
  "adapter-grok-build",
  "adapter-opencode",
  "adapter-pi",
@@ -4762,7 +4773,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tokendance-desktop"
-version = "0.1.58"
+version = "0.1.59"
 dependencies = [
  "acquisition",
  "adapter-codex",

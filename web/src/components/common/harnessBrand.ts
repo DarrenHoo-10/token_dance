@@ -28,6 +28,7 @@ const KNOWN: Record<string, KnownHarness> = {
   pi: { color: '#4D9ABF', markBg: '#FFF8F1', markFg: '#111', border: '#E8E0D6' },
   workbuddy: { color: '#01C886', markBg: '#01C886', markFg: '#fff' },
   'doubao-work': { color: '#1E37FC', markBg: '#F4F6FF', markFg: '#1E37FC', border: '#D6DCF8' },
+  droid: { color: '#7C3AED', markBg: '#7C3AED', markFg: '#fff' },
 };
 
 const ALIASES: Record<string, string> = {
@@ -56,6 +57,9 @@ const ALIASES: Record<string, string> = {
   'work-buddy': 'workbuddy',
   'doubao-work': 'doubao-work',
   doubao: 'doubao-work',
+  droid: 'droid',
+  'factory-droid': 'droid',
+  factory: 'droid',
 };
 
 export function normalizeHarnessKey(value?: string | null): string {

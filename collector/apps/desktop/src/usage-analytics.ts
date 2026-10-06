@@ -25,7 +25,7 @@ export function quotaWindowLabel(window: { label?: string | null; windowMinutes?
 }
 
 export function quotaStatusText(quota: AgentQuota | undefined, zh: boolean): string | null {
-  const names: Record<string, string> = { 'grok-build': 'Grok Build', cursor: 'Cursor', zcode: 'ZCode', codex: 'Codex', 'claude-code': 'Claude', pi: 'Pi', 'deepseek-harness': 'DeepSeek Harness', opencode: 'OpenCode', workbuddy: 'WorkBuddy', 'doubao-work': 'Doubao Work' };
+  const names: Record<string, string> = { 'grok-build': 'Grok Build', cursor: 'Cursor', zcode: 'ZCode', codex: 'Codex', 'claude-code': 'Claude', pi: 'Pi', 'deepseek-harness': 'DeepSeek Harness', opencode: 'OpenCode', workbuddy: 'WorkBuddy', 'doubao-work': 'Doubao Work', droid: 'Droid' };
   const name = names[quota?.agentId ?? ''] ?? quota?.agentId ?? '';
   switch (quota?.status) {
     case 'not_connected': return zh ? `请在 ${name} 登录` : `Sign in to ${name}`;

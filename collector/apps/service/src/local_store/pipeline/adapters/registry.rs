@@ -8,6 +8,7 @@ use super::claude_desktop::ClaudeDesktopStrategy;
 use super::codex::CodexStrategy;
 use super::common::SkillBook;
 use super::cursor::CursorStrategy;
+use super::droid::DroidStrategy;
 use super::jsonl_harness::{JsonlHarnessStrategy, CLAUDE, DEEPSEEK, GROK, PI, WORKBUDDY};
 use super::opencode::OpenCodeStrategy;
 use super::zcode::ZcodeStrategy;
@@ -31,6 +32,7 @@ pub struct AdapterRoots {
     pub pi_sessions: PathBuf,
     pub workbuddy_history: PathBuf,
     pub doubao_history: PathBuf,
+    pub droid_logs: PathBuf,
 }
 
 pub struct HarnessRegistry {
@@ -139,6 +141,10 @@ impl HarnessRegistry {
             skill_allocator,
         )));
         strategy_source_ids.push(None);
+        strategies.push(Box::new(DroidStrategy::new(
+            roots.identity_secret,
+            roots.droid_logs,
+        )));
 
         Self {
             skill_book: book,
