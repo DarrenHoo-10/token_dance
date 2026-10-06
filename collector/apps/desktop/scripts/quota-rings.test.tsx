@@ -19,3 +19,15 @@ describe('Claude quota card', () => {
     expect(container.querySelector('.usage-data-note')).toBeNull();
   });
 });
+
+describe('Quota row without a signed-in plan', () => {
+  it('hides the ring entirely when the agent is not connected', () => {
+    const { container } = render(<QuotaRings zh quota={{ agentId: 'zcode', observedAt, windows: [], status: 'not_connected' }} />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it('still asks for re-login when a signed-in session expires', () => {
+    render(<QuotaRings zh quota={{ agentId: 'zcode', observedAt, windows: [], status: 'auth_required' }} />);
+    expect(screen.getByText('请在 ZCode 重新登录')).toBeTruthy();
+  });
+});
