@@ -5,7 +5,10 @@ import { annualUsage, quotaStale, quotaStatusText, quotaWindowLabel, type AgentQ
 export function QuotaRings({ quota, zh }: { quota?: AgentQuota; zh: boolean }) {
   const status = quotaStatusText(quota, zh);
   if (!quota || (!quota.windows.length && !status)) return null;
-  if (!quota.windows.length || quota.status === 'auth_required' || quota.status === 'not_connected') return <div className="usage-quota-empty"><span className="usage-ring unavailable">—</span><span>{status}</span></div>;
+  // Not signed in to the agent's plan (own API key/model): there is no quota to
+  // watch, so the empty ring and sign-in prompt are noise — hide the row.
+  if (quota.status === 'not_connected' && !quota.windows.length) return null;
+  if (!quota.windows.length || quota.status === 'auth_required') return <div className="usage-quota-empty"><span className="usage-ring unavailable">—</span><span>{status}</span></div>;
   return <><div className="usage-quotas">{quota.windows.map((window, index) => {
     const stale = quotaStale(quota, window.resetsAt);
     const label = quotaWindowLabel(window, zh);
