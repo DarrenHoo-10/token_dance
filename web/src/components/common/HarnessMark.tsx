@@ -87,6 +87,16 @@ const glyphs: Record<string, ReactNode> = {
       <path fill="#1E37FC" d="M17.305 4.961a199.47 199.47 0 01-1.08-1.094c-.202-.213-.398-.419-.586-.622l-1.333-1.378c.151.615.648 2.786.869 5.617 3.288.395 6.185 1.898 7.396 2.8-1.306-1.275-3.475-3.487-5.266-5.323z" />
     </Icon>
   ),
+  droid: (
+    <Icon>
+      <g fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+        <path d="M12 4.6V3" />
+        <path d="M6.8 6.4 5.6 5.2M17.2 6.4l1.2-1.2" />
+        <rect x="4.6" y="7.6" width="14.8" height="9.8" rx="3.2" fill="currentColor" stroke="none" />
+        <path d="M8.4 20.2h7.2" />
+      </g>
+    </Icon>
+  ),
 };
 
 export function HarnessMark({

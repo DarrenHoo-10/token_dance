@@ -132,6 +132,7 @@ use serde_json::json;
 use super::codex::{decode_otlp_cumulative_for_test, CodexStrategy};
 use super::common::SkillBook;
 use super::cursor::CursorStrategy;
+use super::droid::DroidStrategy;
 use super::identity::{fact_key, skill_key, TypedNativeKey};
 use super::jsonl_harness::{JsonlHarnessStrategy, CLAUDE};
 use super::opencode::OpenCodeStrategy;
@@ -249,11 +250,11 @@ fn capability_matrix_throttles_unavailable_streams() {
     assert!(should_throttle("grok-build", "chat-history"));
     assert!(!should_throttle("codex", "sessions-jsonl"));
     assert_eq!(for_harness("zcode").unwrap().streams.len(), 4);
-    assert_eq!(capability::ALL.len(), 10);
+    assert_eq!(capability::ALL.len(), 11);
 }
 
 #[test]
-fn registry_covers_all_ten_harnesses() {
+fn registry_covers_all_eleven_harnesses() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(std::sync::Mutex::new(open_store(1_700_000_000_000)));
     let book = SkillBook::new();
@@ -272,15 +273,14 @@ fn registry_covers_all_ten_harnesses() {
         pi_sessions: dir.path().join("pi"),
         workbuddy_history: dir.path().join("workbuddy"),
         doubao_history: dir.path().join("doubao"),
+        droid_logs: dir.path().join("droid/logs"),
     };
     let desktop_locator = roots.claude_desktop_leveldb.to_string_lossy().into_owned();
     let cli_locator = roots.claude_projects.join("session.jsonl");
     std::fs::create_dir_all(&roots.claude_desktop_leveldb).unwrap();
     let reg = HarnessRegistry::from_roots(roots, alloc);
-    assert_eq!(reg.harness_ids().len(), 10);
-    let desktop = reg
-        .get_for_source("claude-code", &desktop_locator)
-        .unwrap();
+    assert_eq!(reg.harness_ids().len(), 11);
+    let desktop = reg.get_for_source("claude-code", &desktop_locator).unwrap();
     assert!(desktop.owns_source(&desktop_locator));
     let sources = desktop.discover(DiscoveryBudget::default()).unwrap();
     assert_eq!(sources.len(), 1);
@@ -627,7 +627,10 @@ fn cursor_missing_timestamp_uses_previous_or_mtime() {
             .into_bytes(),
         file_mtime_ms: Some(now),
     };
-    let DecodeOutcome::Emit(write_facts) = strategy.decode(&write, &mut code_state, "cursor-code").unwrap() else {
+    let DecodeOutcome::Emit(write_facts) = strategy
+        .decode(&write, &mut code_state, "cursor-code")
+        .unwrap()
+    else {
         panic!("cursor write tool_use must emit code_changed");
     };
     assert!(write_facts.iter().any(|f| {
@@ -1871,7 +1874,10 @@ fn codex_skill_read_checkpoint_privacy_and_replay() {
     let now = beijing_wall_to_utc_ms(2026, 9, 12, 12, 0, 0);
     for (path, expected_public) in [
         ("C:/Users/Fixture/.codex/skills/browser/SKILL.md", "browser"),
-        ("C:/private/project/skills/private-name/SKILL.md", "private-name"),
+        (
+            "C:/private/project/skills/private-name/SKILL.md",
+            "private-name",
+        ),
     ] {
         let names = Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen = names.clone();
@@ -1950,28 +1956,61 @@ fn codex_skill_read_checkpoint_privacy_and_replay() {
 
 #[test]
 fn grok_normalized_input_includes_cache_once() {
- let strategy=JsonlHarnessStrategy::new(super::jsonl_harness::GROK,secret(),PathBuf::from("/tmp"),SkillBook::new(),Arc::new(|_,_|1));
- let record=RawRecord{ordinal:0,byte_start:Some(0),byte_end:Some(200),native_rowid:None,file_mtime_ms:None,payload:json!({"name":"grok_code.token.usage","id":"request-a","timestamp":"2026-09-13T01:00:00Z","tokens":{"input_tokens":100,"output_tokens":10,"cache_read_tokens":90,"total_tokens":110}}).to_string().into_bytes()};
- let mut state=DecoderState::default();
- let DecodeOutcome::Emit(facts)=strategy.decode(&record,&mut state,"/tmp/updates.jsonl").unwrap() else {panic!("missing usage")};
- let fact=facts.iter().find(|f|f.event_type=="model_usage_recorded").unwrap();
- assert_eq!(fact.payload_sections["usage"]["input_context_tokens"],100);
- assert_eq!(fact.payload_sections["usage"]["cache_read_tokens"],90);
- assert_eq!(fact.payload_sections["usage"]["token_total"],110);
- assert_eq!(fact.fact_revision,2);
+    let strategy = JsonlHarnessStrategy::new(
+        super::jsonl_harness::GROK,
+        secret(),
+        PathBuf::from("/tmp"),
+        SkillBook::new(),
+        Arc::new(|_, _| 1),
+    );
+    let record=RawRecord{ordinal:0,byte_start:Some(0),byte_end:Some(200),native_rowid:None,file_mtime_ms:None,payload:json!({"name":"grok_code.token.usage","id":"request-a","timestamp":"2026-09-13T01:00:00Z","tokens":{"input_tokens":100,"output_tokens":10,"cache_read_tokens":90,"total_tokens":110}}).to_string().into_bytes()};
+    let mut state = DecoderState::default();
+    let DecodeOutcome::Emit(facts) = strategy
+        .decode(&record, &mut state, "/tmp/updates.jsonl")
+        .unwrap()
+    else {
+        panic!("missing usage")
+    };
+    let fact = facts
+        .iter()
+        .find(|f| f.event_type == "model_usage_recorded")
+        .unwrap();
+    assert_eq!(fact.payload_sections["usage"]["input_context_tokens"], 100);
+    assert_eq!(fact.payload_sections["usage"]["cache_read_tokens"], 90);
+    assert_eq!(fact.payload_sections["usage"]["token_total"], 110);
+    assert_eq!(fact.fact_revision, 2);
 }
 
 #[test]
 fn codex_model_context_survives_checkpoint_for_pricing() {
- let strategy=CodexStrategy::new(secret(),PathBuf::from("/tmp"),SkillBook::new(),Arc::new(|_,_|1));
- let mut state=DecoderState::default();
- let raw=|ordinal,payload:serde_json::Value|RawRecord{ordinal,byte_start:Some(ordinal*100),byte_end:Some((ordinal+1)*100),native_rowid:None,file_mtime_ms:None,payload:payload.to_string().into_bytes()};
- strategy.decode(&raw(0,json!({"type":"turn_context","timestamp":"2026-09-13T01:00:00Z","payload":{"model":"gpt-5.5"}})),&mut state,"/tmp/session").unwrap();
- let saved=serde_json::to_string(&state.json).unwrap();state.json=serde_json::from_str(&saved).unwrap();
- let result=strategy.decode(&raw(1,json!({"type":"event_msg","timestamp":"2026-09-13T01:00:01Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110}}}})),&mut state,"/tmp/session").unwrap();
- let DecodeOutcome::Emit(facts)=result else {panic!("expected usage")};
- let f=facts.iter().find(|f|f.event_type=="model_usage_recorded").unwrap();
- assert_eq!(f.model_identity,Some(("openai".into(),"gpt-5.5".into())));assert_eq!(f.fact_revision,2);
+    let strategy = CodexStrategy::new(
+        secret(),
+        PathBuf::from("/tmp"),
+        SkillBook::new(),
+        Arc::new(|_, _| 1),
+    );
+    let mut state = DecoderState::default();
+    let raw = |ordinal, payload: serde_json::Value| RawRecord {
+        ordinal,
+        byte_start: Some(ordinal * 100),
+        byte_end: Some((ordinal + 1) * 100),
+        native_rowid: None,
+        file_mtime_ms: None,
+        payload: payload.to_string().into_bytes(),
+    };
+    strategy.decode(&raw(0,json!({"type":"turn_context","timestamp":"2026-09-13T01:00:00Z","payload":{"model":"gpt-5.5"}})),&mut state,"/tmp/session").unwrap();
+    let saved = serde_json::to_string(&state.json).unwrap();
+    state.json = serde_json::from_str(&saved).unwrap();
+    let result=strategy.decode(&raw(1,json!({"type":"event_msg","timestamp":"2026-09-13T01:00:01Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110}}}})),&mut state,"/tmp/session").unwrap();
+    let DecodeOutcome::Emit(facts) = result else {
+        panic!("expected usage")
+    };
+    let f = facts
+        .iter()
+        .find(|f| f.event_type == "model_usage_recorded")
+        .unwrap();
+    assert_eq!(f.model_identity, Some(("openai".into(), "gpt-5.5".into())));
+    assert_eq!(f.fact_revision, 2);
 }
 
 #[test]
@@ -2002,9 +2041,17 @@ fn codex_real_shape_model_context_reaches_priced_store() {
     .unwrap();
 
     // Writer timestamps use the wall clock, so task claiming must use it too.
-    let file=codex_dir.join("s.jsonl");
-    let usage=std::fs::read_to_string(&file).unwrap();
-    std::fs::write(&file,format!("{}\n{}",json!({"type":"turn_context","timestamp":now,"payload":{"model":"gpt-5.5"}}),usage)).unwrap();
+    let file = codex_dir.join("s.jsonl");
+    let usage = std::fs::read_to_string(&file).unwrap();
+    std::fs::write(
+        &file,
+        format!(
+            "{}\n{}",
+            json!({"type":"turn_context","timestamp":now,"payload":{"model":"gpt-5.5"}}),
+            usage
+        ),
+    )
+    .unwrap();
     std::fs::write(dir.path().join("openrouter-prices.json"),r#"{"fetched_at":1789258883,"data":[{"id":"openai/gpt-5.5","pricing":{"prompt":"0.000005","completion":"0.00003"}}]}"#).unwrap();
     let store = PipelineStore::open(dir.path()).unwrap();
     let writer = Arc::new(PipelineWriter::start(store));
@@ -2021,8 +2068,12 @@ fn codex_real_shape_model_context_reaches_priced_store() {
         id
     });
     let mut registry = HarnessRegistry::from_roots(roots, alloc);
-    let model_writer=Arc::clone(&writer);
-    registry.set_model_allocator(Arc::new(move |p,m|model_writer.upsert_model(p,m).map_err(|e|crate::local_store::pipeline::runner::RunnerError::Pipeline(e.to_string()))));
+    let model_writer = Arc::clone(&writer);
+    registry.set_model_allocator(Arc::new(move |p, m| {
+        model_writer
+            .upsert_model(p, m)
+            .map_err(|e| crate::local_store::pipeline::runner::RunnerError::Pipeline(e.to_string()))
+    }));
     let strategy = registry.get("codex").expect("codex");
     let specs = strategy.discover(DiscoveryBudget::new(8, 200)).unwrap();
     assert!(!specs.is_empty());
@@ -2066,10 +2117,15 @@ fn codex_real_shape_model_context_reaches_priced_store() {
 
 #[test]
 fn codex_requests_in_same_turn_have_distinct_replay_stable_keys() {
-    let strategy=CodexStrategy::new(secret(),PathBuf::from("/tmp"),SkillBook::new(),Arc::new(|_,_|1));
+    let strategy = CodexStrategy::new(
+        secret(),
+        PathBuf::from("/tmp"),
+        SkillBook::new(),
+        Arc::new(|_, _| 1),
+    );
     let decode = || {
-        let mut state=DecoderState::default();
-        state.json=json!({"codex_model":"gpt-5.5", "active_turn_id":"one-turn"});
+        let mut state = DecoderState::default();
+        state.json = json!({"codex_model":"gpt-5.5", "active_turn_id":"one-turn"});
         [100_u64,200].into_iter().map(|offset| {
             let record=RawRecord {ordinal:offset,byte_start:Some(offset),byte_end:Some(offset+100),native_rowid:None,file_mtime_ms:None,
                 payload:json!({"type":"event_msg","timestamp":"2026-09-13T01:00:01Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":offset,"output_tokens":10,"total_tokens":offset+10}}}}).to_string().into_bytes()};
@@ -2077,59 +2133,341 @@ fn codex_requests_in_same_turn_have_distinct_replay_stable_keys() {
             facts.into_iter().find(|f|f.event_type=="model_usage_recorded").unwrap()
         }).collect::<Vec<_>>()
     };
-    let first=decode();let replay=decode();
-    assert_ne!(first[0].fact_key,first[1].fact_key);
-    for (a,b) in first.iter().zip(replay.iter()) {assert_eq!(a.fact_key,b.fact_key);assert_eq!(a.event_id,b.event_id);}
+    let first = decode();
+    let replay = decode();
+    assert_ne!(first[0].fact_key, first[1].fact_key);
+    for (a, b) in first.iter().zip(replay.iter()) {
+        assert_eq!(a.fact_key, b.fact_key);
+        assert_eq!(a.event_id, b.event_id);
+    }
 }
 
 #[test]
 fn codex_multiple_user_messages_in_one_turn_do_not_collide() {
-    let strategy=CodexStrategy::new(secret(),PathBuf::from("/tmp"),SkillBook::new(),Arc::new(|_,_|1));
-    let mut state=DecoderState::default();
-    let mut keys=Vec::new();
-    for offset in [100_u64,200] {
+    let strategy = CodexStrategy::new(
+        secret(),
+        PathBuf::from("/tmp"),
+        SkillBook::new(),
+        Arc::new(|_, _| 1),
+    );
+    let mut state = DecoderState::default();
+    let mut keys = Vec::new();
+    for offset in [100_u64, 200] {
         let record=RawRecord {ordinal:offset,byte_start:Some(offset),byte_end:Some(offset+100),native_rowid:None,file_mtime_ms:None,
             payload:json!({"type":"response_item","timestamp":"2026-09-13T01:00:01Z","session_id":"session","turn_id":"turn","payload":{"type":"message","role":"user"}}).to_string().into_bytes()};
-        let DecodeOutcome::Emit(facts)=strategy.decode(&record,&mut state,"stable-session").unwrap() else {panic!("missing activity")};
+        let DecodeOutcome::Emit(facts) = strategy
+            .decode(&record, &mut state, "stable-session")
+            .unwrap()
+        else {
+            panic!("missing activity")
+        };
         keys.push(facts[0].fact_key);
     }
-    assert_ne!(keys[0],keys[1]);
+    assert_ne!(keys[0], keys[1]);
 }
 
 #[test]
 fn codex_fork_skips_inherited_history_across_checkpoints() {
-    let strategy=CodexStrategy::new(secret(),PathBuf::from("/tmp"),SkillBook::new(),Arc::new(|_,_|1));
-    let mut state=DecoderState::default();
-    let raw=|offset,payload:serde_json::Value|RawRecord{ordinal:0,byte_start:Some(offset),byte_end:Some(offset+100),native_rowid:None,file_mtime_ms:None,payload:payload.to_string().into_bytes()};
+    let strategy = CodexStrategy::new(
+        secret(),
+        PathBuf::from("/tmp"),
+        SkillBook::new(),
+        Arc::new(|_, _| 1),
+    );
+    let mut state = DecoderState::default();
+    let raw = |offset, payload: serde_json::Value| RawRecord {
+        ordinal: 0,
+        byte_start: Some(offset),
+        byte_end: Some(offset + 100),
+        native_rowid: None,
+        file_mtime_ms: None,
+        payload: payload.to_string().into_bytes(),
+    };
     strategy.decode(&raw(0,json!({"type":"session_meta","timestamp":"2026-09-13T01:00:00Z","payload":{"id":"child","subagent_history_start_ordinal":3}})),&mut state,"file").unwrap();
     assert!(matches!(strategy.decode(&raw(100,json!({"type":"session_meta","timestamp":"2026-09-13T01:00:00Z","payload":{"id":"parent"}})),&mut state,"file").unwrap(),DecodeOutcome::ContextOnly));
-    state.json=serde_json::from_str(&serde_json::to_string(&state.json).unwrap()).unwrap();
-    let usage=json!({"type":"event_msg","timestamp":"2026-09-13T01:00:01Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}}}});
-    assert!(matches!(strategy.decode(&raw(200,usage.clone()),&mut state,"file").unwrap(),DecodeOutcome::ContextOnly));
-    assert!(matches!(strategy.decode(&raw(300,usage),&mut state,"file").unwrap(),DecodeOutcome::Emit(_)));
-    assert_eq!(state.json["codex_session_id"],"child");
+    state.json = serde_json::from_str(&serde_json::to_string(&state.json).unwrap()).unwrap();
+    let usage = json!({"type":"event_msg","timestamp":"2026-09-13T01:00:01Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10}}}});
+    assert!(matches!(
+        strategy
+            .decode(&raw(200, usage.clone()), &mut state, "file")
+            .unwrap(),
+        DecodeOutcome::ContextOnly
+    ));
+    assert!(matches!(
+        strategy
+            .decode(&raw(300, usage), &mut state, "file")
+            .unwrap(),
+        DecodeOutcome::Emit(_)
+    ));
+    assert_eq!(state.json["codex_session_id"], "child");
 }
 
 #[test]
 fn codex_same_session_rollout_segments_do_not_collide() {
-    let strategy=CodexStrategy::new(secret(),PathBuf::from("/tmp"),SkillBook::new(),Arc::new(|_,_|1));
-    let decode=|path:&str| {
-        let mut state=DecoderState::default();state.json=json!({"codex_session_id":"same-session"});
+    let strategy = CodexStrategy::new(
+        secret(),
+        PathBuf::from("/tmp"),
+        SkillBook::new(),
+        Arc::new(|_, _| 1),
+    );
+    let decode = |path: &str| {
+        let mut state = DecoderState::default();
+        state.json = json!({"codex_session_id":"same-session"});
         let record=RawRecord{ordinal:0,byte_start:Some(100),byte_end:Some(200),native_rowid:None,file_mtime_ms:None,payload:json!({"type":"event_msg","timestamp":"2026-09-13T01:00:00Z","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":10,"total_tokens":10}}}}).to_string().into_bytes()};
-        let DecodeOutcome::Emit(facts)=strategy.decode(&record,&mut state,path).unwrap() else {panic!("missing usage")};facts[0].fact_key
+        let DecodeOutcome::Emit(facts) = strategy.decode(&record, &mut state, path).unwrap() else {
+            panic!("missing usage")
+        };
+        facts[0].fact_key
     };
-    assert_ne!(decode("/sessions/rollout-a.jsonl"),decode("/sessions/rollout-b.jsonl"));
-    assert_eq!(decode("/sessions/rollout-a.jsonl"),decode("/archived_sessions/rollout-a.jsonl"));
+    assert_ne!(
+        decode("/sessions/rollout-a.jsonl"),
+        decode("/sessions/rollout-b.jsonl")
+    );
+    assert_eq!(
+        decode("/sessions/rollout-a.jsonl"),
+        decode("/archived_sessions/rollout-a.jsonl")
+    );
 }
 
 #[test]
 fn workbuddy_provider_data_model_is_allocated_for_pricing() {
-    let mut strategy=JsonlHarnessStrategy::new(super::jsonl_harness::WORKBUDDY,secret(),PathBuf::from("/tmp"),SkillBook::new(),Arc::new(|_,_|1));
-    strategy.set_model_allocator(Arc::new(|_,model|{assert!(model=="hy3" || model=="deepseek-v4.1-flash");Ok(42)}));
-    for model in ["hy3","deepseek-v4.1-flash"] {
+    let mut strategy = JsonlHarnessStrategy::new(
+        super::jsonl_harness::WORKBUDDY,
+        secret(),
+        PathBuf::from("/tmp"),
+        SkillBook::new(),
+        Arc::new(|_, _| 1),
+    );
+    strategy.set_model_allocator(Arc::new(|_, model| {
+        assert!(model == "hy3" || model == "deepseek-v4.1-flash");
+        Ok(42)
+    }));
+    for model in ["hy3", "deepseek-v4.1-flash"] {
         let r=RawRecord{ordinal:0,byte_start:Some(100),byte_end:Some(200),native_rowid:None,file_mtime_ms:None,payload:json!({"id":"request","timestamp":"2026-09-13T01:00:00Z","type":"message","role":"assistant","providerData":{"model":model},"message":{"usage":{"input_tokens":100,"output_tokens":10,"total_tokens":110}}}).to_string().into_bytes()};
-        let DecodeOutcome::Emit(facts)=strategy.decode(&r,&mut DecoderState::default(),"session").unwrap() else {panic!("missing usage")};
-        let f=facts.iter().find(|f|f.event_type=="model_usage_recorded").unwrap();
-        assert_eq!(f.model_key,42);assert_eq!(f.model_identity,Some(("workbuddy".into(),model.into())));assert_eq!(f.fact_revision,2);
+        let DecodeOutcome::Emit(facts) = strategy
+            .decode(&r, &mut DecoderState::default(), "session")
+            .unwrap()
+        else {
+            panic!("missing usage")
+        };
+        let f = facts
+            .iter()
+            .find(|f| f.event_type == "model_usage_recorded")
+            .unwrap();
+        assert_eq!(f.model_key, 42);
+        assert_eq!(f.model_identity, Some(("workbuddy".into(), model.into())));
+        assert_eq!(f.fact_revision, 2);
     }
+}
+
+/// Real model_dimensions ids so committed events satisfy the model_key FK.
+fn droid_model_allocator(
+    store: &mut PipelineStore,
+) -> crate::local_store::pipeline::runner::ModelAllocator {
+    let ids: std::collections::HashMap<String, i64> = [
+        "gemini-3.8-flash",
+        "gpt-6.1-sol",
+        "claude-haiku-4-5-20251001",
+    ]
+    .into_iter()
+    .map(|model| {
+        let id = store.upsert_model("droid", model).expect("model dimension");
+        (model.to_string(), id)
+    })
+    .collect();
+    Arc::new(move |_, model| Ok(ids.get(model).copied().unwrap_or(0)))
+}
+
+const DROID_LOG_FIXTURE: &str =
+    include_str!("../../../../../../adapters/droid/fixtures/contract/droid-log-single.log");
+
+#[test]
+fn droid_streaming_result_lines_emit_exact_per_response_usage() {
+    let now = beijing_wall_to_utc_ms(2026, 10, 6, 23, 0, 0);
+    let dir = tempfile::tempdir().unwrap();
+    let logs = dir.path().join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let log = logs.join("droid-log-single.log");
+    std::fs::write(&log, DROID_LOG_FIXTURE).unwrap();
+    std::fs::write(
+        logs.join("console.log"),
+        "[2026-10-06T10:00:00.000Z] INFO: x | Context: {}\n",
+    )
+    .unwrap();
+
+    let mut store = open_store(now);
+    let mut strategy = DroidStrategy::new(secret(), &logs);
+    strategy.set_model_allocator(droid_model_allocator(&mut store));
+    let specs = strategy.discover(DiscoveryBudget::default()).unwrap();
+    assert_eq!(specs.len(), 1, "only droid-log* files are droid sources");
+    assert_eq!(specs[0].stream_key, "droid-log");
+
+    let source_id = register_source(
+        &mut store,
+        "droid",
+        specs[0].locator_ref.as_str(),
+        "droid-log",
+        SourceKind::Jsonl,
+        r#"{"offset":0}"#,
+        r#"{"last_source_time":null}"#,
+        now,
+    );
+    let sink = StoreSinkMut::new(&mut store);
+    let outcome = run_source_once(
+        &sink,
+        &strategy,
+        source_id,
+        DEFAULT_READ_BUDGET,
+        DEFAULT_LEASE_MS,
+        &[],
+        None,
+    )
+    .unwrap();
+    assert!(matches!(outcome, RunOutcome::Committed(_)), "{outcome:?}");
+    assert_eq!(
+        count_events(&store),
+        4,
+        "one usage fact per streaming result carrying tokens"
+    );
+    let totals: Vec<u64> = store
+        .with_connection(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT json_extract(payload_json,'$.usage.token_total') FROM events \
+                     WHERE event_type='model_usage_recorded' ORDER BY occurred_at",
+                )
+                .map_err(|e| crate::local_store::pipeline::PipelineError::Sqlite(e.to_string()))?;
+            let rows = stmt
+                .query_map([], |r| r.get::<_, u64>(0))
+                .map_err(|e| crate::local_store::pipeline::PipelineError::Sqlite(e.to_string()))?;
+            Ok(rows.map(|r| r.unwrap()).collect())
+        })
+        .unwrap();
+    assert_eq!(totals, vec![13350, 25460, 3350, 42]);
+    assert_eq!(totals.iter().sum::<u64>(), 42202);
+    // Re-read from zero must not double-count.
+    exec_sql(
+        &mut store,
+        "UPDATE collection_sources SET cursor_json=?1, observed_boundary_json=?2",
+        &[&r#"{"offset":0}"#, &r#"{"len":0}"#],
+    );
+    let sink = StoreSinkMut::new(&mut store);
+    run_source_once(
+        &sink,
+        &strategy,
+        source_id,
+        DEFAULT_READ_BUDGET,
+        DEFAULT_LEASE_MS,
+        &[],
+        None,
+    )
+    .unwrap();
+    assert_eq!(count_events(&store), 4, "stable ids dedup re-reads");
+}
+
+#[test]
+fn droid_log_restart_recollects_new_generation_without_duplicates() {
+    let now = beijing_wall_to_utc_ms(2026, 10, 6, 23, 0, 0);
+    let dir = tempfile::tempdir().unwrap();
+    let logs = dir.path().join("logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let log = logs.join("droid-log-single.log");
+    let first_line = DROID_LOG_FIXTURE
+        .lines()
+        .find(|line| line.contains("DR_RESP_CANARY_1"))
+        .unwrap();
+    std::fs::write(&log, format!("{first_line}\n")).unwrap();
+
+    let mut store = open_store(now);
+    let mut strategy = DroidStrategy::new(secret(), &logs);
+    strategy.set_model_allocator(droid_model_allocator(&mut store));
+    let specs = strategy.discover(DiscoveryBudget::default()).unwrap();
+    let source_id = register_source(
+        &mut store,
+        "droid",
+        specs[0].locator_ref.as_str(),
+        "droid-log",
+        SourceKind::Jsonl,
+        r#"{"offset":0}"#,
+        r#"{"last_source_time":null}"#,
+        now,
+    );
+    let sink = StoreSinkMut::new(&mut store);
+    run_source_once(
+        &sink,
+        &strategy,
+        source_id,
+        DEFAULT_READ_BUDGET,
+        DEFAULT_LEASE_MS,
+        &[],
+        None,
+    )
+    .unwrap();
+    assert_eq!(count_events(&store), 1);
+
+    // droid truncates the log on every daemon start; the new generation replays
+    // the same response (stable id) plus a new one.
+    let third_line = DROID_LOG_FIXTURE
+        .lines()
+        .find(|line| line.contains("DR_RESP_CANARY_3"))
+        .unwrap();
+    std::fs::write(&log, format!("{first_line}\n{third_line}\n")).unwrap();
+    let sink = StoreSinkMut::new(&mut store);
+    let outcome = run_source_once(
+        &sink,
+        &strategy,
+        source_id,
+        DEFAULT_READ_BUDGET,
+        DEFAULT_LEASE_MS,
+        &[],
+        None,
+    )
+    .unwrap();
+    assert!(
+        matches!(outcome, RunOutcome::Committed(_)),
+        "shrunken log restarts from zero, got {outcome:?}"
+    );
+    assert_eq!(count_events(&store), 2, "replayed response dedups");
+}
+
+#[test]
+fn droid_usage_attributes_model_and_cache_components() {
+    let mut strategy = DroidStrategy::new(secret(), "/tmp");
+    strategy.set_model_allocator(Arc::new(|_, _| Ok(42)));
+    let line = DROID_LOG_FIXTURE
+        .lines()
+        .find(|line| line.contains("DR_RESP_CANARY_3"))
+        .unwrap();
+    let record = RawRecord {
+        ordinal: 0,
+        byte_start: Some(0),
+        byte_end: Some(line.len() as u64),
+        native_rowid: None,
+        payload: line.as_bytes().to_vec(),
+        file_mtime_ms: Some(1789142400000),
+    };
+    let mut state = DecoderState::default();
+    let DecodeOutcome::Emit(facts) = strategy.decode(&record, &mut state, "log").unwrap() else {
+        panic!("missing usage")
+    };
+    assert_eq!(facts.len(), 1);
+    let fact = &facts[0];
+    assert_eq!(
+        fact.model_identity,
+        Some(("droid".into(), "gpt-6.1-sol".into()))
+    );
+    assert_eq!(fact.model_key, 42);
+    assert!(fact.session_key.is_some());
+    assert_eq!(
+        fact.payload_sections["usage"],
+        json!({
+            "token_total": 3350,
+            "input_context_tokens": 3050,
+            "output_tokens": 300,
+            "cache_read_tokens": 2000,
+            "cache_write_tokens": 50,
+            "reasoning_tokens": 0,
+        })
+    );
+    assert_eq!(fact.accuracy.as_str(), "exact");
 }

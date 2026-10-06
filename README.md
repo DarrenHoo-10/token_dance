@@ -47,6 +47,7 @@ TokenDance 是一款 AI 编程用量统计工具。桌面客户端在本机采�
 | OpenCode | 读取本机 `opencode.db` 中的 Token、AI 交互次数和变更行数 |
 | WorkBuddy / Doubao Work | 检测到本机安装后采集本地会话记录 |
 | Pi / DeepSeek Harness | 可用指标以客户端中的来源状态为准 |
+| Droid (Factory) | 读取本机 droid 日志中的逐次模型用量；日志随 droid 重启清空，仅统计运行期间采集到的部分 |
 
 不同工具能提供的用量、费用和额度信息不同，没有对应数据时不会显示为 0。
 

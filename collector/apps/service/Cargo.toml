@@ -23,6 +23,7 @@ adapter-zcode = { path = "../../adapters/zcode" }
 adapter-opencode = { path = "../../adapters/opencode" }
 adapter-workbuddy = { path = "../../adapters/workbuddy" }
 adapter-doubao-work = { path = "../../adapters/doubao-work" }
+adapter-droid = { path = "../../adapters/droid" }
 collector-core = { path = "../../crates/collector-core" }
 config-executor = { path = "../../crates/config-executor" }
 protocol = { path = "../../crates/protocol" }

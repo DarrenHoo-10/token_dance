@@ -98,6 +98,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "adapter-droid"
+version = "0.1.0"
+dependencies = [
+ "adapter-host",
+ "adapter-sdk",
+ "async-trait",
+ "privacy",
+ "protocol",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "adapter-grok-build"
 version = "0.1.0"
 dependencies = [
@@ -562,6 +575,7 @@ dependencies = [
  "adapter-cursor",
  "adapter-deepseek-harness",
  "adapter-doubao-work",
+ "adapter-droid",
  "adapter-grok-build",
  "adapter-opencode",
  "adapter-pi",

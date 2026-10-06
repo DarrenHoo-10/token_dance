@@ -37,6 +37,8 @@ func agentDisplayName(id string) string {
 		return "WorkBuddy"
 	case "doubao-work":
 		return "Doubao Work"
+	case "droid":
+		return "Droid"
 	default:
 		parts := strings.Split(id, "-")
 		for i, p := range parts {

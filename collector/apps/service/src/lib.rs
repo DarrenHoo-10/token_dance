@@ -15,8 +15,8 @@ pub use detect::{
     EnumeratedSourceKind,
 };
 pub use grok_hook::{
-    decode_pending_session_ends, grok_sessions_root, grok_user_home, start_listener, take_hook_frames,
-    GrokHookInbox,
+    decode_pending_session_ends, grok_sessions_root, grok_user_home, start_listener,
+    take_hook_frames, GrokHookInbox,
 };
 pub use platform::{AppPaths, InstanceLock, PathResolver};
 pub use runtime::{collect_decoded, collect_tick, CollectReport, LocalCollectOutcome};
@@ -54,10 +54,11 @@ pub enum OfficialAgent {
     OpenCode,
     WorkBuddy,
     DoubaoWork,
+    Droid,
 }
 
 impl OfficialAgent {
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Codex,
         Self::ClaudeCode,
         Self::GrokBuild,
@@ -68,6 +69,7 @@ impl OfficialAgent {
         Self::OpenCode,
         Self::WorkBuddy,
         Self::DoubaoWork,
+        Self::Droid,
     ];
 }
 
@@ -177,6 +179,7 @@ pub struct OfficialAdapters {
     pub opencode: Arc<dyn AgentAdapter>,
     pub workbuddy: Arc<dyn AgentAdapter>,
     pub doubao_work: Arc<dyn AgentAdapter>,
+    pub droid: Arc<dyn AgentAdapter>,
 }
 
 impl OfficialAdapters {
@@ -195,6 +198,7 @@ impl OfficialAdapters {
             opencode: opencode_adapter(snapshot.get(OfficialAgent::OpenCode), hmac_key),
             workbuddy: workbuddy_adapter(snapshot.get(OfficialAgent::WorkBuddy), hmac_key),
             doubao_work: doubao_work_adapter(snapshot.get(OfficialAgent::DoubaoWork), hmac_key),
+            droid: droid_adapter(snapshot.get(OfficialAgent::Droid), hmac_key),
         })
     }
 
@@ -210,6 +214,7 @@ impl OfficialAdapters {
             self.opencode,
             self.workbuddy,
             self.doubao_work,
+            self.droid,
         ]
     }
 }
@@ -332,6 +337,16 @@ fn pi_adapter(detection: Option<&AgentDetection>, key: &[u8]) -> Arc<dyn AgentAd
     }
 }
 
+fn droid_adapter(detection: Option<&AgentDetection>, key: &[u8]) -> Arc<dyn AgentAdapter> {
+    match detection {
+        Some(item) => Arc::new(adapter_droid::DroidAdapter::for_version(
+            item.version.clone(),
+            key.to_vec(),
+        )),
+        None => Arc::new(adapter_droid::DroidAdapter::undetected(key.to_vec())),
+    }
+}
+
 fn opencode_adapter(detection: Option<&AgentDetection>, key: &[u8]) -> Arc<dyn AgentAdapter> {
     let installed = detection.is_some();
     let detection = detection
@@ -355,7 +370,9 @@ fn workbuddy_adapter(detection: Option<&AgentDetection>, key: &[u8]) -> Arc<dyn 
             item.version.clone(),
             key.to_vec(),
         )),
-        None => Arc::new(adapter_workbuddy::WorkBuddyAdapter::undetected(key.to_vec())),
+        None => Arc::new(adapter_workbuddy::WorkBuddyAdapter::undetected(
+            key.to_vec(),
+        )),
     }
 }
 
@@ -1167,6 +1184,7 @@ pub fn adapter_id(agent: OfficialAgent) -> &'static str {
         OfficialAgent::OpenCode => adapter_opencode::ADAPTER_ID,
         OfficialAgent::WorkBuddy => adapter_workbuddy::ADAPTER_ID,
         OfficialAgent::DoubaoWork => adapter_doubao_work::ADAPTER_ID,
+        OfficialAgent::Droid => adapter_droid::ADAPTER_ID,
     }
 }
 
@@ -1263,7 +1281,7 @@ mod tests {
         )
         .unwrap();
         collector.probe_all().await;
-        assert_eq!(collector.runtimes().len(), 10);
+        assert_eq!(collector.runtimes().len(), 11);
         assert!(collector.runtimes().into_iter().all(|runtime| {
             !runtime.detected
                 && runtime.agent_version.is_none()
@@ -1316,7 +1334,11 @@ mod tests {
                 },
             )
             .with(OfficialAgent::WorkBuddy, AgentDetection::installed("1.0.0"))
-            .with(OfficialAgent::DoubaoWork, AgentDetection::installed("1.0.0"));
+            .with(
+                OfficialAgent::DoubaoWork,
+                AgentDetection::installed("1.0.0"),
+            )
+            .with(OfficialAgent::Droid, AgentDetection::installed("0.234.0"));
         snapshot.configure_source(
             OfficialAgent::Cursor,
             "cursor-personal-local",
@@ -1362,6 +1384,14 @@ mod tests {
             adapter_doubao_work::HISTORY_SOURCE_ID,
             DetectedSourceConfig {
                 path: Some(PathBuf::from("doubao-work-session.jsonl")),
+                ..DetectedSourceConfig::default()
+            },
+        );
+        snapshot.configure_source(
+            OfficialAgent::Droid,
+            adapter_droid::LOG_SOURCE_ID,
+            DetectedSourceConfig {
+                path: Some(PathBuf::from("droid-log-single.log")),
                 ..DetectedSourceConfig::default()
             },
         );

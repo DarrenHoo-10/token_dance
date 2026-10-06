@@ -212,8 +212,18 @@ pub const DOUBAO: HarnessCapability = HarnessCapability {
     ],
 };
 
+pub const DROID: HarnessCapability = HarnessCapability {
+    harness_id: "droid",
+    streams: &[StreamCapability {
+        stream_key: "droid-log",
+        level: CapabilityLevel::Available,
+        reason_code: None,
+        poll_interval_ms: None,
+    }],
+};
+
 pub const ALL: &[&HarnessCapability] = &[
-    &CODEX, &CLAUDE, &CURSOR, &ZCODE, &OPENCODE, &GROK, &DEEPSEEK, &PI, &WORKBUDDY, &DOUBAO,
+    &CODEX, &CLAUDE, &CURSOR, &ZCODE, &OPENCODE, &GROK, &DEEPSEEK, &PI, &WORKBUDDY, &DOUBAO, &DROID,
 ];
 
 pub fn for_harness(harness_id: &str) -> Option<&'static HarnessCapability> {

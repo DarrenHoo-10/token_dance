@@ -58,6 +58,7 @@ fn detect_from_resolver(resolver: &PathResolver) -> DetectionSnapshot {
     detect_opencode(resolver, &mut snapshot);
     detect_workbuddy(resolver, &mut snapshot);
     detect_doubao_work(resolver, &mut snapshot);
+    detect_droid(home, &mut snapshot);
     snapshot
 }
 
@@ -523,6 +524,31 @@ fn detect_pi(home: &Path, snapshot: &mut DetectionSnapshot) {
             adapter_pi::HISTORY_SOURCE_ID,
             DetectedSourceConfig {
                 path: Some(sessions),
+                ..DetectedSourceConfig::default()
+            },
+        );
+    }
+}
+
+fn detect_droid(home: &Path, snapshot: &mut DetectionSnapshot) {
+    let root = home.join(".factory");
+    if !root.is_dir() {
+        return;
+    }
+    // droid persists its own startup version as plain text.
+    let version = fs::read_to_string(root.join("state").join("last-startup-version"))
+        .ok()
+        .map(|text| text.trim().trim_start_matches('v').to_string())
+        .filter(|version| !version.is_empty())
+        .unwrap_or_else(|| "0".into());
+    snapshot.insert(OfficialAgent::Droid, AgentDetection::installed(version));
+    let logs = root.join("logs");
+    if logs.is_dir() {
+        snapshot.configure_source(
+            OfficialAgent::Droid,
+            adapter_droid::LOG_SOURCE_ID,
+            DetectedSourceConfig {
+                path: Some(logs),
                 ..DetectedSourceConfig::default()
             },
         );

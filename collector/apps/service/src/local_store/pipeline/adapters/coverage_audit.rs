@@ -11,7 +11,17 @@ use std::{
 };
 
 fn probe(strategy: &dyn HarnessStrategy, label: &str, records: Vec<Value>, sqlite: bool) {
-    let count = records.len();
+    let payloads = records.iter().map(|v| v.to_string().into_bytes()).collect();
+    probe_payloads(strategy, label, payloads, sqlite);
+}
+
+fn probe_payloads(
+    strategy: &dyn HarnessStrategy,
+    label: &str,
+    payloads: Vec<Vec<u8>>,
+    sqlite: bool,
+) {
+    let count = payloads.len();
     assert!(count > 0, "empty audit fixture {label}");
     let mut state = DecoderState {
         version: 1,
@@ -20,13 +30,13 @@ fn probe(strategy: &dyn HarnessStrategy, label: &str, records: Vec<Value>, sqlit
     let mut events = BTreeMap::<String, u64>::new();
     let (mut context, mut ignored, mut errors, mut tokens, mut skills_success, mut skills_failure) =
         (0, 0, 0, 0, 0, 0);
-    for (i, v) in records.iter().enumerate() {
+    for (i, payload) in payloads.iter().enumerate() {
         let row = RawRecord {
             ordinal: i as u64,
             byte_start: Some(i as u64),
             byte_end: Some(i as u64 + 1),
             native_rowid: sqlite.then_some(i as i64 + 1),
-            payload: v.to_string().into_bytes(),
+            payload: payload.clone(),
             file_mtime_ms: Some(1789142400000),
         };
         match strategy.decode(&row, &mut state, "audit-fixture") {
@@ -66,6 +76,7 @@ fn probe(strategy: &dyn HarnessStrategy, label: &str, records: Vec<Value>, sqlit
         ("pi", "known.json") => Some((9018, 0)),
         ("pi", "errors.json") => Some((310, 0)),
         ("workbuddy" | "doubao-work", "known.json") => Some((100, 0)),
+        ("droid", "droid-log-single.log") => Some((42202, 0)),
         ("zcode", "actual-sql-projection") => Some((12, 1)),
         ("opencode", "actual-sql-projection") => Some((46, 1)),
         _ => None,
@@ -169,6 +180,21 @@ fn audit_all_harness_native_formats() {
         for file in files {
             probe(&strategy, file, fixture(&root, dir, file), false);
         }
+    }
+    {
+        let droid_log = std::fs::read_to_string(
+            root.join("droid")
+                .join("fixtures/contract")
+                .join("droid-log-single.log"),
+        )
+        .unwrap();
+        let payloads = droid_log
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| line.as_bytes().to_vec())
+            .collect();
+        let strategy = droid::DroidStrategy::new(secret.clone(), "unused");
+        probe_payloads(&strategy, "droid-log-single.log", payloads, false);
     }
     let cursor = cursor::CursorStrategy::new(
         secret.clone(),

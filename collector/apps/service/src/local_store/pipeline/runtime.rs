@@ -553,9 +553,7 @@ impl PipelineRuntime {
         let _lifecycle = self.lifecycle.write().map_err(|_| "pipeline lifecycle")?;
         let status = self
             .writer
-            .rebuild(super::reconstruction::RebuildAction::Begin(
-                version.into(),
-            ))
+            .rebuild(super::reconstruction::RebuildAction::Begin(version.into()))
             .map_err(|e| e.to_string())?;
         *self.queue.lock().expect("source queue") = WorkQueue::default();
         *self.discovery.lock().expect("discovery") = DiscoveryState::default();
@@ -622,6 +620,8 @@ pub fn adapter_roots_from_detection(
             .unwrap_or_else(|| home.join(".workbuddy")),
         doubao_history: source_path(detection, OfficialAgent::DoubaoWork)
             .unwrap_or_else(|| home.join(".doubao-work")),
+        droid_logs: source_path(detection, OfficialAgent::Droid)
+            .unwrap_or_else(|| home.join(".factory").join("logs")),
     }
 }
 
@@ -678,6 +678,7 @@ pub fn adapter_roots_for_fixture(identity_secret: Vec<u8>, root: &Path) -> Adapt
         pi_sessions: root.join("pi"),
         workbuddy_history: root.join("workbuddy"),
         doubao_history: root.join("doubao"),
+        droid_logs: root.join("droid/logs"),
     }
 }
 

@@ -1,0 +1,4 @@
+[
+  {"versionRange": ">=0.1.0 <1.0.0", "sessionFormatVersion": 1, "source_kind": "jsonl_tail", "schema_fingerprint": "droid daemon log: '[RFC3339Z] LEVEL: [Agent] Streaming result | Context: {json}' per LLM response with inputTokens/outputTokens/cacheReadInputTokens/cachedTokensWritten/reasoningTokens and tags.modelId/tags.sessionId", "eventSchemaHash": "sha256:8f1c2a3b4d5e6f70-droid-v1", "capabilities": ["tokens", "sessions"], "test_fixture_version": "1", "result": "supported"},
+  {"versionRange": ">=1.0.0", "source_kind": "jsonl_tail", "schema_fingerprint": "unverified", "eventSchemaHash": "sha256:unknown-droid", "capabilities": ["tokens"], "test_fixture_version": "1", "result": "degraded"}
+]

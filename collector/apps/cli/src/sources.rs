@@ -11,7 +11,7 @@ pub struct Source {
     pub agent: OfficialAgent,
 }
 
-pub const ALL: [Source; 10] = [
+pub const ALL: [Source; 11] = [
     Source {
         name: "codex",
         agent: OfficialAgent::Codex,
@@ -52,6 +52,10 @@ pub const ALL: [Source; 10] = [
         name: "doubao-work",
         agent: OfficialAgent::DoubaoWork,
     },
+    Source {
+        name: "droid",
+        agent: OfficialAgent::Droid,
+    },
 ];
 
 pub fn find(name: &str) -> Option<&'static Source> {
@@ -75,6 +79,7 @@ pub fn override_root(roots: &mut AdapterRoots, name: &str, path: PathBuf) {
         "opencode" => roots.opencode_db = path,
         "workbuddy" => roots.workbuddy_history = path,
         "doubao-work" => roots.doubao_history = path,
+        "droid" => roots.droid_logs = path,
         _ => {}
     }
 }
@@ -92,6 +97,7 @@ pub fn effective_path(roots: &AdapterRoots, name: &str) -> Option<PathBuf> {
         "opencode" => roots.opencode_db.clone(),
         "workbuddy" => roots.workbuddy_history.clone(),
         "doubao-work" => roots.doubao_history.clone(),
+        "droid" => roots.droid_logs.clone(),
         _ => return None,
     })
 }
