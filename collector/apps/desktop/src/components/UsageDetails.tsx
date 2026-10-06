@@ -14,8 +14,10 @@ export function QuotaRings({ quota, zh }: { quota?: AgentQuota; zh: boolean }) {
     const hours = remaining == null ? 0 : Math.ceil(remaining / 3600000);
     const reset = remaining === null ? (zh ? '重置时间未知' : 'Reset time unknown') : remaining === 0 ? (zh ? '等待更新' : 'Awaiting update') : days > 1 ? (zh ? `${days} 天后重置` : `Resets in ${days}d`) : (zh ? `${hours} 小时后重置` : `Resets in ${hours}h`);
     const showReset = quota.agentId !== 'claude-code' || remaining !== null;
+    const used = Math.min(100, Math.max(0, window.usedPercent));
+    const remainingPercent = Math.round(100 - used);
     return <div className={`usage-quota ${stale ? 'stale' : ''}`} key={index}>
-      <div className={`usage-ring ${!stale && window.usedPercent >= 80 ? 'warning' : ''}`} style={{ '--used': Math.min(100, Math.max(0, window.usedPercent)) } as CSSProperties} role="img" aria-label={`${label}: ${window.usedPercent}% ${zh ? '已用' : 'used'}${stale ? (zh ? '，待更新' : ', stale') : ''}`}><b>{Math.round(window.usedPercent)}%</b></div>
+      <div className={`usage-ring ${!stale && used >= 80 ? 'warning' : ''}`} style={{ '--value': 100 - used } as CSSProperties} role="img" aria-label={`${label}: ${remainingPercent}% ${zh ? '剩余' : 'remaining'}${stale ? (zh ? '，待更新' : ', stale') : ''}`}><b>{remainingPercent}%</b></div>
       <span>{window.provider ? `${window.provider} · ` : ''}{label}{showReset && <small>{stale ? (zh ? '待更新 · ' : 'Stale · ') : ''}{reset}</small>}</span>
     </div>;
   })}</div>{status && <p className="usage-data-note" role="status">{status}</p>}</>;
