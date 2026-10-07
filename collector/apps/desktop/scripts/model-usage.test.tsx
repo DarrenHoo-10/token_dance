@@ -11,7 +11,8 @@ const models = [1, 4, 2, 3].map(n => ({
 it('shows the top three models, expands all, and collapses back to three', () => {
   const { container } = render(<ModelUsageList models={models} range="today" zh />);
   expect([...container.querySelectorAll('.usage-model-name')].map(el => el.textContent)).toEqual(['model-4', 'model-3', 'model-2']);
-  expect(container.querySelector('details')?.open).toBe(true);
+  expect(container.querySelector('details')?.open).toBe(false);
+  (container.querySelector('details') as HTMLDetailsElement).open = true;
   fireEvent.click(screen.getByRole('button', { name: '展开全部 (4)' }));
   expect(screen.getByText('model-1')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: '收起' }));
