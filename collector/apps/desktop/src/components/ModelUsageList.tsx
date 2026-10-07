@@ -10,7 +10,7 @@ export function ModelUsageList({ models = [], range, zh }: { models?: ModelUsage
   if (!ranked.length) return null;
   const visible = expanded ? ranked : ranked.slice(0, 3);
   const format = new Intl.NumberFormat('en', { maximumFractionDigits: 2, notation: 'compact' });
-  return <details className="usage-models" open>
+  return <details className="usage-models">
     <summary>{zh ? '模型用量' : 'Model usage'}</summary>
     <ul>{visible.map(model => <li key={model.modelKey}>
       <span className="usage-model-name" title={model.providerId ? `${model.providerId} / ${model.modelId}` : model.modelId}>{model.modelId || (zh ? '未知模型' : 'Unknown model')}</span>
