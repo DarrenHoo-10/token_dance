@@ -51,6 +51,8 @@
 .settings-inline-link { margin-top:6px; font-size:11px; color:#375e00; text-decoration:underline; }
 html[data-platform="macos"] .settings-page .usage-window-controls .usage-minimize,
 html[data-platform="macos"] .settings-page .usage-window-controls .usage-close { display:none; }
+/* Windows reaches the usage panel with a tray left-click, so settings has no back-to-monitor button. */
+html:not([data-platform="macos"]) .settings-page .settings-monitor-button { display:none; }
 html[data-platform="macos"] .settings-header { padding-left:86px; -webkit-app-region:drag; app-region:drag; user-select:none; cursor:default; }
 html[data-platform="macos"] .settings-header button,
 html[data-platform="macos"] .settings-header a,
