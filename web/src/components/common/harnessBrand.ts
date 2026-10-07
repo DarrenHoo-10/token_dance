@@ -28,7 +28,7 @@ const KNOWN: Record<string, KnownHarness> = {
   pi: { color: '#4D9ABF', markBg: '#FFF8F1', markFg: '#111', border: '#E8E0D6' },
   workbuddy: { color: '#01C886', markBg: '#01C886', markFg: '#fff' },
   'doubao-work': { color: '#1E37FC', markBg: '#F4F6FF', markFg: '#1E37FC', border: '#D6DCF8' },
-  droid: { color: '#7C3AED', markBg: '#7C3AED', markFg: '#fff' },
+  droid: { color: '#7C3AED', markBg: '#020202', markFg: '#FAFAFA' },
 };
 
 const ALIASES: Record<string, string> = {
