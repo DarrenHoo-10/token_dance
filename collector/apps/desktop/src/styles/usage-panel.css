@@ -19,6 +19,9 @@ html[data-platform="macos"] .usage-brand img{width:28px;height:28px}
 .usage-source-row>strong{margin-left:auto}.usage-source-row>small+strong{margin-left:0}
 
 .usage-models{margin-top:12px;padding-top:10px;border-top:1px solid var(--usage-line);font-size:11px;color:var(--usage-muted)}
+/* Inside an other-source row the name row's own border is the only separator;
+   a second line here plus a flush-left block made the model list read as detached. */
+.usage-other-source .usage-models{margin-top:0;padding:2px 0 10px 12px;border-top:0}
 .usage-models summary{cursor:pointer;font-weight:500;width:fit-content;padding:2px 0}
 .usage-models ul{list-style:none;margin:7px 0 0;padding:0}
 .usage-models li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:5px 0}
