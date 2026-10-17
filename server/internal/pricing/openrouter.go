@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -90,10 +91,24 @@ func (c *Client) Load(ctx context.Context) (Catalog, time.Time, error) {
 // Explicit runtime aliases. Unknown variants are deliberately not fuzzy-matched.
 var aliases = map[string]string{"grok-4.6-build": "x-ai/grok-4.6", "grok-4.7-build-fast": "x-ai/grok-4.7", "gemini-3.7-flash-high": "google/gemini-3.7-flash", "claude-opus-4-6-thinking": "anthropic/claude-opus-4.6"}
 
+var anthropicDashedID = regexp.MustCompile(`^claude-([a-z]+)-(\d{1,2})-(\d{1,2})$`)
+
+// Anthropic-native ids use dashes (claude-sonnet-5-5); OpenRouter uses dots.
+func anthropicDottedID(name string) (string, bool) {
+	m := anthropicDashedID.FindStringSubmatch(name)
+	if m == nil {
+		return "", false
+	}
+	return "anthropic/claude-" + m[1] + "-" + m[2] + "." + m[3], true
+}
+
 func (c Catalog) Match(name string) (Model, bool) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	if alias, ok := aliases[name]; ok {
 		name = alias
+	}
+	if dotted, ok := anthropicDottedID(name); ok {
+		name = dotted
 	}
 	var candidate Model
 	count := 0
