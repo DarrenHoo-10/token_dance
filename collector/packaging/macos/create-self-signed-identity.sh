@@ -6,9 +6,12 @@
 # a Keychain "Always Allow" given once keeps working. It is not a Developer ID,
 # is not notarized, and does not change Gatekeeper behaviour for downloads.
 #
-# The private key never leaves this machine; do not export or commit it. Keep
-# using the same certificate for every release: replacing it changes the app's
-# identity and users are asked to approve Keychain access once more.
+# CI release builds install a GitHub secret-backed copy of this same identity
+# (MACOS_SELFSIGNED_P12_BASE64, MACOS_SELFSIGNED_P12_PASSWORD, and
+# MACOS_SELFSIGNED_CERT_SHA1). Do not commit the private key or print those
+# secrets. Keep using the same certificate for every release: replacing it
+# changes the app's identity and users are asked to approve Keychain access
+# once more.
 set -euo pipefail
 
 name="${1:-TokenDance Self-Signed}"

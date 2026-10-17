@@ -397,8 +397,136 @@ jobs:
           grep -F 'BLOCKED: DEVELOPER_ID_APPLICATION signing identity is missing' "$work_dir/blocked.log"
       - name: Adapter Pack tests
         run: cargo test --locked --manifest-path collector/packaging/adapter-pack/Cargo.toml
+      - name: Install self-signed macOS signing identity
+        if: github.event_name == 'workflow_dispatch' && inputs.unnotarized_macos_release
+        env:
+          MACOS_SELFSIGNED_P12_BASE64: ${{ secrets.MACOS_SELFSIGNED_P12_BASE64 }}
+          MACOS_SELFSIGNED_P12_PASSWORD: ${{ secrets.MACOS_SELFSIGNED_P12_PASSWORD }}
+          MACOS_SELFSIGNED_CERT_SHA1: ${{ secrets.MACOS_SELFSIGNED_CERT_SHA1 }}
+        run: |
+          set -euo pipefail
+          : "${MACOS_SELFSIGNED_P12_BASE64:?BLOCKED: MACOS_SELFSIGNED_P12_BASE64 is missing}"
+          : "${MACOS_SELFSIGNED_P12_PASSWORD:?BLOCKED: MACOS_SELFSIGNED_P12_PASSWORD is missing}"
+          : "${MACOS_SELFSIGNED_CERT_SHA1:?BLOCKED: MACOS_SELFSIGNED_CERT_SHA1 is missing}"
+          keychain="$RUNNER_TEMP/tokendance-selfsigned.keychain-db"
+          keychain_password="$(uuidgen)"
+          p12_path="$RUNNER_TEMP/tokendance-selfsigned.p12"
+          modern_p12="$RUNNER_TEMP/tokendance-selfsigned-modern.p12"
+          material="$RUNNER_TEMP/tokendance-selfsigned-material.pem"
+          cert_path="$RUNNER_TEMP/tokendance-selfsigned.pem"
+          password_path="$RUNNER_TEMP/tokendance-selfsigned.keychain-password"
+          trusted=0
+          cleanup() {
+            status="$1"
+            rm -f "$p12_path" "$modern_p12" "$material" "$cert_path" || true
+            if [[ "$status" -ne 0 ]]; then
+              security delete-keychain "$keychain" >/dev/null 2>&1 || true
+              rm -f "$password_path" || true
+              if [[ "$trusted" -eq 1 ]]; then
+                sudo security delete-certificate -c "TokenDance Self-Signed" /Library/Keychains/System.keychain >/dev/null 2>&1 || true
+              fi
+            fi
+            exit "$status"
+          }
+          trap 'cleanup $?' EXIT
+          umask 077
+          python3 - "$p12_path" <<'PY'
+          import base64
+          import os
+          import sys
+          with open(sys.argv[1], "wb") as output:
+              output.write(base64.b64decode(os.environ["MACOS_SELFSIGNED_P12_BASE64"], validate=True))
+          os.chmod(sys.argv[1], 0o600)
+          PY
+          # A self-signed cert is omitted from `find-identity -v` until it is trusted.
+          # User-keychain trust prompts on a headless runner, so trust the cert into the
+          # System keychain. OpenSSL 3 needs -legacy to read this PBE-SHA1-3DES p12.
+          import_identity() {
+            local p12="$1"
+            local log
+            security delete-keychain "$keychain" >/dev/null 2>&1 || true
+            security create-keychain -p "$keychain_password" "$keychain" || return 1
+            security set-keychain-settings -lut 21600 "$keychain" || return 1
+            security unlock-keychain -p "$keychain_password" "$keychain" || return 1
+            security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db" || return 1
+            if ! log="$(security import "$p12" -k "$keychain" -P "$MACOS_SELFSIGNED_P12_PASSWORD" -f pkcs12 -T /usr/bin/codesign -T /usr/bin/security 2>&1)"; then
+              printf '%s\n' "$log" >&2
+              return 1
+            fi
+            printf '%s\n' "$log"
+            security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" || return 1
+            security find-identity -p codesigning "$keychain" | grep -F '"TokenDance Self-Signed"' >/dev/null || return 1
+          }
+          if ! import_identity "$p12_path"; then
+            echo 'PKCS#12 import did not yield TokenDance Self-Signed; converting legacy PBE-SHA1-3DES and retrying.' >&2
+            legacy_args=""
+            if openssl version 2>/dev/null | grep -q 'OpenSSL 3'; then
+              legacy_args="-legacy"
+            fi
+            # shellcheck disable=SC2086
+            openssl pkcs12 $legacy_args -in "$p12_path" -passin env:MACOS_SELFSIGNED_P12_PASSWORD -nodes -out "$material"
+            if ! openssl pkcs12 -export -in "$material" -passout env:MACOS_SELFSIGNED_P12_PASSWORD \
+              -keypbe AES-256-CBC -certpbe AES-256-CBC -macalg SHA256 -out "$modern_p12"; then
+              openssl pkcs12 -export -in "$material" -passout env:MACOS_SELFSIGNED_P12_PASSWORD -out "$modern_p12"
+            fi
+            rm -f "$material"
+            import_identity "$modern_p12" || exit 1
+          fi
+          security find-certificate -c "TokenDance Self-Signed" -p "$keychain" > "$cert_path"
+          if [[ ! -s "$cert_path" ]]; then
+            echo 'BLOCKED: imported identity has no TokenDance Self-Signed certificate' >&2
+            exit 1
+          fi
+          fingerprint="$(openssl x509 -in "$cert_path" -fingerprint -sha1 -noout)"
+          FINGERPRINT="$fingerprint" python3 - <<'PY'
+          import os
+          import re
+          import sys
+          expected = re.sub(r"[\s:]", "", os.environ["MACOS_SELFSIGNED_CERT_SHA1"]).upper()
+          actual = re.sub(r"[\s:]", "", os.environ["FINGERPRINT"].split("=", 1)[-1]).upper()
+          if not re.fullmatch(r"[0-9A-F]{40}", expected):
+              print("BLOCKED: MACOS_SELFSIGNED_CERT_SHA1 is not 40 hex characters", file=sys.stderr)
+              sys.exit(1)
+          if actual != expected:
+              print(f"BLOCKED: imported certificate SHA1 {actual} does not match MACOS_SELFSIGNED_CERT_SHA1", file=sys.stderr)
+              sys.exit(1)
+          PY
+          sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$cert_path"
+          trusted=1
+          echo "TOKENDANCE_SELFSIGNED_TRUSTED=1" >> "$GITHUB_ENV"
+          listing="$(security find-identity -v -p codesigning)"
+          LISTING="$listing" python3 - <<'PY'
+          import os
+          import re
+          import sys
+          expected = re.sub(r"[\s:]", "", os.environ["MACOS_SELFSIGNED_CERT_SHA1"]).upper()
+          name = "TokenDance Self-Signed"
+          found = []
+          for line in os.environ.get("LISTING", "").splitlines():
+              match = re.fullmatch(r'\s*\d+\)\s+([A-Fa-f0-9]{40})\s+"([^"]+)"(?:\s+\(.*\))?\s*', line)
+              if match and match.group(2) == name:
+                  found.append(match.group(1).upper())
+          if found != [expected]:
+              print("BLOCKED: find-identity -v does not list TokenDance Self-Signed with the expected SHA1", file=sys.stderr)
+              print(os.environ.get("LISTING", ""), file=sys.stderr)
+              sys.exit(1)
+          print(f"Installed {name} ({found[0]})")
+          PY
+          echo "TOKENDANCE_SIGNING_IDENTITY=TokenDance Self-Signed" >> "$GITHUB_ENV"
+          echo "TOKENDANCE_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          printf '%s' "$keychain_password" > "$password_path"
       - name: Build macOS app for selected architecture
         run: |
+          if [[ "${{ github.event_name }}" == workflow_dispatch && "${{ inputs.unnotarized_macos_release }}" == true ]]; then
+            keychain="${TOKENDANCE_SIGNING_KEYCHAIN:-$RUNNER_TEMP/tokendance-selfsigned.keychain-db}"
+            password_path="$RUNNER_TEMP/tokendance-selfsigned.keychain-password"
+            if [[ ! -f "$password_path" ]]; then
+              echo 'BLOCKED: self-signed keychain was not prepared' >&2
+              exit 1
+            fi
+            security unlock-keychain -p "$(cat "$password_path")" "$keychain" || exit 1
+            security list-keychains -d user -s "$keychain" "$HOME/Library/Keychains/login.keychain-db" || exit 1
+          fi
           build_args=("${{ matrix.architecture }}" --no-install)
           if [[ "$BUILD_PROFILE" == debug ]]; then build_args+=(--debug); fi
           if [[ "${{ inputs.sign_release }}" == true ]]; then build_args+=(--notarized); else build_args+=(--unnotarized); fi
@@ -413,6 +541,36 @@ jobs:
           cp -R "$native_app" collector/packaging/macos/release/TokenDance.app
           cp "collector/apps/desktop/release/build-info-${{ matrix.architecture }}.json" collector/packaging/macos/release/build-info.json
           cat collector/packaging/macos/release/build-info.json >> "$GITHUB_STEP_SUMMARY"
+      - name: Assert free macOS release is self-signed
+        if: github.event_name == 'workflow_dispatch' && inputs.unnotarized_macos_release
+        env:
+          MACOS_SELFSIGNED_CERT_SHA1: ${{ secrets.MACOS_SELFSIGNED_CERT_SHA1 }}
+        run: |
+          set -euo pipefail
+          : "${MACOS_SELFSIGNED_CERT_SHA1:?BLOCKED: MACOS_SELFSIGNED_CERT_SHA1 is missing}"
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import sys
+          path = "collector/packaging/macos/release/build-info.json"
+          with open(path, encoding="utf-8") as handle:
+              info = json.load(handle)
+          expected = re.sub(r"[\s:]", "", os.environ["MACOS_SELFSIGNED_CERT_SHA1"]).upper()
+          actual = re.sub(r"[\s:]", "", str(info.get("certificateSha1") or "")).upper()
+          if not re.fullmatch(r"[0-9A-F]{40}", expected):
+              print("BLOCKED: MACOS_SELFSIGNED_CERT_SHA1 is not 40 hex characters", file=sys.stderr)
+              sys.exit(1)
+          if info.get("signingAuthority") != "self-signed" or actual != expected:
+              print(
+                  "BLOCKED: build-info.json expected signingAuthority=self-signed "
+                  f"and certificateSha1={expected}, got signingAuthority={info.get('signingAuthority')!r} "
+                  f"certificateSha1={actual or None!r}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          print(f"build-info.json signingAuthority=self-signed certificateSha1={actual}")
+          PY
       - name: Recovery window starts without production credentials
         if: env.BUILD_PROFILE == 'debug' && matrix.architecture == 'arm64'
         run: |
@@ -531,3 +689,20 @@ jobs:
             collector/packaging/macos/release/tokendance-desktop-macos-unsigned.zip
             collector/packaging/macos/release/build-info.json
           if-no-files-found: error
+      - name: Remove temporary self-signed keychain
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.unnotarized_macos_release
+        run: |
+          set -euo pipefail
+          keychain="${TOKENDANCE_SIGNING_KEYCHAIN:-$RUNNER_TEMP/tokendance-selfsigned.keychain-db}"
+          if [[ -e "$keychain" ]]; then
+            security delete-keychain "$keychain" >/dev/null 2>&1 || true
+          fi
+          if [[ "${TOKENDANCE_SELFSIGNED_TRUSTED:-}" == "1" ]]; then
+            sudo security delete-certificate -c "TokenDance Self-Signed" /Library/Keychains/System.keychain >/dev/null 2>&1 || true
+          fi
+          rm -f \
+            "$RUNNER_TEMP/tokendance-selfsigned.p12" \
+            "$RUNNER_TEMP/tokendance-selfsigned-modern.p12" \
+            "$RUNNER_TEMP/tokendance-selfsigned-material.pem" \
+            "$RUNNER_TEMP/tokendance-selfsigned.pem" \
+            "$RUNNER_TEMP/tokendance-selfsigned.keychain-password"

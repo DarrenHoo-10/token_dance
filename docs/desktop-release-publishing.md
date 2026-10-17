@@ -121,9 +121,9 @@ npm --prefix collector/apps/desktop run build:macos -- arm64 --unnotarized --no-
 npm --prefix collector/apps/desktop run build:macos -- x86_64 --unnotarized --no-install
 ```
 
-默认不传签名选项时同样走未公证分发。`--notarized` 才启用下文的付费签名、公证流程；两个选项不能同时使用。CI 手动运行 `cross-platform-packaging` 时选择 `main`，勾选 `unnotarized_macos_release`，不要同时勾选 `sign_release`。此路径不会读取任何 Apple 发布 secrets。
+默认不传签名选项时同样走未公证分发。`--notarized` 才启用下文的付费签名、公证流程；两个选项不能同时使用。CI 手动运行 `cross-platform-packaging` 时选择 `main`，勾选 `unnotarized_macos_release`，不要同时勾选 `sign_release`。此路径不读取 Developer ID 或公证 secrets，只读取自签名身份 secrets。
 
-**一次性准备签名身份。** 在构建 DMG 的 Mac 上运行 `bash collector/packaging/macos/create-self-signed-identity.sh`，会在登录钥匙串创建自签名代码签名证书 `TokenDance Self-Signed`（需要输入一次登录密码）。之后 `build:macos --unnotarized` 自动用它签名，所有版本保持同一代码身份，用户在钥匙串里点过一次“始终允许”后，更新不再重新询问。私钥只留在这台机器，不要导出、提交或放进 CI；换证书等于换身份，用户需再允许一次。找不到该证书时回退 ad-hoc 并打印警告，ad-hoc 构建每个版本身份都变，升级后会让用户逐条重新授权钥匙串。环境变量 `TOKENDANCE_SIGNING_IDENTITY` 可指定其他名称（找不到则失败），设为 `adhoc` 强制 ad-hoc；不接受 Apple 签发的身份。CI 没有该证书，仍是 ad-hoc。
+**一次性准备签名身份。** 本地构建机运行 `bash collector/packaging/macos/create-self-signed-identity.sh`，在登录钥匙串创建自签名代码签名证书 `TokenDance Self-Signed`（需要输入一次登录密码）。CI 的 `unnotarized_macos_release` 把同一身份的 GitHub secret 副本（`MACOS_SELFSIGNED_P12_BASE64`、`MACOS_SELFSIGNED_P12_PASSWORD`、`MACOS_SELFSIGNED_CERT_SHA1`）导入临时钥匙串，并信任为代码签名根。之后 `build:macos --unnotarized` 用它签名，所有版本保持同一代码身份，用户在钥匙串里点过一次“始终允许”后，更新不再重新询问。不要把私钥提交进仓库或打印到日志；换证书等于换身份，用户需再允许一次。本地非发布构建找不到该证书时回退 ad-hoc 并打印警告。发布和 CI 构建缺少默认身份会以 BLOCKED 失败，不再静默回退；只有显式 `TOKENDANCE_SIGNING_IDENTITY=adhoc` 才允许 ad-hoc。ad-hoc 构建每个版本身份都变，升级后会让用户逐条重新授权钥匙串。环境变量 `TOKENDANCE_SIGNING_IDENTITY` 可指定其他名称（找不到则失败）；不接受 Apple 签发的身份。
 
 输出 `TokenDance-<version>-macos-<architecture>.dmg`、`.dmg.sha256` 和 `.build-info.json`。文件名不编码公证状态；应用使用自签名证书（或回退的 ad-hoc 签名）保证基本包完整性，这不等于 Developer ID 身份认证或 Apple 公证。元数据明确记录 `notarized=false`、`signingAuthority=self-signed`（并带 `certificateSha1`）或 `adhoc`、`credentialStore=login-keychain`；自签名构建会校验指定要求绑定到该证书而非单个二进制哈希。发布器和下载页都保留此标识，禁止把未公证包标为已公证。
 
