@@ -516,18 +516,9 @@ pub fn start_auto_sync(handle: tauri::AppHandle, app: AppState) {
         {
             let mut guard = account.0.lock().await;
             if guard.is_none() {
-                if let Ok(bytes) = fs::read(persist_path()) {
-                    if let Ok(saved) = serde_json::from_slice::<PersistedAccount>(&bytes) {
-                        if saved.expires_at > unix_now() {
-                            if let Ok(origin) = account_origin(&saved.origin) {
-                                if let Ok(mut current) = Connection::new(origin) {
-                                    current.cookies = saved.cookies;
-                                    current.csrf = saved.csrf;
-                                    *guard = Some(current);
-                                }
-                            }
-                        }
-                    }
+                // Keychain access can block on a system prompt; keep it off the runtime.
+                if let Ok(Some(current)) = tokio::task::spawn_blocking(restore_saved_connection).await {
+                    *guard = Some(current);
                 }
             }
         }
@@ -674,6 +665,27 @@ fn load_account(origin: &Url) -> Option<(BTreeMap<String, String>, String)> {
         Err(CredentialError::NotFound) => migrate_legacy_session(origin_s),
         Err(_) => None,
     }
+}
+
+/// Rebuild the logged-in connection at startup. The session lives in the
+/// credential store; the index file only names its origin. The legacy plaintext
+/// file is still honoured so `load_account` can migrate it.
+fn restore_saved_connection() -> Option<Connection> {
+    let origin = fs::read(index_path())
+        .ok()
+        .and_then(|body| serde_json::from_slice::<SessionIndex>(&body).ok())
+        .filter(|index| index.expires_at > unix_now())
+        .map(|index| index.origin)
+        .or_else(|| {
+            let body = fs::read(persist_path()).ok()?;
+            Some(serde_json::from_slice::<PersistedAccount>(&body).ok()?.origin)
+        })?;
+    let origin = account_origin(&origin).ok()?;
+    let (cookies, csrf) = load_account(&origin)?;
+    let mut current = Connection::new(origin).ok()?;
+    current.cookies = cookies;
+    current.csrf = csrf;
+    Some(current)
 }
 
 fn parse_session_secret(secret: &str, origin: &str) -> Option<(BTreeMap<String, String>, String)> {
