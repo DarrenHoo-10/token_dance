@@ -1,6 +1,9 @@
 from pathlib import Path
 import importlib.util
+import os
+import subprocess
 import sys
+import textwrap
 import unittest
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -41,6 +44,42 @@ class UnnotarizedTests(unittest.TestCase):
         self.assertTrue(package.stable_requirement(f'designated => identifier "io.tokendance.desktop" and certificate leaf = H"{sha1.lower()}"', sha1))
         self.assertFalse(package.stable_requirement('designated => cdhash H"abcd"', sha1))
 
+    def test_duplicate_find_identity_lines_are_the_same_certificate(self):
+        sha1 = 'AB' * 20
+        other = 'EF' * 20
+        duplicated = (
+            f'  1) {sha1} "{package.DEFAULT_IDENTITY}"\n'
+            f'  2) {sha1.lower()} "{package.DEFAULT_IDENTITY}"\n'
+            '     2 valid identities found\n'
+        )
+        self.assertEqual(package.find_identity(package.DEFAULT_IDENTITY, duplicated), sha1)
+        self.assertEqual(package.require_identity(package.DEFAULT_IDENTITY, duplicated, sha1), sha1)
+        self.assertEqual(package.require_identity(package.DEFAULT_IDENTITY, duplicated, sha1.lower()), sha1)
+        self.assertEqual(
+            package.require_identity(package.DEFAULT_IDENTITY, duplicated, ':'.join(sha1[i:i + 2] for i in range(0, 40, 2))),
+            sha1,
+        )
+        self.assertEqual(
+            package.select_signing({'CI': 'true', 'GITHUB_ACTIONS': 'true'}, duplicated),
+            (package.DEFAULT_IDENTITY, sha1),
+        )
+        self.assertIsNone(package.find_identity(package.DEFAULT_IDENTITY, '     0 valid identities found\n'))
+        with self.assertRaises(ValueError) as missing:
+            package.require_identity(package.DEFAULT_IDENTITY, '     0 valid identities found\n', sha1)
+        self.assertIn('BLOCKED', str(missing.exception))
+        wrong = f'  1) {other} "{package.DEFAULT_IDENTITY}"\n  2) {other} "{package.DEFAULT_IDENTITY}"\n'
+        self.assertEqual(package.find_identity(package.DEFAULT_IDENTITY, wrong), other)
+        with self.assertRaises(ValueError) as mismatch:
+            package.require_identity(package.DEFAULT_IDENTITY, wrong, sha1)
+        self.assertIn('expected SHA1', str(mismatch.exception))
+        mixed = duplicated + f'  3) {other} "{package.DEFAULT_IDENTITY}"\n'
+        with self.assertRaises(ValueError) as ambiguous:
+            package.require_identity(package.DEFAULT_IDENTITY, mixed, sha1)
+        self.assertIn('More than one', str(ambiguous.exception))
+        with self.assertRaises(ValueError) as malformed:
+            package.require_identity(package.DEFAULT_IDENTITY, duplicated, 'abc')
+        self.assertIn('40 hex', str(malformed.exception))
+
     def test_identity_helper_creates_a_local_codesigning_only_certificate(self):
         script = (ROOT / 'collector/packaging/macos/create-self-signed-identity.sh').read_text()
         self.assertIn('codeSigning', script)
@@ -70,7 +109,40 @@ class UnnotarizedTests(unittest.TestCase):
         self.assertIn('MACOS_SELFSIGNED_CERT_SHA1', workflow)
         self.assertIn('TOKENDANCE_SIGNING_IDENTITY=TokenDance Self-Signed', workflow)
         self.assertIn('sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain', workflow)
+        self.assertIn('package.require_identity(', workflow)
+        self.assertIn('sys.path.insert(0, root)', workflow)
+        self.assertIn('imported certificate SHA1', workflow)
+        self.assertNotIn('found != [expected]', workflow)
         self.assertIn('signingAuthority") != "self-signed"', workflow)
+
+    def test_install_step_accepts_only_the_expected_certificate(self):
+        workflow = (ROOT / '.github/workflows/cross-platform-packaging.yml').read_text()
+        body = workflow.split("LISTING=\"$listing\" python3 - <<'PY'\n", 1)[1].split("\n          PY\n", 1)[0]
+        script = textwrap.dedent(body)
+        sha1 = 'AB' * 20
+        other = 'EF' * 20
+        duplicated = (
+            f'  1) {sha1} "TokenDance Self-Signed"\n'
+            f'  2) {sha1} "TokenDance Self-Signed"\n'
+            '     2 valid identities found\n'
+        )
+        cases = [
+            (duplicated, sha1, 0),
+            ('     0 valid identities found\n', sha1, 1),
+            (f'  1) {other} "TokenDance Self-Signed"\n  2) {other} "TokenDance Self-Signed"\n', sha1, 1),
+            (duplicated + f'  3) {other} "TokenDance Self-Signed"\n', sha1, 1),
+            (duplicated, 'abc', 1),
+        ]
+        for listing, expected, status in cases:
+            env = os.environ.copy()
+            env['LISTING'] = listing
+            env['MACOS_SELFSIGNED_CERT_SHA1'] = expected
+            result = subprocess.run([sys.executable, '-c', script], cwd=ROOT, env=env, capture_output=True, text=True)
+            self.assertEqual(result.returncode, status, result.stderr or result.stdout)
+            if status == 0:
+                self.assertIn(sha1, result.stdout)
+            else:
+                self.assertIn('BLOCKED', result.stderr)
         sign_release = workflow.split('Sign, notarize, staple, and verify bound macOS release artifact', 1)[1]
         self.assertNotIn('MACOS_SELFSIGNED', sign_release.split('Record unsigned build status', 1)[0])
 

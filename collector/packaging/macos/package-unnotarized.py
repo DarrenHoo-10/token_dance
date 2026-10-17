@@ -17,6 +17,9 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+
+# Loaded by path from the repo root in CI; dmg.py is a sibling script.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import dmg
 
 DEFAULT_IDENTITY = 'TokenDance Self-Signed'
@@ -37,13 +40,38 @@ def validate_app(info):
 
 
 def find_identity(name, listing):
-    """SHA-1 of the one valid code-signing identity called `name`, or None."""
+    """SHA-1 of the valid code-signing identity called `name`, or None.
+
+    `security find-identity -v` prints one line per keychain. After the
+    certificate is trusted into the System keychain, the same SHA-1 is listed
+    twice and is still one identity. Distinct hashes stay ambiguous.
+    """
     hashes = [match.group(1).upper() for line in listing.splitlines()
               if (match := re.fullmatch(r'\s*\d+\)\s+([A-Fa-f0-9]{40})\s+"([^"]+)"(?:\s+\(.*\))?\s*', line))
               and match.group(2) == name]
-    if len(hashes) > 1:
+    unique = set(hashes)
+    if len(unique) > 1:
         raise ValueError(f'More than one code-signing identity is named "{name}"')
     return hashes[0] if hashes else None
+
+
+def require_identity(name, listing, expected):
+    """Return `expected` when every `name` line in `listing` is that SHA-1.
+
+    Duplicate lines of the same certificate are accepted. A missing identity,
+    a different SHA-1, more than one distinct SHA-1, or a malformed expected
+    fingerprint all fail closed.
+    """
+    normalized = re.sub(r'[\s:]', '', expected or '').upper()
+    if not re.fullmatch(r'[0-9A-F]{40}', normalized):
+        raise ValueError('BLOCKED: expected code-signing SHA1 is not 40 hex characters')
+    try:
+        found = find_identity(name, listing)
+    except ValueError as error:
+        raise ValueError(f'BLOCKED: {error}') from error
+    if found != normalized:
+        raise ValueError(f'BLOCKED: find-identity -v does not list {name} with the expected SHA1')
+    return found
 
 
 def _flag(value):

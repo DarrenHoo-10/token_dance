@@ -494,23 +494,30 @@ jobs:
           sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$cert_path"
           trusted=1
           echo "TOKENDANCE_SELFSIGNED_TRUSTED=1" >> "$GITHUB_ENV"
+          # Unscoped find-identity is what the packager uses. trustRoot copies the
+          # cert into the System keychain, so the same SHA1 is listed once per
+          # keychain. require_identity accepts that duplicate and still rejects a
+          # missing identity, a different SHA1, or two different hashes.
           listing="$(security find-identity -v -p codesigning)"
           LISTING="$listing" python3 - <<'PY'
+          import importlib.util
           import os
-          import re
           import sys
-          expected = re.sub(r"[\s:]", "", os.environ["MACOS_SELFSIGNED_CERT_SHA1"]).upper()
-          name = "TokenDance Self-Signed"
-          found = []
-          for line in os.environ.get("LISTING", "").splitlines():
-              match = re.fullmatch(r'\s*\d+\)\s+([A-Fa-f0-9]{40})\s+"([^"]+)"(?:\s+\(.*\))?\s*', line)
-              if match and match.group(2) == name:
-                  found.append(match.group(1).upper())
-          if found != [expected]:
-              print("BLOCKED: find-identity -v does not list TokenDance Self-Signed with the expected SHA1", file=sys.stderr)
-              print(os.environ.get("LISTING", ""), file=sys.stderr)
+          root = "collector/packaging/macos"
+          sys.path.insert(0, root)
+          spec = importlib.util.spec_from_file_location(
+              "unnotarized", os.path.join(root, "package-unnotarized.py"))
+          package = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(package)
+          listing = os.environ.get("LISTING", "")
+          try:
+              found = package.require_identity(
+                  "TokenDance Self-Signed", listing, os.environ["MACOS_SELFSIGNED_CERT_SHA1"])
+          except ValueError as error:
+              print(error, file=sys.stderr)
+              print(listing, file=sys.stderr)
               sys.exit(1)
-          print(f"Installed {name} ({found[0]})")
+          print(f"Installed TokenDance Self-Signed ({found})")
           PY
           echo "TOKENDANCE_SIGNING_IDENTITY=TokenDance Self-Signed" >> "$GITHUB_ENV"
           echo "TOKENDANCE_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
