@@ -2,7 +2,7 @@
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use super::buckets::Grain;
 use super::types::PipelineError;
@@ -162,11 +162,51 @@ pub fn query_harness_usage_history(
             total_tokens: r.get::<_, i64>(5)?.max(0) as u64,
         })
     })?.collect::<Result<Vec<_>, _>>()?;
+    let models = merge_model_usage(models);
     Ok(HarnessUsageHistory {
         days: days.into_values().collect(),
         hours,
         models,
     })
+}
+
+/// The usage panel lists models by name only, so per-provider rows sharing one
+/// model id (e.g. Codex sessions with and without `model_provider`) must fold
+/// into a single entry; `model_key` keeps the smallest key of the group because
+/// rows arrive ordered by it.
+fn merge_model_usage(rows: Vec<ModelUsage>) -> Vec<ModelUsage> {
+    let mut merged: Vec<ModelUsage> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
+    let mut providers: Vec<BTreeSet<String>> = Vec::new();
+    for row in rows {
+        let slot = match index.get(&row.model_id) {
+            Some(&slot) => slot,
+            None => {
+                index.insert(row.model_id.clone(), merged.len());
+                merged.push(ModelUsage {
+                    model_key: row.model_key,
+                    model_id: row.model_id.clone(),
+                    provider_id: String::new(),
+                    today_tokens: 0,
+                    week_tokens: 0,
+                    total_tokens: 0,
+                });
+                providers.push(BTreeSet::new());
+                merged.len() - 1
+            }
+        };
+        let target = &mut merged[slot];
+        target.today_tokens = target.today_tokens.saturating_add(row.today_tokens);
+        target.week_tokens = target.week_tokens.saturating_add(row.week_tokens);
+        target.total_tokens = target.total_tokens.saturating_add(row.total_tokens);
+        if !row.provider_id.is_empty() {
+            providers[slot].insert(row.provider_id);
+        }
+    }
+    for (target, providers) in merged.iter_mut().zip(providers) {
+        target.provider_id = providers.into_iter().collect::<Vec<_>>().join(", ");
+    }
+    merged
 }
 
 #[derive(Debug, Clone, Serialize)]
