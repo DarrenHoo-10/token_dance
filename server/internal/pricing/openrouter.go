@@ -24,7 +24,10 @@ type Rates struct {
 	Overrides  []Tier `json:"overrides"`
 }
 type Tier struct {
-	MinPrompt uint64 `json:"min_prompt_tokens"`
+	MinPrompt uint64   `json:"min_prompt_tokens"`
+	UTCStart  *uint64  `json:"utc_start"`
+	UTCEnd    *uint64  `json:"utc_end"`
+	UTCDays   []string `json:"utc_days"`
 	Rates
 }
 type Model struct {
@@ -88,10 +91,16 @@ func (c *Client) Load(ctx context.Context) (Catalog, time.Time, error) {
 }
 
 // Explicit runtime aliases. Unknown variants are deliberately not fuzzy-matched.
-var aliases = map[string]string{"grok-4.6-build": "x-ai/grok-4.6", "gemini-3.7-flash-high": "google/gemini-3.7-flash", "claude-opus-4-6-thinking": "anthropic/claude-opus-4.6"}
+var aliases = map[string]string{"grok-4.6-build": "x-ai/grok-4.6", "gemini-3.7-flash-high": "google/gemini-3.7-flash", "claude-opus-4-6-thinking": "anthropic/claude-opus-4.6", "deepseek-flash": "deepseek/deepseek-v4.1-flash"}
 
 func (c Catalog) Match(name string) (Model, bool) {
 	name = strings.ToLower(strings.TrimSpace(name))
+	// Prefer a dedicated catalog price over the explicit fallback alias.
+	for _, m := range c.Data {
+		if strings.EqualFold(m.ID, name) {
+			return m, true
+		}
+	}
 	if alias, ok := aliases[name]; ok {
 		name = alias
 	}
@@ -128,6 +137,10 @@ func Estimate(model Model, u Usage) (string, bool) {
 	rates := model.Pricing
 	var threshold uint64
 	for _, tier := range model.Pricing.Overrides {
+		// Match desktop estimates: use reference rates, not time promotions.
+		if tier.UTCStart != nil || tier.UTCEnd != nil || tier.UTCDays != nil {
+			continue
+		}
 		if contextTokens >= tier.MinPrompt && tier.MinPrompt >= threshold {
 			threshold = tier.MinPrompt
 			if tier.Prompt != "" {
