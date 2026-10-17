@@ -157,7 +157,7 @@ python3 tools/releases/publish_manifest.py \
   --manifest /var/www/token-dance-releases/stable.json
 ```
 
-Intel 对应 `--platform macos-x64` 和 `macos-x86_64` 文件名。发布器校验 UDIF 结构、架构、来源、公证元数据及最终 DMG 的大小/摘要，并下载公开 URL 比对后才更新账本。DMG 上限 512 MiB，Windows 上限仍为 150 MiB。两个架构独立发布，缺少某架构时下载页明确显示未发布；不生成猜测 URL。网页显示版本、SHA-256、系统下限和说明；Mac 暂不支持应用内自动更新。
+Intel 对应 `--platform macos-x64` 和 `macos-x86_64` 文件名。发布器校验 UDIF 结构、架构、来源、公证元数据及最终 DMG 的大小/摘要，并下载公开 URL 比对后才更新账本。DMG 上限 512 MiB，Windows 上限仍为 150 MiB。两个架构独立发布，缺少某架构时下载页明确显示未发布；不生成猜测 URL。网页显示版本、SHA-256、系统下限和说明；Mac 应用内更新读取 `macos.json`：按架构选择条目，校验 DMG 的 SHA-256 与大小后下载，挂载并把 `.app` 暂存到已安装应用旁；校验签名、Bundle ID 和版本，若已安装应用由稳定证书签名，新包必须满足同一证书要求。随后由退出后运行的辅助脚本替换并回滚失败，再重新打开。自动更新开启时后台下载，下次启动安装；应用所在目录不可写时报错，需手动安装。
 
 两份清单分别原子替换；若第二份写入失败，发布序号保持未完成，可安全重试或 reconcile。不自动删除历史版本记录，不从普通前端部署覆盖发布文件。应将`deploy/nginx-token-dance.conf` 变更一起纳入正常 main 部署。
 
