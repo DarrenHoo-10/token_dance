@@ -97,6 +97,8 @@ impl Catalog {
             "claude-opus-4-6-thinking" => "anthropic/claude-opus-4.6",
             other => other,
         };
+        let dotted = anthropic_dotted_id(id);
+        let id = dotted.as_deref().unwrap_or(id);
         if let Some(m) = self.data.iter().find(|m| m.id.eq_ignore_ascii_case(id)) {
             return Some(m);
         }
@@ -112,6 +114,19 @@ impl Catalog {
             Some(m)
         }
     }
+}
+/// Anthropic-native ids write versions with dashes (`claude-sonnet-5-5`) while
+/// OpenRouter uses dots (`anthropic/claude-sonnet-5.5`). Only an exact
+/// `claude-<family>-<major>-<minor>` shape is rewritten; anything else is left alone.
+fn anthropic_dotted_id(id: &str) -> Option<String> {
+    let rest = id.strip_prefix("claude-")?;
+    let (head, minor) = rest.rsplit_once('-')?;
+    let (family, major) = head.rsplit_once('-')?;
+    let digits = |s: &str| !s.is_empty() && s.len() <= 2 && s.bytes().all(|b| b.is_ascii_digit());
+    if family.is_empty() || !digits(major) || !digits(minor) {
+        return None;
+    }
+    Some(format!("anthropic/claude-{family}-{major}.{minor}"))
 }
 // Decimal arithmetic to 10^-24 USD/token, rounded once to 10^-8 USD/call.
 fn rate(s: &str) -> Option<u128> {
@@ -148,13 +163,17 @@ pub struct Request {
     pub matched_model: Option<String>,
 }
 pub fn estimate(m: &Model, u: &Request) -> Option<u64> {
-    estimate_with_input_semantics(m,u,u.agent=="codex")
+    estimate_with_input_semantics(m, u, u.agent == "codex")
 }
 /// Pipeline input_context_tokens already includes cache for every harness.
 pub fn estimate_context(m: &Model, u: &Request) -> Option<u64> {
-    estimate_with_input_semantics(m,u,true)
+    estimate_with_input_semantics(m, u, true)
 }
-fn estimate_with_input_semantics(m:&Model,u:&Request,input_includes_cache:bool)->Option<u64> {
+fn estimate_with_input_semantics(
+    m: &Model,
+    u: &Request,
+    input_includes_cache: bool,
+) -> Option<u64> {
     if !u.eligible {
         return None;
     }
@@ -546,11 +565,19 @@ mod tests {
             id: "x-ai/grok-4.7".into(),
             pricing: Rates::default(),
         });
-        assert_eq!(
-            c.model("grok-4.7-build-fast").unwrap().id,
-            "x-ai/grok-4.7"
-        );
+        assert_eq!(c.model("grok-4.7-build-fast").unwrap().id, "x-ai/grok-4.7");
         assert!(c.model("grok-4.7-build").is_none());
+    }
+
+    #[test]
+    fn anthropic_dashed_versions_match_dotted_catalog_ids() {
+        let mut c = catalog();
+        c.data[0].id = "anthropic/claude-sonnet-5.5".into();
+        assert_eq!(
+            c.model("claude-sonnet-5-5").unwrap().id,
+            "anthropic/claude-sonnet-5.5"
+        );
+        assert!(c.model("claude-sonnet-5-6").is_none());
     }
 
     #[test]
