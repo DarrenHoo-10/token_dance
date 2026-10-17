@@ -10,15 +10,33 @@ use std::{
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::{Mutex, RwLock};
 
+#[cfg(target_os = "macos")]
+mod macos;
+
+#[cfg(not(target_os = "macos"))]
 const RELEASES: &str = "https://www.nexorai.com.cn/token-dance/releases/stable.json";
+// Mac entries live in their own manifest so older Windows updaters never see them.
+#[cfg(target_os = "macos")]
+const RELEASES: &str = "https://www.nexorai.com.cn/token-dance/releases/macos.json";
 const UPDATE_POLICY: &str = "https://www.nexorai.com.cn/token-dance/v1/update-policy";
 static REQUIRED_UNTIL: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 pub fn upgrade_required() -> bool {
     REQUIRED_UNTIL.load(std::sync::atomic::Ordering::Acquire) > chrono::Utc::now().timestamp()
 }
 const MAX_DOWNLOAD: u64 = 150 * 1024 * 1024;
+const MAX_DMG_DOWNLOAD: u64 = 512 * 1024 * 1024;
 const CURRENT: &str = env!("CARGO_PKG_VERSION");
-const SUPPORTED: bool = cfg!(all(target_os = "windows", target_arch = "x86_64"));
+const SUPPORTED: bool =
+    cfg!(all(target_os = "windows", target_arch = "x86_64")) || cfg!(target_os = "macos");
+const PLATFORM: &str = if cfg!(target_os = "macos") {
+    if cfg!(target_arch = "aarch64") {
+        "macos-arm64"
+    } else {
+        "macos-x64"
+    }
+} else {
+    "windows-x64"
+};
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -47,7 +65,11 @@ fn directory() -> PathBuf {
     crate::state::app_data_root().join("updates")
 }
 fn cached_binary() -> PathBuf {
-    directory().join("pending.exe")
+    directory().join(if cfg!(target_os = "macos") {
+        "pending.dmg"
+    } else {
+        "pending.exe"
+    })
 }
 fn auto_enabled() -> bool {
     let path = directory().join("preferences.json");
@@ -75,6 +97,7 @@ struct Release {
     #[serde(default)]
     exe: Asset,
     zip: Option<Asset>,
+    dmg: Option<Asset>,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,6 +111,8 @@ struct Candidate {
     notes: String,
     published_at: Option<String>,
     asset: Asset,
+    /// A macOS disk image rather than a Windows executable.
+    dmg: bool,
 }
 
 fn below_minimum(current: &str, minimum: &str) -> bool {
@@ -128,12 +153,23 @@ fn valid_asset_url(value: &str) -> bool {
         && !value.bytes().any(|b| b.is_ascii_whitespace() || b == b'\\')
 }
 fn valid_asset(asset: &Asset) -> bool {
+    valid_asset_within(asset, MAX_DOWNLOAD)
+}
+fn valid_asset_within(asset: &Asset, max: u64) -> bool {
     valid_asset_url(&asset.url)
         && asset.size > 0
-        && asset.size <= MAX_DOWNLOAD
+        && asset.size <= max
         && valid_digest(&asset.sha256)
 }
+#[cfg(test)]
 fn select_release(manifest: Manifest, current: &str) -> Result<Option<Candidate>, String> {
+    select_release_for("windows-x64", manifest, current)
+}
+fn select_release_for(
+    platform: &str,
+    manifest: Manifest,
+    current: &str,
+) -> Result<Option<Candidate>, String> {
     let current = parse_version(current).ok_or("invalid_current_version")?;
     if manifest.schema_version != 1 || manifest.releases.len() > 100 {
         return Err("invalid_release".into());
@@ -141,7 +177,7 @@ fn select_release(manifest: Manifest, current: &str) -> Result<Option<Candidate>
     let mut best: Option<(semver::Version, Release)> = None;
     let mut seen = std::collections::HashSet::new();
     for release in manifest.releases {
-        if release.platform != "windows-x64" {
+        if release.platform != platform {
             continue;
         }
         let version = parse_version(&release.version).ok_or("invalid_release")?;
@@ -160,11 +196,20 @@ fn select_release(manifest: Manifest, current: &str) -> Result<Option<Candidate>
     };
     // Validate newest metadata even when installed version is current. Never
     // silently fall back to an older release when the newest package is broken.
-    if !valid_asset(&release.exe)
-        || release
-            .zip
+    let dmg = platform.starts_with("macos");
+    let asset_ok = if dmg {
+        release
+            .dmg
             .as_ref()
-            .is_some_and(|asset| !valid_asset(asset))
+            .is_some_and(|asset| valid_asset_within(asset, MAX_DMG_DOWNLOAD))
+    } else {
+        valid_asset(&release.exe)
+            && release
+                .zip
+                .as_ref()
+                .is_none_or(|asset| valid_asset(asset))
+    };
+    if !asset_ok
         || chrono::DateTime::parse_from_rfc3339(&release.published_at).is_err()
     {
         return Err("unverified_release".into());
@@ -176,7 +221,12 @@ fn select_release(manifest: Manifest, current: &str) -> Result<Option<Candidate>
         version: version.to_string(),
         notes: release.notes,
         published_at: Some(release.published_at),
-        asset: release.exe,
+        asset: if dmg {
+            release.dmg.unwrap_or_default()
+        } else {
+            release.exe
+        },
+        dmg,
     }))
 }
 
@@ -245,11 +295,11 @@ async fn latest() -> Result<Option<Candidate>, String> {
         bytes.extend_from_slice(&chunk);
     }
     let manifest = serde_json::from_slice(&bytes).map_err(|_| "invalid_release")?;
-    select_release(manifest, CURRENT)
+    select_release_for(PLATFORM, manifest, CURRENT)
 }
 fn verify(bytes: &[u8], candidate: &Candidate) -> bool {
     bytes.len() as u64 == candidate.asset.size
-        && bytes.starts_with(b"MZ")
+        && (candidate.dmg || bytes.starts_with(b"MZ"))
         && format!("{:x}", Sha256::digest(bytes)).eq_ignore_ascii_case(&candidate.asset.sha256)
 }
 fn verified_cache(candidate: &Candidate) -> bool {
@@ -494,11 +544,27 @@ pub async fn install_update(
         state.download().await?;
         state.snapshot.write().await.phase = "installing".into();
         let candidate = state.candidate.read().await.clone().ok_or("no_update")?;
-        replace_verified(&candidate)?;
-        let _ = app.state::<crate::state::AppState>().shutdown().await;
-        app.state::<crate::single_instance::InstanceGuard>()
-            .release();
-        app.restart();
+        #[cfg(target_os = "macos")]
+        {
+            let (path, version) = (cached_binary(), candidate.version.clone());
+            tokio::task::spawn_blocking(move || macos::install(&path, &version))
+                .await
+                .map_err(|_| "install_failed")??;
+            let _ = std::fs::remove_file(cached_binary());
+            let _ = app.state::<crate::state::AppState>().shutdown().await;
+            app.state::<crate::single_instance::InstanceGuard>()
+                .release();
+            // The detached helper swaps the bundle once this process is gone.
+            app.exit(0);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            replace_verified(&candidate)?;
+            let _ = app.state::<crate::state::AppState>().shutdown().await;
+            app.state::<crate::single_instance::InstanceGuard>()
+                .release();
+            app.restart();
+        }
         #[allow(unreachable_code)]
         Ok::<(), String>(())
     }
@@ -509,6 +575,7 @@ pub async fn install_update(
     result
 }
 
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn replace_verified(candidate: &Candidate) -> Result<(), String> {
     // Re-read into an exclusive temporary file so validation and replacement use
     // the same bytes, even if another instance replaces the download cache.
@@ -526,6 +593,7 @@ fn replace_verified(candidate: &Candidate) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 fn replace_with_rollback(
     current: &Path,
     replace: impl FnOnce() -> std::io::Result<()>,
@@ -559,10 +627,26 @@ pub fn apply_pending_before_start(release_instance: impl FnOnce()) -> bool {
     if !verified_cache(&candidate) {
         return false;
     }
+    #[cfg(target_os = "macos")]
+    {
+        // Stage and schedule the swap; the helper reopens the app after we exit.
+        if macos::install(&cached_binary(), &candidate.version).is_err() {
+            return false;
+        }
+        let _ = std::fs::remove_file(cached_binary());
+        release_instance();
+        return true;
+    }
+    #[cfg(not(target_os = "macos"))]
+    apply_pending_replacement(&candidate, release_instance)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_pending_replacement(candidate: &Candidate, release_instance: impl FnOnce()) -> bool {
     let Ok(executable) = std::env::current_exe() else {
         return false;
     };
-    if replace_verified(&candidate).is_err() {
+    if replace_verified(candidate).is_err() {
         return false;
     }
     let mut command = std::process::Command::new(executable);
@@ -719,6 +803,32 @@ mod tests {
         }));
         let manifest = serde_json::from_value(value).unwrap();
         assert_eq!(select_release(manifest, "0.1.0").unwrap().unwrap().version, "0.2.0");
+    }
+    #[test]
+    fn mac_selection_uses_its_platform_and_dmg_asset() {
+        let input = r#"{"schemaVersion":1,"releases":[
+          {"version":"0.3.0","platform":"macos-arm64","notes":"n","publishedAt":"2026-09-12T00:00:00Z",
+           "dmg":{"url":"https://downloads.example.com/a.dmg","sha256":"HASH","size":512}},
+          {"version":"0.4.0","platform":"macos-x64","notes":"n","publishedAt":"2026-09-12T00:00:00Z",
+           "dmg":{"url":"https://downloads.example.com/b.dmg","sha256":"HASH","size":512}}]}"#
+            .replace("HASH", &"a".repeat(64));
+        let pick = |platform| {
+            select_release_for(platform, serde_json::from_str(&input).unwrap(), "0.1.0")
+                .unwrap()
+                .unwrap()
+        };
+        let arm = pick("macos-arm64");
+        assert_eq!((arm.version.as_str(), arm.dmg), ("0.3.0", true));
+        assert_eq!(pick("macos-x64").version, "0.4.0");
+        assert!(select_release_for("macos-arm64", serde_json::from_str(&input).unwrap(), "0.3.0").unwrap().is_none());
+        // A DMG has no MZ header; integrity rests on size and SHA-256 only.
+        assert!(!verify(b"x", &arm));
+    }
+    #[test]
+    fn mac_release_without_a_valid_dmg_is_rejected() {
+        let input = r#"{"schemaVersion":1,"releases":[
+          {"version":"0.3.0","platform":"macos-arm64","notes":"n","publishedAt":"2026-09-12T00:00:00Z"}]}"#;
+        assert!(select_release_for("macos-arm64", serde_json::from_str(input).unwrap(), "0.1.0").is_err());
     }
     #[tokio::test]
     async fn concurrent_operations_do_not_queue_a_second_install() {
