@@ -95,6 +95,8 @@ impl Catalog {
             "grok-4.7-build-fast" => "x-ai/grok-4.7",
             "gemini-3.7-flash-high" => "google/gemini-3.7-flash",
             "claude-opus-4-6-thinking" => "anthropic/claude-opus-4.6",
+            // DeepSeek's native API name differs from the public catalog ID.
+            "deepseek-flash" => "deepseek/deepseek-v4.1-flash",
             other => other,
         };
         let dotted = anthropic_dotted_id(id);
@@ -567,6 +569,30 @@ mod tests {
         });
         assert_eq!(c.model("grok-4.7-build-fast").unwrap().id, "x-ai/grok-4.7");
         assert!(c.model("grok-4.7-build").is_none());
+    }
+
+    #[test]
+    fn deepseek_flash_alias_is_explicit_and_exact_prices_win() {
+        let mut c = catalog();
+        c.data[0].id = "deepseek/deepseek-v4.1-flash".into();
+        assert_eq!(
+            c.model("deepseek-flash").unwrap().id,
+            "deepseek/deepseek-v4.1-flash"
+        );
+        for id in [
+            "deepseek-flash-unknown",
+            "deepseek-pro",
+            "deepseek-v4-flash",
+        ] {
+            assert!(c.model(id).is_none());
+        }
+        c.data.push(Model {
+            id: "deepseek-flash".into(),
+            pricing: Rates::default(),
+        });
+        assert_eq!(c.model("deepseek-flash").unwrap().id, "deepseek-flash");
+        c.data.clear();
+        assert!(c.model("deepseek-flash").is_none());
     }
 
     #[test]
