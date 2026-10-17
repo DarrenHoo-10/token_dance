@@ -2,9 +2,12 @@
 
 The app is signed with the project's own self-signed code-signing certificate
 when it is installed in the build machine's keychain (see
-create-self-signed-identity.sh), otherwise ad-hoc. A certificate keeps the
-code's designated requirement stable across releases, so Keychain "Always
-Allow" grants survive updates; an ad-hoc signature is pinned to one binary hash.
+create-self-signed-identity.sh). A certificate keeps the code's designated
+requirement stable across releases, so Keychain "Always Allow" grants survive
+updates; an ad-hoc signature is pinned to one binary hash.
+
+Local non-release builds may fall back to ad-hoc with a warning. Release and
+CI builds fail closed unless TOKENDANCE_SIGNING_IDENTITY=adhoc is set.
 """
 import argparse
 import hashlib
@@ -43,11 +46,22 @@ def find_identity(name, listing):
     return hashes[0] if hashes else None
 
 
+def _flag(value):
+    return str(value or '').strip().lower() in {'1', 'true', 'yes'}
+
+
+def release_signing_required(environ):
+    """Release and CI builds must not silently fall back to a per-build ad-hoc identity."""
+    return _flag(environ.get('CI')) or _flag(environ.get('GITHUB_ACTIONS')) or environ.get('BUILD_PROFILE') == 'release'
+
+
 def select_signing(environ, listing):
     """Return (name, sha1) of the identity to sign with, or None for ad-hoc.
 
-    An explicitly requested identity must exist; the default one is optional so
-    a machine without it still produces the old ad-hoc package, with a warning.
+    An explicitly requested identity must exist. The default identity is optional
+    for local non-release builds, which still produce an ad-hoc package and a
+    warning. Release and CI builds fail instead. TOKENDANCE_SIGNING_IDENTITY=adhoc
+    (or "-") is the only ad-hoc escape hatch.
     """
     requested = environ.get('TOKENDANCE_SIGNING_IDENTITY')
     if requested in ('-', 'adhoc'):
@@ -58,9 +72,15 @@ def select_signing(environ, listing):
     sha1 = find_identity(name, listing)
     if sha1:
         return name, sha1
-    if requested:
-        raise ValueError(f'Code-signing identity "{requested}" was not found in the keychain')
-    return None
+    if not release_signing_required(environ):
+        if requested:
+            raise ValueError(f'Code-signing identity "{requested}" was not found in the keychain')
+        return None
+    raise ValueError(
+        f'BLOCKED: code-signing identity "{name}" is not installed. '
+        'Release builds must not fall back to ad-hoc. '
+        'Set TOKENDANCE_SIGNING_IDENTITY=adhoc only to force a one-off ad-hoc signature.'
+    )
 
 
 def stable_requirement(requirement, sha1):
@@ -97,7 +117,9 @@ def main():
     else:
         authority, sha1, identity = 'adhoc', None, '-'
         print('WARNING: ad-hoc signing; Keychain approvals will not survive updates. '
-              'Run collector/packaging/macos/create-self-signed-identity.sh once on this machine.', file=sys.stderr)
+              'Run collector/packaging/macos/create-self-signed-identity.sh once on this machine. '
+              'Release and CI builds fail instead of falling back unless TOKENDANCE_SIGNING_IDENTITY=adhoc.',
+              file=sys.stderr)
     # Neither mode is a verified Developer ID signature or notarization.
     for path in sorted((app / 'Contents').rglob('*'), key=lambda p: len(p.parts), reverse=True):
         if is_macho(path):

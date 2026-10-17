@@ -21,10 +21,19 @@ class UnnotarizedTests(unittest.TestCase):
         sha1 = 'AB' * 20
         listing = f'  1) {sha1} "{package.DEFAULT_IDENTITY}"\n  2) {"CD" * 20} "Other"\n     2 valid identities found\n'
         self.assertEqual(package.select_signing({}, listing), (package.DEFAULT_IDENTITY, sha1))
+        self.assertEqual(package.select_signing({'CI': 'true'}, listing), (package.DEFAULT_IDENTITY, sha1))
         self.assertIsNone(package.select_signing({}, '     0 valid identities found\n'))
         self.assertIsNone(package.select_signing({'TOKENDANCE_SIGNING_IDENTITY': 'adhoc'}, listing))
+        self.assertIsNone(package.select_signing({'CI': 'true', 'BUILD_PROFILE': 'release', 'TOKENDANCE_SIGNING_IDENTITY': 'adhoc'}, listing))
+        for environ in ({'CI': 'true'}, {'GITHUB_ACTIONS': 'true'}, {'BUILD_PROFILE': 'release'}, {'CI': '1'}):
+            with self.assertRaises(ValueError) as blocked:
+                package.select_signing(environ, '     0 valid identities found\n')
+            self.assertIn('BLOCKED', str(blocked.exception))
         with self.assertRaises(ValueError):  # an explicitly requested identity must exist
             package.select_signing({'TOKENDANCE_SIGNING_IDENTITY': 'Missing'}, listing)
+        with self.assertRaises(ValueError) as blocked:
+            package.select_signing({'CI': 'true', 'TOKENDANCE_SIGNING_IDENTITY': 'Missing'}, listing)
+        self.assertIn('BLOCKED', str(blocked.exception))
         with self.assertRaises(ValueError):
             package.select_signing({'TOKENDANCE_SIGNING_IDENTITY': 'Developer ID Application: X (ABCDEFGHIJ)'}, listing)
         with self.assertRaises(ValueError):  # ambiguous
@@ -36,6 +45,8 @@ class UnnotarizedTests(unittest.TestCase):
         script = (ROOT / 'collector/packaging/macos/create-self-signed-identity.sh').read_text()
         self.assertIn('codeSigning', script)
         self.assertIn('security import', script)
+        self.assertIn('MACOS_SELFSIGNED_P12_BASE64', script)
+        self.assertNotIn('never leaves this machine', script)
         for forbidden in ('--master-disable', 'xattr -d', 'spctl --global', 'sudo'):
             self.assertNotIn(forbidden, script)
 
@@ -54,6 +65,14 @@ class UnnotarizedTests(unittest.TestCase):
         self.assertIn('TokenDance-${version}-macos-${outArch}.dmg', mac_build)
         self.assertNotIn('TokenDance-${version}-macos-${outArch}-unnotarized.dmg', mac_build)
         self.assertIn('*-macos-${{ matrix.architecture }}.dmg collector/packaging/macos/release/', workflow)
+        self.assertIn('MACOS_SELFSIGNED_P12_BASE64', workflow)
+        self.assertIn('MACOS_SELFSIGNED_P12_PASSWORD', workflow)
+        self.assertIn('MACOS_SELFSIGNED_CERT_SHA1', workflow)
+        self.assertIn('TOKENDANCE_SIGNING_IDENTITY=TokenDance Self-Signed', workflow)
+        self.assertIn('sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain', workflow)
+        self.assertIn('signingAuthority") != "self-signed"', workflow)
+        sign_release = workflow.split('Sign, notarize, staple, and verify bound macOS release artifact', 1)[1]
+        self.assertNotIn('MACOS_SELFSIGNED', sign_release.split('Record unsigned build status', 1)[0])
 
 
 if __name__ == '__main__': unittest.main()
