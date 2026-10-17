@@ -73,3 +73,31 @@ func TestCatalogCache(t *testing.T) {
 		t.Fatal("catalog not cached")
 	}
 }
+
+func TestDeepSeekFlashAliasAndReferenceRates(t *testing.T) {
+	var c Catalog
+	if err := json.Unmarshal([]byte(`{"data":[{"id":"deepseek/deepseek-v4.1-flash","pricing":{"prompt":"0.00000015","completion":"0.0000006","input_cache_read":"0.000000003","overrides":[{"utc_start":0,"utc_end":100,"prompt":"0"},{"utc_days":["saturday"],"completion":"0"}]}}]}`), &c); err != nil {
+		t.Fatal(err)
+	}
+	m, ok := c.Match("deepseek-flash")
+	if !ok || m.ID != "deepseek/deepseek-v4.1-flash" {
+		t.Fatalf("alias: %+v, %v", m, ok)
+	}
+	cost, ok := Estimate(m, Usage{Input: 1000, Output: 100, CacheRead: 800, InputIncludesCache: true})
+	if !ok || cost != "0.00009240" {
+		t.Fatalf("reference cost: %s, %v", cost, ok)
+	}
+	for _, id := range []string{"deepseek-flash-unknown", "deepseek-pro", "deepseek-v4-flash"} {
+		if _, ok := c.Match(id); ok {
+			t.Fatalf("unverified model matched: %s", id)
+		}
+	}
+	c.Data = append(c.Data, Model{ID: "deepseek-flash", Pricing: Rates{Prompt: "0", Completion: "0"}})
+	m, ok = c.Match("deepseek-flash")
+	if !ok || m.ID != "deepseek-flash" {
+		t.Fatal("exact catalog price must win")
+	}
+	if _, ok := (Catalog{}).Match("deepseek-flash"); ok {
+		t.Fatal("missing catalog model matched")
+	}
+}

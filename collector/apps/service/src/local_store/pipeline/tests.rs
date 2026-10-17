@@ -749,6 +749,64 @@ fn cursor_base_model_price_backfills_retained_usage_once() {
 }
 
 #[test]
+fn deepseek_flash_price_backfills_retained_usage_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = PipelineStore::open(dir.path()).unwrap();
+    store.set_clock_ms(1_700_000_000_000);
+    let model = store.upsert_model("deepseek-official", "deepseek-flash").unwrap();
+    let source = store.register_source(&RegisterSource {
+        harness_id: "deepseek-harness".into(),
+        source_key: blob(1),
+        source_kind: SourceKind::Other,
+        locator_ref: "local:deepseek/session.jsonl".into(),
+        stream_key: "sessions-jsonl".into(),
+        cursor_kind: CursorKind::Opaque,
+        cursor_json: "{}".into(),
+        decoder_state_version: 1,
+        decoder_state_json: "{}".into(),
+        observed_boundary_json: "{}".into(),
+        next_poll_at: None,
+    }).unwrap();
+    let (token, _, seq) = store.lease_source(source, DEFAULT_LEASE_MS).unwrap();
+    let mut event = candidate(11, None);
+    event.model_key = model;
+    event.payload_json = serde_json::json!({
+        "meta": {"accuracy": "exact", "time_source": "source_record"},
+        "usage": {"token_total": 1100, "input_context_tokens": 1000,
+                  "output_tokens": 100, "cache_read_tokens": 800, "cache_write_tokens": 0},
+    }).to_string();
+    commit_one(&mut store, source, &token, seq, vec![event], "{}");
+    assert_eq!(store.event_count().unwrap(), 1);
+    // Simulate an upgrade: retained usage is repriced by maintenance on restart.
+    std::fs::write(dir.path().join("openrouter-prices.json"), r#"{"data":[{"id":"deepseek/deepseek-v4.1-flash","pricing":{"prompt":"0.00000015","completion":"0.0000006","input_cache_read":"0.000000003"}}]}"#).unwrap();
+    drop(store);
+    let mut store = PipelineStore::open(dir.path()).unwrap();
+    store.set_clock_ms(1_700_000_000_000);
+    for _ in 0..3 {
+        store.backfill_derived_metrics(128).unwrap();
+    }
+    assert_eq!(store.event_count().unwrap(), 2);
+    for consumer in [Consumer::Hour, Consumer::Day, Consumer::Month] {
+        for task in store.claim_tasks(consumer, 16, DEFAULT_LEASE_MS).unwrap() {
+            store.apply_and_complete_metrics(&task).unwrap();
+        }
+    }
+    store.with_connection(|c| {
+        let (cost, requests): (i64, i64) = c.query_row(
+            "SELECT estimated_cost_units,estimated_request_count FROM cost_metrics WHERE harness_id='deepseek-harness' AND grain='day'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        assert_eq!((cost, requests), (9_240, 1));
+        let tokens: i64 = c.query_row(
+            "SELECT exact_token_total FROM model_metrics WHERE harness_id='deepseek-harness' AND grain='day'",
+            [], |r| r.get(0),
+        )?;
+        assert_eq!(tokens, 1100);
+        Ok(())
+    }).unwrap();
+}
+
+#[test]
 fn late_price_catalog_backfills_existing_usage_without_replaying_tokens() {
  let dir=tempfile::tempdir().unwrap();
  let mut store=PipelineStore::open(dir.path()).unwrap();store.set_clock_ms(1_700_000_000_000);
