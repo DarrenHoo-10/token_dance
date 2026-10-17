@@ -678,13 +678,14 @@ fn harness_model_usage_respects_periods_sources_and_soft_deletes() {
                 rusqlite::params![deleted, grain, today + offset * 86_400_000, harness, model, tokens])?;
         }
         let history = super::query::query_harness_usage_history(c, "cursor", today, today + 86_400_000)?;
-        assert_eq!(history.models.len(), 2);
-        let first = history.models.iter().find(|m| m.model_key == a).unwrap();
-        assert_eq!((first.today_tokens, first.week_tokens, first.total_tokens), (110, 320, 730));
-        assert_eq!(first.provider_id, "provider-a");
-        let second = history.models.iter().find(|m| m.model_key == b).unwrap();
-        assert_eq!((second.today_tokens, second.week_tokens, second.total_tokens), (60, 60, 60));
-        assert_eq!(second.provider_id, "provider-b");
+        assert_eq!(history.models.len(), 1);
+        let merged = &history.models[0];
+        assert_eq!(merged.model_id, "shared-name");
+        assert_eq!(merged.provider_id, "provider-a, provider-b");
+        assert_eq!((merged.today_tokens, merged.week_tokens, merged.total_tokens), (170, 380, 790));
+        let codex = super::query::query_harness_usage_history(c, "codex", today, today + 86_400_000)?;
+        assert_eq!(codex.models.len(), 1);
+        assert_eq!((codex.models[0].model_id.as_str(), codex.models[0].provider_id.as_str(), codex.models[0].total_tokens), ("shared-name", "provider-a", 6410));
         assert!(super::query::query_harness_usage_history(c, "missing", today, today + 86_400_000)?.models.is_empty());
         Ok(())
     }).unwrap();
