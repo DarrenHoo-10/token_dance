@@ -5,6 +5,40 @@ use crate::local_store::pipeline::runner::{
     DecoderState, FactDraft, RawRecord, TimeSource, TokenAccuracy,
 };
 use serde_json::{json, Value};
+use std::collections::{HashMap, VecDeque};
+use std::sync::Mutex;
+
+/// Remembers which transcript file first emitted usage for a Claude `message.id`, so a copy of
+/// the same message in another file (resumed sessions, sub-agents) is not counted again.
+/// In-memory only and bounded: it starts empty after a restart and forgets the oldest ids.
+#[derive(Default)]
+pub struct UsageOwners {
+    inner: Mutex<UsageOwnersInner>,
+}
+#[derive(Default)]
+struct UsageOwnersInner {
+    owner: HashMap<String, String>,
+    order: VecDeque<String>,
+}
+impl UsageOwners {
+    const CAP: usize = 100_000;
+    /// True when `scope` may emit usage for `message_id`: first sighting, or the file that
+    /// already owns it (a re-read must still reproduce its own facts).
+    fn claim(&self, message_id: &str, scope: &str) -> bool {
+        let mut g = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(owner) = g.owner.get(message_id) {
+            return owner == scope;
+        }
+        if g.order.len() >= Self::CAP {
+            if let Some(oldest) = g.order.pop_front() {
+                g.owner.remove(&oldest);
+            }
+        }
+        g.owner.insert(message_id.to_owned(), scope.to_owned());
+        g.order.push_back(message_id.to_owned());
+        true
+    }
+}
 
 pub struct Context<'a> {
     pub harness: &'a str,
@@ -15,6 +49,8 @@ pub struct Context<'a> {
     pub record: &'a RawRecord,
     pub book: &'a SkillBook,
     pub allocator: &'a dyn Fn([u8; 32], &str) -> i64,
+    /// Cross-file usage ownership; `None` keeps dedup per file only.
+    pub usage_owners: Option<&'a UsageOwners>,
 }
 fn text(v: &Value, keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|k| {
@@ -249,6 +285,8 @@ fn finish_call(
 /// belongs to the API message, so only the first line seen for a `message.id` may emit it.
 /// The identity stays `uuid`-based: a later line has a different timestamp, so keying it by
 /// `message.id` would hit `IdentityContentConflict` instead of deduplicating.
+/// Resumed sessions and sub-agents copy the same message into another file, where the per-file
+/// state above cannot see it; `usage_owners` lets only the first file seen emit its usage.
 fn claude_repeats_message_usage(c: &Context, message: &Value, state: &mut DecoderState) -> bool {
     const SEEN_CAP: usize = 256;
     if c.harness != "claude-code" {
@@ -263,6 +301,11 @@ fn claude_repeats_message_usage(c: &Context, message: &Value, state: &mut Decode
     let seen = state.json["native_usage_seen"].as_array_mut().unwrap();
     if seen.iter().any(|v| v.as_str() == Some(message_id.as_str())) {
         return true;
+    }
+    if let Some(owners) = c.usage_owners {
+        if !owners.claim(&message_id, c.scope) {
+            return true;
+        }
     }
     if seen.len() >= SEEN_CAP {
         seen.remove(0);
@@ -692,6 +735,7 @@ mod tests {
                 record: &row,
                 book: &book,
                 allocator: &alloc,
+                usage_owners: None,
             };
             if let Some(mut f) = decode(&ctx, &v, &mut state) {
                 facts.append(&mut f);
@@ -781,6 +825,7 @@ mod tests {
                 record: &row,
                 book: &book,
                 allocator: &alloc,
+                usage_owners: None,
             };
             decode(&ctx, &v, state)
                 .unwrap()
@@ -799,6 +844,74 @@ mod tests {
         assert_eq!(count(with_id("u2"), 1, &mut resumed), 0);
         assert_eq!(count(no_id("u3"), 2, &mut resumed), 1);
         assert_eq!(count(no_id("u4"), 3, &mut resumed), 1);
+    }
+
+    #[test]
+    fn claude_usage_is_counted_once_across_files_but_a_reread_still_emits() {
+        fn alloc(_: [u8; 32], _: &str) -> i64 {
+            1
+        }
+        let book = SkillBook::new();
+        let secret = vec![7; 32];
+        let owners = UsageOwners::default();
+        // `state` stands in for one file's decoder state; a fresh one is a different file.
+        let count = |scope: &str, message_id: Option<&str>, uuid: &str, state: &mut DecoderState| {
+            let mut message = json!({"model":"m","usage":{"input_tokens":1,"output_tokens":1}});
+            if let Some(id) = message_id {
+                message["id"] = json!(id);
+            }
+            // A resumed copy keeps uuid and tokens but gets a rewritten sessionId.
+            let v = json!({"type":"assistant","uuid":uuid,"sessionId":format!("sid-{scope}"),"message":message});
+            let row = RawRecord {
+                ordinal: 0,
+                byte_start: Some(0),
+                byte_end: Some(1),
+                native_rowid: None,
+                payload: v.to_string().into_bytes(),
+                file_mtime_ms: Some(1789257600000),
+            };
+            let ctx = Context {
+                harness: "claude-code",
+                secret: &secret,
+                scope,
+                now: 1789257600000,
+                time_source: TimeSource::SourceRecord,
+                record: &row,
+                book: &book,
+                allocator: &alloc,
+                usage_owners: Some(&owners),
+            };
+            decode(&ctx, &v, state)
+                .unwrap()
+                .iter()
+                .filter(|f| f.event_type == "model_usage_recorded")
+                .count()
+        };
+        let fresh = || DecoderState {
+            version: 1,
+            json: json!({}),
+        };
+        assert_eq!(count("original", Some("msg_a"), "u1", &mut fresh()), 1);
+        // Resumed session / sub-agent file carrying the same message.
+        assert_eq!(count("resumed", Some("msg_a"), "u1", &mut fresh()), 0);
+        // Re-reading the owning file from scratch (state reset) reproduces its fact.
+        assert_eq!(count("original", Some("msg_a"), "u1", &mut fresh()), 1);
+        // Other messages and lines without a message.id are unaffected.
+        assert_eq!(count("resumed", Some("msg_b"), "u2", &mut fresh()), 1);
+        assert_eq!(count("resumed", None, "u3", &mut fresh()), 1);
+        assert_eq!(count("original", None, "u3", &mut fresh()), 1);
+    }
+
+    #[test]
+    fn usage_owners_evicts_oldest_entries_beyond_cap() {
+        let owners = UsageOwners::default();
+        assert!(owners.claim("m0", "a"));
+        assert!(!owners.claim("m0", "b"));
+        for i in 1..=UsageOwners::CAP {
+            assert!(owners.claim(&format!("m{i}"), "a"));
+        }
+        // m0 was evicted, so another file may now claim it.
+        assert!(owners.claim("m0", "b"));
     }
 
     #[test]
