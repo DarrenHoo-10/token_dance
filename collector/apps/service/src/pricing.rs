@@ -51,6 +51,33 @@ impl Catalog {
         !self.data.is_empty()
             && (0..21600).contains(&(chrono::Utc::now().timestamp() - self.fetched_at))
     }
+    /// The OpenRouter catalog doubles as the base-model registry for usage
+    /// folding: a catalog id's final slug (lowercased) is the base model name.
+    /// Each dotted version spelling also registers its dash-spelled form as an
+    /// alias (`claude-sonnet-5-5` folds into `claude-sonnet-5.5`), because
+    /// harnesses report dashes where the catalog writes dots. Catalog
+    /// refreshes grow the registry without a release.
+    pub fn base_aliases(&self) -> Vec<(String, String)> {
+        let mut aliases: Vec<(String, String)> = Vec::new();
+        let mut register = |aliases: &mut Vec<(String, String)>, alias: String, canonical: String| {
+            if !alias.is_empty() && !aliases.iter().any(|(a, _)| a == &alias) {
+                aliases.push((alias, canonical));
+            }
+        };
+        for model in &self.data {
+            let Some(slug) = model.id.rsplit('/').next() else {
+                continue;
+            };
+            let canonical = slug.trim().to_lowercase();
+            if canonical.is_empty() {
+                continue;
+            }
+            register(&mut aliases, canonical.clone(), canonical.clone());
+            let dashed = canonical.replace('.', "-");
+            register(&mut aliases, dashed, canonical);
+        }
+        aliases
+    }
     pub async fn fetch() -> Result<Self, String> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(15))

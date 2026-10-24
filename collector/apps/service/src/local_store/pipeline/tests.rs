@@ -677,16 +677,16 @@ fn harness_model_usage_respects_periods_sources_and_soft_deletes() {
                 VALUES (0,0,?1,?2,?3,?4,?5,?6,10,1,1,1)",
                 rusqlite::params![deleted, grain, today + offset * 86_400_000, harness, model, tokens])?;
         }
-        let history = super::query::query_harness_usage_history(c, "cursor", today, today + 86_400_000)?;
+        let history = super::query::query_harness_usage_history(c, "cursor", today, today + 86_400_000, &[])?;
         assert_eq!(history.models.len(), 1);
         let merged = &history.models[0];
         assert_eq!(merged.model_id, "shared-name");
         assert_eq!(merged.provider_id, "provider-a, provider-b");
         assert_eq!((merged.today_tokens, merged.week_tokens, merged.total_tokens), (170, 380, 790));
-        let codex = super::query::query_harness_usage_history(c, "codex", today, today + 86_400_000)?;
+        let codex = super::query::query_harness_usage_history(c, "codex", today, today + 86_400_000, &[])?;
         assert_eq!(codex.models.len(), 1);
         assert_eq!((codex.models[0].model_id.as_str(), codex.models[0].provider_id.as_str(), codex.models[0].total_tokens), ("shared-name", "provider-a", 6410));
-        assert!(super::query::query_harness_usage_history(c, "missing", today, today + 86_400_000)?.models.is_empty());
+        assert!(super::query::query_harness_usage_history(c, "missing", today, today + 86_400_000, &[])?.models.is_empty());
         Ok(())
     }).unwrap();
 }
@@ -715,7 +715,7 @@ fn harness_model_usage_folds_base_model_spelling_variants() {
                 rusqlite::params![today + offset * 86_400_000, model, tokens])?;
         }
         let history =
-            super::query::query_harness_usage_history(c, "zcode", today, today + 86_400_000)?;
+            super::query::query_harness_usage_history(c, "zcode", today, today + 86_400_000, &[])?;
         assert_eq!(
             history.models.len(),
             2,
@@ -730,6 +730,56 @@ fn harness_model_usage_folds_base_model_spelling_variants() {
         assert_eq!(lite.total_tokens, 70);
         Ok(())
     }).unwrap();
+}
+
+#[test]
+fn harness_model_usage_folds_by_openrouter_base_models() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("openrouter-prices.json"),
+        r#"{"fetched_at":1,"data":[{"id":"z-ai/glm-5.3-flash","pricing":{}},{"id":"z-ai/glm-5.3-flash-lite","pricing":{}}]}"#,
+    )
+    .unwrap();
+    let mut store = PipelineStore::open(dir.path()).unwrap();
+    store.set_clock_ms(1_700_000_000_000);
+    let display = store.upsert_model("zcode", "GLM-5.3-Flash").unwrap();
+    let suffixed = store.upsert_model("zcode", "glm-5.3-flash@500k").unwrap();
+    let fireworks =
+        store.upsert_model("zcode", "accounts/fireworks/models/glm-5p3-flash").unwrap();
+    let lite = store.upsert_model("zcode", "glm-5.3-flash-lite").unwrap();
+    let today = beijing_day_start(1_700_000_000_000);
+    store.with_connection(|c| {
+        for (model, tokens) in [(display, 300), (suffixed, 100), (fireworks, 50), (lite, 70)] {
+            c.execute("INSERT INTO model_metrics
+                (created_at,updated_at,delete_at,grain,bucket_start,harness_id,model_key,
+                 exact_token_total,derived_token_total,usage_observed_count,token_total_known_count,metric_semantics_version)
+                VALUES (0,0,NULL,'day',?1,'zcode',?2,?3,0,1,1,1)",
+                rusqlite::params![today, model, tokens])?;
+        }
+        Ok(())
+    }).unwrap();
+    let base_models = store.base_model_aliases();
+    assert!(base_models.iter().any(|(alias, _)| alias == "glm-5.3-flash"));
+    let history = store.with_connection(|c| {
+        super::query::query_harness_usage_history(
+            c,
+            "zcode",
+            today,
+            today + 86_400_000,
+            &base_models,
+        )
+    }).unwrap();
+    assert_eq!(
+        history.models.len(),
+        2,
+        "catalog base models fold their variants; a listed lite model stays its own base"
+    );
+    let glm = &history.models[0];
+    assert_eq!(glm.model_id, "GLM-5.3-Flash", "the dominant variant names the row");
+    assert_eq!(glm.total_tokens, 450);
+    let lite = &history.models[1];
+    assert_eq!(lite.model_id, "glm-5.3-flash-lite");
+    assert_eq!(lite.total_tokens, 70);
 }
 
 #[test]
