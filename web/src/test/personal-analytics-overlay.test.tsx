@@ -69,6 +69,15 @@ function mockAnalytics(range = 'today') {
     items: [{ key: 'codex', label: 'Codex', tokenTotal: '580000', percentage: 52 }],
     aggregationVersion: 1,
   });
+  vi.spyOn(api, 'getModelBreakdowns').mockImplementation(async (_range, filter) => ({
+    items: filter?.agent === 'cursor'
+      ? [{ key: 'cursor-fast', label: 'cursor-fast', tokenTotal: '2400', percentage: 100 }]
+      : [
+        { key: 'gpt-5.4', label: 'gpt-5.4', tokenTotal: '800000', percentage: 71.4 },
+        { key: 'claude-sonnet', label: 'claude-sonnet', tokenTotal: '320000', percentage: 28.6 },
+      ],
+    aggregationVersion: 1,
+  }));
   vi.spyOn(api, 'getPersonalSkills').mockResolvedValue({
     skills: [{ skillId: 'sk_1', skillPublicName: 'codex-review', useCount: '24', activeDays: 1 }],
     aggregationVersion: 1,
@@ -222,6 +231,28 @@ describe('Personal analytics overlay', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /重置筛选/ }));
     await waitFor(() => expect(within(dialog).queryByText('没有符合筛选的记录')).not.toBeInTheDocument());
     expect(api.getPersonalSummary).toHaveBeenCalled();
+  });
+
+  it('shows each model share under the trend and follows the agent filter', async () => {
+    renderOverlay('/leaderboard');
+    fireEvent.click(screen.getByRole('button', { name: '个人数据' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Test Dev，你的创造正在发生。' });
+    const panel = await waitFor(() => {
+      const found = dialog.querySelector<HTMLElement>('.model-breakdown');
+      expect(found).not.toBeNull();
+      return found as HTMLElement;
+    });
+    expect(await within(panel).findByText('claude-sonnet')).toBeInTheDocument();
+    expect(within(panel).getByText('71.4%')).toBeInTheDocument();
+    expect(within(panel).getByText('28.6%')).toBeInTheDocument();
+    expect(within(panel).getByText('800.0K')).toBeInTheDocument();
+    expect(api.getModelBreakdowns).toHaveBeenCalledWith('today', { agent: undefined });
+
+    fireEvent.click(within(dialog).getByRole('combobox', { name: 'Agent 筛选' }));
+    fireEvent.click(within(dialog).getByRole('option', { name: 'cursor' }));
+    await waitFor(() => expect(api.getModelBreakdowns).toHaveBeenCalledWith('today', { agent: 'cursor' }));
+    expect(await within(panel).findByText('cursor-fast')).toBeInTheDocument();
+    expect(within(panel).getByText('100.0%')).toBeInTheDocument();
   });
 
   it('applies the selected harness and model to cards and agent mix, and drops a selection that leaves the range', async () => {

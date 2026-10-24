@@ -224,6 +224,13 @@ func TestPersonalSliceFollowsRangeHarnessAndModel(t *testing.T) {
 	if len(cursorBreakdown.Items) != 1 || cursorBreakdown.Items[0].Key != "cursor" || cursorBreakdown.Items[0].TokenTotal != "400" {
 		t.Fatalf("cursor breakdown: %+v", cursorBreakdown.Items)
 	}
+	cursorModels, err := analytics.GetModelBreakdownFiltered(ctx, userID, r7, &cursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cursorModels.Items) != 1 || cursorModels.Items[0].Key != "claude-3-7-sonnet" || cursorModels.Items[0].TokenTotal != "400" || cursorModels.Items[0].Percentage != 100 {
+		t.Fatalf("cursor model breakdown: %+v", cursorModels.Items)
+	}
 
 	skills, err := analytics.GetSkillRankingFiltered(ctx, userID, r7, &cursor)
 	if err != nil {

@@ -249,6 +249,11 @@ export const enUS = {
     modelFilter: 'Model filter',
     coreMetricsLabel: 'Ten core developer metrics',
     unknownAgent: 'Unknown agent',
+    modelShare: 'Model share',
+    modelShareCount: '{count} models',
+    modelShareOthers: 'Others',
+    modelShareEmpty: 'No model usage in this period yet.',
+    modelShareError: 'Model share could not be loaded.',
     daysAgo: '{count}d ago',
   },
   activity: {

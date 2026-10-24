@@ -1500,6 +1500,10 @@ func (m *MemoryStore) GetAgentBreakdownFiltered(ctx context.Context, userID stri
 }
 
 func (m *MemoryStore) GetModelBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error) {
+	return m.GetModelBreakdownFiltered(ctx, userID, r, nil)
+}
+
+func (m *MemoryStore) GetModelBreakdownFiltered(ctx context.Context, userID string, r domain.TimeRange, agentID *string) (*domain.BreakdownResponse, error) {
 	return &domain.BreakdownResponse{Range: r, Items: []domain.BreakdownItem{}}, nil
 }
 

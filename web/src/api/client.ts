@@ -397,8 +397,9 @@ class ApiHttpClient {
     return this.request<BreakdownResponse>(`/me/breakdowns/agents?${params.toString()}`, { method: 'GET' });
   }
 
-  public async getModelBreakdowns(range = '30d'): Promise<BreakdownResponse> {
+  public async getModelBreakdowns(range = '30d', filter: { agent?: string } = {}): Promise<BreakdownResponse> {
     const params = new URLSearchParams({ range });
+    if (filter.agent) params.set('agent', filter.agent);
     return this.request<BreakdownResponse>(`/me/breakdowns/models?${params.toString()}`, { method: 'GET' });
   }
 

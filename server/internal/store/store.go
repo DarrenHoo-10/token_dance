@@ -77,6 +77,8 @@ type AnalyticsStore interface {
 	GetAgentBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error)
 	GetAgentBreakdownFiltered(ctx context.Context, userID string, r domain.TimeRange, agentID, modelID *string) (*domain.BreakdownResponse, error)
 	GetModelBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error)
+	// GetModelBreakdownFiltered limits the model composition to one harness. Nil, blank, or "all" means unfiltered.
+	GetModelBreakdownFiltered(ctx context.Context, userID string, r domain.TimeRange, agentID *string) (*domain.BreakdownResponse, error)
 	GetSkillRanking(ctx context.Context, userID string, r domain.TimeRange) (*domain.SkillsResponse, error)
 	// GetSkillRankingFiltered filters by harness. Skill rows have no model dimension, so model is not applied here.
 	GetSkillRankingFiltered(ctx context.Context, userID string, r domain.TimeRange, agentID *string) (*domain.SkillsResponse, error)
