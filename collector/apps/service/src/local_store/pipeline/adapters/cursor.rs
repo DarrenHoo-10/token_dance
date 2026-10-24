@@ -193,6 +193,7 @@ impl HarnessStrategy for CursorStrategy {
             record,
             book: &self.skill_book,
             allocator: &*self.skill_allocator,
+            usage_owners: None,
         };
         if let Some(mut facts) = if value.get("message").is_some() || value["type"] == "turn_ended"
         {

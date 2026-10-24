@@ -132,6 +132,7 @@ pub struct JsonlHarnessStrategy {
     model_allocator: Option<crate::local_store::pipeline::runner::ModelAllocator>,
     pub skill_book: SkillBook,
     pub skill_allocator: Arc<dyn Fn([u8; 32], &str) -> i64 + Send + Sync>,
+    usage_owners: super::native_jsonl::UsageOwners,
 }
 
 impl JsonlHarnessStrategy {
@@ -149,6 +150,7 @@ impl JsonlHarnessStrategy {
             model_allocator: None,
             skill_book,
             skill_allocator,
+            usage_owners: Default::default(),
         }
     }
 
@@ -293,6 +295,7 @@ impl HarnessStrategy for JsonlHarnessStrategy {
             record,
             book: &self.skill_book,
             allocator: &*self.skill_allocator,
+            usage_owners: Some(&self.usage_owners),
         };
         if let Some(mut facts) = super::native_jsonl::decode(&native_context, &value, state) {
             for fact in &mut facts {
