@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { getAgentConfigs, getAgentQuotas, getDaemonStatus, hideWindow, isTauriEnvironment, openSettings, openWebsite, toggleGlobalPause } from './tauri-bridge';
+import { dismissQoderEnvNotice, getAgentConfigs, getAgentQuotas, getDaemonStatus, getQoderEnvNotice, hideWindow, isTauriEnvironment, openSettings, openWebsite, toggleGlobalPause } from './tauri-bridge';
 import { syncStatusText } from './sync-status';
 import type { AgentConfig, DaemonStatus } from './tauri-bridge';
 import { cloudUsageHint, collectionStatusText, usageTokens, usageCosts, usageTrend, type UsageRange, type AgentQuota } from './usage-analytics';
@@ -21,6 +21,7 @@ export function UsagePanel() {
   const [data, setData] = useState<{ agents: AgentConfig[]; status: DaemonStatus } | null>(null);
   const [quotas, setQuotas] = useState<AgentQuota[]>([]);
   const [error, setError] = useState(false);
+  const [qoderNotice, setQoderNotice] = useState<number | null>(null);
   useWindowReady(true);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -56,6 +57,8 @@ export function UsagePanel() {
     refresh.current = load;
     void load();
     void loadQuotas();
+    // One-time notice; absent once dismissed, so a single read per mount is enough.
+    getQoderEnvNotice().then(value => { if (!disposed) setQoderNotice(value); }).catch(() => { /* notice state unavailable; nothing to show */ });
     const timer = window.setInterval(load, 3000);
     const quotaTimer = window.setInterval(loadQuotas, 3000);
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') void hideWindow(); };
@@ -71,6 +74,10 @@ export function UsagePanel() {
     if (busy) return;
     setBusy(true);
     try { await action(); await refresh.current(); } catch (err) { setMessage(String(err)); } finally { setBusy(false); }
+  };
+  const dismissQoderNotice = async () => {
+    setQoderNotice(null);
+    try { await dismissQoderEnvNotice(); } catch { /* dismissal not persisted; notice returns next launch */ }
   };
   const agents = [...(data?.agents ?? [])].sort((a, b) => (usageTokens(b, range) ?? -1) - (usageTokens(a, range) ?? -1));
   const active = agents.filter(agent => usageTokens(agent, range) !== null).slice(0, 3);
@@ -95,6 +102,7 @@ export function UsagePanel() {
     </div></header>
     <main className="usage-content">
       <div className="usage-heading"><h1>{text('我的用量', 'My usage')}</h1><span>{new Date().toLocaleDateString(zh ? 'zh-CN' : 'en-US', { month: 'short', day: 'numeric', timeZone: 'Asia/Shanghai' })}</span></div>
+      {qoderNotice !== null && <div className="usage-qoder-notice" role="note"><span>{text('已开启 Qoder 的 token 统计（用户环境变量 QODER_EXPOSE_TOKEN_USAGE），重启 Qoder 后生效。', 'Qoder token tracking enabled (user environment variable QODER_EXPOSE_TOKEN_USAGE); restart Qoder for it to take effect.')}</span><button onClick={() => void dismissQoderNotice()}>{text('知道了', 'Got it')}</button></div>}
       <div className="usage-totals" aria-label={text('统计周期', 'Usage period')}>{periods.map(period => {
         const values = agents.map(agent => usageTokens(agent, period.key)).filter(value => value !== null);
         return <button className="usage-total-card" key={period.key} aria-pressed={range === period.key} onClick={() => setRange(period.key)} title={period.key === 'all' ? text('本机已记录的全部历史；升级前已清理的数据不包含在内', 'All recorded local history; excludes history removed before this upgrade') : undefined}>

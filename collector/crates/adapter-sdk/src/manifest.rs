@@ -53,6 +53,7 @@ pub fn sample_manifest(id: impl Into<String>) -> AdapterManifest {
             }],
             commands: vec![],
             network_domains: vec![],
+            environment_keys: None,
         },
         capabilities: vec![Capability::Sessions, Capability::Tokens],
     }
@@ -107,7 +108,35 @@ pub fn validate_manifest(manifest: &AdapterManifest) -> Result<(), AdapterError>
     for domain in &manifest.permissions.network_domains {
         validate_network_domain(domain)?;
     }
+    if let Some(keys) = &manifest.permissions.environment_keys {
+        if keys.len() > 256 {
+            return Err(AdapterError::manifest_invalid(
+                "manifest environmentKeys must not exceed 256 entries",
+            ));
+        }
+        for key in keys {
+            validate_environment_key(key)?;
+        }
+    }
     Ok(())
+}
+
+/// Manifest-declared environment keys must satisfy the same charset the
+/// config-executor accepts (`prepare_environment`), so a declared permission
+/// can never produce an un-executable plan.
+fn validate_environment_key(key: &str) -> Result<(), AdapterError> {
+    let valid = !key.is_empty()
+        && key.len() <= 256
+        && key
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_');
+    if valid {
+        Ok(())
+    } else {
+        Err(AdapterError::manifest_invalid(format!(
+            "environment key `{key}` must be 1-256 ASCII letters, digits, or underscores"
+        )))
+    }
 }
 
 pub fn protocol_compatible(adapter_protocol: &str, collector_protocol: &str) -> bool {
@@ -372,6 +401,20 @@ mod tests {
         manifest.permissions.network_domains = vec!["*.example.com".into()];
         let err = manifest.validate().unwrap_err();
         assert_eq!(err.code, ErrorCode::ManifestPermissionDenied);
+    }
+
+    #[test]
+    fn rejects_invalid_environment_key() {
+        for key in ["", "QODER KEY", "QODER=1", "QODER.EXPOSE", "QÖDER"] {
+            let mut manifest = sample_manifest("dev.tokenshow.adapter.example");
+            manifest.permissions.environment_keys = Some(vec![key.into()]);
+            let err = manifest.validate().unwrap_err();
+            assert_eq!(err.code, ErrorCode::ManifestInvalid, "key {key:?}");
+        }
+        let mut manifest = sample_manifest("dev.tokenshow.adapter.example");
+        manifest.permissions.environment_keys =
+            Some(vec!["QODER_EXPOSE_TOKEN_USAGE".into()]);
+        manifest.validate().unwrap();
     }
 
     #[test]

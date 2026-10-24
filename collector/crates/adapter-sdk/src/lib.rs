@@ -31,4 +31,6 @@ pub use protocol::{
     SourceKind, TokenUsage, PROTOCOL_VERSION,
 };
 pub use setup::{ConfigMutation, PermissionRequest, RollbackStep, SetupPlan, VerifyStep};
-pub use source::{assert_source_allowed, assert_write_path_allowed, SourceSpec};
+pub use source::{
+    assert_environment_key_allowed, assert_source_allowed, assert_write_path_allowed, SourceSpec,
+};

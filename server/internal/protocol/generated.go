@@ -345,10 +345,11 @@ type CommandPermission struct {
 }
 
 type AdapterPermissions struct {
-	ReadPaths      []PathPermission    `json:"readPaths"`
-	WritePaths     []PathPermission    `json:"writePaths"`
-	Commands       []CommandPermission `json:"commands"`
-	NetworkDomains []string            `json:"networkDomains"`
+	ReadPaths       []PathPermission    `json:"readPaths"`
+	WritePaths      []PathPermission    `json:"writePaths"`
+	Commands        []CommandPermission `json:"commands"`
+	NetworkDomains  []string            `json:"networkDomains"`
+	EnvironmentKeys []string            `json:"environmentKeys,omitempty"`
 }
 
 type AdapterManifest struct {

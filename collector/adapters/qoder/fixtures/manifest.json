@@ -15,7 +15,8 @@
     ],
     "writePaths": [],
     "commands": [],
-    "networkDomains": []
+    "networkDomains": [],
+    "environmentKeys": ["QODER_EXPOSE_TOKEN_USAGE"]
   },
   "capabilities": ["tokens", "sessions", "turns", "cost"]
 }

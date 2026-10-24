@@ -309,10 +309,13 @@ pub struct SetupPlan {
 pub enum ConfigMutation {
     JsonMergePatch { path: PathTemplate, patch: Value },
     TomlMergePatch { path: PathTemplate, patch: Value },
-    EnvironmentSet { scope: UserScope, key: String, value: SecretRef },
+    EnvironmentSet { scope: UserScope, key: String, value_ref: ValueRef },
     DirectoryCreate { path: PathTemplate },
 }
 ```
+
+`EnvironmentSet` 仅接受字面量 `value://` 引用（执行期绝不解析 secret/host 引用），key 必须在
+manifest `permissions.environmentKeys` 中精确声明（`adapter-host` 出口校验）。
 
 配置写入流程必须满足：
 
@@ -1037,7 +1040,10 @@ Harness 的 session log 包含 turn、step、user/message、assistant、tool/cal
 - `EnvironmentSet`（User scope，`QODER_EXPOSE_TOKEN_USAGE=true`），`required_permissions`
   为空（产品决策：非危险权限）。`config-executor` 已支持该 mutation：Windows 写
   `HKCU\Environment` + `WM_SETTINGCHANGE` 广播，读回验证、加密备份、回滚（恢复旧值或删除
-  新键）；非 Windows 平台显式拒绝（macOS 仅建议模式）。桌面端自动执行接线为后续项。
+  新键）；非 Windows 平台显式拒绝（macOS 仅建议模式）。manifest 需在
+  `permissions.environmentKeys` 声明键名（`adapter-host` 出口精确校验，大小写不敏感）。
+  桌面端已接线：启动装配后检测到 Qoder 即自动 propose→apply 并发一次性通知
+  （`apps/desktop/src-tauri/src/qoder_setup.rs`），macOS 只建议不写入。
 
 #### 隐私边界
 

@@ -91,4 +91,6 @@ commands.allow = [
   "login_account",
   "logout_account",
   "recover_sync_device",
+  "get_qoder_env_notice",
+  "dismiss_qoder_env_notice",
 ]

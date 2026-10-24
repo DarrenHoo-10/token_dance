@@ -525,6 +525,21 @@ export async function setAgentStatus(agentId: string, enabled: boolean): Promise
   return { ...ag };
 }
 
+/** Epoch ms when Qoder token exposure was auto-enabled, or null when dismissed/absent. */
+export async function getQoderEnvNotice(): Promise<number | null> {
+  if (isTauriEnvironment()) {
+    return await invoke<number | null>("get_qoder_env_notice");
+  }
+  return null;
+}
+
+/** Dismiss the one-time Qoder env notice; the environment variable stays enabled. */
+export async function dismissQoderEnvNotice(): Promise<void> {
+  if (isTauriEnvironment()) {
+    await invoke<void>("dismiss_qoder_env_notice");
+  }
+}
+
 export async function previewUploadBatch(): Promise<UploadBatchPreview> {
   if (isTauriEnvironment()) {
     const ack = await invoke<OperationAck<UploadBatchPreview>>("preview_upload_batch");

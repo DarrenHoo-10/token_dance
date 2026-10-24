@@ -40,7 +40,9 @@ pub trait SetupVerifier {
 /// ever mutates the user-scoped store — on Windows `HKCU\Environment` plus a
 /// `WM_SETTINGCHANGE` broadcast. Non-Windows builds keep a rejecting default
 /// because macOS GUI apps do not inherit shell environment changes.
-pub trait UserEnvironmentStore {
+///
+/// `Send` because executor state crosses async boundaries.
+pub trait UserEnvironmentStore: Send {
     fn read(&self, key: &str) -> Result<Option<String>, String>;
     fn write(&self, key: &str, value: &str) -> Result<(), String>;
     fn delete(&self, key: &str) -> Result<(), String>;
@@ -373,6 +375,15 @@ where
         environment: impl UserEnvironmentStore + 'static,
     ) -> Self {
         self.environment = Box::new(environment);
+        self
+    }
+
+    /// Boxed variant for callers that already hold a trait object.
+    pub fn with_boxed_environment(
+        mut self,
+        environment: Box<dyn UserEnvironmentStore>,
+    ) -> Self {
+        self.environment = environment;
         self
     }
 

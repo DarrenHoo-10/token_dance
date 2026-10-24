@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
-use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
 
 use adapter_sdk::{ConfigMutation, RollbackStep, SetupPlan, SetupPlanStatus, VerifyStep};
 use serde_json::json;
@@ -17,24 +16,27 @@ use super::{
 /// `HKCU\Environment` key. `fail_write`/`wrong_read_back` inject failures.
 #[derive(Clone, Default)]
 struct MemoryEnvironmentStore {
-    state: Rc<RefCell<HashMap<String, String>>>,
+    state: Arc<Mutex<HashMap<String, String>>>,
     fail_write: bool,
     wrong_read_back: bool,
 }
 
 impl MemoryEnvironmentStore {
     fn get(&self, key: &str) -> Option<String> {
-        self.state.borrow().get(key).cloned()
+        self.state.lock().unwrap().get(key).cloned()
     }
 
     fn set(&self, key: &str, value: &str) {
-        self.state.borrow_mut().insert(key.into(), value.into());
+        self.state
+            .lock()
+            .unwrap()
+            .insert(key.into(), value.into());
     }
 }
 
 impl UserEnvironmentStore for MemoryEnvironmentStore {
     fn read(&self, key: &str) -> Result<Option<String>, String> {
-        let current = self.state.borrow().get(key).cloned();
+        let current = self.state.lock().unwrap().get(key).cloned();
         if self.wrong_read_back {
             return Ok(current.map(|_| "stale".into()));
         }
@@ -45,7 +47,10 @@ impl UserEnvironmentStore for MemoryEnvironmentStore {
         if self.fail_write {
             return Err("registry unavailable".into());
         }
-        self.state.borrow_mut().insert(key.into(), value.into());
+        self.state
+            .lock()
+            .unwrap()
+            .insert(key.into(), value.into());
         Ok(())
     }
 
@@ -53,7 +58,7 @@ impl UserEnvironmentStore for MemoryEnvironmentStore {
         if self.fail_write {
             return Err("registry unavailable".into());
         }
-        self.state.borrow_mut().remove(key);
+        self.state.lock().unwrap().remove(key);
         Ok(())
     }
 }

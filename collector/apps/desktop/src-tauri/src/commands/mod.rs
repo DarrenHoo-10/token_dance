@@ -5,6 +5,7 @@ pub mod config;
 pub mod daemon;
 pub mod deletion;
 pub mod device;
+pub mod notice;
 pub mod orb;
 pub mod quotas;
 pub mod upload;

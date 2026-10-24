@@ -1,9 +1,9 @@
 # Qoder 接入设计方案
 
 状态：**P1 已实施**（2026-10-24，transcript adapter 全链路：adapter crate + pipeline 策略 +
-注册/检测 + 桌面端与 web 元数据 + config-executor `EnvironmentSet` 支持）。未实施：桌面端
-检测到 Qoder 后自动执行 setup_plan 写入环境变量（executor 已就绪，接线待做，见 §4.3）、
-P2 额度环、P3 IDE local.db。本机实测 + 公开资料调研时间 2026-10-24；本机装有 Qoder CLI
+注册/检测 + 桌面端与 web 元数据 + config-executor `EnvironmentSet` 支持；同日补齐桌面端触发链
+"检测到 Qoder → 自动执行 setup_plan 写环境变量 → 一次性通知"，见 §4.3）。未实施：P2 额度环、
+P3 IDE local.db。本机实测 + 公开资料调研时间 2026-10-24；本机装有 Qoder CLI
 （`~/.qoder`，CLI 1.1.75-hotfix.1），所有本地数据结论以真实文件为据，来源见 §2.6。
 
 ## 1、背景与目标
@@ -136,12 +136,26 @@ setup_plan 走现有 §3.6 配置变更计划：`ConfigMutation::EnvironmentSet`
 生效检测在运行时：新会话 token 仍全 0 → 提示重启 Qoder；变量在但长期无效（Qoder 改版）→
 仅提示不降级（credits 采集不受影响）。
 
-**实施状态（2026-10-24）**：`config-executor` 已支持 `EnvironmentSet`——User scope、字面量
-`value://` 引用（计划里绝不解析 secret/host 引用）、Windows `HKCU\Environment` 写入 +
-`WM_SETTINGCHANGE` 广播、读回验证、加密备份与回滚（恢复旧值或删除新键）、非 Windows 平台
-显式拒绝（对应 macOS 仅建议模式）；单测见 `crates/config-executor/src/tests.rs`。
-**尚未接线**：桌面端"检测到 Qoder → 自动取 setup_plan → apply → 通知"的触发链不在本次
-改动内（桌面目前只执行自身的 control plan），环境变量需手动设置或等接线后自动写入。
+**实施状态（2026-10-24）**：全链路已落地。
+
+- `config-executor` 已支持 `EnvironmentSet`——User scope、字面量 `value://` 引用（计划里
+  绝不解析 secret/host 引用）、Windows `HKCU\Environment` 写入 + `WM_SETTINGCHANGE` 广播、
+  读回验证、加密备份与回滚（恢复旧值或删除新键）、非 Windows 平台显式拒绝；单测见
+  `crates/config-executor/src/tests.rs`。
+- 协议与权限：`AdapterPermissions` 新增可选 `environmentKeys`（精确键名 allowlist，大小写
+  不敏感匹配，schema 见 `schemas/protocol/v1`）；`adapter-host` 在 setup_plan 出口校验
+  `EnvironmentSet` 的 key 必须在 manifest 声明（否则 `MANIFEST_PERMISSION_DENIED`），
+  adapter-sdk manifest 校验键名字符集与 executor 一致。qoder manifest 已声明
+  `QODER_EXPOSE_TOKEN_USAGE`。
+- 桌面端触发链（`apps/desktop/src-tauri/src/qoder_setup.rs`）：`AppState::build` 装配服务后
+  调用 `ensure_exposed`——检测到 Qoder 且变量未开启时，经 `Collector::propose_setup` 取计划、
+  形状自检（恰好 1 条 user-scope `QODER_EXPOSE_TOKEN_USAGE` 写入）、`begin_configure` →
+  executor apply（备份/读回验证/失败回滚）→ `finish_configure_ok/err`，runtime
+  setup_plan_status 随之 Proposed/Applied/Failed（沿用现有 UI 展示）。成功后写一次性通知
+  水位 `qoder_env_enabled_at`（持久化 control，旧文件 serde 默认 None），UsagePanel 顶部
+  显示可关闭横幅（重启 Qoder 后生效），关闭命令 `dismiss_qoder_env_notice` 只清水位、
+  不动环境变量。fixture / local-test 构建跳过；macOS 返回 SuggestOnly 不写任何东西。
+  单测用注入的 FakeEnvironment store，绝不碰真实 `HKCU\Environment`。
 
 ### 4.4 指标映射（核心口径）
 

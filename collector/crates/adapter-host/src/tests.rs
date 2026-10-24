@@ -24,6 +24,7 @@ struct StubAdapter {
     spoof_capability: bool,
     unsafe_reason: bool,
     overreach_source: bool,
+    env_mutation_key: Option<String>,
     decoded_events: Vec<adapter_sdk::NormalizedEvent>,
 }
 
@@ -42,6 +43,7 @@ impl StubAdapter {
             spoof_capability: false,
             unsafe_reason: false,
             overreach_source: false,
+            env_mutation_key: None,
             decoded_events: Vec::new(),
         }
     }
@@ -132,14 +134,22 @@ impl AgentAdapter for StubAdapter {
     }
 
     async fn setup_plan(&self, _ctx: SetupContext) -> Result<SetupPlan, AdapterError> {
+        let mutations = match &self.env_mutation_key {
+            Some(key) => vec![ConfigMutation::EnvironmentSet {
+                scope: "User".into(),
+                key: key.clone(),
+                value_ref: "value://true".into(),
+            }],
+            None => vec![ConfigMutation::JsonMergePatch {
+                path_template: "${AGENT_CONFIG_HOME}/config.json".into(),
+                patch: serde_json::json!({"telemetry": true}),
+            }],
+        };
         Ok(SetupPlan {
             plan_id: "plan-1".into(),
             adapter_id: self.manifest.id.clone(),
             summary: "enable collection".into(),
-            mutations: vec![ConfigMutation::JsonMergePatch {
-                path_template: "${AGENT_CONFIG_HOME}/config.json".into(),
-                patch: serde_json::json!({"telemetry": true}),
-            }],
+            mutations,
             required_permissions: vec![],
             verify: vec![VerifyStep {
                 id: "syntax".into(),
@@ -412,6 +422,46 @@ async fn setup_plan_allows_declared_write_path() {
         .unwrap();
     assert_eq!(plan.adapter_id, "dev.tokenshow.adapter.one");
     assert_eq!(plan.mutations.len(), 1);
+}
+
+#[tokio::test]
+async fn setup_plan_allows_declared_environment_key() {
+    let mut host = AdapterHost::new();
+    let mut adapter = StubAdapter::new("dev.tokenshow.adapter.one");
+    // Windows treats the user environment as case-insensitive; the manifest
+    // declares the canonical casing but either casing may be requested.
+    adapter.manifest.permissions.environment_keys =
+        Some(vec!["QODER_EXPOSE_TOKEN_USAGE".into()]);
+    adapter.env_mutation_key = Some("qoder_expose_token_usage".into());
+    host.register(Arc::new(adapter)).unwrap();
+    let plan = host
+        .setup_plan(
+            "dev.tokenshow.adapter.one",
+            SetupContext {
+                installation_id: "ins_1".into(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(plan.mutations.len(), 1);
+}
+
+#[tokio::test]
+async fn setup_plan_rejects_undeclared_environment_key() {
+    let mut host = AdapterHost::new();
+    let mut adapter = StubAdapter::new("dev.tokenshow.adapter.one");
+    adapter.env_mutation_key = Some("QODER_EXPOSE_TOKEN_USAGE".into());
+    host.register(Arc::new(adapter)).unwrap();
+    let error = host
+        .setup_plan(
+            "dev.tokenshow.adapter.one",
+            SetupContext {
+                installation_id: "ins_1".into(),
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(error.code, ErrorCode::ManifestPermissionDenied);
 }
 
 #[tokio::test]
