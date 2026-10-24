@@ -6,8 +6,8 @@ use adapter_sdk::{
 };
 use adapter_zcode::{
     compatibility_supported, fingerprint_supported, load_manifest, verified_query_plan,
-    ZCodeAdapter, COMPATIBILITY_JSON, FINGERPRINT_V1, FINGERPRINT_V2, FINGERPRINT_V3, KNOWN_JSON,
-    RUNTIME_JSON, UNKNOWN_JSON,
+    ZCodeAdapter, COMPATIBILITY_JSON, FINGERPRINT_V1, FINGERPRINT_V2, FINGERPRINT_V3,
+    FINGERPRINT_V4, KNOWN_JSON, RUNTIME_JSON, UNKNOWN_JSON,
 };
 use privacy::PrivacyFilter;
 
@@ -115,12 +115,24 @@ async fn version_and_fingerprint_must_match_the_verified_matrix() {
     assert!(!compatibility_supported("1.1.9", FINGERPRINT_V2));
     assert!(!compatibility_supported("2.0.0", FINGERPRINT_V2));
 
+    assert!(compatibility_supported("0.8.0", FINGERPRINT_V3));
+    assert!(compatibility_supported("0.16.9", FINGERPRINT_V4));
+    assert!(!compatibility_supported("1.0.0", FINGERPRINT_V4));
+    assert!(verified_query_plan(FINGERPRINT_V4).is_some());
+
     let mismatch = ZCodeAdapter::new("1.1.9", FINGERPRINT_V2, KEY);
     let sources = mismatch
         .discover_sources(adapter_sdk::SourceContext::default())
         .await
         .unwrap();
     assert!(sources.iter().all(|source| source.id() != "zcode-sqlite"));
+
+    let v4 = ZCodeAdapter::new("0.16.9", FINGERPRINT_V4, KEY);
+    let sources = v4
+        .discover_sources(adapter_sdk::SourceContext::default())
+        .await
+        .unwrap();
+    assert!(sources.iter().any(|source| source.id() == "zcode-sqlite"));
 }
 
 #[tokio::test]
@@ -146,6 +158,19 @@ async fn v3_session_summaries_emit_derived_generated_lines() {
     let json = serde_json::to_string(&events).unwrap();
     assert!(!json.contains("ZCODE_DIFF_CANARY"));
     assert!(!json.contains("secret.rs"));
+}
+
+#[tokio::test]
+async fn v4_fingerprint_decodes_verified_sqlite_records() {
+    let adapter = ZCodeAdapter::new("0.16.9", FINGERPRINT_V4, KEY);
+    let payload = r#"{"fingerprint":"zcode-sqlite-v4-uv0","records":[{"type":"step_finish","timestamp":"2026-10-24T01:00:00Z","sessionId":"zcode-session-secret","stepId":7,"provider":"zai","model":"glm","inputTokens":10,"outputTokens":2,"totalTokens":12}]}"#;
+    let events = adapter
+        .decode(frame(SourceKind::SqliteSnapshot, "zcode-sqlite", payload))
+        .await
+        .unwrap();
+    assert_eq!(events.len(), 1);
+    assert!(matches!(events[0].payload, EventPayload::ModelUsageRecorded(_)));
+    assert!(!serde_json::to_string(&events).unwrap().contains("zcode-session-secret"));
 }
 
 #[tokio::test]
