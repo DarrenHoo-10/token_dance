@@ -171,18 +171,20 @@ pub fn query_harness_usage_history(
 }
 
 /// The usage panel lists models by name only, so per-provider rows sharing one
-/// model id (e.g. Codex sessions with and without `model_provider`) must fold
-/// into a single entry; `model_key` keeps the smallest key of the group because
-/// rows arrive ordered by it.
+/// base model (same id across providers, or spelling variants like
+/// `GLM-5.3-Flash` / `glm-5.3-flash` / Fireworks
+/// `accounts/fireworks/models/glm-5p3-flash`) must fold into a single entry;
+/// `model_key` keeps the smallest key of the group because rows arrive ordered
+/// by it, and the display name is the variant carrying the most tokens.
 fn merge_model_usage(rows: Vec<ModelUsage>) -> Vec<ModelUsage> {
     let mut merged: Vec<ModelUsage> = Vec::new();
     let mut index: HashMap<String, usize> = HashMap::new();
     let mut providers: Vec<BTreeSet<String>> = Vec::new();
     for row in rows {
-        let slot = match index.get(&row.model_id) {
+        let slot = match index.get(&base_model_key(&row.model_id)) {
             Some(&slot) => slot,
             None => {
-                index.insert(row.model_id.clone(), merged.len());
+                index.insert(base_model_key(&row.model_id), merged.len());
                 merged.push(ModelUsage {
                     model_key: row.model_key,
                     model_id: row.model_id.clone(),
@@ -195,10 +197,14 @@ fn merge_model_usage(rows: Vec<ModelUsage>) -> Vec<ModelUsage> {
                 merged.len() - 1
             }
         };
+        let dominant = row.total_tokens > merged[slot].total_tokens;
         let target = &mut merged[slot];
         target.today_tokens = target.today_tokens.saturating_add(row.today_tokens);
         target.week_tokens = target.week_tokens.saturating_add(row.week_tokens);
         target.total_tokens = target.total_tokens.saturating_add(row.total_tokens);
+        if dominant {
+            target.model_id = row.model_id.clone();
+        }
         if !row.provider_id.is_empty() {
             providers[slot].insert(row.provider_id);
         }
@@ -207,6 +213,34 @@ fn merge_model_usage(rows: Vec<ModelUsage>) -> Vec<ModelUsage> {
         target.provider_id = providers.into_iter().collect::<Vec<_>>().join(", ");
     }
     merged
+}
+
+/// Folding key for model spelling variants of one base model: comparison is
+/// case-insensitive, and provider-scoped paths reduce to their final segment
+/// with the Fireworks `p`-encoded dot decoded (`glm-5p3` -> `glm-5.3`).
+fn base_model_key(model_id: &str) -> String {
+    let lowered = model_id.trim().to_lowercase();
+    match lowered.find("/models/") {
+        Some(pos) => decode_fireworks_dots(&lowered[pos + "/models/".len()..]),
+        None => lowered,
+    }
+}
+
+fn decode_fireworks_dots(name: &str) -> String {
+    let chars: Vec<char> = name.chars().collect();
+    let mut out = String::with_capacity(name.len());
+    for i in 0..chars.len() {
+        let between_digits = i > 0
+            && i + 1 < chars.len()
+            && chars[i - 1].is_ascii_digit()
+            && chars[i + 1].is_ascii_digit();
+        out.push(if between_digits && chars[i] == 'p' {
+            '.'
+        } else {
+            chars[i]
+        });
+    }
+    out
 }
 
 #[derive(Debug, Clone, Serialize)]
