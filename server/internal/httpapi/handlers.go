@@ -706,7 +706,7 @@ func (h *Handlers) GetModelBreakdowns(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	rangeKey := r.URL.Query().Get("range")
 
-	resp, err := h.analytics.GetModelBreakdownRange(r.Context(), user.UserID, rangeKey, r.URL.Query().Get("from"), r.URL.Query().Get("to"))
+	resp, err := h.analytics.GetModelBreakdownFiltered(r.Context(), user.UserID, rangeKey, r.URL.Query().Get("from"), r.URL.Query().Get("to"), queryFilterID(r, "agent"))
 	if err != nil {
 		WriteError(w, r, err)
 		return

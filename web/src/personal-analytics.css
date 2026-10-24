@@ -508,6 +508,59 @@
 .trend-precise-total strong { color: #658245; font-size: 12px; font-weight: 600; }
 .trend-precise-total > small { margin-left: auto; font-size: 9px; }
 
+.model-breakdown {
+  border-top: 1px solid #f0f3eb;
+  margin-top: 14px;
+  padding-top: 16px;
+}
+
+.model-breakdown-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+  color: #526a3d;
+}
+
+.model-breakdown-head strong { font-weight: 650; }
+.model-breakdown-head small { font-size: 9px; color: #a0ad94; }
+
+.model-share-bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  margin-top: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.model-share-bar > i { flex-basis: 0; min-width: 2px; }
+
+.model-share-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.model-share-list > li {
+  display: grid;
+  grid-template-columns: 6px minmax(0, 1fr) 52px 78px;
+  align-items: center;
+  column-gap: 8px;
+  padding: 10px 0;
+  border-top: 1px solid #f0f3ec;
+  font-size: 10px;
+}
+
+.model-share-list > li:first-child { border-top: 0; }
+.model-share-list i { width: 6px; height: 6px; border-radius: 50%; }
+.model-share-list span { color: #748863; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.model-share-list b { text-align: right; font-size: 11px; font-weight: 650; color: #526a3d; }
+.model-share-list em { text-align: right; font-style: normal; font-size: 12px; font-weight: 600; }
+.model-share-list em small { margin-left: 4px; font-size: 9px; font-weight: 400; color: #a1ad95; }
+.model-share-list > li.selected span { color: #3f5a2a; font-weight: 650; }
+
 .analytics-chart-empty {
   min-height: 220px;
   display: flex;

@@ -12,6 +12,7 @@ import { TokenTrendChart } from '@/components/analytics/TokenTrendChart';
 import { personalTokenRank } from '@/components/analytics/tokenRanking';
 import { FilterSelect } from '@/components/common/FilterSelect';
 import { AgentBreakdown } from '@/components/analytics/AgentBreakdown';
+import { ModelBreakdown } from '@/components/analytics/ModelBreakdown';
 import { ActivityCalendar } from '@/components/analytics/ActivityCalendar';
 import { SkillRanking } from '@/components/analytics/SkillRanking';
 import { SyncStatusCard } from '@/components/analytics/SyncStatusCard';
@@ -204,6 +205,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
   const [publicProfile, setPublicProfile] = useState<PublicUserProfile | null>(null);
   const [trends, setTrends] = useState<TokenTrendsResponse | null>(null);
   const [agentBreakdowns, setAgentBreakdowns] = useState<BreakdownItem[]>([]);
+  const [modelBreakdowns, setModelBreakdowns] = useState<BreakdownItem[] | null>([]);
   const [skills, setSkills] = useState<SkillItem[]>([]);
   const [calendarDays, setCalendarDays] = useState<CalendarDay[]>([]);
   const [calendarStreak, setCalendarStreak] = useState(0);
@@ -243,14 +245,17 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
       return;
     }
     const slice = usageSlice(selectedAgent, selectedModel);
-    const [summaryRes, agentsRes, skillsRes] = await Promise.all([
+    const [summaryRes, agentsRes, skillsRes, modelsRes] = await Promise.all([
       api.getPersonalSummary(range, slice),
       api.getAgentBreakdowns(range, slice),
       api.getPersonalSkills(range, { agent: slice.agent }),
+      // Secondary panel: a failure here must not take down the whole board.
+      api.getModelBreakdowns(range, { agent: slice.agent }).catch(() => null),
     ]);
     if (seq !== boardSeq.current) return;
     setSummary(summaryRes);
     setAgentBreakdowns(agentsRes.items || []);
+    setModelBreakdowns(modelsRes ? modelsRes.items || [] : null);
     setSkills(skillsRes.skills || (skillsRes as unknown as { items: SkillItem[] }).items || []);
     setError(null);
   }, [range, publicHandle, selectedAgent, selectedModel]);
@@ -511,6 +516,7 @@ export const PersonalAnalytics: React.FC<{ onLeave?: () => void; active?: boolea
             <strong>{chartEmpty || !selectionLabel ? (zh ? '暂无记录' : 'No records') : selectionLabel}</strong>
             <small>{hourly ? (zh ? '按小时' : 'Hourly') : (zh ? '按天' : 'Daily')}</small>
           </div>
+          {!publicHandle && <ModelBreakdown items={modelBreakdowns} selectedModel={selectedModel !== 'all' ? selectedModel : undefined} />}
         </section>
 
         <section className="analytics-section agent-section">

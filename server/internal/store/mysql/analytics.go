@@ -856,12 +856,18 @@ func (s *analyticsStore) agentBreakdown(ctx context.Context, userID string, r do
 }
 
 func (s *analyticsStore) GetModelBreakdown(ctx context.Context, userID string, r domain.TimeRange) (*domain.BreakdownResponse, error) {
+	return s.GetModelBreakdownFiltered(ctx, userID, r, nil)
+}
+
+func (s *analyticsStore) GetModelBreakdownFiltered(ctx context.Context, userID string, r domain.TimeRange, agentID *string) (*domain.BreakdownResponse, error) {
 	plan := planUTCAggregates(r)
 	grain, fromMs, toMs, err := analyticsMetricBucketRange(r)
 	if err != nil {
 		return nil, err
 	}
+	agent, hasAgent := dimensionID(agentID)
 
+	// sqlc-dynamic-reviewed: optional harness predicate is a bound parameter.
 	query := `
 		SELECT
 			tm.model_id,
@@ -871,11 +877,14 @@ func (s *analyticsStore) GetModelBreakdown(ctx context.Context, userID string, r
 		FROM bound_telemetry_model_metrics m
 		JOIN telemetry_models tm ON tm.id = m.model_key
 		WHERE m.user_id = ? AND m.grain = '` + grain + `' AND m.delete_at IS NULL
-		  AND m.bucket_start >= ? AND m.bucket_start <= ?
+		  AND m.bucket_start >= ? AND m.bucket_start <= ?`
+	args := []any{userID, fromMs, toMs}
+	query, args = appendDim(query, args, "m.harness_id", agent, hasAgent)
+	query += `
 		GROUP BY tm.model_id
 		ORDER BY total_tokens DESC`
 
-	rows, err := s.db.QueryContext(ctx, query, userID, fromMs, toMs)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query model breakdown: %w", err)
 	}
@@ -919,7 +928,7 @@ func (s *analyticsStore) GetModelBreakdown(ctx context.Context, userID string, r
 		return nil, fmt.Errorf("model breakdown rows iteration error: %w", err)
 	}
 
-	rawBoundaryItems, err := s.queryRawBreakdown(ctx, userID, plan.raw, "model_id", nil, nil)
+	rawBoundaryItems, err := s.queryRawBreakdown(ctx, userID, plan.raw, "model_id", agentID, nil)
 	if err != nil {
 		return nil, err
 	}

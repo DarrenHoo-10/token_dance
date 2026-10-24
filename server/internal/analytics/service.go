@@ -141,11 +141,14 @@ func (s *Service) GetModelBreakdown(ctx context.Context, userID, rangeKey string
 	return s.GetModelBreakdownRange(ctx, userID, rangeKey, "", "")
 }
 func (s *Service) GetModelBreakdownRange(ctx context.Context, userID, rangeKey, from, to string) (*domain.BreakdownResponse, error) {
+	return s.GetModelBreakdownFiltered(ctx, userID, rangeKey, from, to, nil)
+}
+func (s *Service) GetModelBreakdownFiltered(ctx context.Context, userID, rangeKey, from, to string, agentID *string) (*domain.BreakdownResponse, error) {
 	r, err := s.profileRange(ctx, userID, rangeKey, from, to)
 	if err != nil {
 		return nil, err
 	}
-	return s.store.GetModelBreakdown(ctx, userID, r)
+	return s.store.GetModelBreakdownFiltered(ctx, userID, r, agentID)
 }
 
 func (s *Service) GetSkillRanking(ctx context.Context, userID, rangeKey string) (*domain.SkillsResponse, error) {

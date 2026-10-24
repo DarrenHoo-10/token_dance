@@ -249,6 +249,11 @@ export const zhCN = {
     modelFilter: '模型筛选',
     coreMetricsLabel: '十项核心开发指标',
     unknownAgent: '未知 Agent',
+    modelShare: '模型占比',
+    modelShareCount: '{count} 个模型',
+    modelShareOthers: '其他',
+    modelShareEmpty: '这段时间还没有模型用量。',
+    modelShareError: '模型占比暂时无法加载。',
     daysAgo: '{count} 天前',
   },
   activity: {

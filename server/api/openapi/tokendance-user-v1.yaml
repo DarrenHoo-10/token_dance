@@ -855,6 +855,11 @@ paths:
         schema:
           type: string
           format: date
+      - name: agent
+        in: query
+        description: Limit the composition to models used by one harness in the selected range.
+        schema:
+          type: string
       responses:
         '200':
           description: Model breakdown
