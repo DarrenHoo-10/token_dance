@@ -692,6 +692,47 @@ fn harness_model_usage_respects_periods_sources_and_soft_deletes() {
 }
 
 #[test]
+fn harness_model_usage_folds_base_model_spelling_variants() {
+    let mut store = open_store();
+    let display = store.upsert_model("zcode", "GLM-5.3-Flash").unwrap();
+    let lowercase = store.upsert_model("zcode", "glm-5.3-flash").unwrap();
+    let fireworks =
+        store.upsert_model("zcode", "accounts/fireworks/models/glm-5p3-flash").unwrap();
+    let lite = store.upsert_model("zcode", "glm-5.3-flash-lite").unwrap();
+    let today = beijing_day_start(1_700_000_000_000);
+    store.with_connection(|c| {
+        for (model, offset, tokens) in [
+            (display, 0, 300),
+            (lowercase, 0, 100),
+            (lowercase, -1, 40),
+            (fireworks, 0, 50),
+            (lite, 0, 70),
+        ] {
+            c.execute("INSERT INTO model_metrics
+                (created_at,updated_at,delete_at,grain,bucket_start,harness_id,model_key,
+                 exact_token_total,derived_token_total,usage_observed_count,token_total_known_count,metric_semantics_version)
+                VALUES (0,0,NULL,'day',?1,'zcode',?2,?3,0,1,1,1)",
+                rusqlite::params![today + offset * 86_400_000, model, tokens])?;
+        }
+        let history =
+            super::query::query_harness_usage_history(c, "zcode", today, today + 86_400_000)?;
+        assert_eq!(
+            history.models.len(),
+            2,
+            "spelling variants fold into the base model; a distinct model stays separate"
+        );
+        let glm = &history.models[0];
+        assert_eq!(glm.model_id, "GLM-5.3-Flash", "the dominant variant names the row");
+        assert_eq!((glm.today_tokens, glm.week_tokens, glm.total_tokens), (450, 490, 490));
+        assert_eq!(glm.provider_id, "zcode");
+        let lite = &history.models[1];
+        assert_eq!(lite.model_id, "glm-5.3-flash-lite");
+        assert_eq!(lite.total_tokens, 70);
+        Ok(())
+    }).unwrap();
+}
+
+#[test]
 fn cursor_base_model_price_backfills_retained_usage_once() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = PipelineStore::open(dir.path()).unwrap();

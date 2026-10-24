@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"tokendance/internal/domain"
 )
@@ -890,11 +891,6 @@ func (s *analyticsStore) GetModelBreakdownFiltered(ctx context.Context, userID s
 	}
 	defer rows.Close()
 
-	type rawModelItem struct {
-		modelID string
-		tokens  uint64
-	}
-
 	var rawItems []rawModelItem
 	var sumTokens uint64
 	var maxComputedAtNull sql.NullTime
@@ -932,19 +928,14 @@ func (s *analyticsStore) GetModelBreakdownFiltered(ctx context.Context, userID s
 	if err != nil {
 		return nil, err
 	}
-	byModel := make(map[string]uint64, len(rawItems)+len(rawBoundaryItems))
-	for _, item := range rawItems {
-		byModel[item.modelID] += item.tokens
-	}
+	combined := make([]rawModelItem, 0, len(rawItems)+len(rawBoundaryItems))
+	combined = append(combined, rawItems...)
 	for _, item := range rawBoundaryItems {
-		byModel[item.key] += item.tokens
+		combined = append(combined, rawModelItem{modelID: item.key, tokens: item.tokens})
 		sumTokens += item.tokens
 		maxNullTime(&maxComputedAtNull, item.watermark)
 	}
-	rawItems = rawItems[:0]
-	for modelID, tokens := range byModel {
-		rawItems = append(rawItems, rawModelItem{modelID: modelID, tokens: tokens})
-	}
+	rawItems = foldModelVariants(combined)
 	sort.Slice(rawItems, func(i, j int) bool {
 		if rawItems[i].tokens == rawItems[j].tokens {
 			return rawItems[i].modelID < rawItems[j].modelID
@@ -983,6 +974,72 @@ func (s *analyticsStore) GetModelBreakdownFiltered(ctx context.Context, userID s
 		DataWatermarkAt:    dataWatermarkAt,
 		AggregationVersion: aggVer,
 	}, nil
+}
+
+type rawModelItem struct {
+	modelID string
+	tokens  uint64
+}
+
+// baseModelKey reduces spelling variants of one model to a shared folding key:
+// case-insensitive, and provider-scoped paths (Fireworks
+// `accounts/<org>/models/glm-5p3-flash`) reduce to their final segment with
+// the `p`-encoded dot decoded (`5p3` -> `5.3`).
+func baseModelKey(modelID string) string {
+	lowered := strings.ToLower(strings.TrimSpace(modelID))
+	if idx := strings.Index(lowered, "/models/"); idx >= 0 {
+		return decodeFireworksDots(lowered[idx+len("/models/"):])
+	}
+	return lowered
+}
+
+// decodeFireworksDots turns the dot encoding Fireworks uses inside
+// accounts/<org>/models paths back into dots (`glm-5p3` -> `glm-5.3`).
+func decodeFireworksDots(name string) string {
+	runes := []rune(name)
+	var b strings.Builder
+	b.Grow(len(name))
+	for i, r := range runes {
+		if r == 'p' && i > 0 && i+1 < len(runes) &&
+			unicode.IsDigit(runes[i-1]) && unicode.IsDigit(runes[i+1]) {
+			r = '.'
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// foldModelVariants merges breakdown rows whose model ids fold to the same
+// base model: tokens sum across variants and each row is named after the
+// variant carrying the most tokens (ties: lexicographically smallest id).
+func foldModelVariants(items []rawModelItem) []rawModelItem {
+	type modelFold struct {
+		variants map[string]uint64
+		total    uint64
+	}
+	folded := make(map[string]*modelFold, len(items))
+	for _, item := range items {
+		base := baseModelKey(item.modelID)
+		f := folded[base]
+		if f == nil {
+			f = &modelFold{variants: make(map[string]uint64)}
+			folded[base] = f
+		}
+		f.variants[item.modelID] += item.tokens
+		f.total += item.tokens
+	}
+	foldedList := make([]rawModelItem, 0, len(folded))
+	for _, f := range folded {
+		dominant := ""
+		for modelID, tokens := range f.variants {
+			if dominant == "" || tokens > f.variants[dominant] ||
+				(tokens == f.variants[dominant] && modelID < dominant) {
+				dominant = modelID
+			}
+		}
+		foldedList = append(foldedList, rawModelItem{modelID: dominant, tokens: f.total})
+	}
+	return foldedList
 }
 
 func (s *analyticsStore) GetSkillRanking(ctx context.Context, userID string, r domain.TimeRange) (*domain.SkillsResponse, error) {
