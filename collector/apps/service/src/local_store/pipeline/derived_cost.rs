@@ -103,6 +103,15 @@ impl PipelineStore {
         }
     }
 
+    /// OpenRouter catalog aliases (alias -> canonical base model): the
+    /// registry usage folding groups by. Reloaded when the catalog file next
+    /// to the store changes, so a price refresh grows the registry without a
+    /// release.
+    pub fn base_model_aliases(&mut self) -> Vec<(String, String)> {
+        self.refresh_price_catalog();
+        self.price_catalog.base_aliases()
+    }
+
     /// Bounded scan on the writer's compensation tick. A restart may replay the
     /// scan: immutable costs and monotonic session extents make that idempotent.
     pub fn backfill_derived_metrics(&mut self, limit: usize) -> Result<usize, PipelineError> {
