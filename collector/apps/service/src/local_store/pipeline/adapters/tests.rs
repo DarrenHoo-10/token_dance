@@ -249,12 +249,13 @@ fn capability_matrix_throttles_unavailable_streams() {
     assert!(should_throttle("cursor", "remote-api-aggregate"));
     assert!(should_throttle("grok-build", "chat-history"));
     assert!(!should_throttle("codex", "sessions-jsonl"));
+    assert!(!should_throttle("qoder", "projects-jsonl"));
     assert_eq!(for_harness("zcode").unwrap().streams.len(), 4);
-    assert_eq!(capability::ALL.len(), 11);
+    assert_eq!(capability::ALL.len(), 12);
 }
 
 #[test]
-fn registry_covers_all_eleven_harnesses() {
+fn registry_covers_all_twelve_harnesses() {
     let dir = tempfile::tempdir().unwrap();
     let store = Arc::new(std::sync::Mutex::new(open_store(1_700_000_000_000)));
     let book = SkillBook::new();
@@ -274,12 +275,13 @@ fn registry_covers_all_eleven_harnesses() {
         workbuddy_history: dir.path().join("workbuddy"),
         doubao_history: dir.path().join("doubao"),
         droid_logs: dir.path().join("droid/logs"),
+        qoder_projects: vec![dir.path().join("qoder")],
     };
     let desktop_locator = roots.claude_desktop_leveldb.to_string_lossy().into_owned();
     let cli_locator = roots.claude_projects.join("session.jsonl");
     std::fs::create_dir_all(&roots.claude_desktop_leveldb).unwrap();
     let reg = HarnessRegistry::from_roots(roots, alloc);
-    assert_eq!(reg.harness_ids().len(), 11);
+    assert_eq!(reg.harness_ids().len(), 12);
     let desktop = reg.get_for_source("claude-code", &desktop_locator).unwrap();
     assert!(desktop.owns_source(&desktop_locator));
     let sources = desktop.discover(DiscoveryBudget::default()).unwrap();

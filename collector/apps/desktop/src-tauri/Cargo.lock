@@ -131,6 +131,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "adapter-qoder"
+version = "0.1.0"
+dependencies = [
+ "adapter-sdk",
+ "async-trait",
+ "protocol",
+ "serde_json",
+]
+
+[[package]]
 name = "adapter-sdk"
 version = "0.1.0"
 dependencies = [
@@ -638,6 +648,7 @@ dependencies = [
  "adapter-grok-build",
  "adapter-opencode",
  "adapter-pi",
+ "adapter-qoder",
  "adapter-sdk",
  "adapter-workbuddy",
  "adapter-zcode",

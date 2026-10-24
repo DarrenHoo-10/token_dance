@@ -1001,6 +1001,67 @@ Harness 的 session log 包含 turn、step、user/message、assistant、tool/cal
 - [Pi Session File Format](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/session-format.md)
 - 兼容矩阵：session format version 3、CLI 版本 `>=0.2.0 <2.0.0`；超出范围时进入 `DEGRADED`，仅保留已验证的会话历史解码。
 
+### 7.8 Qoder Adapter（P1 已实施）
+
+#### 检测
+
+- 探测 `~/.qoder/projects`（国际版）与 `~/.qoder-cn/projects`（中国版），`QODER_CONFIG_DIR` /
+  `QODERCN_CONFIG_DIR` 环境变量可覆盖根目录；两源并存时都注册（`qoder-projects` /
+  `qoder-cn-projects`）。
+- 版本取 `logs/runs/*/manifest.json` 中最新 run 的 `cli_version`，读取失败回退 `1.0.0`。
+- 兼容矩阵：`>=0.1.0 <2.0.0` 全量；`>=2.0.0` 进入 `DEGRADED`，仅保留 `[cost, sessions]`。
+
+#### 数据源优先级
+
+1. `projects/<slug>/<session-id>.jsonl`（含 `subagents/*.jsonl`）只读 JSONL tail——append-only，
+   按 (文件, 字节偏移) checkpoint 增量读；任务名/manifest 等 enrich 文件 P1 不读。
+
+#### 解码口径
+
+- 会话首条记录映射 `session_started`（derived），sessionId 仅保留 HMAC。
+- `type:"user"` 且 `origin.kind=human`（不含 tool_result）映射 `turn_started`（derived），
+  promptId 作轮次键。
+- `type:"assistant"` 终止行（`stop_reason=end_turn`）的 `message.usage`：四 token 字段为
+  **会话累计值**且默认写 0（需 `QODER_EXPOSE_TOKEN_USAGE=true` 才写真实值）。全 0 视为缺失，
+  不产事件；非零时按 per-session 4 字段 HWM 差分取单次值（input 实测含 cache_read）：
+  `input_context=Δinput+Δcache_creation`、`token_total=Δinput+Δcache_creation+Δoutput`、
+  协议 `input_tokens`（未缓存）=`Δinput−Δcache_read`（饱和减）；首条非零观测只建基线，
+  计数回落视为基线重置并跳过。状态跨批次持久化在 DecoderState。
+- 同记录 `usage.credits > 0` 映射 `cost_recorded`（exact，`source=provider_reported`）：
+  credits 为**单次值**（非累计，无需差分），`units=credits×10^8` 取整、
+  `currency=QODER_CREDIT`，守卫 (0, 1e6) 区间外拒收；`original_credits`/`billable` 明细 P2。
+- 未知记录 `type`（本机已见 20+ 种）一律忽略，天然前向兼容。
+
+#### 配置计划
+
+- `EnvironmentSet`（User scope，`QODER_EXPOSE_TOKEN_USAGE=true`），`required_permissions`
+  为空（产品决策：非危险权限）。`config-executor` 已支持该 mutation：Windows 写
+  `HKCU\Environment` + `WM_SETTINGCHANGE` 广播，读回验证、加密备份、回滚（恢复旧值或删除
+  新键）；非 Windows 平台显式拒绝（macOS 仅建议模式）。桌面端自动执行接线为后续项。
+
+#### 隐私边界
+
+- prompt/代码/thinking/tool 输出正文一律不进入事件；`cwd` 仅保留 HMAC；`requestTokenAnchor`
+  等 opaque 字段忽略。契约测试断言事件负载不含 fixture 中的 canary 正文。
+
+#### 指标映射
+
+| TokenDance 指标 | 数据来源 | Accuracy |
+| --- | --- | --- |
+| token | assistant `message.usage`（HWM 差分） | `exact`（开关未生效时 `unavailable`，不造 0） |
+| cost | assistant `usage.credits` | `exact`（provider_reported） |
+| session | 会话首条记录 | `derived` |
+| turn | user `origin.kind=human` / assistant `end_turn` | `derived` |
+| tool | （P2）tool_use 跨行关联 | `unavailable` |
+| skill / code | 未公开稳定语义 | `unavailable` |
+
+#### 依据与限制
+
+- 结构口径以本机真实 transcript 实测为准（CLI 1.1.75-hotfix.1，2026-10-24），详见
+  [Qoder 接入设计方案](qoder-integration.md)。
+- credits 无公开稳定价目，不做 credits→token/USD 换算；token 需环境变量生效且 Qoder 以新
+  环境重启后才有值，运行时仅提示不降级。
+
 ## 8、Windows 与 macOS 平台设计
 
 ### 8.1 路径模板

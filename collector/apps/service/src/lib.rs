@@ -55,10 +55,11 @@ pub enum OfficialAgent {
     WorkBuddy,
     DoubaoWork,
     Droid,
+    Qoder,
 }
 
 impl OfficialAgent {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Codex,
         Self::ClaudeCode,
         Self::GrokBuild,
@@ -70,6 +71,7 @@ impl OfficialAgent {
         Self::WorkBuddy,
         Self::DoubaoWork,
         Self::Droid,
+        Self::Qoder,
     ];
 }
 
@@ -180,6 +182,7 @@ pub struct OfficialAdapters {
     pub workbuddy: Arc<dyn AgentAdapter>,
     pub doubao_work: Arc<dyn AgentAdapter>,
     pub droid: Arc<dyn AgentAdapter>,
+    pub qoder: Arc<dyn AgentAdapter>,
 }
 
 impl OfficialAdapters {
@@ -199,6 +202,7 @@ impl OfficialAdapters {
             workbuddy: workbuddy_adapter(snapshot.get(OfficialAgent::WorkBuddy), hmac_key),
             doubao_work: doubao_work_adapter(snapshot.get(OfficialAgent::DoubaoWork), hmac_key),
             droid: droid_adapter(snapshot.get(OfficialAgent::Droid), hmac_key),
+            qoder: qoder_adapter(snapshot.get(OfficialAgent::Qoder), hmac_key),
         })
     }
 
@@ -215,6 +219,7 @@ impl OfficialAdapters {
             self.workbuddy,
             self.doubao_work,
             self.droid,
+            self.qoder,
         ]
     }
 }
@@ -344,6 +349,16 @@ fn droid_adapter(detection: Option<&AgentDetection>, key: &[u8]) -> Arc<dyn Agen
             key.to_vec(),
         )),
         None => Arc::new(adapter_droid::DroidAdapter::undetected(key.to_vec())),
+    }
+}
+
+fn qoder_adapter(detection: Option<&AgentDetection>, key: &[u8]) -> Arc<dyn AgentAdapter> {
+    match detection {
+        Some(item) => Arc::new(adapter_qoder::QoderAdapter::for_version(
+            item.version.clone(),
+            key.to_vec(),
+        )),
+        None => Arc::new(adapter_qoder::QoderAdapter::undetected(key.to_vec())),
     }
 }
 
@@ -1186,6 +1201,7 @@ pub fn adapter_id(agent: OfficialAgent) -> &'static str {
         OfficialAgent::WorkBuddy => adapter_workbuddy::ADAPTER_ID,
         OfficialAgent::DoubaoWork => adapter_doubao_work::ADAPTER_ID,
         OfficialAgent::Droid => adapter_droid::ADAPTER_ID,
+        OfficialAgent::Qoder => adapter_qoder::ADAPTER_ID,
     }
 }
 
@@ -1282,7 +1298,7 @@ mod tests {
         )
         .unwrap();
         collector.probe_all().await;
-        assert_eq!(collector.runtimes().len(), 11);
+        assert_eq!(collector.runtimes().len(), 12);
         assert!(collector.runtimes().into_iter().all(|runtime| {
             !runtime.detected
                 && runtime.agent_version.is_none()
@@ -1339,6 +1355,7 @@ mod tests {
                 OfficialAgent::DoubaoWork,
                 AgentDetection::installed("1.0.0"),
             )
+            .with(OfficialAgent::Qoder, AgentDetection::installed("1.0.0"))
             .with(OfficialAgent::Droid, AgentDetection::installed("0.234.0"));
         snapshot.configure_source(
             OfficialAgent::Cursor,
@@ -1393,6 +1410,14 @@ mod tests {
             adapter_droid::LOG_SOURCE_ID,
             DetectedSourceConfig {
                 path: Some(PathBuf::from("droid-log-single.log")),
+                ..DetectedSourceConfig::default()
+            },
+        );
+        snapshot.configure_source(
+            OfficialAgent::Qoder,
+            adapter_qoder::HISTORY_SOURCE_ID,
+            DetectedSourceConfig {
+                path: Some(PathBuf::from("qoder-transcript.jsonl")),
                 ..DetectedSourceConfig::default()
             },
         );

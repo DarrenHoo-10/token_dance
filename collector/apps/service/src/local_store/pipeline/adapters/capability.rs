@@ -222,8 +222,19 @@ pub const DROID: HarnessCapability = HarnessCapability {
     }],
 };
 
+pub const QODER: HarnessCapability = HarnessCapability {
+    harness_id: "qoder",
+    streams: &[StreamCapability {
+        stream_key: "projects-jsonl",
+        level: CapabilityLevel::Available,
+        reason_code: None,
+        poll_interval_ms: None,
+    }],
+};
+
 pub const ALL: &[&HarnessCapability] = &[
     &CODEX, &CLAUDE, &CURSOR, &ZCODE, &OPENCODE, &GROK, &DEEPSEEK, &PI, &WORKBUDDY, &DOUBAO, &DROID,
+    &QODER,
 ];
 
 pub fn for_harness(harness_id: &str) -> Option<&'static HarnessCapability> {

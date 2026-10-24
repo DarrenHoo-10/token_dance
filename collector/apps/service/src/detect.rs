@@ -59,6 +59,7 @@ fn detect_from_resolver(resolver: &PathResolver) -> DetectionSnapshot {
     detect_workbuddy(resolver, &mut snapshot);
     detect_doubao_work(resolver, &mut snapshot);
     detect_droid(home, &mut snapshot);
+    detect_qoder(resolver, &mut snapshot);
     snapshot
 }
 
@@ -553,6 +554,71 @@ fn detect_droid(home: &Path, snapshot: &mut DetectionSnapshot) {
             },
         );
     }
+}
+
+/// Qoder transcripts: `~/.qoder/projects` (intl) and `~/.qoder-cn/projects`
+/// (CN build); `QODER_CONFIG_DIR` / `QODERCN_CONFIG_DIR` override the roots.
+fn detect_qoder(resolver: &PathResolver, snapshot: &mut DetectionSnapshot) {
+    let home = resolver.home();
+    let candidates = [
+        (
+            "qoder-projects",
+            resolver
+                .env_dir("QODER_CONFIG_DIR")
+                .unwrap_or_else(|| home.join(".qoder")),
+        ),
+        (
+            "qoder-cn-projects",
+            resolver
+                .env_dir("QODERCN_CONFIG_DIR")
+                .unwrap_or_else(|| home.join(".qoder-cn")),
+        ),
+    ];
+    let config_roots: Vec<(&str, PathBuf)> = candidates
+        .into_iter()
+        .filter(|(_, root)| root.is_dir())
+        .collect();
+    if config_roots.is_empty() {
+        return;
+    }
+    // Version: the newest run manifest carries cli_version; transcripts
+    // repeat it per record but reading one manifest is cheaper.
+    let version = config_roots
+        .iter()
+        .find_map(|(_, root)| newest_run_cli_version(root))
+        .unwrap_or_else(|| "1.0.0".into());
+    snapshot.insert(OfficialAgent::Qoder, AgentDetection::installed(version));
+    for (source_id, root) in config_roots {
+        let projects = root.join("projects");
+        if projects.is_dir() {
+            snapshot.configure_source(
+                OfficialAgent::Qoder,
+                source_id,
+                DetectedSourceConfig {
+                    path: Some(projects),
+                    ..DetectedSourceConfig::default()
+                },
+            );
+        }
+    }
+}
+
+fn newest_run_cli_version(config_root: &Path) -> Option<String> {
+    let runs = config_root.join("logs").join("runs");
+    let newest = fs::read_dir(runs)
+        .ok()?
+        .flatten()
+        .filter(|entry| entry.path().is_dir())
+        .max_by_key(|entry| {
+            entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .ok()
+                .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        })?;
+    read_json_version(&newest.path().join("manifest.json"))
 }
 
 fn read_json_version(path: &Path) -> Option<String> {

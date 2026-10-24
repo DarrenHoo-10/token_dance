@@ -1,14 +1,62 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::cell::RefCell;
 
 use adapter_sdk::{ConfigMutation, RollbackStep, SetupPlan, SetupPlanStatus, VerifyStep};
 use serde_json::json;
 use tempfile::tempdir;
 
 use super::{
-    sha256, EncryptedBackupStore, ExecutorError, SemanticVerifier, SetupPlanExecutor, SetupVerifier,
+    sha256, EncryptedBackupStore, ExecutorError, SemanticVerifier, SetupPlanExecutor,
+    SetupVerifier, UserEnvironmentStore,
 };
+
+/// In-memory user-environment store so tests never touch the real
+/// `HKCU\Environment` key. `fail_write`/`wrong_read_back` inject failures.
+#[derive(Clone, Default)]
+struct MemoryEnvironmentStore {
+    state: Rc<RefCell<HashMap<String, String>>>,
+    fail_write: bool,
+    wrong_read_back: bool,
+}
+
+impl MemoryEnvironmentStore {
+    fn get(&self, key: &str) -> Option<String> {
+        self.state.borrow().get(key).cloned()
+    }
+
+    fn set(&self, key: &str, value: &str) {
+        self.state.borrow_mut().insert(key.into(), value.into());
+    }
+}
+
+impl UserEnvironmentStore for MemoryEnvironmentStore {
+    fn read(&self, key: &str) -> Result<Option<String>, String> {
+        let current = self.state.borrow().get(key).cloned();
+        if self.wrong_read_back {
+            return Ok(current.map(|_| "stale".into()));
+        }
+        Ok(current)
+    }
+
+    fn write(&self, key: &str, value: &str) -> Result<(), String> {
+        if self.fail_write {
+            return Err("registry unavailable".into());
+        }
+        self.state.borrow_mut().insert(key.into(), value.into());
+        Ok(())
+    }
+
+    fn delete(&self, key: &str) -> Result<(), String> {
+        if self.fail_write {
+            return Err("registry unavailable".into());
+        }
+        self.state.borrow_mut().remove(key);
+        Ok(())
+    }
+}
 
 #[derive(Default)]
 struct XorBackupStore {
@@ -270,11 +318,149 @@ fn rollback_failure_ends_in_failed_state() {
     );
 }
 
+fn environment_plan(key: &str, value_ref: &str) -> SetupPlan {
+    let mut plan = json_plan(json!({"enabled": true}));
+    plan.mutations = vec![ConfigMutation::EnvironmentSet {
+        scope: "User".into(),
+        key: key.into(),
+        value_ref: value_ref.into(),
+    }];
+    plan
+}
+
+#[test]
+fn environment_set_writes_user_value_and_reports_hashes() {
+    let directory = tempdir().unwrap();
+    let environment = MemoryEnvironmentStore::default();
+    environment.set("QODER_EXPOSE_TOKEN_USAGE", "false");
+    let plan = environment_plan("QODER_EXPOSE_TOKEN_USAGE", "value://true");
+    let mut executor = SetupPlanExecutor::new(
+        roots(directory.path()),
+        XorBackupStore::default(),
+        PassVerifier,
+    )
+    .with_environment(environment.clone());
+
+    executor.approve(&plan).unwrap();
+    let report = executor.apply(&plan).unwrap();
+
+    assert_eq!(executor.status(), SetupPlanStatus::Applied);
+    assert_eq!(
+        environment.get("QODER_EXPOSE_TOKEN_USAGE").as_deref(),
+        Some("true")
+    );
+    assert_eq!(report.mutations.len(), 1);
+    assert_eq!(
+        report.mutations[0].path,
+        PathBuf::from("env:QODER_EXPOSE_TOKEN_USAGE")
+    );
+    assert_eq!(
+        report.mutations[0].before_hash.as_deref(),
+        Some(sha256(b"false").as_str())
+    );
+    assert_eq!(
+        report.mutations[0].after_hash.as_deref(),
+        Some(sha256(b"true").as_str())
+    );
+}
+
+#[test]
+fn environment_set_restores_previous_value_when_verification_fails() {
+    let directory = tempdir().unwrap();
+    let environment = MemoryEnvironmentStore::default();
+    environment.set("QODER_EXPOSE_TOKEN_USAGE", "false");
+    let plan = environment_plan("QODER_EXPOSE_TOKEN_USAGE", "value://true");
+    let mut executor = SetupPlanExecutor::new(
+        roots(directory.path()),
+        XorBackupStore::default(),
+        FailVerifier,
+    )
+    .with_environment(environment.clone());
+
+    executor.approve(&plan).unwrap();
+    let error = executor.apply(&plan).unwrap_err();
+
+    assert!(matches!(error, ExecutorError::AppliedThenRolledBack(_)));
+    assert_eq!(
+        environment.get("QODER_EXPOSE_TOKEN_USAGE").as_deref(),
+        Some("false")
+    );
+    assert_eq!(executor.status(), SetupPlanStatus::RolledBack);
+}
+
+#[test]
+fn environment_set_removes_variable_when_rolling_back_fresh_key() {
+    let directory = tempdir().unwrap();
+    let environment = MemoryEnvironmentStore::default();
+    let plan = environment_plan("QODER_EXPOSE_TOKEN_USAGE", "value://true");
+    let mut executor = SetupPlanExecutor::new(
+        roots(directory.path()),
+        XorBackupStore::default(),
+        FailVerifier,
+    )
+    .with_environment(environment.clone());
+
+    executor.approve(&plan).unwrap();
+    assert!(matches!(
+        executor.apply(&plan),
+        Err(ExecutorError::AppliedThenRolledBack(_))
+    ));
+    assert_eq!(environment.get("QODER_EXPOSE_TOKEN_USAGE"), None);
+}
+
+#[test]
+fn environment_set_write_failure_rolls_back_without_side_effects() {
+    let directory = tempdir().unwrap();
+    let environment = MemoryEnvironmentStore {
+        fail_write: true,
+        ..MemoryEnvironmentStore::default()
+    };
+    let plan = environment_plan("QODER_EXPOSE_TOKEN_USAGE", "value://true");
+    let mut executor = SetupPlanExecutor::new(
+        roots(directory.path()),
+        XorBackupStore::default(),
+        PassVerifier,
+    )
+    .with_environment(environment.clone());
+
+    executor.approve(&plan).unwrap();
+    assert!(matches!(
+        executor.apply(&plan),
+        Err(ExecutorError::AppliedThenRolledBack(message))
+            if message.contains("registry unavailable")
+    ));
+    assert_eq!(environment.get("QODER_EXPOSE_TOKEN_USAGE"), None);
+}
+
+#[test]
+fn environment_set_read_back_mismatch_fails_and_rolls_back() {
+    let directory = tempdir().unwrap();
+    let environment = MemoryEnvironmentStore {
+        wrong_read_back: true,
+        ..MemoryEnvironmentStore::default()
+    };
+    environment.set("QODER_EXPOSE_TOKEN_USAGE", "false");
+    let plan = environment_plan("QODER_EXPOSE_TOKEN_USAGE", "value://true");
+    let mut executor = SetupPlanExecutor::new(
+        roots(directory.path()),
+        XorBackupStore::default(),
+        PassVerifier,
+    )
+    .with_environment(environment.clone());
+
+    executor.approve(&plan).unwrap();
+    assert!(matches!(
+        executor.apply(&plan),
+        Err(ExecutorError::AppliedThenRolledBack(message))
+            if message.contains("read-back verification failed")
+    ));
+}
+
 #[test]
 fn rejects_environment_and_path_escape_before_writing() {
     let directory = tempdir().unwrap();
-    let mut environment_plan = json_plan(json!({"enabled": true}));
-    environment_plan.mutations = vec![ConfigMutation::EnvironmentSet {
+    let mut secret_plan = json_plan(json!({"enabled": true}));
+    secret_plan.mutations = vec![ConfigMutation::EnvironmentSet {
         scope: "user".into(),
         key: "TOKEN".into(),
         value_ref: "secret".into(),
@@ -283,12 +469,50 @@ fn rejects_environment_and_path_escape_before_writing() {
         roots(directory.path()),
         XorBackupStore::default(),
         PassVerifier,
-    );
-    executor.approve(&environment_plan).unwrap();
+    )
+    .with_environment(MemoryEnvironmentStore::default());
+    executor.approve(&secret_plan).unwrap();
     assert!(matches!(
-        executor.apply(&environment_plan),
+        executor.apply(&secret_plan),
+        Err(ExecutorError::AppliedThenRolledBack(_))
+    ));
+
+    let mut machine_scope_plan = json_plan(json!({"enabled": true}));
+    machine_scope_plan.mutations = vec![ConfigMutation::EnvironmentSet {
+        scope: "Machine".into(),
+        key: "TOKEN".into(),
+        value_ref: "value://true".into(),
+    }];
+    let mut executor = SetupPlanExecutor::new(
+        roots(directory.path()),
+        XorBackupStore::default(),
+        PassVerifier,
+    )
+    .with_environment(MemoryEnvironmentStore::default());
+    executor.approve(&machine_scope_plan).unwrap();
+    assert!(matches!(
+        executor.apply(&machine_scope_plan),
         Err(ExecutorError::AppliedThenRolledBack(message))
-            if message.contains("EnvironmentSet")
+            if message.contains("Machine")
+    ));
+
+    let mut invalid_key_plan = json_plan(json!({"enabled": true}));
+    invalid_key_plan.mutations = vec![ConfigMutation::EnvironmentSet {
+        scope: "user".into(),
+        key: "BAD KEY=".into(),
+        value_ref: "value://true".into(),
+    }];
+    let mut executor = SetupPlanExecutor::new(
+        roots(directory.path()),
+        XorBackupStore::default(),
+        PassVerifier,
+    )
+    .with_environment(MemoryEnvironmentStore::default());
+    executor.approve(&invalid_key_plan).unwrap();
+    assert!(matches!(
+        executor.apply(&invalid_key_plan),
+        Err(ExecutorError::AppliedThenRolledBack(message))
+            if message.contains("invalid environment variable name")
     ));
 
     let mut escape_plan = json_plan(json!({"enabled": true}));
@@ -312,6 +536,70 @@ fn rejects_environment_and_path_escape_before_writing() {
         .unwrap()
         .join("outside.json")
         .exists());
+}
+
+#[test]
+fn duplicate_environment_key_in_one_plan_is_rejected() {
+    let directory = tempdir().unwrap();
+    let mut plan = json_plan(json!({"enabled": true}));
+    plan.mutations = vec![
+        ConfigMutation::EnvironmentSet {
+            scope: "User".into(),
+            key: "QODER_EXPOSE_TOKEN_USAGE".into(),
+            value_ref: "value://true".into(),
+        },
+        ConfigMutation::EnvironmentSet {
+            scope: "User".into(),
+            key: "QODER_EXPOSE_TOKEN_USAGE".into(),
+            value_ref: "value://1".into(),
+        },
+    ];
+    let mut executor = SetupPlanExecutor::new(
+        roots(directory.path()),
+        XorBackupStore::default(),
+        PassVerifier,
+    )
+    .with_environment(MemoryEnvironmentStore::default());
+
+    executor.approve(&plan).unwrap();
+    assert!(matches!(
+        executor.apply(&plan),
+        Err(ExecutorError::AppliedThenRolledBack(message))
+            if message.contains("duplicate")
+    ));
+}
+
+#[test]
+fn environment_and_file_mutations_rollback_together() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("config.json");
+    let original = b"{\"enabled\":false}\n";
+    fs::write(&path, original).unwrap();
+    let environment = MemoryEnvironmentStore::default();
+    environment.set("QODER_EXPOSE_TOKEN_USAGE", "false");
+    let mut plan = json_plan(json!({"enabled": true}));
+    plan.mutations.push(ConfigMutation::EnvironmentSet {
+        scope: "User".into(),
+        key: "QODER_EXPOSE_TOKEN_USAGE".into(),
+        value_ref: "value://true".into(),
+    });
+    let mut executor = SetupPlanExecutor::new(
+        roots(directory.path()),
+        XorBackupStore::default(),
+        FailVerifier,
+    )
+    .with_environment(environment.clone());
+
+    executor.approve(&plan).unwrap();
+    assert!(matches!(
+        executor.apply(&plan),
+        Err(ExecutorError::AppliedThenRolledBack(_))
+    ));
+    assert_eq!(fs::read(&path).unwrap(), original);
+    assert_eq!(
+        environment.get("QODER_EXPOSE_TOKEN_USAGE").as_deref(),
+        Some("false")
+    );
 }
 
 #[test]

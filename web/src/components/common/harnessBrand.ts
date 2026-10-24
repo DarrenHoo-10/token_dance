@@ -29,6 +29,7 @@ const KNOWN: Record<string, KnownHarness> = {
   workbuddy: { color: '#01C886', markBg: '#01C886', markFg: '#fff' },
   'doubao-work': { color: '#1E37FC', markBg: '#F4F6FF', markFg: '#1E37FC', border: '#D6DCF8' },
   droid: { color: '#7C3AED', markBg: '#020202', markFg: '#FAFAFA' },
+  qoder: { color: '#7B61FF', markBg: '#7B61FF', markFg: '#fff' },
 };
 
 const ALIASES: Record<string, string> = {
@@ -60,6 +61,10 @@ const ALIASES: Record<string, string> = {
   droid: 'droid',
   'factory-droid': 'droid',
   factory: 'droid',
+  qoder: 'qoder',
+  'qoder-cli': 'qoder',
+  'qoder-ide': 'qoder',
+  'qoder-cn': 'qoder',
 };
 
 export function normalizeHarnessKey(value?: string | null): string {
