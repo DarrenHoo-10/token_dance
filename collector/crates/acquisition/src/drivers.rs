@@ -328,6 +328,7 @@ pub enum SqliteAdapterPlan {
     ZcodeV1,
     ZcodeV2,
     ZcodeV3,
+    ZcodeV4,
     OpenCodeV1,
 }
 
@@ -338,6 +339,7 @@ impl SqliteAdapterPlan {
             Self::ZcodeV1 => "zcode-sqlite-v1-uv7",
             Self::ZcodeV2 => "zcode-sqlite-v2-uv9",
             Self::ZcodeV3 => "zcode-sqlite-v3-uv0",
+            Self::ZcodeV4 => "zcode-sqlite-v4-uv0",
             Self::OpenCodeV1 => "opencode-sqlite-v1-uv0",
         }
     }
@@ -348,6 +350,7 @@ impl SqliteAdapterPlan {
             Self::ZcodeV1 => 7,
             Self::ZcodeV2 => 9,
             Self::ZcodeV3 => 0,
+            Self::ZcodeV4 => 0,
             Self::OpenCodeV1 => 0,
         }
     }
@@ -462,6 +465,87 @@ impl SqliteAdapterPlan {
                     ],
                 ),
             ],
+            // ZCode 0.16.x added soft-delete bookkeeping to `session`
+            // (time_deleted, last_outcome); the usage tables are unchanged.
+            Self::ZcodeV4 => &[
+                (
+                    "session",
+                    &[
+                        "id",
+                        "project_id",
+                        "workspace_id",
+                        "parent_id",
+                        "slug",
+                        "directory",
+                        "path",
+                        "title",
+                        "version",
+                        "share_url",
+                        "summary_additions",
+                        "summary_deletions",
+                        "summary_files",
+                        "summary_diffs",
+                        "revert",
+                        "permission",
+                        "time_created",
+                        "time_updated",
+                        "time_compacting",
+                        "time_archived",
+                        "task_type",
+                        "title_source",
+                        "title_message_id",
+                        "time_title_updated",
+                        "trace_id",
+                        "time_deleted",
+                        "last_outcome",
+                    ],
+                ),
+                (
+                    "model_usage",
+                    &[
+                        "id",
+                        "logical_request_id",
+                        "attempt_index",
+                        "session_id",
+                        "turn_id",
+                        "trace_id",
+                        "span_id",
+                        "assistant_message_id",
+                        "parent_user_message_id",
+                        "query_source",
+                        "provider_id",
+                        "model_id",
+                        "variant",
+                        "agent",
+                        "mode",
+                        "task_type",
+                        "status",
+                        "started_at",
+                        "first_token_at",
+                        "completed_at",
+                        "duration_ms",
+                        "time_to_first_token_ms",
+                        "finish_reason",
+                        "tool_call_count",
+                        "input_tokens",
+                        "output_tokens",
+                        "reasoning_tokens",
+                        "cache_creation_input_tokens",
+                        "cache_read_input_tokens",
+                        "provider_total_tokens",
+                        "computed_total_tokens",
+                        "retry_count",
+                        "retryable",
+                        "cancelled_by_user",
+                        "context_exceeded",
+                        "error_type",
+                        "error_code",
+                        "error_message",
+                        "raw_usage_json",
+                        "provider_metadata_json",
+                    ],
+                ),
+            ],
             Self::OpenCodeV1 => &[
                 (
                     "session",
@@ -523,7 +607,8 @@ impl SqliteAdapterPlan {
                 "SELECT id, created_at, model FROM sessions WHERE id > ?1 ORDER BY id",
                 "SELECT id, session_id, finished_at, input_tokens, output_tokens, total_tokens, tool_count, skill_name FROM step_metrics WHERE id > ?1 ORDER BY id",
             ],
-            Self::ZcodeV3 => &[
+            // Same verified plan as V3: the added session columns are never selected.
+            Self::ZcodeV3 | Self::ZcodeV4 => &[
                 "SELECT rowid AS id, id AS session_ref, time_created FROM session WHERE rowid > ?1 ORDER BY rowid",
                 "SELECT rowid AS id, session_id, provider_id, model_id, input_tokens, output_tokens, computed_total_tokens, tool_call_count, completed_at FROM model_usage WHERE rowid > ?1 AND status = 'completed' ORDER BY rowid",
                 // Code lines come only from completed Edit/Write calls. The
@@ -731,7 +816,7 @@ fn sqlite_value(value: ValueRef<'_>) -> Value {
 
 fn normalize_sqlite_record(plan: SqliteAdapterPlan, row: &mut Map<String, Value>) {
     match plan {
-        SqliteAdapterPlan::ZcodeV3 => {
+        SqliteAdapterPlan::ZcodeV3 | SqliteAdapterPlan::ZcodeV4 => {
             // Session probe rows carry `session_ref`; usage rows carry `session_id`.
             // Code rows are tagged event_type=code_changed and must not leak diffs/paths.
             let event_type = row.remove("event_type");
@@ -870,6 +955,7 @@ pub struct ZcodeSqliteDetection {
 pub fn detect_zcode_sqlite(path: &Path) -> Option<ZcodeSqliteDetection> {
     let connection = open_snapshot(path).ok()?;
     for plan in [
+        SqliteAdapterPlan::ZcodeV4,
         SqliteAdapterPlan::ZcodeV3,
         SqliteAdapterPlan::ZcodeV2,
         SqliteAdapterPlan::ZcodeV1,

@@ -1053,6 +1053,7 @@ fn build_driver(
                 "zcode-sqlite-v1-uv7" => SqliteAdapterPlan::ZcodeV1,
                 "zcode-sqlite-v2-uv9" => SqliteAdapterPlan::ZcodeV2,
                 "zcode-sqlite-v3-uv0" => SqliteAdapterPlan::ZcodeV3,
+                "zcode-sqlite-v4-uv0" => SqliteAdapterPlan::ZcodeV4,
                 "opencode-sqlite-v1-uv0" => SqliteAdapterPlan::OpenCodeV1,
                 _ => {
                     return Err(acquisition::AcquisitionError::Other(
