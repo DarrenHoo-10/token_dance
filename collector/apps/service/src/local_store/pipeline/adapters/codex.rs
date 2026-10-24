@@ -570,6 +570,7 @@ impl CodexStrategy {
 
         // Always advance cumulative baselines from total_token_usage when present.
         let mut cumulative_emit = None;
+        let mut cumulative_unchanged = false;
         if let Some(total_obj) = info.get("total_token_usage").and_then(|v| v.as_object()) {
             let (input, output, total, cache, reasoning) = read_usage_counts(total_obj);
             let series = format!("total::{}", session.unwrap_or("default"));
@@ -587,11 +588,20 @@ impl CodexStrategy {
                 Ok(delta) => {
                     cumulative_emit = Some(delta);
                 }
-                Err(IgnoreCode::Other(code))
-                    if code == "cumulative_baseline_only" || code == "cumulative_unchanged" => {}
+                Err(IgnoreCode::Other(code)) if code == "cumulative_unchanged" => {
+                    // An all-zero total is a placeholder, not proof of a replayed record.
+                    cumulative_unchanged = total > 0;
+                }
+                Err(IgnoreCode::Other(code)) if code == "cumulative_baseline_only" => {}
                 Err(IgnoreCode::EstimatedOnly) => {}
                 Err(other) => return Ok(DecodeOutcome::Ignore(other)),
             }
+        }
+
+        // Codex re-logs the previous token_count (same totals and last_token_usage)
+        // on rate-limit refreshes; an unchanged cumulative means no new request.
+        if cumulative_unchanged {
+            return Ok(DecodeOutcome::ContextOnly);
         }
 
         if let Some(last_obj) = info.get("last_token_usage").and_then(|v| v.as_object()) {

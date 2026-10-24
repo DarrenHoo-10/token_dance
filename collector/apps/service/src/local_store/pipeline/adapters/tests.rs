@@ -1197,6 +1197,108 @@ fn review_codex_native_token_count_last_and_total_semantics() {
     assert_eq!(facts[0].payload_sections["usage"]["token_total"], 45);
 }
 
+fn codex_token_count_record(ordinal: u64, ts: i64, info: serde_json::Value) -> RawRecord {
+    RawRecord {
+        ordinal,
+        byte_start: Some(ordinal * 100),
+        byte_end: Some(ordinal * 100 + 99),
+        native_rowid: None,
+        payload: json!({
+            "type":"event_msg",
+            "timestamp": ts,
+            "thread_id":"t1",
+            "payload":{"type":"token_count","info":info}
+        })
+        .to_string()
+        .into_bytes(),
+        file_mtime_ms: None,
+    }
+}
+
+#[test]
+fn codex_replayed_token_count_with_unchanged_total_is_not_counted_again() {
+    let now = beijing_wall_to_utc_ms(2026, 9, 11, 12, 0, 0);
+    let strategy = CodexStrategy::new(
+        secret(),
+        PathBuf::from("/tmp"),
+        SkillBook::new(),
+        Arc::new(|_, _| 1),
+    );
+    let mut state = DecoderState {
+        version: 1,
+        json: json!({}),
+    };
+    let info = json!({
+        "last_token_usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15},
+        "total_token_usage":{"input_tokens":110,"output_tokens":25,"total_tokens":135}
+    });
+
+    // First sight counts its own request.
+    let first = codex_token_count_record(0, now - 5_000, info.clone());
+    let out = strategy.decode(&first, &mut state, "/tmp/a.jsonl").unwrap();
+    let DecodeOutcome::Emit(facts) = out else {
+        panic!("first token_count must emit its last_token_usage, got {out:?}");
+    };
+    assert_eq!(facts[0].payload_sections["usage"]["token_total"], 15);
+
+    // Same totals re-logged at another offset (rate-limit refresh): no new request.
+    let replay = codex_token_count_record(1, now - 4_000, info);
+    let out = strategy
+        .decode(&replay, &mut state, "/tmp/a.jsonl")
+        .unwrap();
+    assert!(
+        matches!(out, DecodeOutcome::ContextOnly),
+        "unchanged cumulative must not emit again: {out:?}"
+    );
+
+    // A real next request still counts.
+    let next = codex_token_count_record(
+        2,
+        now - 3_000,
+        json!({
+            "last_token_usage":{"input_tokens":20,"output_tokens":10,"total_tokens":30},
+            "total_token_usage":{"input_tokens":130,"output_tokens":35,"total_tokens":165}
+        }),
+    );
+    let out = strategy.decode(&next, &mut state, "/tmp/a.jsonl").unwrap();
+    let DecodeOutcome::Emit(facts) = out else {
+        panic!("a request with a grown total must emit, got {out:?}");
+    };
+    assert_eq!(facts[0].payload_sections["usage"]["token_total"], 30);
+}
+
+#[test]
+fn codex_all_zero_total_placeholder_does_not_suppress_last_usage() {
+    let now = beijing_wall_to_utc_ms(2026, 9, 11, 12, 0, 0);
+    let strategy = CodexStrategy::new(
+        secret(),
+        PathBuf::from("/tmp"),
+        SkillBook::new(),
+        Arc::new(|_, _| 1),
+    );
+    let mut state = DecoderState {
+        version: 1,
+        json: json!({}),
+    };
+    for ordinal in 0..2 {
+        let record = codex_token_count_record(
+            ordinal,
+            now - 5_000 + ordinal as i64,
+            json!({
+                "last_token_usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15},
+                "total_token_usage":{"input_tokens":0,"output_tokens":0,"total_tokens":0}
+            }),
+        );
+        let out = strategy
+            .decode(&record, &mut state, "/tmp/a.jsonl")
+            .unwrap();
+        assert!(
+            matches!(out, DecodeOutcome::Emit(_)),
+            "zero-total placeholder must keep emitting last_token_usage: {out:?}"
+        );
+    }
+}
+
 #[test]
 fn review_pipeline_runtime_raw_to_metrics_to_upload_pending() {
     use crate::local_store::pipeline::adapters::HarnessRegistry;
