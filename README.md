@@ -48,7 +48,7 @@ TokenDance 是一款 AI 编程用量统计工具。桌面客户端在本机采�
 | WorkBuddy / Doubao Work | 检测到本机安装后采集本地会话记录 |
 | Pi / DeepSeek Harness | 可用指标以客户端中的来源状态为准 |
 | Droid (Factory) | 读取本机 droid 日志中的逐次模型用量；日志随 droid 重启清空，仅统计运行期间采集到的部分 |
-| Qoder | 读取本机 `~/.qoder/projects` 会话转录中的 Token 与 credits 消耗；Token 统计需开启 `QODER_EXPOSE_TOKEN_USAGE`（安装时自动写入），credits 消耗无需任何配置 |
+| Qoder | 读取本机 `~/.qoder/projects` 会话转录中的 Token 与 credits 消耗；Token 统计需开启 `QODER_EXPOSE_TOKEN_USAGE`（安装时自动写入），credits 消耗无需任何配置；积分额度环检测到 `QODER_PERSONAL_ACCESS_TOKEN` 环境变量时自动查询，或在设置中粘贴浏览器 Cookie |
 
 不同工具能提供的用量、费用和额度信息不同，没有对应数据时不会显示为 0。
 

@@ -540,6 +540,35 @@ export async function dismissQoderEnvNotice(): Promise<void> {
   }
 }
 
+/** Credential presence for the Qoder credits ring; the cookie value itself never crosses IPC after being stored. */
+export interface QoderQuotaCredential {
+  personalToken: boolean;
+  savedCookieHost: string | null;
+}
+
+export async function getQoderQuotaCredential(): Promise<QoderQuotaCredential | null> {
+  if (isTauriEnvironment()) {
+    return await invoke<QoderQuotaCredential>("get_qoder_quota_credential");
+  }
+  return null;
+}
+
+/** Save a pasted Qoder Cookie header for the credits ring; it stays bound to one regional host. */
+export async function setQoderQuotaCookie(cookie: string, host: string): Promise<QoderQuotaCredential> {
+  if (isTauriEnvironment()) {
+    return await invoke<QoderQuotaCredential>("set_qoder_quota_cookie", { cookie, host });
+  }
+  return { personalToken: false, savedCookieHost: null };
+}
+
+/** Remove the saved Qoder cookie; a personal access token from the environment is unaffected. */
+export async function clearQoderQuotaCookie(): Promise<QoderQuotaCredential> {
+  if (isTauriEnvironment()) {
+    return await invoke<QoderQuotaCredential>("clear_qoder_quota_cookie");
+  }
+  return { personalToken: false, savedCookieHost: null };
+}
+
 export async function previewUploadBatch(): Promise<UploadBatchPreview> {
   if (isTauriEnvironment()) {
     const ack = await invoke<OperationAck<UploadBatchPreview>>("preview_upload_batch");

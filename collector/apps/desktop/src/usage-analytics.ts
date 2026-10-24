@@ -14,6 +14,7 @@ export function quotaWindowLabel(window: { label?: string | null; windowMinutes?
   const labels: Record<string, [string, string]> = {
     five_hour: ['5 小时额度', '5-hour quota'], weekly: ['周额度', 'Weekly quota'],
     shared_week: ['共享周额度', 'Shared weekly quota'], shared_quota: ['共享套餐额度', 'Shared plan quota'],
+    credits: ['积分额度', 'Credits quota'],
     auto: ['Auto 额度', 'Auto quota'], api: ['API 额度', 'API quota'],
     plan: ['套餐额度', 'Plan quota'], personal_limit: ['个人额度上限', 'Personal limit'],
   };

@@ -2,9 +2,10 @@
 
 状态：**P1 已实施**（2026-10-24，transcript adapter 全链路：adapter crate + pipeline 策略 +
 注册/检测 + 桌面端与 web 元数据 + config-executor `EnvironmentSet` 支持；同日补齐桌面端触发链
-"检测到 Qoder → 自动执行 setup_plan 写环境变量 → 一次性通知"，见 §4.3）。未实施：P2 额度环、
-P3 IDE local.db。本机实测 + 公开资料调研时间 2026-10-24；本机装有 Qoder CLI
-（`~/.qoder`，CLI 1.1.75-hotfix.1），所有本地数据结论以真实文件为据，来源见 §2.6。
+"检测到 Qoder → 自动执行 setup_plan 写环境变量 → 一次性通知"，见 §4.3）；**P2 额度环已实施**
+（2026-10-24，见 §5 实施状态）。未实施：P3 IDE local.db。本机实测 + 公开资料调研时间
+2026-10-24；本机装有 Qoder CLI（`~/.qoder`，CLI 1.1.75-hotfix.1），所有本地数据结论以真实文件
+为据，来源见 §2.6。
 
 ## 1、背景与目标
 
@@ -208,6 +209,29 @@ FactDraft；`cwd` 只作项目路径 HMAC（对齐 claude-code adapter）；`req
   不跟随重定向、8s/4s 超时、256KB 响应上限、300s 缓存（keyed on 凭据 SHA256）、失败保留旧观测
   且不刷新 observed_at、local_test 不发网。
 
+**实施状态（2026-10-24）**：已落地。
+
+- `commands/quotas/qoder.rs` + `quotas.rs` 注册（`QODER_REFRESH`，local_test 早退之后，不发网）。
+- 凭据候选顺序：PAT（`QODER_PERSONAL_ACCESS_TOKEN`，Bearer 头，qoder.com → qoder.com.cn 两个
+  host 依次尝试）→ 粘贴 Cookie（`Cookie` 头，严格绑定存储时的单一 host）；首个成功者生效，
+  PAT 失效时自动落到 Cookie。全部失败时按 auth_required > network_error > no_quota > unavailable
+  取最有行动价值的错误。
+- 响应口径按 CodexBar `qoder.js` 逆向：`totalQuota|total_quota.quotaSummary|quota_summary.
+  {usedValue|used_value, limitValue|limit_value, usagePercentage|usage_percentage}`；`sharedQuota`
+  字段齐全时合并（相加并重算百分比，忽略 base 自带百分比），字段缺失则忽略共享池；
+  `nextResetAt|next_reset_at` 兼容秒/毫秒/ISO8601。
+- 窗口映射：单窗口 `window_minutes=43200`（快照推不出完整周期长度，固定月度桶）、`resets_at`、
+  `label="credits"`（前端双语"积分额度/Credits quota"）；`plan` 留空——端点不返回套餐名，
+  不凭 total 猜（CodexBar 亦不显示）。
+- 设置卡片（检测到 qoder 来源才显示）：粘贴 Cookie + 站点选择（qoder.com/qoder.com.cn），
+  存 `platform_credentials`（account `qoder-quota-cookie`，JSON `{version,host,cookie}`，put 后
+  readback 校验），状态接口只回 `personalToken/savedCookieHost`，Cookie 值绝不跨 IPC；
+  `set/clear` 后即时失效 300s 缓存。
+- 无凭据时不产出额度行（`QuotaRings` 对 `not_connected` 一律隐藏，与 zcode 一致）。
+- 测试：解析（camel/snake、shared 合并、reset 单位、畸形拒收）、Cookie 校验、候选顺序、
+  failed_refresh、重定向拒绝与超时（本地假服务器）；live 验证 `TOKENDANCE_VERIFY_QODER_QUOTA=1`
+  的 ignored 测试。桌面 cargo 174/0、tsc、usage vitest 全绿。
+
 ## 6、P3：IDE local.db 采集（token 主路径 + BYOK）
 
 - `SqliteSnapshot` 安全读（§6.4 只读快照/WAL 规则）：`chat_message.token_info{prompt, completion,
@@ -263,7 +287,9 @@ golden summary + 契约测试（对齐 zcode 的 known/runtime/unknown 三态 fi
 ## 10、开放问题
 
 1. **PAT 能否调用 `api/v2/me/usages/big_model_credits`**（决定额度是全自动还是 Cookie 手动）——
-   实施时拿真 PAT 实测一次即可，风险低。
+   **仍未实测**（本机无 PAT；CodexBar 只用 Cookie）。实现按"先 PAT 后 Cookie"落定，两种结果都
+   只影响是否需要粘贴 Cookie，不改代码；拿真 PAT 跑一次 `TOKENDANCE_VERIFY_QODER_QUOTA=1` 的
+   ignored 测试即可关闭。
 2. ~~usage 累计 vs 单次~~ **已实测关闭（2026-10-24）**：tokens 为会话累计值（HWM 差分必要，
    且 input 含 cache_read 需相减换算），credits 为单次值；契约 fixture 直接采用本机实测
    transcript（07fe7561 会话，含开关生效前后对照）。

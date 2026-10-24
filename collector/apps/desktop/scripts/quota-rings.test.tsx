@@ -31,3 +31,20 @@ describe('Quota row without a signed-in plan', () => {
     expect(screen.getByText('请在 ZCode 重新登录')).toBeTruthy();
   });
 });
+
+describe('Qoder credits ring', () => {
+  it('renders the monthly credits window with its reset countdown', () => {
+    const resetsAt = Math.floor(Date.now() / 1000) + 5 * 86400;
+    render(<QuotaRings zh quota={{ agentId: 'qoder', observedAt, status: 'ready', windows: [
+      { label: 'credits', windowMinutes: 43200, usedPercent: 6, resetsAt },
+    ] }} />);
+    expect(screen.getByText(/积分额度/)).toBeTruthy();
+    expect(screen.getByText('94%')).toBeTruthy();
+    expect(screen.getByText(/5 天后重置/)).toBeTruthy();
+  });
+
+  it('flags an expired cookie as needing a fresh sign-in', () => {
+    render(<QuotaRings zh quota={{ agentId: 'qoder', observedAt, windows: [], status: 'auth_required' }} />);
+    expect(screen.getByText('请在 Qoder 重新登录')).toBeTruthy();
+  });
+});

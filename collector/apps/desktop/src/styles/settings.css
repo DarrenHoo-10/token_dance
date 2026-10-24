@@ -1,7 +1,7 @@
 .settings-page { --settings-line:#e0e6e0; --settings-muted:#5e6660; display:flex; flex-direction:column; height:100dvh; min-height:420px; max-width:880px; margin:auto; background:#f5f7f4; color:#111512; font:13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif; border:1px solid var(--settings-line); position:relative; }
 .settings-page button { border:0; background:transparent; color:inherit; font:inherit; cursor:pointer; }
 .settings-page button:disabled { opacity:.45; cursor:default; }
-.settings-page button:focus-visible,.settings-page input:focus-visible { outline:2px solid #527c19; outline-offset:3px; }
+.settings-page button:focus-visible,.settings-page input:focus-visible,.settings-page select:focus-visible { outline:2px solid #527c19; outline-offset:3px; }
 .settings-header { display:flex; align-items:center; justify-content:space-between; gap:20px; min-height:60px; padding:0 28px; background:#fff; border-bottom:1px solid var(--settings-line); flex-shrink:0; }
 .settings-brand { display:flex; align-items:center; gap:10px; }
 .settings-brand img { width:29px; height:29px; object-fit:contain; }
@@ -84,6 +84,15 @@ html[data-platform="macos"] .settings-header input { -webkit-app-region:no-drag;
 .settings-website-link { display:inline-flex; align-items:center; gap:8px; min-width:0; color:#536846; font-size:12px; text-decoration:none; }
 .settings-website-link > span:first-child { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .settings-website-link:hover { color:#263e16; text-decoration:underline; text-underline-offset:3px; }
+
+/* Qoder credits-ring credential card: paste form follows the login form's palette. */
+.settings-qoder-form { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+.settings-qoder-form input { flex:1 1 200px; min-width:0; height:34px; border:1px solid #dce3d6; border-radius:7px; padding:7px 10px; font-family:inherit; font-size:12px; color:#182311; background:#fcfdfb; }
+.settings-qoder-form input::placeholder { color:#8e9887; }
+.settings-qoder-form select { height:34px; border:1px solid #dce3d6; border-radius:7px; padding:0 6px; font-family:inherit; font-size:12px; color:#182311; background:#fcfdfb; }
+.settings-page .settings-qoder-form button { height:34px; padding:0 14px; border:1px solid #dce8cb; border-radius:7px; background:#f5faed; color:#375e00; font-size:12px; font-weight:600; }
+.settings-page .settings-qoder-form button:not(:disabled):hover { background:#eaf6d9; }
+.settings-qoder-hint { margin:9px 0 0; font-size:11px; line-height:1.5; color:#647357; }
 .settings-website-link:focus-visible { outline:2px solid #527c19; outline-offset:4px; border-radius:3px; }
 .settings-footer > span { flex-shrink:0; }
 

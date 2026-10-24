@@ -93,4 +93,7 @@ commands.allow = [
   "recover_sync_device",
   "get_qoder_env_notice",
   "dismiss_qoder_env_notice",
+  "get_qoder_quota_credential",
+  "set_qoder_quota_cookie",
+  "clear_qoder_quota_cookie",
 ]
