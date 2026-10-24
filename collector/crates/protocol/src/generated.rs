@@ -478,6 +478,8 @@ pub struct AdapterPermissions {
     pub write_paths: Vec<PathPermission>,
     pub commands: Vec<CommandPermission>,
     pub network_domains: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub environment_keys: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

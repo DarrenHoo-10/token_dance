@@ -14,6 +14,7 @@ export function quotaWindowLabel(window: { label?: string | null; windowMinutes?
   const labels: Record<string, [string, string]> = {
     five_hour: ['5 小时额度', '5-hour quota'], weekly: ['周额度', 'Weekly quota'],
     shared_week: ['共享周额度', 'Shared weekly quota'], shared_quota: ['共享套餐额度', 'Shared plan quota'],
+    credits: ['积分额度', 'Credits quota'],
     auto: ['Auto 额度', 'Auto quota'], api: ['API 额度', 'API quota'],
     plan: ['套餐额度', 'Plan quota'], personal_limit: ['个人额度上限', 'Personal limit'],
   };
@@ -25,7 +26,7 @@ export function quotaWindowLabel(window: { label?: string | null; windowMinutes?
 }
 
 export function quotaStatusText(quota: AgentQuota | undefined, zh: boolean): string | null {
-  const names: Record<string, string> = { 'grok-build': 'Grok Build', cursor: 'Cursor', zcode: 'ZCode', codex: 'Codex', 'claude-code': 'Claude', pi: 'Pi', 'deepseek-harness': 'DeepSeek Harness', opencode: 'OpenCode', workbuddy: 'WorkBuddy', 'doubao-work': 'Doubao Work', droid: 'Droid' };
+  const names: Record<string, string> = { 'grok-build': 'Grok Build', cursor: 'Cursor', zcode: 'ZCode', codex: 'Codex', 'claude-code': 'Claude', pi: 'Pi', 'deepseek-harness': 'DeepSeek Harness', opencode: 'OpenCode', workbuddy: 'WorkBuddy', 'doubao-work': 'Doubao Work', droid: 'Droid', qoder: 'Qoder' };
   const name = names[quota?.agentId ?? ''] ?? quota?.agentId ?? '';
   switch (quota?.status) {
     case 'not_connected': return zh ? `请在 ${name} 登录` : `Sign in to ${name}`;

@@ -132,7 +132,8 @@
       "readPaths": "PathPermission[]",
       "writePaths": "PathPermission[]",
       "commands": "CommandPermission[]",
-      "networkDomains": "domain[]"
+      "networkDomains": "domain[]",
+      "environmentKeys?": "identifier[]"
     },
     "AdapterManifest": {
       "$schema": "schemaUri",

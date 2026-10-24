@@ -11,6 +11,7 @@ use super::cursor::CursorStrategy;
 use super::droid::DroidStrategy;
 use super::jsonl_harness::{JsonlHarnessStrategy, CLAUDE, DEEPSEEK, GROK, PI, WORKBUDDY};
 use super::opencode::OpenCodeStrategy;
+use super::qoder::QoderStrategy;
 use super::zcode::ZcodeStrategy;
 use crate::local_store::pipeline::runner::HarnessStrategy;
 
@@ -33,6 +34,8 @@ pub struct AdapterRoots {
     pub workbuddy_history: PathBuf,
     pub doubao_history: PathBuf,
     pub droid_logs: PathBuf,
+    /// Qoder transcript roots: intl `~/.qoder/projects` + CN `~/.qoder-cn/projects`.
+    pub qoder_projects: Vec<PathBuf>,
 }
 
 pub struct HarnessRegistry {
@@ -132,6 +135,11 @@ impl HarnessRegistry {
             roots.workbuddy_history,
             book.clone(),
             skill_allocator.clone(),
+        )));
+        strategy_source_ids.push(None);
+        strategies.push(Box::new(QoderStrategy::new(
+            secret.clone(),
+            roots.qoder_projects,
         )));
         strategy_source_ids.push(None);
         strategies.push(Box::new(super::doubao::DoubaoStrategy::new(

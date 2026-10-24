@@ -193,6 +193,7 @@ export interface AdapterPermissions {
   writePaths: Array<PathPermission>
   commands: Array<CommandPermission>
   networkDomains: Array<string>
+  environmentKeys?: Array<string>
 }
 
 export interface AdapterManifest {

@@ -6,6 +6,7 @@ pub mod local_test;
 #[cfg(target_os = "macos")]
 pub mod macos_tray;
 pub mod orb;
+pub mod qoder_setup;
 pub mod rebuild;
 mod single_instance;
 pub mod state;
@@ -243,6 +244,11 @@ pub fn run() {
             commands::quotas::get_agent_quotas,
             commands::agents::toggle_agent,
             commands::agents::set_agent_status,
+            commands::notice::get_qoder_env_notice,
+            commands::notice::dismiss_qoder_env_notice,
+            commands::quotas::qoder::get_qoder_quota_credential,
+            commands::quotas::qoder::set_qoder_quota_cookie,
+            commands::quotas::qoder::clear_qoder_quota_cookie,
             commands::upload::preview_upload_batch,
             commands::upload::trigger_sync_now,
             commands::upload::get_pending_envelopes,

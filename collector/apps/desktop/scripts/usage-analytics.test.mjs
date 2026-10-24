@@ -11,6 +11,8 @@ test('quota labels separate Codex windows, shared weekly usage and Cursor billin
   assert.equal(quotaWindowLabel({label:'five_hour', windowMinutes:300}, true), '5 小时额度');
   assert.equal(quotaWindowLabel({label:'weekly', windowMinutes:10080}, true), '周额度');
   assert.equal(quotaWindowLabel({label:'weekly', windowMinutes:10080}, false), 'Weekly quota');
+  assert.equal(quotaWindowLabel({label:'credits', windowMinutes:43200}, true), '积分额度');
+  assert.equal(quotaWindowLabel({label:'credits', windowMinutes:43200}, false), 'Credits quota');
   assert.equal(quotaWindowLabel({windowMinutes:0}, true), '当前周期额度');
   assert.equal(quotaWindowLabel({windowMinutes:300}, true), '5 小时额度');
   for (const [agentId, name] of [['grok-build','Grok Build'],['cursor','Cursor']]) {

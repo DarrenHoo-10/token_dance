@@ -837,6 +837,16 @@
             "pattern": "^(?=.{1,253}$)(?!.*\\*)(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\\.)+[A-Za-z]{2,63}$"
           },
           "maxItems": 256
+        },
+        "environmentKeys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "maxItems": 256
         }
       },
       "required": [

@@ -276,6 +276,10 @@ struct PersistedControl {
     config_backups: Vec<ConfigBackup>,
     events_uploaded: u64,
     last_sync_time: Option<String>,
+    /// When the Qoder token-exposure variable was auto-enabled (epoch ms).
+    /// Drives the one-time panel notice; clearing it dismisses the notice.
+    #[serde(default)]
+    qoder_env_enabled_at: Option<i64>,
 }
 
 impl PersistedControl {
@@ -318,6 +322,7 @@ impl PersistedControl {
             config_backups: Vec::new(),
             events_uploaded: 0,
             last_sync_time: None,
+            qoder_env_enabled_at: None,
         }
     }
 
@@ -332,7 +337,7 @@ impl PersistedControl {
     }
 }
 
-struct EmptySecrets;
+pub(crate) struct EmptySecrets;
 impl SecretResolver for EmptySecrets {
     fn resolve(&self, _secret_ref: &str) -> Result<Vec<u8>, String> {
         Err("secret_not_configured".into())
@@ -340,7 +345,7 @@ impl SecretResolver for EmptySecrets {
 }
 
 #[derive(Default)]
-struct MemoryBackupStore {
+pub(crate) struct MemoryBackupStore {
     values: HashMap<String, Vec<u8>>,
 }
 
@@ -473,11 +478,28 @@ impl AppState {
                 let _ = start_listener(hook_auth_token(&key), service.grok_hooks.clone());
             }
         }
+        // Qoder token exposure: auto-apply the adapter's setup plan once, on
+        // real machines only (design doc §4.3 — notify, never ask).
+        let mut qoder_env_applied = false;
+        if !fixture && !crate::local_test::enabled() {
+            let outcome = crate::qoder_setup::ensure_exposed(&mut service, &detection).await;
+            qoder_env_applied = outcome == crate::qoder_setup::QoderEnvOutcome::Applied;
+            if !matches!(
+                outcome,
+                crate::qoder_setup::QoderEnvOutcome::NotDetected
+                    | crate::qoder_setup::QoderEnvOutcome::AlreadyEnabled
+            ) {
+                eprintln!("qoder env setup: {outcome:?}");
+            }
+        }
         let existing_control = load_control(&root)?;
         let first_launch = existing_control.is_none();
         let autostart_enabled = autostart.is_enabled()?;
-        let control = existing_control
+        let mut control = existing_control
             .unwrap_or_else(|| PersistedControl::initial(&installation_id, autostart_enabled));
+        if qoder_env_applied && control.qoder_env_enabled_at.is_none() {
+            control.qoder_env_enabled_at = Some(Utc::now().timestamp_millis());
+        }
         if first_launch {
             apply_default_autostart(autostart.as_ref());
         }
@@ -546,6 +568,21 @@ impl AppState {
 
     pub fn control_dir_path(&self) -> PathBuf {
         (*self.control_dir).clone()
+    }
+
+    /// Epoch ms when Qoder token exposure was auto-enabled, if the one-time
+    /// panel notice is still pending.
+    pub async fn qoder_env_notice(&self) -> Option<i64> {
+        self.control.read().await.qoder_env_enabled_at
+    }
+
+    /// Dismiss the Qoder env notice (the variable itself stays enabled).
+    pub async fn dismiss_qoder_env_notice(&self) -> Result<(), String> {
+        {
+            let mut control = self.control.write().await;
+            control.qoder_env_enabled_at = None;
+        }
+        self.persist_control().await
     }
 
     pub fn log_dir_path(&self) -> PathBuf {
@@ -1517,7 +1554,7 @@ fn load_control(root: &Path) -> Result<Option<PersistedControl>, String> {
         .map_err(|error| error.to_string())
 }
 
-fn agent_metadata() -> [(&'static str, &'static str, &'static str); 11] {
+fn agent_metadata() -> [(&'static str, &'static str, &'static str); 12] {
     [
         ("codex", "Codex", "dev.tokenshow.adapter.codex"),
         ("claude-code", "Claude", "dev.tokenshow.adapter.claude"),
@@ -1542,6 +1579,7 @@ fn agent_metadata() -> [(&'static str, &'static str, &'static str); 11] {
             "dev.tokenshow.adapter.doubao-work",
         ),
         ("droid", "Droid", "dev.tokenshow.adapter.droid"),
+        ("qoder", "Qoder", crate::qoder_setup::QODER_ADAPTER_ID),
     ]
 }
 

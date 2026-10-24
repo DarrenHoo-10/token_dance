@@ -18,6 +18,7 @@ mod jsonl_harness;
 mod jsonl_io;
 mod native_jsonl;
 mod opencode;
+mod qoder;
 mod registry;
 mod zcode;
 mod zstd_jsonl;
@@ -29,8 +30,8 @@ pub use capability::{
     for_harness, should_throttle, stream_level, CapabilityLevel, HarnessCapability,
     StreamCapability, ALL as CAPABILITY_ALL, CLAUDE as CAP_CLAUDE, CODEX as CAP_CODEX,
     CURSOR as CAP_CURSOR, DEEPSEEK as CAP_DEEPSEEK, DOUBAO as CAP_DOUBAO, DROID as CAP_DROID,
-    GROK as CAP_GROK, OPENCODE as CAP_OPENCODE, PI as CAP_PI, WORKBUDDY as CAP_WORKBUDDY,
-    ZCODE as CAP_ZCODE,
+    GROK as CAP_GROK, OPENCODE as CAP_OPENCODE, PI as CAP_PI, QODER as CAP_QODER,
+    WORKBUDDY as CAP_WORKBUDDY, ZCODE as CAP_ZCODE,
 };
 pub use codex::{decode_otlp_cumulative_for_test, CodexStrategy, HARNESS_ID as CODEX_ID};
 pub use common::SkillBook;
@@ -44,6 +45,7 @@ pub use jsonl_harness::{
     JsonlHarnessStrategy, JsonlProfile, CLAUDE, DEEPSEEK, DOUBAO, GROK, PI, WORKBUDDY,
 };
 pub use opencode::{OpenCodeStrategy, HARNESS_ID as OPENCODE_ID};
+pub use qoder::{QoderStrategy, HARNESS_ID as QODER_ID};
 pub use registry::{AdapterRoots, HarnessRegistry, SkillAllocator};
 pub use zcode::{ZcodeStrategy, HARNESS_ID as ZCODE_ID};
 

@@ -23,6 +23,7 @@ members = [
     "adapters/workbuddy",
     "adapters/doubao-work",
     "adapters/droid",
+    "adapters/qoder",
     "apps/service",
     "apps/cli",
 ]
@@ -56,6 +57,7 @@ adapter-opencode = { path = "adapters/opencode" }
 adapter-workbuddy = { path = "adapters/workbuddy" }
 adapter-doubao-work = { path = "adapters/doubao-work" }
 adapter-droid = { path = "adapters/droid" }
+adapter-qoder = { path = "adapters/qoder" }
 collector-service = { path = "apps/service" }
 
 aes-gcm = "0.10"

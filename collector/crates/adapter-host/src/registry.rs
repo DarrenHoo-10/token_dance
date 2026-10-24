@@ -6,10 +6,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use adapter_sdk::{
-    assert_source_allowed, assert_write_path_allowed, AdapterError, AdapterHealth, AdapterManifest,
-    AgentAdapter, Capability, CapabilityAvailability, CapabilityReport, CapabilityStatus,
-    ErrorCode, EventPayload, NormalizedEvent, ProbeContext, ProbeReport, RawFrame, SetupContext,
-    SetupPlan, SourceContext, SourceSpec, PROTOCOL_VERSION,
+    assert_environment_key_allowed, assert_source_allowed, assert_write_path_allowed,
+    AdapterError, AdapterHealth, AdapterManifest, AgentAdapter, Capability, CapabilityAvailability,
+    CapabilityReport, CapabilityStatus, ErrorCode, EventPayload, NormalizedEvent, ProbeContext,
+    ProbeReport, RawFrame, SetupContext, SetupPlan, SourceContext, SourceSpec, PROTOCOL_VERSION,
 };
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::time::timeout;
@@ -171,11 +171,14 @@ impl AdapterHost {
         for mutation in &plan.mutations {
             if let Some(path) = mutation.path_template() {
                 assert_write_path_allowed(&entry.manifest, path)?;
-            } else {
-                return Err(AdapterError::manifest_permission_denied(
-                    "environment mutation is forbidden until manifest environment permissions exist",
-                ));
+                continue;
             }
+            let adapter_sdk::ConfigMutation::EnvironmentSet { key, .. } = mutation else {
+                return Err(AdapterError::setup_failed(
+                    "unsupported mutation kind in setup plan",
+                ));
+            };
+            assert_environment_key_allowed(&entry.manifest, key)?;
         }
         Ok(plan)
     }

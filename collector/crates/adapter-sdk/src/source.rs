@@ -145,6 +145,30 @@ pub fn assert_write_path_allowed(
     assert_path_declared(&manifest.permissions.write_paths, path_template)
 }
 
+/// Environment mutations are allow-listed by exact key name (case-insensitive:
+/// Windows treats the user environment as case-insensitive). A key not
+/// declared in the manifest is rejected before any executor sees the plan.
+pub fn assert_environment_key_allowed(
+    manifest: &protocol::AdapterManifest,
+    key: &str,
+) -> Result<(), AdapterError> {
+    let declared = manifest
+        .permissions
+        .environment_keys
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .any(|allowed| allowed.eq_ignore_ascii_case(key));
+    if declared {
+        Ok(())
+    } else {
+        Err(AdapterError::new(
+            ErrorCode::ManifestPermissionDenied,
+            format!("environment key `{key}` is not declared in manifest permissions"),
+        ))
+    }
+}
+
 fn assert_path_declared(allowed: &[PathPermission], requested: &str) -> Result<(), AdapterError> {
     if allowed
         .iter()

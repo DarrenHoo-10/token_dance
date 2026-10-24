@@ -37,6 +37,7 @@ pub const CATALOG_AGENTS: &[(&str, &str)] = &[
     ("workbuddy", "WorkBuddy"),
     ("doubao-work", "Doubao Work"),
     ("droid", "Droid"),
+    ("qoder", "Qoder"),
 ];
 
 pub fn from_ledger(

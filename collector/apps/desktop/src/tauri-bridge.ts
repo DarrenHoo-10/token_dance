@@ -525,6 +525,50 @@ export async function setAgentStatus(agentId: string, enabled: boolean): Promise
   return { ...ag };
 }
 
+/** Epoch ms when Qoder token exposure was auto-enabled, or null when dismissed/absent. */
+export async function getQoderEnvNotice(): Promise<number | null> {
+  if (isTauriEnvironment()) {
+    return await invoke<number | null>("get_qoder_env_notice");
+  }
+  return null;
+}
+
+/** Dismiss the one-time Qoder env notice; the environment variable stays enabled. */
+export async function dismissQoderEnvNotice(): Promise<void> {
+  if (isTauriEnvironment()) {
+    await invoke<void>("dismiss_qoder_env_notice");
+  }
+}
+
+/** Credential presence for the Qoder credits ring; the cookie value itself never crosses IPC after being stored. */
+export interface QoderQuotaCredential {
+  personalToken: boolean;
+  savedCookieHost: string | null;
+}
+
+export async function getQoderQuotaCredential(): Promise<QoderQuotaCredential | null> {
+  if (isTauriEnvironment()) {
+    return await invoke<QoderQuotaCredential>("get_qoder_quota_credential");
+  }
+  return null;
+}
+
+/** Save a pasted Qoder Cookie header for the credits ring; it stays bound to one regional host. */
+export async function setQoderQuotaCookie(cookie: string, host: string): Promise<QoderQuotaCredential> {
+  if (isTauriEnvironment()) {
+    return await invoke<QoderQuotaCredential>("set_qoder_quota_cookie", { cookie, host });
+  }
+  return { personalToken: false, savedCookieHost: null };
+}
+
+/** Remove the saved Qoder cookie; a personal access token from the environment is unaffected. */
+export async function clearQoderQuotaCookie(): Promise<QoderQuotaCredential> {
+  if (isTauriEnvironment()) {
+    return await invoke<QoderQuotaCredential>("clear_qoder_quota_cookie");
+  }
+  return { personalToken: false, savedCookieHost: null };
+}
+
 export async function previewUploadBatch(): Promise<UploadBatchPreview> {
   if (isTauriEnvironment()) {
     const ack = await invoke<OperationAck<UploadBatchPreview>>("preview_upload_batch");

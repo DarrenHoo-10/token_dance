@@ -35,6 +35,206 @@ pub trait SetupVerifier {
     fn verify(&mut self, step: &VerifyStep) -> Result<(), String>;
 }
 
+/// Read/write access to the user's *persistent* environment (the store new
+/// processes inherit). This is deliberately not `std::env`: the executor only
+/// ever mutates the user-scoped store — on Windows `HKCU\Environment` plus a
+/// `WM_SETTINGCHANGE` broadcast. Non-Windows builds keep a rejecting default
+/// because macOS GUI apps do not inherit shell environment changes.
+///
+/// `Send` because executor state crosses async boundaries.
+pub trait UserEnvironmentStore: Send {
+    fn read(&self, key: &str) -> Result<Option<String>, String>;
+    fn write(&self, key: &str, value: &str) -> Result<(), String>;
+    fn delete(&self, key: &str) -> Result<(), String>;
+}
+
+/// Default store for platforms without a persistent user environment that GUI
+/// and CLI children both inherit. Every operation reports the platform limit
+/// so `EnvironmentSet` plans fail (and roll back) loudly instead of silently
+/// no-op'ing.
+#[derive(Debug, Default)]
+pub struct UnsupportedUserEnvironmentStore;
+
+impl UserEnvironmentStore for UnsupportedUserEnvironmentStore {
+    fn read(&self, _key: &str) -> Result<Option<String>, String> {
+        Err("user environment writes are only supported on Windows".into())
+    }
+
+    fn write(&self, _key: &str, _value: &str) -> Result<(), String> {
+        Err("user environment writes are only supported on Windows".into())
+    }
+
+    fn delete(&self, _key: &str) -> Result<(), String> {
+        Err("user environment writes are only supported on Windows".into())
+    }
+}
+
+#[cfg(windows)]
+#[derive(Debug, Default)]
+pub struct WindowsUserEnvironmentStore;
+
+#[cfg(windows)]
+impl UserEnvironmentStore for WindowsUserEnvironmentStore {
+    fn read(&self, key: &str) -> Result<Option<String>, String> {
+        windows_registry::read_user_string(key)
+    }
+
+    fn write(&self, key: &str, value: &str) -> Result<(), String> {
+        windows_registry::set_user_string(key, value)?;
+        windows_registry::broadcast_environment_change();
+        Ok(())
+    }
+
+    fn delete(&self, key: &str) -> Result<(), String> {
+        windows_registry::delete_user_value(key)?;
+        windows_registry::broadcast_environment_change();
+        Ok(())
+    }
+}
+
+#[cfg(windows)]
+mod windows_registry {
+    use std::io;
+
+    const HKEY_CURRENT_USER: isize = 0x8000_0001;
+    const RRF_RT_REG_SZ: u32 = 0x0000_0002;
+    const REG_SZ: u32 = 1;
+    const WM_SETTINGCHANGE: u32 = 0x001A;
+    const HWND_BROADCAST: isize = 0xFFFF;
+    const SMTO_ABORTIFHUNG: u32 = 0x0002;
+
+    #[link(name = "Advapi32")]
+    extern "system" {
+        fn RegGetValueW(
+            hkey: isize,
+            lpsubkey: *const u16,
+            lpvalue: *const u16,
+            dwflags: u32,
+            pdwtype: *mut u32,
+            pvdata: *mut u8,
+            pcbdata: *mut u32,
+        ) -> i32;
+        fn RegSetKeyValueW(
+            hkey: isize,
+            lpsubkey: *const u16,
+            lpvalue: *const u16,
+            dwtype: u32,
+            pvdata: *const u8,
+            cbdata: u32,
+        ) -> i32;
+        fn RegDeleteKeyValueW(hkey: isize, lpsubkey: *const u16, lpvalue: *const u16) -> i32;
+    }
+
+    #[link(name = "User32")]
+    extern "system" {
+        fn SendMessageTimeoutW(
+            hwnd: isize,
+            msg: u32,
+            wparam: usize,
+            lparam: isize,
+            fuflags: u32,
+            utimeout: u32,
+            lresult: *mut usize,
+        ) -> isize;
+    }
+
+    fn wide(value: &str) -> Vec<u16> {
+        value.encode_utf16().chain(Some(0)).collect()
+    }
+
+    fn check(status: i32, operation: &str) -> Result<(), String> {
+        if status == 0 {
+            Ok(())
+        } else {
+            Err(format!(
+                "{operation} failed: {}",
+                io::Error::from_raw_os_error(status)
+            ))
+        }
+    }
+
+    pub fn read_user_string(key: &str) -> Result<Option<String>, String> {
+        let subkey = wide("Environment");
+        let value = wide(key);
+        let mut capacity = 1024usize;
+        loop {
+            let mut buffer = Vec::<u16>::with_capacity(capacity);
+            let mut size = (capacity * 2) as u32;
+            let mut value_type = 0u32;
+            let status = unsafe {
+                RegGetValueW(
+                    HKEY_CURRENT_USER,
+                    subkey.as_ptr(),
+                    value.as_ptr(),
+                    RRF_RT_REG_SZ,
+                    &mut value_type,
+                    buffer.as_mut_ptr().cast(),
+                    &mut size,
+                )
+            };
+            if status == 2 {
+                // ERROR_FILE_NOT_FOUND: the variable is not set.
+                return Ok(None);
+            }
+            if status == 234 {
+                // ERROR_MORE_DATA: retry with the reported size.
+                capacity = (size as usize / 2).max(capacity + 1);
+                continue;
+            }
+            check(status, "RegGetValueW")?;
+            let units = (size as usize / 2).min(capacity);
+            unsafe { buffer.set_len(units) };
+            let end = buffer.iter().position(|&unit| unit == 0).unwrap_or(units);
+            return Ok(Some(String::from_utf16_lossy(&buffer[..end])));
+        }
+    }
+
+    pub fn set_user_string(key: &str, value: &str) -> Result<(), String> {
+        let subkey = wide("Environment");
+        let value_name = wide(key);
+        let mut data = value.encode_utf16().collect::<Vec<u16>>();
+        data.push(0);
+        let status = unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                subkey.as_ptr(),
+                value_name.as_ptr(),
+                REG_SZ,
+                data.as_ptr().cast(),
+                (data.len() * 2) as u32,
+            )
+        };
+        check(status, "RegSetKeyValueW")
+    }
+
+    pub fn delete_user_value(key: &str) -> Result<(), String> {
+        let subkey = wide("Environment");
+        let value_name = wide(key);
+        let status =
+            unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, subkey.as_ptr(), value_name.as_ptr()) };
+        if status == 2 {
+            // Already absent — deleting is idempotent.
+            return Ok(());
+        }
+        check(status, "RegDeleteKeyValueW")
+    }
+
+    pub fn broadcast_environment_change() {
+        let environment = wide("Environment");
+        unsafe {
+            SendMessageTimeoutW(
+                HWND_BROADCAST,
+                WM_SETTINGCHANGE,
+                0,
+                environment.as_ptr() as isize,
+                SMTO_ABORTIFHUNG,
+                5_000,
+                std::ptr::null_mut(),
+            );
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct SemanticTarget {
     path: PathBuf,
@@ -96,8 +296,14 @@ pub enum ExecutorError {
     PlanChanged,
     #[error("unsafe configuration path `{0}`")]
     UnsafePath(String),
-    #[error("unsupported configuration mutation: EnvironmentSet")]
-    EnvironmentSetRejected,
+    #[error("unsupported environment scope `{0}` (only `user` is supported)")]
+    UnsupportedEnvironmentScope(String),
+    #[error("unsupported environment value reference `{0}` (only literal `value://` references are supported)")]
+    UnsupportedValueRef(String),
+    #[error("invalid environment variable name `{0}`")]
+    InvalidEnvironmentKey(String),
+    #[error("user environment operation failed for `{key}`: {message}")]
+    EnvironmentIo { key: String, message: String },
     #[error("duplicate mutation target `{0}`")]
     DuplicateTarget(PathBuf),
     #[error(
@@ -136,6 +342,7 @@ pub struct SetupPlanExecutor<B, V> {
     roots: HashMap<String, PathBuf>,
     backup_store: B,
     verifier: V,
+    environment: Box<dyn UserEnvironmentStore>,
     status: SetupPlanStatus,
     history: Vec<SetupPlanStatus>,
     approved_plan_hash: Option<String>,
@@ -151,10 +358,33 @@ where
             roots,
             backup_store,
             verifier,
+            #[cfg(windows)]
+            environment: Box::new(WindowsUserEnvironmentStore),
+            #[cfg(not(windows))]
+            environment: Box::new(UnsupportedUserEnvironmentStore),
             status: SetupPlanStatus::Proposed,
             history: vec![SetupPlanStatus::Proposed],
             approved_plan_hash: None,
         }
+    }
+
+    /// Swap the user-environment store (tests inject an in-memory store so the
+    /// real `HKCU\Environment` key is never touched).
+    pub fn with_environment(
+        mut self,
+        environment: impl UserEnvironmentStore + 'static,
+    ) -> Self {
+        self.environment = Box::new(environment);
+        self
+    }
+
+    /// Boxed variant for callers that already hold a trait object.
+    pub fn with_boxed_environment(
+        mut self,
+        environment: Box<dyn UserEnvironmentStore>,
+    ) -> Self {
+        self.environment = environment;
+        self
     }
 
     pub fn status(&self) -> SetupPlanStatus {
@@ -198,7 +428,7 @@ where
 
         let mut applied_count = 0;
         for mutation in &prepared {
-            if let Err(error) = apply_prepared(mutation) {
+            if let Err(error) = apply_prepared(self.environment.as_ref(), mutation) {
                 return self.fail_and_rollback(error.to_string(), &mut prepared, applied_count);
             }
             applied_count += 1;
@@ -245,9 +475,11 @@ where
         let mut prepared = Vec::with_capacity(plan.mutations.len());
         for mutation in &plan.mutations {
             let item = match mutation {
-                ConfigMutation::EnvironmentSet { .. } => {
-                    return Err(ExecutorError::EnvironmentSetRejected)
-                }
+                ConfigMutation::EnvironmentSet {
+                    scope,
+                    key,
+                    value_ref,
+                } => prepare_environment(self.environment.as_ref(), scope, key, value_ref)?,
                 ConfigMutation::DirectoryCreate { path_template } => {
                     let path = self.resolve_path(path_template)?;
                     PreparedMutation::Directory {
@@ -270,8 +502,8 @@ where
                     prepare_toml(path, patch)?
                 }
             };
-            if !targets.insert(item.path().to_path_buf()) {
-                return Err(ExecutorError::DuplicateTarget(item.path().to_path_buf()));
+            if !targets.insert(item.target_key()) {
+                return Err(ExecutorError::DuplicateTarget(item.dedup_path()));
             }
             prepared.push(item);
         }
@@ -284,24 +516,47 @@ where
         prepared: &mut [PreparedMutation<B::Handle>],
     ) -> Result<(), ExecutorError> {
         for mutation in prepared {
-            let PreparedMutation::File {
-                path,
-                before,
-                before_hash: Some(before_hash),
-                backup,
-                ..
-            } = mutation
-            else {
-                continue;
-            };
-            let handle = self
-                .backup_store
-                .save_encrypted(&plan.plan_id, path, before_hash, before)
-                .map_err(|message| ExecutorError::Backup {
-                    path: path.clone(),
-                    message,
-                })?;
-            *backup = Some(handle);
+            match mutation {
+                PreparedMutation::File {
+                    path,
+                    before,
+                    before_hash: Some(before_hash),
+                    backup,
+                    ..
+                } => {
+                    let handle = self
+                        .backup_store
+                        .save_encrypted(&plan.plan_id, path, before_hash, before)
+                        .map_err(|message| ExecutorError::Backup {
+                            path: path.clone(),
+                            message,
+                        })?;
+                    *backup = Some(handle);
+                }
+                PreparedMutation::Environment {
+                    key,
+                    previous: Some(previous),
+                    backup,
+                    ..
+                } => {
+                    let path = environment_report_path(key);
+                    let before_hash = sha256(previous.as_bytes());
+                    let handle = self
+                        .backup_store
+                        .save_encrypted(
+                            &plan.plan_id,
+                            &path,
+                            &before_hash,
+                            previous.as_bytes(),
+                        )
+                        .map_err(|message| ExecutorError::Backup {
+                            path: path.clone(),
+                            message,
+                        })?;
+                    *backup = Some(handle);
+                }
+                _ => {}
+            }
         }
         Ok(())
     }
@@ -428,6 +683,46 @@ where
                         })
                     }
                 })(),
+                PreparedMutation::Environment {
+                    key,
+                    value,
+                    previous,
+                    backup,
+                } => (|| {
+                    let environment = self.environment.as_ref();
+                    let current = environment
+                        .read(key)
+                        .map_err(|error| format!("could not read `{key}` before rollback: {error}"))?;
+                    if current.as_deref() != Some(value.as_str()) {
+                        return Err(format!(
+                            "rollback conflict for `{key}`: current {current:?}, planned {value:?}"
+                        ));
+                    }
+                    match previous {
+                        Some(original) => {
+                            let handle = backup
+                                .as_ref()
+                                .ok_or_else(|| format!("missing backup for `{key}`"))?;
+                            let bytes = self
+                                .backup_store
+                                .restore_decrypted(handle)
+                                .map_err(|error| {
+                                    format!("could not restore backup for `{key}`: {error}")
+                                })?;
+                            let restored = String::from_utf8(bytes)
+                                .map_err(|error| format!("backup for `{key}` is not UTF-8: {error}"))?;
+                            if &restored != original {
+                                return Err(format!("backup mismatch for `{key}`"));
+                            }
+                            environment
+                                .write(key, &restored)
+                                .map_err(|error| format!("could not restore `{key}`: {error}"))
+                        }
+                        None => environment
+                            .delete(key)
+                            .map_err(|error| format!("could not remove `{key}`: {error}")),
+                    }
+                })(),
                 PreparedMutation::Directory { path, existed } if !*existed => {
                     fs::remove_dir(&*path)
                         .map_err(|error| format!("could not remove `{}`: {error}", path.display()))
@@ -478,12 +773,42 @@ enum PreparedMutation<H> {
         path: PathBuf,
         existed: bool,
     },
+    Environment {
+        key: String,
+        value: String,
+        previous: Option<String>,
+        backup: Option<H>,
+    },
+}
+
+/// Deduplication identity: file-system mutations collide by path, environment
+/// mutations by key.
+#[derive(PartialEq, Eq, Hash)]
+enum TargetKey {
+    Path(PathBuf),
+    Env(String),
+}
+
+/// Pseudo path used in `ApplyReport` and backup records for an environment
+/// mutation (there is no file behind it).
+fn environment_report_path(key: &str) -> PathBuf {
+    PathBuf::from(format!("env:{key}"))
 }
 
 impl<H> PreparedMutation<H> {
-    fn path(&self) -> &Path {
+    fn target_key(&self) -> TargetKey {
         match self {
-            Self::File { path, .. } | Self::Directory { path, .. } => path,
+            Self::File { path, .. } | Self::Directory { path, .. } => TargetKey::Path(path.clone()),
+            Self::Environment { key, .. } => TargetKey::Env(key.clone()),
+        }
+    }
+
+    /// The path reported in `DuplicateTarget` errors (environment mutations
+    /// report their pseudo path).
+    fn dedup_path(&self) -> PathBuf {
+        match self {
+            Self::File { path, .. } | Self::Directory { path, .. } => path.clone(),
+            Self::Environment { key, .. } => environment_report_path(key),
         }
     }
 
@@ -503,6 +828,15 @@ impl<H> PreparedMutation<H> {
                 path: path.clone(),
                 before_hash: None,
                 after_hash: None,
+            },
+            Self::Environment {
+                key, value, previous, ..
+            } => AppliedMutation {
+                path: environment_report_path(key),
+                before_hash: previous
+                    .as_ref()
+                    .map(|value| sha256(value.as_bytes())),
+                after_hash: Some(sha256(value.as_bytes())),
             },
         }
     }
@@ -835,9 +1169,71 @@ fn merge_toml(
     Ok(())
 }
 
-fn apply_prepared<H>(mutation: &PreparedMutation<H>) -> Result<(), ExecutorError> {
+fn prepare_environment<H>(
+    environment: &dyn UserEnvironmentStore,
+    scope: &str,
+    key: &str,
+    value_ref: &str,
+) -> Result<PreparedMutation<H>, ExecutorError> {
+    if !scope.eq_ignore_ascii_case("user") {
+        return Err(ExecutorError::UnsupportedEnvironmentScope(scope.into()));
+    }
+    let Some(value) = value_ref.strip_prefix("value://") else {
+        // Plans must never resolve secrets or host values at execute time;
+        // only literal `value://` references are honored.
+        return Err(ExecutorError::UnsupportedValueRef(value_ref.into()));
+    };
+    if key.is_empty()
+        || key.len() > 256
+        || !key
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '_')
+    {
+        return Err(ExecutorError::InvalidEnvironmentKey(key.into()));
+    }
+    let previous = environment
+        .read(key)
+        .map_err(|message| ExecutorError::EnvironmentIo {
+            key: key.into(),
+            message,
+        })?;
+    Ok(PreparedMutation::Environment {
+        key: key.into(),
+        value: value.into(),
+        previous,
+        backup: None,
+    })
+}
+
+fn apply_prepared<H>(
+    environment: &dyn UserEnvironmentStore,
+    mutation: &PreparedMutation<H>,
+) -> Result<(), ExecutorError> {
     match mutation {
         PreparedMutation::File { path, after, .. } => write_atomic(path, after),
+        PreparedMutation::Environment { key, value, .. } => {
+            environment
+                .write(key, value)
+                .map_err(|message| ExecutorError::EnvironmentIo {
+                    key: key.clone(),
+                    message,
+                })?;
+            // Read-back verification: the persistent store, not the current
+            // process, must carry the value.
+            let read_back = environment
+                .read(key)
+                .map_err(|message| ExecutorError::EnvironmentIo {
+                    key: key.clone(),
+                    message,
+                })?;
+            if read_back.as_deref() != Some(value.as_str()) {
+                return Err(ExecutorError::EnvironmentIo {
+                    key: key.clone(),
+                    message: "read-back verification failed".into(),
+                });
+            }
+            Ok(())
+        }
         PreparedMutation::Directory { existed: true, .. } => Ok(()),
         PreparedMutation::Directory {
             path,

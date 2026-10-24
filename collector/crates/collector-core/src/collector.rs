@@ -210,6 +210,38 @@ impl Collector {
         }
     }
 
+    /// Mark a proposed setup plan as being applied by an executor. The host
+    /// (desktop) drives the config-executor; Core only tracks status.
+    pub fn begin_configure(&mut self, adapter_id: &str) -> Result<(), AdapterError> {
+        let runtime = self.runtimes.get_mut(adapter_id).ok_or_else(|| {
+            AdapterError::adapter_not_found(format!("adapter `{adapter_id}` is not registered"))
+        })?;
+        runtime.begin_configure();
+        Ok(())
+    }
+
+    /// Mark the executed setup plan as applied.
+    pub fn finish_configure_ok(&mut self, adapter_id: &str) -> Result<(), AdapterError> {
+        let runtime = self.runtimes.get_mut(adapter_id).ok_or_else(|| {
+            AdapterError::adapter_not_found(format!("adapter `{adapter_id}` is not registered"))
+        })?;
+        runtime.finish_configure_ok();
+        Ok(())
+    }
+
+    /// Mark the executed setup plan as failed.
+    pub fn finish_configure_err(
+        &mut self,
+        adapter_id: &str,
+        error: &AdapterError,
+    ) -> Result<(), AdapterError> {
+        let runtime = self.runtimes.get_mut(adapter_id).ok_or_else(|| {
+            AdapterError::adapter_not_found(format!("adapter `{adapter_id}` is not registered"))
+        })?;
+        runtime.finish_configure_err(error);
+        Ok(())
+    }
+
     pub async fn decode(
         &self,
         adapter_id: &str,

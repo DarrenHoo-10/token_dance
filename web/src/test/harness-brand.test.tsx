@@ -31,6 +31,15 @@ describe('harness brand identity', () => {
     expect(resolveHarnessBrand('gpt-4.1', 'gpt-4.1').known).toBe(false);
   });
 
+  it('maps qoder ids and aliases to the qoder brand', () => {
+    expect(matchHarnessId('qoder', 'Qoder')).toBe('qoder');
+    expect(matchHarnessId('qoder-cli', 'Qoder')).toBe('qoder');
+    expect(matchHarnessId('qoder-cn', 'Qoder CN')).toBe('qoder');
+    const brand = resolveHarnessBrand('qoder', 'Qoder');
+    expect(brand.known).toBe(true);
+    expect(brand.color).toBe('#7B61FF');
+  });
+
   it('renders brand glyphs instead of shared initials', () => {
     const { container } = render(
       <>

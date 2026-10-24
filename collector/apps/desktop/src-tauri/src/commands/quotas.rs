@@ -1,6 +1,7 @@
 use serde::Serialize;
 use serde_json::Value;
 mod zcode;
+pub mod qoder;
 mod connected;
 mod claude_desktop;
 use std::{fs, io::{Read, Seek, SeekFrom}, path::{Path, PathBuf}, sync::Mutex, time::{Duration, Instant}};
@@ -140,6 +141,7 @@ static REMOTE_QUOTAS: Mutex<std::collections::BTreeMap<&'static str, AgentQuota>
 static ZCODE_REFRESH: AtomicBool = AtomicBool::new(false);
 static GROK_REFRESH: AtomicBool = AtomicBool::new(false);
 static CURSOR_REFRESH: AtomicBool = AtomicBool::new(false);
+static QODER_REFRESH: AtomicBool = AtomicBool::new(false);
 static CODEX_REFRESH: AtomicBool = AtomicBool::new(false);
 
 fn refresh_remote(id: &'static str, inflight: &'static AtomicBool, future: impl std::future::Future<Output=Option<AgentQuota>> + Send + 'static) {
@@ -178,6 +180,7 @@ pub async fn get_agent_quotas() -> Result<Vec<AgentQuota>, String> {
     refresh_remote("zcode", &ZCODE_REFRESH, zcode::read_quota());
     refresh_remote("grok-build", &GROK_REFRESH, connected::grok());
     refresh_remote("cursor", &CURSOR_REFRESH, connected::cursor());
+    refresh_remote("qoder", &QODER_REFRESH, qoder::read_quota());
     let remotes = REMOTE_QUOTAS.lock().map_err(|_| "Quota cache unavailable")?;
     if let Some(codex) = remotes.get("codex") {
         let replace = match codex.status.as_deref() {

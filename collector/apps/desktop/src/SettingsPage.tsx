@@ -3,9 +3,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { brandLogo, localTestBuild } from "./brand";
 import { DesktopAccountCard } from "./DesktopAccountCard";
 import { recoverSyncDevice } from "./account-bridge";
-import { getAgentConfigs, getAutostartStatus, getDaemonStatus, getWebsiteUrl, hideWindow, isTauriEnvironment, openLoginItemsSettings, openWebsite, retryRuntimeInit, setAgentStatus, setAutostart, setGlobalPause, showWindow, startWindowDrag } from "./tauri-bridge";
+import { getAgentConfigs, getAutostartStatus, getDaemonStatus, getQoderQuotaCredential, getWebsiteUrl, hideWindow, isTauriEnvironment, openLoginItemsSettings, openWebsite, retryRuntimeInit, setAgentStatus, setAutostart, setGlobalPause, setQoderQuotaCookie, clearQoderQuotaCookie, showWindow, startWindowDrag } from "./tauri-bridge";
 import { resolveWebsiteOrigin } from "./website";
-import type { AgentConfig, AutostartInfo, DaemonStatus } from "./tauri-bridge";
+import type { AgentConfig, AutostartInfo, DaemonStatus, QoderQuotaCredential } from "./tauri-bridge";
 import "./styles/settings.css";
 import { useWindowReady } from './window-ready';
 import { SoftwareUpdateCard, UpdateNotice } from './components/SoftwareUpdate';
@@ -25,6 +25,9 @@ export function SettingsPage() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [sourcesOpen, setSourcesOpen] = useState(false);
+  const [qoderCred, setQoderCred] = useState<QoderQuotaCredential | null>(null);
+  const [cookieDraft, setCookieDraft] = useState("");
+  const [cookieHost, setCookieHost] = useState("qoder.com");
   const website = resolveWebsiteOrigin(getWebsiteUrl());
   const mounted = useRef(false);
   const loading = useRef<Promise<boolean> | null>(null);
@@ -67,6 +70,15 @@ export function SettingsPage() {
     const timer = window.setTimeout(() => setNotice(""), 4500);
     return () => clearTimeout(timer);
   }, [notice]);
+
+  const hasQoder = data?.agents.some(agent => agent.id === "qoder") ?? false;
+  useEffect(() => {
+    if (!hasQoder) return;
+    let disposed = false;
+    getQoderQuotaCredential().then(status => { if (!disposed && status) setQoderCred(status); })
+      .catch(() => { /* credential status unavailable; the card simply shows unconfigured */ });
+    return () => { disposed = true; };
+  }, [hasQoder]);
 
   const perform = async (action: () => Promise<unknown>, readback = false) => {
     if (mutating.current) return;
@@ -112,6 +124,28 @@ export function SettingsPage() {
         </div>
       </section>
       <OrbSettings zh={zh} />
+      {hasQoder && <section className="settings-section" aria-labelledby="qoder-credits-heading">
+        <div className="settings-section-heading"><h2 id="qoder-credits-heading">{t("Qoder 额度", "Qoder credits")}</h2><span>{t("在监控页显示积分额度环", "Show the credits ring in the usage panel")}</span></div>
+        <div className="settings-sheet">
+          <div className="settings-row"><div>
+            <h3>{t("凭据", "Credential")}</h3>
+            <p>{qoderCred?.personalToken && qoderCred.savedCookieHost ? t("已检测到个人访问令牌，并保存了浏览器 Cookie", "Personal access token detected; browser cookie saved")
+              : qoderCred?.personalToken ? t("已检测到个人访问令牌（环境变量 QODER_PERSONAL_ACCESS_TOKEN）", "Personal access token detected (environment variable QODER_PERSONAL_ACCESS_TOKEN)")
+              : qoderCred?.savedCookieHost ? t(`已保存 ${qoderCred.savedCookieHost} 的 Cookie`, `Cookie saved for ${qoderCred.savedCookieHost}`)
+              : t("未配置：粘贴浏览器 Cookie 后即可显示积分额度环", "Not configured: paste a browser cookie to show the credits ring")}</p>
+            <div className="settings-qoder-form">
+              <input type="password" autoComplete="off" spellCheck={false} placeholder={t("粘贴 Cookie 请求头，例如 sid=…; csrf=…", "Paste the Cookie header, e.g. sid=…; csrf=…")} value={cookieDraft} onChange={event => setCookieDraft(event.target.value)} aria-label={t("Qoder Cookie", "Qoder cookie")} />
+              <select value={cookieHost} onChange={event => setCookieHost(event.target.value)} aria-label={t("Qoder 站点", "Qoder site")}>
+                <option value="qoder.com">qoder.com</option>
+                <option value="qoder.com.cn">qoder.com.cn</option>
+              </select>
+              <button disabled={disabled || !cookieDraft.trim()} onClick={() => void perform(async () => { setQoderCred(await setQoderQuotaCookie(cookieDraft, cookieHost)); setCookieDraft(""); })}>{t("保存", "Save")}</button>
+              {qoderCred?.savedCookieHost && <button disabled={disabled} onClick={() => void perform(async () => setQoderCred(await clearQoderQuotaCookie()))}>{t("清除", "Clear")}</button>}
+            </div>
+            <p className="settings-qoder-hint">{t("获取方式：浏览器登录 Qoder 网页版，打开开发者工具 → Network，复制任一 qoder 请求的 Cookie 请求头。个人令牌不可用时以该 Cookie 查询；仅保存在本机凭据存储，不会回传界面。", "How to get it: sign in to the Qoder web app, open DevTools → Network, and copy the Cookie header of any qoder request. Used when no personal token works; stored only in this device's credential store and never echoed back.")}</p>
+          </div></div>
+        </div>
+      </section>}
       <section className="settings-sources">
         <button className="settings-disclosure" aria-expanded={sourcesOpen} aria-controls="settings-source-list" onClick={() => setSourcesOpen(!sourcesOpen)}><div><h2>{t("采集来源", "Collection sources")}</h2><p>{t("选择这台设备上的 Agent", "Choose which agents to collect from")}</p></div><span>{data ? t(`${data.agents.filter(agent => agent.enabled && agent.status !== "UNDETECTED").length} 个已启用来源`, `${data.agents.filter(agent => agent.enabled && agent.status !== "UNDETECTED").length} sources enabled`) : "—"}<b aria-hidden="true">{sourcesOpen ? "−" : "+"}</b></span></button>
         <div id="settings-source-list" hidden={!sourcesOpen} className="settings-source-list">
