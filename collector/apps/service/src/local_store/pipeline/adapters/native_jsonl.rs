@@ -55,12 +55,14 @@ pub struct Context<'a> {
 
 /// Claude Code stores the local mirror of an SSH remote session under
 /// `~/.claude/projects/ssh-<session-uuid>/<session-uuid>.jsonl`; regular
-/// project directory names never start with `ssh-`.
+/// project directory names never start with `ssh-`. Parsed by hand over both
+/// separators so a Windows-scope transcript decoded on any platform still
+/// matches.
 fn is_ssh_mirror_scope(scope: &str) -> bool {
-    std::path::Path::new(scope)
-        .parent()
-        .and_then(std::path::Path::file_name)
-        .is_some_and(|name| name.to_string_lossy().starts_with("ssh-"))
+    let file_start = scope.rfind(['/', '\\']).map_or(0, |i| i + 1);
+    let dir = scope[..file_start].trim_end_matches(['/', '\\']);
+    let dir_start = dir.rfind(['/', '\\']).map_or(0, |i| i + 1);
+    dir[dir_start..].starts_with("ssh-")
 }
 
 /// Cross-device usage identity, only for harnesses whose native ids are
