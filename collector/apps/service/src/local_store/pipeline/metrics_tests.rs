@@ -122,6 +122,7 @@ fn harness_sessions(store: &mut PipelineStore, grain: &str, bucket: i64, harness
 
 fn base_event(seed: u8, event_type: &str, occurred_at: i64, payload: &str) -> EventCandidate {
     EventCandidate {
+        usage_identity: None,
         event_id: blob(seed),
         fact_key: blob(seed.wrapping_add(40)),
         fact_revision: 1,
@@ -176,9 +177,19 @@ fn duration_out_of_order_converges() {
         };
         commit(&mut store, sid, &token, 0, events);
         drain_all(&mut store);
-        assert_eq!(harness_active(&mut store,"day",day,"codex"),7_200_000,"reverse={reverse}");
-        for (hour,expected) in [(9,3_600_000),(10,3_600_000),(11,0)] {let bucket=bucket_start(Grain::Hour,ms(2024,6,15,hour,0));assert_eq!(harness_active(&mut store,"hour",bucket,"codex"),expected,"reverse={reverse}");}
-
+        assert_eq!(
+            harness_active(&mut store, "day", day, "codex"),
+            7_200_000,
+            "reverse={reverse}"
+        );
+        for (hour, expected) in [(9, 3_600_000), (10, 3_600_000), (11, 0)] {
+            let bucket = bucket_start(Grain::Hour, ms(2024, 6, 15, hour, 0));
+            assert_eq!(
+                harness_active(&mut store, "hour", bucket, "codex"),
+                expected,
+                "reverse={reverse}"
+            );
+        }
     }
 }
 
@@ -526,14 +537,25 @@ fn code_revision_replaces_prior_contribution_in_either_arrival_order() {
 
 #[test]
 fn session_span_crosses_month_boundary_and_backfill_is_idempotent() {
-    let mut store=open_store();
-    let (sid,token)=register(&mut store,"codex",1);
-    let mut start=base_event(71,"session_started",ms(2024,5,31,23,30),r#"{"meta":{"accuracy":"exact","time_source":"source_record"},"activity":{}}"#);
-    start.session_key=Some(blob(99));
-    let mut end=start.clone(); end.event_id=blob(72);end.fact_key=blob(72);end.event_type="session_ended".into();end.occurred_at=ms(2024,6,1,0,30);
-    commit(&mut store,sid,&token,0,vec![end,start]);
-    for consumer in [Consumer::Hour,Consumer::Day,Consumer::Month] {
-        for task in store.claim_tasks(consumer,8,DEFAULT_LEASE_MS).unwrap() {store.apply_and_complete_metrics(&task).unwrap();}
+    let mut store = open_store();
+    let (sid, token) = register(&mut store, "codex", 1);
+    let mut start = base_event(
+        71,
+        "session_started",
+        ms(2024, 5, 31, 23, 30),
+        r#"{"meta":{"accuracy":"exact","time_source":"source_record"},"activity":{}}"#,
+    );
+    start.session_key = Some(blob(99));
+    let mut end = start.clone();
+    end.event_id = blob(72);
+    end.fact_key = blob(72);
+    end.event_type = "session_ended".into();
+    end.occurred_at = ms(2024, 6, 1, 0, 30);
+    commit(&mut store, sid, &token, 0, vec![end, start]);
+    for consumer in [Consumer::Hour, Consumer::Day, Consumer::Month] {
+        for task in store.claim_tasks(consumer, 8, DEFAULT_LEASE_MS).unwrap() {
+            store.apply_and_complete_metrics(&task).unwrap();
+        }
     }
     store.backfill_derived_metrics(128).unwrap();
     store.with_connection(|conn| {

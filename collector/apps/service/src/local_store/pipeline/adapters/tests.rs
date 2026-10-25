@@ -956,7 +956,7 @@ fn review_content_hash_is_p0_sha256_not_hmac() {
         .unwrap();
     let rows = store.load_upload_events(&[row_id]).unwrap();
     assert_eq!(rows.len(), 1);
-    let envelope = encode_wire_event(&rows[0]).unwrap();
+    let envelope = encode_wire_event(&rows[0], false).unwrap();
     let mut wire = serde_json::to_value(&envelope).unwrap();
     wire.as_object_mut().unwrap().remove("contentHash");
     let recomputed = protocol::v2::compute_content_hash(&wire).unwrap();

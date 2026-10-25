@@ -146,6 +146,9 @@ pub struct FactDraft {
     pub accuracy: TokenAccuracy,
     /// Business payload sections excluding meta (`usage` / `cost` / `code` / `activity` / `context`).
     pub payload_sections: Value,
+    /// Device-independent usage identity carried on the wire outside the
+    /// content hash; None keeps per-device accounting.
+    pub usage_identity: Option<crate::local_store::pipeline::types::UsageIdentityMeta>,
 }
 
 impl FactDraft {
@@ -193,6 +196,7 @@ impl FactDraft {
             cost_scope_key: self.cost_scope_key,
             payload_json: local_payload.to_string(),
             applicable_consumers,
+            usage_identity: self.usage_identity,
         })
     }
 }

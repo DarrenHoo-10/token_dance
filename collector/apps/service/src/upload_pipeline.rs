@@ -10,7 +10,8 @@ use base64::Engine as _;
 use protocol::v2::{Accuracy, TimeSource};
 use protocol::v2::{
     AckResult, EventEnvelope, EventPayload, EventType, ModelRef, SkillRef, TelemetryEventsResponse,
-    METRIC_SEMANTICS_VERSION, PROTOCOL_VERSION_NUMBER, SCHEMA_VERSION,
+    UsageIdentity, UsageIdentitySource, METRIC_SEMANTICS_VERSION, PROTOCOL_VERSION_NUMBER,
+    SCHEMA_VERSION,
 };
 use serde_json::Value;
 use uploader::{
@@ -65,6 +66,9 @@ pub struct UploadConsumer {
     in_flight: Vec<InFlight>,
     auth_blocked_until: Option<Instant>,
     capabilities_ok: bool,
+    /// Server advertised cross-device usage identity support; older servers
+    /// would quarantine unknown wire fields, so gate sending on it.
+    usage_identity_enabled: bool,
 }
 
 struct InFlight {
@@ -84,6 +88,7 @@ impl UploadConsumer {
             in_flight: Vec::new(),
             auth_blocked_until: None,
             capabilities_ok: false,
+            usage_identity_enabled: false,
         }
     }
 
@@ -140,6 +145,7 @@ impl UploadConsumer {
                         return Err("SYNC_PROTOCOL_UNSUPPORTED".into());
                     }
                     self.capabilities_ok = true;
+                    self.usage_identity_enabled = caps.usage_identity == Some(true);
                 }
                 Err(TransportError::Auth) => {
                     self.block_auth(Duration::from_secs(300));
@@ -240,7 +246,8 @@ impl UploadConsumer {
                 // Missing row: release via lease expiry; skip.
                 continue;
             };
-            let envelope = encode_wire_event(row).map_err(|e| e.to_string())?;
+            let envelope =
+                encode_wire_event(row, self.usage_identity_enabled).map_err(|e| e.to_string())?;
             let encoded = serde_json::to_vec(&envelope).map_err(|e| e.to_string())?;
             if !envelopes.is_empty()
                 && (envelopes.len() >= CLIENT_MAX_BATCH_EVENTS
@@ -467,9 +474,25 @@ fn transport_error_code(err: &TransportError) -> &'static str {
     }
 }
 
-pub fn encode_wire_event(row: &UploadWireEvent) -> Result<EventEnvelope, String> {
+pub fn encode_wire_event(
+    row: &UploadWireEvent,
+    usage_identity_enabled: bool,
+) -> Result<EventEnvelope, String> {
     let payload = local_payload_to_wire(&row.payload_json)?;
     let event_type = parse_event_type(&row.event_type)?;
+    let usage_identity = if usage_identity_enabled {
+        row.usage_identity.as_ref().map(|u| UsageIdentity {
+            session_id: u.session.clone(),
+            message_id: u.message.clone(),
+            source: if u.ssh_mirror {
+                Some(UsageIdentitySource::SshMirror)
+            } else {
+                None
+            },
+        })
+    } else {
+        None
+    };
     Ok(EventEnvelope {
         event_id: b64_32(&row.event_id),
         fact_key: b64_32(&row.fact_key),
@@ -490,6 +513,7 @@ pub fn encode_wire_event(row: &UploadWireEvent) -> Result<EventEnvelope, String>
         session_key: row.session_key.as_ref().map(b64_32),
         turn_key: row.turn_key.as_ref().map(b64_32),
         cost_scope_key: row.cost_scope_key.as_ref().map(b64_32),
+        usage_identity,
         payload,
         content_hash: b64_32(&row.content_hash),
     })
@@ -629,7 +653,15 @@ pub(crate) mod tests {
     }
     #[tokio::test]
     async fn uploads_do_not_wait_for_rebuild_or_local_statistics() {
-        let (mut store, _) = seed_store_with_consumers(1, vec![Consumer::Hour, Consumer::Day, Consumer::Month, Consumer::Upload]);
+        let (mut store, _) = seed_store_with_consumers(
+            1,
+            vec![
+                Consumer::Hour,
+                Consumer::Day,
+                Consumer::Month,
+                Consumer::Upload,
+            ],
+        );
         store.with_connection(|c| {
             c.execute("UPDATE schema_meta SET extra=json_set(extra,'$.rebuild',json('{\"active\":true}'))",[])?;
             Ok(())
@@ -663,7 +695,10 @@ pub(crate) mod tests {
         seed_store_with_consumers(n, vec![Consumer::Upload])
     }
 
-    pub(crate) fn seed_store_with_consumers(n: u8, consumers: Vec<Consumer>) -> (PipelineStore, Vec<i64>) {
+    pub(crate) fn seed_store_with_consumers(
+        n: u8,
+        consumers: Vec<Consumer>,
+    ) -> (PipelineStore, Vec<i64>) {
         let mut store = PipelineStore::open_in_memory().unwrap();
         store.set_clock_ms(1_700_000_000_000);
         let source_id = store
@@ -684,6 +719,7 @@ pub(crate) mod tests {
         let (token, _, seq) = store.lease_source(source_id, DEFAULT_LEASE_MS).unwrap();
         let events: Vec<_> = (0..n)
             .map(|i| EventCandidate {
+                usage_identity: None,
                 event_id: blob(10 + i),
                 fact_key: blob(50 + i),
                 fact_revision: 1,
@@ -727,6 +763,116 @@ pub(crate) mod tests {
             );
         }
         (store, ids)
+    }
+
+    #[tokio::test]
+    async fn usage_identity_survives_the_local_store_roundtrip() {
+        let (mut store, _) = seed_store_with_upload_events(1);
+        store.set_clock_ms(1_700_000_000_000);
+        let source_id = store
+            .register_source(&RegisterSource {
+                harness_id: "claude-code".into(),
+                source_key: blob(2),
+                source_kind: SourceKind::Jsonl,
+                locator_ref: "C:/u/.claude/projects/ssh-abc/abc.jsonl".into(),
+                stream_key: "projects-jsonl".into(),
+                cursor_kind: CursorKind::ByteOffset,
+                cursor_json: r#"{"offset":0}"#.into(),
+                decoder_state_version: 1,
+                decoder_state_json: "{}".into(),
+                observed_boundary_json: "{}".into(),
+                next_poll_at: Some(1_700_000_000_000),
+            })
+            .unwrap();
+        let (token, _, seq) = store.lease_source(source_id, DEFAULT_LEASE_MS).unwrap();
+        let mut event = EventCandidate {
+            event_id: blob(11),
+            fact_key: blob(51),
+            fact_revision: 1,
+            event_type: "model_usage_recorded".into(),
+            schema_version: 2,
+            metric_semantics_version: 1,
+            content_hash: blob(101),
+            occurred_at: 1_700_000_000_000,
+            model_key: 0,
+            skill_id: None,
+            session_key: None,
+            turn_key: None,
+            cost_scope_key: None,
+            payload_json: payload_exact(),
+            applicable_consumers: vec![Consumer::Upload],
+            usage_identity: None,
+        };
+        event.usage_identity = Some(crate::local_store::pipeline::UsageIdentityMeta {
+            session: "s1".into(),
+            message: "u1".into(),
+            ssh_mirror: true,
+        });
+        store
+            .commit_source(SourceCommitBatch {
+                source_id,
+                expected_commit_seq: seq,
+                lease_token: token,
+                cursor_json: r#"{"offset":1}"#.into(),
+                decoder_state_version: 1,
+                decoder_state_json: "{}".into(),
+                observed_boundary_json: "{}".into(),
+                ignored_record_count_delta: 0,
+                last_ignored_code: None,
+                next_poll_at: Some(1_700_000_100_000),
+                events: vec![event],
+                created_at_override: None,
+            })
+            .unwrap();
+        let row_id = store.event_row_id_by_event_id(&blob(11)).unwrap().unwrap();
+        let row = store
+            .load_upload_events(&[row_id])
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        let identity = row.usage_identity.expect("identity must persist");
+        assert_eq!(identity.session, "s1");
+        assert_eq!(identity.message, "u1");
+        assert!(identity.ssh_mirror);
+    }
+
+    #[test]
+    fn wire_encoding_omits_usage_identity_until_server_supports_it() {
+        let row = UploadWireEvent {
+            event_row_id: 1,
+            event_id: [1; 32],
+            fact_key: [2; 32],
+            fact_revision: 1,
+            schema_version: 2,
+            metric_semantics_version: 1,
+            harness_id: "claude-code".into(),
+            event_type: "model_usage_recorded".into(),
+            occurred_at: 1_700_000_000_000,
+            content_hash: [3; 32],
+            model: Some(("claude-code".into(), "m".into())),
+            skill_key: None,
+            skill_public_name: None,
+            session_key: None,
+            turn_key: None,
+            cost_scope_key: None,
+            payload_json: payload_exact(),
+            usage_identity: Some(crate::local_store::pipeline::UsageIdentityMeta {
+                session: "s1".into(),
+                message: "u1".into(),
+                ssh_mirror: true,
+            }),
+        };
+        let without = encode_wire_event(&row, false).unwrap();
+        assert!(without.usage_identity.is_none());
+        let with = encode_wire_event(&row, true).unwrap();
+        let identity = with.usage_identity.unwrap();
+        assert_eq!(identity.session_id, "s1");
+        assert_eq!(identity.message_id, "u1");
+        assert_eq!(identity.source, Some(UsageIdentitySource::SshMirror));
+        // The identity rides outside the business hash: enabling it must not
+        // change the frozen content hash of the same event.
+        assert_eq!(with.content_hash, without.content_hash);
     }
 
     #[test]

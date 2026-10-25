@@ -23,6 +23,8 @@ const (
 	maxTelemetryV2Events    = int(v2.DefaultMaxBatchEvents)
 )
 
+func boolPtr(v bool) *bool { return &v }
+
 func clientUpgradeRequired() *domain.AppError {
 	return domain.NewAppError(
 		http.StatusUpgradeRequired,
@@ -60,6 +62,7 @@ func (h *Handlers) GetTelemetryCapabilities(w http.ResponseWriter, r *http.Reque
 		MaxBatchBytes:                    v2.DefaultMaxBatchBytes,
 		ServerTimeMs:                     v2.UInt64String(strconv.FormatInt(now.UnixMilli(), 10)),
 		EventReceiveLowerBoundMs:         v2.UInt64String(strconv.FormatInt(lower, 10)),
+		UsageIdentity:                    boolPtr(true),
 	})
 }
 

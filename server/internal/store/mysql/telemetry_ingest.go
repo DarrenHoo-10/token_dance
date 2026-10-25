@@ -78,9 +78,10 @@ func (s *ingestStore) CommitTelemetryEventsV2(ctx context.Context, in domain.Tel
 	}
 
 	type indexedEvent struct {
-		index int
-		event v2.EventEnvelope
-		id    [32]byte
+		index    int
+		event    v2.EventEnvelope
+		id       [32]byte
+		identity *domain.TelemetryUsageIdentity
 	}
 	ordered := make([]indexedEvent, 0, len(in.Events))
 	for i := range in.Events {
@@ -88,7 +89,11 @@ func (s *ingestStore) CommitTelemetryEventsV2(ctx context.Context, in domain.Tel
 		if err != nil {
 			return nil, fmt.Errorf("decode event id: %w", domain.ErrInvalidArgument)
 		}
-		ordered = append(ordered, indexedEvent{index: i, event: in.Events[i], id: id})
+		item := indexedEvent{index: i, event: in.Events[i], id: id}
+		if i < len(in.UsageIdentities) {
+			item.identity = &in.UsageIdentities[i]
+		}
+		ordered = append(ordered, item)
 	}
 	sort.Slice(ordered, func(i, j int) bool {
 		return bytes.Compare(ordered[i].id[:], ordered[j].id[:]) < 0
@@ -101,7 +106,7 @@ func (s *ingestStore) CommitTelemetryEventsV2(ctx context.Context, in domain.Tel
 
 	accepted := false
 	for _, item := range ordered {
-		ack, err := processTelemetryEventV2(ctx, tx, in, item.event, item.id, nowMs, lowerBoundMs, futureLimitMs)
+		ack, err := processTelemetryEventV2(ctx, tx, in, item.event, item.id, item.identity, nowMs, lowerBoundMs, futureLimitMs)
 		if err != nil {
 			return nil, err
 		}
@@ -134,6 +139,7 @@ func processTelemetryEventV2(
 	in domain.TelemetryEventsV2Input,
 	event v2.EventEnvelope,
 	eventID [32]byte,
+	identity *domain.TelemetryUsageIdentity,
 	nowMs, lowerBoundMs, futureLimitMs int64,
 ) (v2.EventAck, error) {
 	ack := v2.EventAck{
@@ -272,19 +278,26 @@ func processTelemetryEventV2(
 	}
 	statusJSON := []byte(`{"hour":0,"day":0,"month":0}`)
 
+	var usageIdentityHash, usageIdentitySource any
+	if identity != nil {
+		usageIdentityHash = identity.Hash[:]
+		usageIdentitySource = identity.Source
+	}
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO telemetry_events (
 			created_at, updated_at, extra,
 			installation_id, event_id, fact_key, fact_revision,
 			harness_id, event_type, schema_version, metric_semantics_version,
 			content_hash, occurred_at, model_key, skill_id,
-			session_key, turn_key, cost_scope_key, payload_json, status_json
+			session_key, turn_key, cost_scope_key, payload_json, status_json,
+			usage_identity_hash, usage_identity_source
 		) VALUES (
 			?, ?, JSON_OBJECT(),
 			?, ?, ?, ?,
 			?, ?, ?, ?,
 			?, ?, ?, ?,
-			?, ?, ?, ?, ?
+			?, ?, ?, ?, ?,
+			?, ?
 		)`,
 		nowMs, nowMs,
 		in.InstallationID, eventID[:], factKey[:], factRevision,
@@ -292,6 +305,7 @@ func processTelemetryEventV2(
 		providedHash[:], occurredAt, modelKey, skillID,
 		nullableBytes(sessionKey), nullableBytes(turnKey), nullableBytes(costScopeKey),
 		payloadJSON, statusJSON,
+		usageIdentityHash, usageIdentitySource,
 	)
 	if err == nil {
 		rowID, err := res.LastInsertId()

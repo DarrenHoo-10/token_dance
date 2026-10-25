@@ -298,7 +298,7 @@ func TestReconstructionRejectsInvalidTimestampWithoutOverflow(t *testing.T) {
 	now := time.Now().UnixMilli()
 	for _, timestamp := range []string{"0", "9223372036854775808", "18446744073709551615"} {
 		event := v2.EventEnvelope{SchemaVersion: v2.SchemaVersion, MetricSemanticsVersion: v2.MetricSemanticsVersion, OccurredAt: v2.UInt64String(timestamp)}
-		ack, err := processTelemetryEventV2(context.Background(), nil, domain.TelemetryEventsV2Input{Reconstruction: true}, event, [32]byte{}, now, now-14*86400000, now+300000)
+		ack, err := processTelemetryEventV2(context.Background(), nil, domain.TelemetryEventsV2Input{Reconstruction: true}, event, [32]byte{}, nil, now, now-14*86400000, now+300000)
 		if err != nil || ack.Result != v2.AckResultInvalid {
 			t.Fatalf("invalid timestamp %s: %+v %v", timestamp, ack, err)
 		}

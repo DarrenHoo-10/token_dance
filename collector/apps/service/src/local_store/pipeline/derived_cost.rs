@@ -17,9 +17,15 @@ fn derived_cost(
     let key: [u8; 32] = hash.finalize().into();
     // Preserve the usage revision ordering while giving a refreshed price
     // catalog its own immutable quote version, including after a local rebuild.
-    const PRICE_VERSION_BASE:i64=10_000_000_000;
-    if !(0..PRICE_VERSION_BASE).contains(&catalog.fetched_at) { return Ok(None) }
-    let revision=event.fact_revision.checked_mul(PRICE_VERSION_BASE).and_then(|v|v.checked_add(catalog.fetched_at)).ok_or_else(||PipelineError::InvalidArgument("cost revision overflow".into()))?;
+    const PRICE_VERSION_BASE: i64 = 10_000_000_000;
+    if !(0..PRICE_VERSION_BASE).contains(&catalog.fetched_at) {
+        return Ok(None);
+    }
+    let revision = event
+        .fact_revision
+        .checked_mul(PRICE_VERSION_BASE)
+        .and_then(|v| v.checked_add(catalog.fetched_at))
+        .ok_or_else(|| PipelineError::InvalidArgument("cost revision overflow".into()))?;
     let exists: bool = tx.query_row(
         "SELECT EXISTS(SELECT 1 FROM events WHERE fact_key=?1 AND fact_revision=?2)",
         params![key.as_slice(), revision],
@@ -60,12 +66,17 @@ fn derived_cost(
         return Ok(None);
     };
     let prior:Option<(i64,i64)>=tx.query_row("SELECT fact_revision,json_extract(payload_json,'$.cost.units') FROM events WHERE fact_key=?1 ORDER BY fact_revision DESC LIMIT 1",[key.as_slice()],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
-    if prior.is_some_and(|(v,n)|v/PRICE_VERSION_BASE==event.fact_revision && n==units){return Ok(None)}
+    if prior.is_some_and(|(v, n)| v / PRICE_VERSION_BASE == event.fact_revision && n == units) {
+        return Ok(None);
+    }
     let mut hash = Sha256::new();
     hash.update(b"tokendance:request-cost-event:v1");
     hash.update(key);
     hash.update(revision.to_be_bytes());
     let fact = super::runner::FactDraft {
+        // The quote describes the same request as its usage fact, so the
+        // pair must share one cross-device identity.
+        usage_identity: event.usage_identity.clone(),
         event_id: hash.finalize().into(),
         fact_key: key,
         fact_revision: revision,
@@ -73,7 +84,10 @@ fn derived_cost(
         schema_version: event.schema_version,
         metric_semantics_version: event.metric_semantics_version,
         occurred_at: event.occurred_at,
-        time_source: value["meta"]["time_source"].as_str().and_then(super::runner::TimeSource::parse).unwrap_or(super::runner::TimeSource::SourceRecord),
+        time_source: value["meta"]["time_source"]
+            .as_str()
+            .and_then(super::runner::TimeSource::parse)
+            .unwrap_or(super::runner::TimeSource::SourceRecord),
         model_key: event.model_key,
         model_identity: Some((provider, model)),
         skill_id: None,
@@ -138,6 +152,7 @@ impl PipelineStore {
         for (id, source, model, status) in &rows {
             let wire = self.load_upload_events(&[*id])?.remove(0);
             let event = EventCandidate {
+                usage_identity: None,
                 event_id: wire.event_id,
                 fact_key: wire.fact_key,
                 fact_revision: wire.fact_revision,
@@ -208,25 +223,51 @@ impl PipelineStore {
         let now = self.now_ms();
         let ids = {
             let mut q = self.conn.prepare("SELECT id FROM events WHERE id>?1 AND event_type='cost_recorded' AND delete_at IS NULL AND expire_at>?2 ORDER BY id LIMIT ?3")?;
-            let rows=q.query_map(params![self.cost_hash_repair_cursor,now,limit.clamp(1,512) as i64],|r|r.get::<_,i64>(0))?.collect::<Result<Vec<_>,_>>()?;
+            let rows = q
+                .query_map(
+                    params![
+                        self.cost_hash_repair_cursor,
+                        now,
+                        limit.clamp(1, 512) as i64
+                    ],
+                    |r| r.get::<_, i64>(0),
+                )?
+                .collect::<Result<Vec<_>, _>>()?;
             rows
         };
         for id in &ids {
-            let status:i64=self.conn.query_row("SELECT json_extract(status_json,'$.upload') FROM events WHERE id=?1",[id],|r|r.get(0))?;
+            let status: i64 = self.conn.query_row(
+                "SELECT json_extract(status_json,'$.upload') FROM events WHERE id=?1",
+                [id],
+                |r| r.get(0),
+            )?;
             // Do not mutate a hash while an upload holds a frozen envelope.
-            if status == ConsumerStatus::InFlight as i64 { return Ok(0); }
-            if matches!(status,0|1|6) {
-                let row=self.load_upload_events(&[*id])?.remove(0);
-                let envelope=crate::upload_pipeline::encode_wire_event(&row).map_err(PipelineError::InvalidArgument)?;
-                let wire=serde_json::to_value(envelope).map_err(|e|PipelineError::InvalidArgument(e.to_string()))?;
-                let corrected=protocol::v2::compute_content_hash(&wire).map_err(|e|PipelineError::InvalidArgument(e.to_string()))?;
-                let mut legacy=wire.clone();
-                legacy["payload"]["cost"]["source"]=serde_json::json!("estimated_price_table");
-                let legacy_hash=protocol::v2::compute_content_hash(&legacy).map_err(|e|PipelineError::InvalidArgument(e.to_string()))?;
-                let stored=base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(row.content_hash);
-                if corrected != stored && legacy_hash == stored && wire["payload"]["cost"]["source"] == "calculated_price" {
-                    let hash=base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(corrected).map_err(|e|PipelineError::InvalidArgument(e.to_string()))?;
-                    let tx=self.conn.transaction()?;
+            if status == ConsumerStatus::InFlight as i64 {
+                return Ok(0);
+            }
+            if matches!(status, 0 | 1 | 6) {
+                let row = self.load_upload_events(&[*id])?.remove(0);
+                // Hash recomputation ignores usage identity; the real upload re-encodes with it.
+                let envelope = crate::upload_pipeline::encode_wire_event(&row, false)
+                    .map_err(PipelineError::InvalidArgument)?;
+                let wire = serde_json::to_value(envelope)
+                    .map_err(|e| PipelineError::InvalidArgument(e.to_string()))?;
+                let corrected = protocol::v2::compute_content_hash(&wire)
+                    .map_err(|e| PipelineError::InvalidArgument(e.to_string()))?;
+                let mut legacy = wire.clone();
+                legacy["payload"]["cost"]["source"] = serde_json::json!("estimated_price_table");
+                let legacy_hash = protocol::v2::compute_content_hash(&legacy)
+                    .map_err(|e| PipelineError::InvalidArgument(e.to_string()))?;
+                let stored =
+                    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(row.content_hash);
+                if corrected != stored
+                    && legacy_hash == stored
+                    && wire["payload"]["cost"]["source"] == "calculated_price"
+                {
+                    let hash = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                        .decode(corrected)
+                        .map_err(|e| PipelineError::InvalidArgument(e.to_string()))?;
+                    let tx = self.conn.transaction()?;
                     let updated=tx.execute("UPDATE events SET content_hash=?1,status_json=json_set(status_json,'$.upload',0),updated_at=?2 WHERE id=?3 AND content_hash=?4 AND json_extract(status_json,'$.upload') IN (0,1,6)",params![hash,now,id,row.content_hash.as_slice()])?;
                     if updated == 1 {
                         tx.execute("INSERT INTO processing_tasks(created_at,updated_at,event_row_id,consumer,runnable_at) VALUES(?1,?1,?2,'upload',?1) ON CONFLICT(event_row_id,consumer) DO UPDATE SET updated_at=excluded.updated_at,delete_at=NULL,runnable_at=excluded.runnable_at,lease_token=NULL,lease_until=NULL,last_error_code=NULL",params![now,id])?;
@@ -234,7 +275,7 @@ impl PipelineStore {
                     tx.commit()?;
                 }
             }
-            self.cost_hash_repair_cursor=*id;
+            self.cost_hash_repair_cursor = *id;
         }
         Ok(ids.len())
     }

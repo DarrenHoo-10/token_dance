@@ -325,7 +325,8 @@ impl HarnessStrategy for JsonlHarnessStrategy {
                     }
                     if self.profile.harness_id == "workbuddy" && fact.model_identity.is_some() {
                         fact.fact_revision = 2;
-                        fact.event_id = super::identity::event_id(&self.identity_secret, &fact.fact_key, 2);
+                        fact.event_id =
+                            super::identity::event_id(&self.identity_secret, &fact.fact_key, 2);
                     }
                 }
             }
@@ -380,7 +381,7 @@ impl HarnessStrategy for JsonlHarnessStrategy {
                 .as_ref()
                 .map(|t| TypedNativeKey::Str(t.clone()))
                 .unwrap_or(byte_native);
-            return Ok(DecodeOutcome::Emit(vec![emit_usage_fact(UsageFactArgs {
+            let mut fact = emit_usage_fact(UsageFactArgs {
                 secret: &self.identity_secret,
                 harness: self.profile.harness_id,
                 scope: logical_scope,
@@ -399,7 +400,17 @@ impl HarnessStrategy for JsonlHarnessStrategy {
                 model_key: 0,
                 cache_read_tokens: None,
                 reasoning_tokens: None,
-            })]));
+            });
+            if self.profile.harness_id == "claude-code" {
+                // Byte-offset natives have no stable cross-device identity; the
+                // helper rejects them and missing sessions outright.
+                fact.usage_identity = super::native_jsonl::ssh_mirror_identity(
+                    logical_scope,
+                    session.as_deref(),
+                    turn.as_deref().unwrap_or_default(),
+                );
+            }
+            return Ok(DecodeOutcome::Emit(vec![fact]));
         }
         Ok(DecodeOutcome::Ignore(IgnoreCode::UnsupportedStructure))
     }

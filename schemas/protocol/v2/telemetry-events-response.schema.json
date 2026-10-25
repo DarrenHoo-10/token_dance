@@ -89,6 +89,12 @@
         "internal_retryable"
       ]
     },
+    "UsageIdentitySource": {
+      "type": "string",
+      "enum": [
+        "ssh_mirror"
+      ]
+    },
     "ModelRef": {
       "type": "object",
       "additionalProperties": false,
@@ -347,6 +353,31 @@
       },
       "required": []
     },
+    "UsageIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "messageId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "source": {
+          "$ref": "#/$defs/UsageIdentitySource"
+        }
+      },
+      "required": [
+        "sessionId",
+        "messageId"
+      ]
+    },
     "EventEnvelope": {
       "type": "object",
       "additionalProperties": false,
@@ -415,6 +446,9 @@
           "pattern": "^[A-Za-z0-9_-]{43}$",
           "minLength": 43,
           "maxLength": 43
+        },
+        "usageIdentity": {
+          "$ref": "#/$defs/UsageIdentity"
         },
         "payload": {
           "$ref": "#/$defs/EventPayload"
@@ -698,6 +732,9 @@
           "type": "string",
           "pattern": "^(0|[1-9][0-9]*)$",
           "maxLength": 20
+        },
+        "usageIdentity": {
+          "type": "boolean"
         }
       },
       "required": [

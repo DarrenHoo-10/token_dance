@@ -69,6 +69,9 @@
       "duplicate_key",
       "dependency_expired",
       "internal_retryable"
+    ],
+    "UsageIdentitySource": [
+      "ssh_mirror"
     ]
   },
   "objects": {
@@ -129,6 +132,11 @@
       "context?": "ContextPayload",
       "meta?": "MetaPayload"
     },
+    "UsageIdentity": {
+      "sessionId": "identifier",
+      "messageId": "identifier",
+      "source?": "UsageIdentitySource"
+    },
     "EventEnvelope": {
       "eventId": "base64url32",
       "factKey": "base64url32",
@@ -143,6 +151,7 @@
       "sessionKey?": "base64url32",
       "turnKey?": "base64url32",
       "costScopeKey?": "base64url32",
+      "usageIdentity?": "UsageIdentity",
       "payload": "EventPayload",
       "contentHash": "base64url32"
     },
@@ -167,11 +176,12 @@
       "protocolVersion": "uint32",
       "supportedSchemaVersions": "uint32[]",
       "supportedMetricSemanticsVersions": "uint32[]",
-      "maxBatchEvents": "uint32",
-      "maxBatchBytes": "uint32",
-      "serverTimeMs": "uint64String",
-      "eventReceiveLowerBoundMs": "uint64String"
-    }
+    "maxBatchEvents": "uint32",
+    "maxBatchBytes": "uint32",
+    "serverTimeMs": "uint64String",
+    "eventReceiveLowerBoundMs": "uint64String",
+    "usageIdentity?": "boolean"
+  }
   },
   "unions": {},
   "roots": [
@@ -224,7 +234,8 @@
       "publicName"
     ],
     "EventEnvelope": [
-      "contentHash"
+      "contentHash",
+      "usageIdentity"
     ]
   },
   "ackUploadMapping": {

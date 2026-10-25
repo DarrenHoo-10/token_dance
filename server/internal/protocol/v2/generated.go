@@ -100,6 +100,12 @@ const (
 	AckErrorCodeInternalRetryable  AckErrorCode = "internal_retryable"
 )
 
+type UsageIdentitySource string
+
+const (
+	UsageIdentitySourceSshMirror UsageIdentitySource = "ssh_mirror"
+)
+
 type ModelRef struct {
 	ProviderID string `json:"providerId"`
 	ModelID    string `json:"modelId"`
@@ -166,22 +172,29 @@ type EventPayload struct {
 	Meta     *MetaPayload     `json:"meta,omitempty"`
 }
 
+type UsageIdentity struct {
+	SessionID string               `json:"sessionId"`
+	MessageID string               `json:"messageId"`
+	Source    *UsageIdentitySource `json:"source,omitempty"`
+}
+
 type EventEnvelope struct {
-	EventID                Base64Url32  `json:"eventId"`
-	FactKey                Base64Url32  `json:"factKey"`
-	FactRevision           UInt64String `json:"factRevision"`
-	SchemaVersion          uint32       `json:"schemaVersion"`
-	MetricSemanticsVersion uint32       `json:"metricSemanticsVersion"`
-	HarnessID              string       `json:"harnessId"`
-	EventType              EventType    `json:"eventType"`
-	OccurredAt             UInt64String `json:"occurredAt"`
-	Model                  *ModelRef    `json:"model,omitempty"`
-	Skill                  *SkillRef    `json:"skill,omitempty"`
-	SessionKey             *Base64Url32 `json:"sessionKey,omitempty"`
-	TurnKey                *Base64Url32 `json:"turnKey,omitempty"`
-	CostScopeKey           *Base64Url32 `json:"costScopeKey,omitempty"`
-	Payload                EventPayload `json:"payload"`
-	ContentHash            Base64Url32  `json:"contentHash"`
+	EventID                Base64Url32    `json:"eventId"`
+	FactKey                Base64Url32    `json:"factKey"`
+	FactRevision           UInt64String   `json:"factRevision"`
+	SchemaVersion          uint32         `json:"schemaVersion"`
+	MetricSemanticsVersion uint32         `json:"metricSemanticsVersion"`
+	HarnessID              string         `json:"harnessId"`
+	EventType              EventType      `json:"eventType"`
+	OccurredAt             UInt64String   `json:"occurredAt"`
+	Model                  *ModelRef      `json:"model,omitempty"`
+	Skill                  *SkillRef      `json:"skill,omitempty"`
+	SessionKey             *Base64Url32   `json:"sessionKey,omitempty"`
+	TurnKey                *Base64Url32   `json:"turnKey,omitempty"`
+	CostScopeKey           *Base64Url32   `json:"costScopeKey,omitempty"`
+	UsageIdentity          *UsageIdentity `json:"usageIdentity,omitempty"`
+	Payload                EventPayload   `json:"payload"`
+	ContentHash            Base64Url32    `json:"contentHash"`
 }
 
 type TelemetryEventsRequest struct {
@@ -212,4 +225,5 @@ type TelemetryCapabilities struct {
 	MaxBatchBytes                    uint32       `json:"maxBatchBytes"`
 	ServerTimeMs                     UInt64String `json:"serverTimeMs"`
 	EventReceiveLowerBoundMs         UInt64String `json:"eventReceiveLowerBoundMs"`
+	UsageIdentity                    *bool        `json:"usageIdentity,omitempty"`
 }

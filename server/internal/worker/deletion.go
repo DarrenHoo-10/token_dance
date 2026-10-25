@@ -328,6 +328,12 @@ func (w *Worker) deletionDeleteEvents(ctx context.Context, claim *deletionClaim)
 				claim.userID.String, installationID); err != nil {
 				return fmt.Errorf("delete installation telemetry events: %w", err)
 			}
+			// The deleted installation may have owned usage-identity facts whose
+			// surviving copies are shadowed; re-open them so the account keeps
+			// counting that usage from whichever installation remains.
+			if err := ReopenUsageIdentityShadowsTx(ctx, tx, claim.userID.String, w.clk.Now()); err != nil {
+				return fmt.Errorf("reopen usage identity shadows: %w", err)
+			}
 			for _, table := range []string{
 				"telemetry_harness_metrics", "telemetry_model_metrics", "telemetry_skill_metrics",
 				"telemetry_cost_metrics", "telemetry_bucket_entities", "telemetry_session_extents",
