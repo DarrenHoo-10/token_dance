@@ -29,6 +29,7 @@ func main() {
 	sinceDays := flag.Int("since-days", 0, "only repair events newer than this many days (0 = all history)")
 	maxGroups := flag.Int("max-groups", 200, "maximum duplicate groups repaired per pass")
 	singlePass := flag.Bool("single-pass", false, "run one pass instead of looping until no groups remain")
+	timeout := flag.Duration("timeout", 4*time.Hour, "overall context timeout for this invocation")
 	flag.Parse()
 
 	if !*dryRun && !*confirm {
@@ -49,7 +50,7 @@ func main() {
 	}
 	defer db.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
 	w := worker.NewWorker(db, nil)
