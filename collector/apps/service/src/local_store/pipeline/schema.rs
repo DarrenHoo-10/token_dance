@@ -203,6 +203,27 @@ mod tests {
     }
 }
 
+/// Cross-device usage identity columns on `events` (added after v3 shipped).
+/// Fresh databases get them from the canonical DDL; existing files ALTER here.
+pub fn ensure_usage_identity_columns(conn: &Connection) -> Result<(), PipelineError> {
+    let has: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('events') WHERE name='usage_identity_session'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has > 0 {
+        return Ok(());
+    }
+    let tx = conn.unchecked_transaction()?;
+    tx.execute_batch(
+        "ALTER TABLE events ADD COLUMN usage_identity_session TEXT; -- 跨设备用量身份的会话原生标识；仅 claude-code 等原生 id 全局唯一的来源填写，未知 NULL
+         ALTER TABLE events ADD COLUMN usage_identity_message TEXT; -- 跨设备用量身份的消息原生标识（transcript 行 uuid）
+         ALTER TABLE events ADD COLUMN usage_identity_source INTEGER CHECK(usage_identity_source IN (0,1)); -- 身份副本来源：0 原始、1 ssh_mirror；无身份时 NULL",
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
 pub fn ensure_session_extents(conn: &Connection) -> Result<(), PipelineError> {
     let exists: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='session_extents')",
@@ -247,7 +268,10 @@ pub fn repair_workbuddy_models(conn: &Connection) -> Result<(), PipelineError> {
     let done: bool = tx.query_row("SELECT coalesce(json_extract(extra,'$.workbuddy_model_repair'),0)>=1 FROM schema_meta WHERE id=1", [], |r|r.get(0))?;
     if !done {
         tx.execute("UPDATE collection_sources SET cursor_json='{}',decoder_state_json='{}',commit_seq=commit_seq+1,lease_token=NULL,lease_until=NULL,next_poll_at=0,observed_boundary_json=json_set(observed_boundary_json,'$._rebuild_pending',json('true')) WHERE harness_id='workbuddy' AND delete_at IS NULL AND EXISTS(SELECT 1 FROM events WHERE events.collection_source_id=collection_sources.id AND events.event_type='model_usage_recorded' AND events.model_key=0)", [])?;
-        tx.execute("UPDATE schema_meta SET extra=json_set(extra,'$.workbuddy_model_repair',1) WHERE id=1", [])?;
+        tx.execute(
+            "UPDATE schema_meta SET extra=json_set(extra,'$.workbuddy_model_repair',1) WHERE id=1",
+            [],
+        )?;
     }
     tx.commit()?;
     Ok(())

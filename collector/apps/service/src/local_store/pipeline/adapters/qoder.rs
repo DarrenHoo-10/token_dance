@@ -86,7 +86,11 @@ impl QoderStrategy {
         if current == [0, 0, 0, 0] {
             return None;
         }
-        let baselines = match state.json.get_mut("qoder_hwm").and_then(Value::as_object_mut) {
+        let baselines = match state
+            .json
+            .get_mut("qoder_hwm")
+            .and_then(Value::as_object_mut)
+        {
             Some(map) => map,
             None => {
                 state.json["qoder_hwm"] = json!({});
@@ -95,10 +99,8 @@ impl QoderStrategy {
                     .expect("just inserted")
             }
         };
-        let previous: Option<[u64; 4]> = baselines
-            .get(session)
-            .and_then(|v| v.as_array())
-            .map(|a| {
+        let previous: Option<[u64; 4]> =
+            baselines.get(session).and_then(|v| v.as_array()).map(|a| {
                 [
                     a.first().and_then(Value::as_u64).unwrap_or(0),
                     a.get(1).and_then(Value::as_u64).unwrap_or(0),
@@ -156,6 +158,7 @@ impl QoderStrategy {
             "cost_recorded",
         );
         Some(FactDraft {
+            usage_identity: None,
             event_id: event_id(&self.identity_secret, &fk, 1),
             fact_key: fk,
             fact_revision: 1,
@@ -169,8 +172,7 @@ impl QoderStrategy {
             skill_id: None,
             skill_key: None,
             session_key: Some(session_key(&self.identity_secret, HARNESS_ID, session)),
-            turn_key: turn
-                .map(|t| turn_key(&self.identity_secret, HARNESS_ID, session, t)),
+            turn_key: turn.map(|t| turn_key(&self.identity_secret, HARNESS_ID, session, t)),
             // Own fact key scopes the delta: one cost fact per request applies once.
             cost_scope_key: Some(fk),
             accuracy: TokenAccuracy::Exact,
@@ -289,10 +291,7 @@ impl HarnessStrategy for QoderStrategy {
 
         let uuid = str_field(o, "uuid").filter(|s| !s.is_empty());
         if kind == "user" {
-            let human = value
-                .pointer("/origin/kind")
-                .and_then(Value::as_str)
-                == Some("human");
+            let human = value.pointer("/origin/kind").and_then(Value::as_str) == Some("human");
             let has_tool_result = value
                 .pointer("/message/content")
                 .and_then(Value::as_array)
@@ -327,7 +326,9 @@ impl HarnessStrategy for QoderStrategy {
 
         // Assistant: usage (once per response) on the stop_reason == end_turn line.
         let message = o.get("message").and_then(Value::as_object);
-        let usage = message.and_then(|m| m.get("usage")).and_then(Value::as_object);
+        let usage = message
+            .and_then(|m| m.get("usage"))
+            .and_then(Value::as_object);
         let stop_reason = message
             .and_then(|m| str_field(m, "stop_reason"))
             .unwrap_or_default();
@@ -468,7 +469,11 @@ mod tests {
         QoderStrategy::new(vec![7; 32], Vec::new())
     }
 
-    fn decode_line(strategy: &QoderStrategy, line: &str, state: &mut DecoderState) -> Vec<FactDraft> {
+    fn decode_line(
+        strategy: &QoderStrategy,
+        line: &str,
+        state: &mut DecoderState,
+    ) -> Vec<FactDraft> {
         let record = RawRecord {
             ordinal: 0,
             byte_start: Some(0),
@@ -477,7 +482,10 @@ mod tests {
             payload: line.as_bytes().to_vec(),
             file_mtime_ms: Some(1_782_000_000_000),
         };
-        match strategy.decode(&record, state, "fixture/qoder-session").unwrap() {
+        match strategy
+            .decode(&record, state, "fixture/qoder-session")
+            .unwrap()
+        {
             DecodeOutcome::Emit(facts) => facts,
             _ => Vec::new(),
         }
@@ -524,11 +532,12 @@ mod tests {
             usage[0].payload_sections["usage"]["input_context_tokens"],
             2805
         );
-        assert_eq!(usage[0].payload_sections["usage"]["cache_read_tokens"], 2272);
-        assert_eq!(usage[0].payload_sections["usage"]["cache_write_tokens"], 20);
         assert_eq!(
-            usage[0].payload_sections["usage"]["output_tokens"], 57
+            usage[0].payload_sections["usage"]["cache_read_tokens"],
+            2272
         );
+        assert_eq!(usage[0].payload_sections["usage"]["cache_write_tokens"], 20);
+        assert_eq!(usage[0].payload_sections["usage"]["output_tokens"], 57);
         assert_eq!(
             usage[0].model_identity,
             Some(("qoder".into(), "dfmodel".into()))

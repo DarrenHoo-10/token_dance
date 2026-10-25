@@ -258,6 +258,7 @@ impl TelemetryV2Transport for ScriptedTelemetryV2 {
             max_batch_bytes: DEFAULT_MAX_BATCH_BYTES,
             server_time_ms: "1735689600000".into(),
             event_receive_lower_bound_ms: "1734393600000".into(),
+            usage_identity: Some(true),
         })
     }
 
@@ -407,6 +408,7 @@ mod tests {
                 session_key: None,
                 turn_key: None,
                 cost_scope_key: None,
+                usage_identity: None,
                 payload: protocol::v2::EventPayload {
                     usage: None,
                     cost: None,

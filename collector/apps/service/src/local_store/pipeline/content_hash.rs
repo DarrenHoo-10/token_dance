@@ -225,6 +225,7 @@ mod tests {
 
     fn draft_with_usage(tokens: u64) -> FactDraft {
         FactDraft {
+            usage_identity: None,
             event_id: [1u8; 32],
             fact_key: [2u8; 32],
             fact_revision: 1,

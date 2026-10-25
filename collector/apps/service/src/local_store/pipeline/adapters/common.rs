@@ -301,6 +301,7 @@ pub fn emit_usage_fact(args: UsageFactArgs<'_>) -> FactDraft {
     }
 
     FactDraft {
+        usage_identity: None,
         event_id: eid,
         fact_key: fk,
         fact_revision: 1,
@@ -358,6 +359,7 @@ pub fn emit_skill_fact(
     let fk = fact_key(secret, harness, scope, &native, "skill_invoked");
     let eid = event_id(secret, &fk, 1);
     FactDraft {
+        usage_identity: None,
         event_id: eid,
         fact_key: fk,
         fact_revision: 1,
@@ -394,6 +396,7 @@ pub fn emit_code_fact(
     let fk = fact_key(secret, harness, scope, &native, "code_changed");
     let eid = event_id(secret, &fk, 1);
     FactDraft {
+        usage_identity: None,
         event_id: eid,
         fact_key: fk,
         fact_revision: 1,
@@ -434,6 +437,7 @@ pub fn emit_activity_fact(
 ) -> FactDraft {
     let fk = fact_key(secret, harness, scope, &native, kind);
     FactDraft {
+        usage_identity: None,
         event_id: event_id(secret, &fk, 1),
         fact_key: fk,
         fact_revision: 1,

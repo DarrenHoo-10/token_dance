@@ -219,6 +219,8 @@ type telemetryEventRow struct {
 	PayloadJSON            []byte
 	StatusJSON             []byte
 	MetricSemanticsVersion uint16
+	FactKey                []byte
+	UsageIdentityHash      []byte
 }
 
 func (w *Worker) executeTelemetryTask(ctx context.Context, claim mysqlstore.TelemetryTaskClaim, now time.Time) error {
@@ -234,7 +236,8 @@ func (w *Worker) executeTelemetryTask(ctx context.Context, claim mysqlstore.Tele
 	err = tx.QueryRowContext(ctx, `
 		SELECT e.id, i.user_id, e.installation_id, e.harness_id, e.event_type, e.occurred_at,
 		       e.model_key, e.skill_id, e.session_key, e.turn_key, e.cost_scope_key,
-		       e.payload_json, e.status_json, e.metric_semantics_version
+		       e.payload_json, e.status_json, e.metric_semantics_version, e.fact_key,
+		       e.usage_identity_hash
 		FROM telemetry_events e
         JOIN installations i ON i.installation_id=e.installation_id
 		INNER JOIN telemetry_tasks t ON t.event_row_id = e.id AND t.id = ?
@@ -248,7 +251,8 @@ func (w *Worker) executeTelemetryTask(ctx context.Context, claim mysqlstore.Tele
 	).Scan(
 		&ev.ID, &ev.UserID, &ev.InstallationID, &ev.HarnessID, &ev.EventType, &ev.OccurredAtMs,
 		&ev.ModelKey, &ev.SkillID, &ev.SessionKey, &ev.TurnKey, &ev.CostScopeKey,
-		&ev.PayloadJSON, &statusRaw, &ev.MetricSemanticsVersion,
+		&ev.PayloadJSON, &statusRaw, &ev.MetricSemanticsVersion, &ev.FactKey,
+		&ev.UsageIdentityHash,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Stale lease / deleted event — drop task if still owned.
@@ -297,10 +301,37 @@ func (w *Worker) executeTelemetryTask(ctx context.Context, claim mysqlstore.Tele
 		return err
 	}
 
+	// Cross-device usage dedup: only the first-ingested copy of a fact counts.
+	// SSH remote sessions mirror the same transcript to two machines, and each
+	// installation would otherwise contribute the same usage twice. The smaller
+	// sibling is always already committed (ids follow insertion order), so the
+	// decision is deterministic regardless of task processing order. Rows that
+	// share this event's fact_key are its own revision chain and stay exempt.
+	shadowed := false
+	if len(ev.UsageIdentityHash) == 32 && usageIdentityDedupApplies(v2.EventType(ev.EventType)) {
+		var sibling int
+		err := tx.QueryRowContext(ctx, `
+			SELECT 1 FROM telemetry_events
+			WHERE user_id = ? AND usage_identity_hash = ? AND id < ?
+			  AND delete_at IS NULL AND fact_key <> ?
+			LIMIT 1`,
+			ev.UserID, ev.UsageIdentityHash, ev.ID, ev.FactKey,
+		).Scan(&sibling)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			shadowed = false
+		case err == nil:
+			shadowed = true
+		default:
+			return fmt.Errorf("check usage identity ownership: %w", err)
+		}
+	}
+
 	apply, err := w.prepareFactRevision(ctx, tx, claim.Consumer, &ev, nowMs)
 	if err != nil {
 		return err
 	}
+	apply = apply && !shadowed
 	changed := false
 	if apply {
 		changed, err = w.applyTelemetryContribution(ctx, tx, claim.Consumer, bucketStart, &ev, &payload, nowMs)
@@ -333,6 +364,13 @@ func (w *Worker) executeTelemetryTask(ctx context.Context, claim mysqlstore.Tele
 	_ = accountStatus
 	_ = installStatus
 	return tx.Commit()
+}
+
+// usageIdentityDedupApplies scopes cross-device dedup to the additive usage and
+// cost facts whose token/amount numbers account aggregates sum across
+// installations. Session and turn events keep their per-installation handling.
+func usageIdentityDedupApplies(eventType v2.EventType) bool {
+	return eventType == v2.EventTypeModelUsageRecorded || eventType == v2.EventTypeCostRecorded
 }
 
 func (w *Worker) applyTelemetryContribution(

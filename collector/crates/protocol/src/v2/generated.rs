@@ -138,6 +138,12 @@ pub enum AckErrorCode {
     InternalRetryable,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum UsageIdentitySource {
+    #[serde(rename = "ssh_mirror")]
+    SshMirror,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ModelRef {
@@ -271,6 +277,15 @@ pub struct EventPayload {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UsageIdentity {
+    pub session_id: String,
+    pub message_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<UsageIdentitySource>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EventEnvelope {
     pub event_id: Base64Url32,
     pub fact_key: Base64Url32,
@@ -290,6 +305,8 @@ pub struct EventEnvelope {
     pub turn_key: Option<Base64Url32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cost_scope_key: Option<Base64Url32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_identity: Option<UsageIdentity>,
     pub payload: EventPayload,
     pub content_hash: Base64Url32,
 }
@@ -332,5 +349,7 @@ pub struct TelemetryCapabilities {
     pub max_batch_bytes: u32,
     pub server_time_ms: UInt64String,
     pub event_receive_lower_bound_ms: UInt64String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage_identity: Option<bool>,
 }
 

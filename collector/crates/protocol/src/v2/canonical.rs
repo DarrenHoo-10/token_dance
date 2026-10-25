@@ -148,7 +148,9 @@ fn project_for_hash(event: &Value) -> Result<Value, ProtocolError> {
     let allowed_set: std::collections::HashSet<&str> = root_allowed.into_iter().collect();
     let mut projected = Map::new();
     for (key, value) in map {
-        if key == "contentHash" {
+        // contentHash is the output; usageIdentity is transport metadata for
+        // cross-device dedup and must not change a fact's business hash.
+        if key == "contentHash" || key == "usageIdentity" {
             continue;
         }
         if !allowed_set.contains(key.as_str()) {

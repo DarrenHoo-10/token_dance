@@ -83,6 +83,9 @@ CREATE TABLE events (
  cost_scope_key BLOB CHECK(length(cost_scope_key)=32), -- 稳定匿名计费范围身份，用于请求或轮次费用关联
  payload_json TEXT NOT NULL CHECK(json_valid(payload_json)) CHECK(json_type(payload_json)='object'), -- 冻结业务 JSON：usage、cost、code、activity、context、meta；只保存适用分组，不复制整份 envelope
  status_json TEXT NOT NULL DEFAULT '{"hour":0,"day":0,"month":0,"upload":0}' CHECK(json_valid(status_json)) CHECK(json_type(status_json)='object'), -- 四个必填整数状态：0 待处理、1 重试、2 处理中、3 完成、4 不适用、5 阻塞、6 隔离
+ usage_identity_session TEXT, -- 跨设备用量身份的会话原生标识；仅 claude-code 等原生 id 全局唯一的来源填写，未知 NULL
+ usage_identity_message TEXT, -- 跨设备用量身份的消息原生标识（transcript 行 uuid）；与 session 一起由服务端 HMAC 后做账号内去重
+ usage_identity_source INTEGER CHECK(usage_identity_source IN (0,1)), -- 身份副本来源：0 原始、1 ssh_mirror（Claude Code SSH 远程会话本机镜像）；无身份时 NULL
  FOREIGN KEY(collection_source_id,harness_id) REFERENCES collection_sources(id,harness_id),
  UNIQUE(fact_key,fact_revision),
  CHECK(json_type(status_json,'$.hour') IS 'integer' AND json_extract(status_json,'$.hour') BETWEEN 0 AND 6),

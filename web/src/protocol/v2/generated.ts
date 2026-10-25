@@ -36,6 +36,9 @@ export type SessionEndReason = (typeof SessionEndReasonValues)[number];
 export const AckErrorCodeValues = ["outside_window","deleted","future_event_time","unsupported_version","schema_invalid","hash_mismatch","negative_count","unknown_field","duplicate_key","dependency_expired","internal_retryable"] as const;
 export type AckErrorCode = (typeof AckErrorCodeValues)[number];
 
+export const UsageIdentitySourceValues = ["ssh_mirror"] as const;
+export type UsageIdentitySource = (typeof UsageIdentitySourceValues)[number];
+
 export interface ModelRef {
   providerId: string
   modelId: string
@@ -102,6 +105,12 @@ export interface EventPayload {
   meta?: MetaPayload
 }
 
+export interface UsageIdentity {
+  sessionId: string
+  messageId: string
+  source?: UsageIdentitySource
+}
+
 export interface EventEnvelope {
   eventId: Base64Url32
   factKey: Base64Url32
@@ -116,6 +125,7 @@ export interface EventEnvelope {
   sessionKey?: Base64Url32
   turnKey?: Base64Url32
   costScopeKey?: Base64Url32
+  usageIdentity?: UsageIdentity
   payload: EventPayload
   contentHash: Base64Url32
 }
@@ -148,5 +158,6 @@ export interface TelemetryCapabilities {
   maxBatchBytes: number
   serverTimeMs: UInt64String
   eventReceiveLowerBoundMs: UInt64String
+  usageIdentity?: boolean
 }
 

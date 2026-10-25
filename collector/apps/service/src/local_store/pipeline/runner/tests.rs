@@ -16,7 +16,9 @@ use super::budget::ReadBudget;
 use super::engine::{run_source_once, RunOutcome, StoreSinkMut};
 use super::jsonl::{read_jsonl_budgeted, SourceChange};
 use super::scheduler::AcquisitionScheduler;
-use super::sqlite_stream::{cursor_from_parts, read_sqlite_change_stream, PendingSet, SqliteChangeMode};
+use super::sqlite_stream::{
+    cursor_from_parts, read_sqlite_change_stream, PendingSet, SqliteChangeMode,
+};
 use super::strategy::{
     CheckpointView, DecodeOutcome, DecoderState, FactDraft, HarnessStrategy, IgnoreCode,
     NativeFactKey, RawBatch, RawRecord, RunnerError, SourceSpec, TokenAccuracy,
@@ -159,6 +161,7 @@ impl HarnessStrategy for FixtureJsonlStrategy {
 
         let _ = content_hash;
         Ok(DecodeOutcome::Emit(vec![FactDraft {
+            usage_identity: None,
             event_id,
             fact_key,
             fact_revision: 1,
@@ -216,19 +219,39 @@ fn reconstruction_restart_preserves_committed_progress_and_pending_sources() {
     use crate::local_store::pipeline::reconstruction;
     let directory = tempfile::tempdir().unwrap();
     let mut store = PipelineStore::open(directory.path()).unwrap();
-    store.with_connection(|c| reconstruction::ensure(c,"0.1.27")).unwrap();
-    let source = register_jsonl(&mut store,"resume-fixture.jsonl",1);
-    store.with_connection(|c| {
-        c.execute("UPDATE collection_sources SET cursor_json='{}',commit_seq=9 WHERE id=?1",[source])?;
-        Ok(())
-    }).unwrap();
+    store
+        .with_connection(|c| reconstruction::ensure(c, "0.1.27"))
+        .unwrap();
+    let source = register_jsonl(&mut store, "resume-fixture.jsonl", 1);
+    store
+        .with_connection(|c| {
+            c.execute(
+                "UPDATE collection_sources SET cursor_json='{}',commit_seq=9 WHERE id=?1",
+                [source],
+            )?;
+            Ok(())
+        })
+        .unwrap();
     drop(store);
     let mut reopened = PipelineStore::open(directory.path()).unwrap();
-    assert!(reopened.with_connection(|c| reconstruction::ensure(c,"0.1.27")).unwrap().active);
-    assert_eq!(reopened.load_source_checkpoint(source).unwrap().commit_seq,9);
-    let progress = reopened.with_connection(|c| reconstruction::reconcile(c,true)).unwrap();
-    assert!(progress.active,"an unfinished source cannot complete reconstruction");
-    assert_eq!((progress.total_sources,progress.completed_sources),(1,0));
+    assert!(
+        reopened
+            .with_connection(|c| reconstruction::ensure(c, "0.1.27"))
+            .unwrap()
+            .active
+    );
+    assert_eq!(
+        reopened.load_source_checkpoint(source).unwrap().commit_seq,
+        9
+    );
+    let progress = reopened
+        .with_connection(|c| reconstruction::reconcile(c, true))
+        .unwrap();
+    assert!(
+        progress.active,
+        "an unfinished source cannot complete reconstruction"
+    );
+    assert_eq!((progress.total_sources, progress.completed_sources), (1, 0));
 }
 
 #[test]
@@ -1017,38 +1040,61 @@ fn sqlite_expired_time_budget_still_advances_without_duplicates() {
     let c = rusqlite::Connection::open(&path).unwrap();
     c.execute_batch("CREATE TABLE part(id INTEGER PRIMARY KEY, updated_at INTEGER, status TEXT, payload TEXT);
         INSERT INTO part VALUES(1,100,'completed','{}'),(2,100,'completed','{}'),(3,101,'completed','{}');").unwrap();
-    for mode in [SqliteChangeMode::AppendRowid, SqliteChangeMode::UpdatedAtRowid, SqliteChangeMode::RunningToCompleted] {
+    for mode in [
+        SqliteChangeMode::AppendRowid,
+        SqliteChangeMode::UpdatedAtRowid,
+        SqliteChangeMode::RunningToCompleted,
+    ] {
         let sql = if matches!(mode, SqliteChangeMode::UpdatedAtRowid) {
             "SELECT id,updated_at,status,payload FROM part WHERE updated_at>?1 OR (updated_at=?1 AND id>?2) ORDER BY updated_at,id"
-        } else { "SELECT id,updated_at,status,payload FROM part WHERE id>?1 ORDER BY id" };
-        let mut cursor = cursor_from_parts(mode,0,0,&PendingSet::new(4096));
+        } else {
+            "SELECT id,updated_at,status,payload FROM part WHERE id>?1 ORDER BY id"
+        };
+        let mut cursor = cursor_from_parts(mode, 0, 0, &PendingSet::new(4096));
         let mut ids = Vec::new();
         for _ in 0..4 {
-            let result=read_sqlite_change_stream(&path,sql,&cursor,mode,ReadBudget::new(2,1024,0)).unwrap();
-            ids.extend(result.rows.iter().map(|r|r.rowid));
-            cursor=result.next_cursor_json;
-            if !result.has_more { break; }
+            let result =
+                read_sqlite_change_stream(&path, sql, &cursor, mode, ReadBudget::new(2, 1024, 0))
+                    .unwrap();
+            ids.extend(result.rows.iter().map(|r| r.rowid));
+            cursor = result.next_cursor_json;
+            if !result.has_more {
+                break;
+            }
         }
-        assert_eq!(ids,vec![1,2,3]);
+        assert_eq!(ids, vec![1, 2, 3]);
     }
 }
 
 #[test]
 #[ignore = "explicit read-only source probe"]
 fn sqlite_source_probe_reaches_eof() {
-    let path=std::env::var_os("TOKENDANCE_SQLITE_SOURCE_PROBE").expect("explicit source path");
-    let mut cursor=cursor_from_parts(SqliteChangeMode::UpdatedAtRowid,0,0,&PendingSet::new(4096));
-    let started=std::time::Instant::now();
+    let path = std::env::var_os("TOKENDANCE_SQLITE_SOURCE_PROBE").expect("explicit source path");
+    let mut cursor = cursor_from_parts(
+        SqliteChangeMode::UpdatedAtRowid,
+        0,
+        0,
+        &PendingSet::new(4096),
+    );
+    let started = std::time::Instant::now();
     for _ in 0..10000 {
-        let result=read_sqlite_change_stream(std::path::Path::new(&path),
-            crate::local_store::pipeline::adapters::ZCODE_SQL_CODE,&cursor,
-            SqliteChangeMode::UpdatedAtRowid,super::budget::DEFAULT_READ_BUDGET).unwrap();
+        let result = read_sqlite_change_stream(
+            std::path::Path::new(&path),
+            crate::local_store::pipeline::adapters::ZCODE_SQL_CODE,
+            &cursor,
+            SqliteChangeMode::UpdatedAtRowid,
+            super::budget::DEFAULT_READ_BUDGET,
+        )
+        .unwrap();
         if !result.has_more {
-            eprintln!("source scan reached EOF in {:?}",started.elapsed());
+            eprintln!("source scan reached EOF in {:?}", started.elapsed());
             return;
         }
-        assert_ne!(result.next_cursor_json,cursor,"nonterminal read must advance");
-        cursor=result.next_cursor_json;
+        assert_ne!(
+            result.next_cursor_json, cursor,
+            "nonterminal read must advance"
+        );
+        cursor = result.next_cursor_json;
     }
     panic!("scan failed to reach EOF");
 }
@@ -1064,15 +1110,28 @@ fn expired_budget_revisits_completed_pending_rows_and_then_discovers_new_rows() 
     let mut cursor = json!({"last_rowid":2,"pending":[1,2],"pending_limit":2});
     let mut ids = Vec::new();
     for _ in 0..8 {
-        let result = read_sqlite_change_stream(&path, sql, &cursor, SqliteChangeMode::RunningToCompleted, ReadBudget::new(1,1024,0)).unwrap();
+        let result = read_sqlite_change_stream(
+            &path,
+            sql,
+            &cursor,
+            SqliteChangeMode::RunningToCompleted,
+            ReadBudget::new(1, 1024, 0),
+        )
+        .unwrap();
         ids.extend(result.rows.iter().map(|row| row.rowid));
         cursor = result.next_cursor_json;
-        if !result.has_more { break; }
+        if !result.has_more {
+            break;
+        }
     }
     ids.sort_unstable();
-    assert_eq!(ids, vec![1,2,3]);
+    assert_eq!(ids, vec![1, 2, 3]);
     assert_eq!(cursor["pending"], json!([]));
-    assert_eq!(db.query_row("SELECT count(*) FROM usage", [], |r| r.get::<_, i64>(0)).unwrap(), 3);
+    assert_eq!(
+        db.query_row("SELECT count(*) FROM usage", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        3
+    );
 }
 
 #[test]
@@ -1087,13 +1146,26 @@ fn unfinished_oldest_pending_row_does_not_starve_completion_or_discovery() {
     let mut ids = Vec::new();
     let mut idle = false;
     for _ in 0..10 {
-        let result = read_sqlite_change_stream(&path, sql, &cursor, SqliteChangeMode::RunningToCompleted, ReadBudget::new(1,1024,0)).unwrap();
+        let result = read_sqlite_change_stream(
+            &path,
+            sql,
+            &cursor,
+            SqliteChangeMode::RunningToCompleted,
+            ReadBudget::new(1, 1024, 0),
+        )
+        .unwrap();
         ids.extend(result.rows.iter().map(|row| row.rowid));
         cursor = result.next_cursor_json;
-        if !result.has_more { idle = true; break; }
+        if !result.has_more {
+            idle = true;
+            break;
+        }
     }
-    assert!(idle, "unfinished records must not keep reconstruction busy at EOF");
-    assert_eq!(ids, vec![2,3]);
+    assert!(
+        idle,
+        "unfinished records must not keep reconstruction busy at EOF"
+    );
+    assert_eq!(ids, vec![2, 3]);
     assert_eq!(cursor["pending"], json!([1]));
     assert_eq!(cursor["last_rowid"], 3);
 }

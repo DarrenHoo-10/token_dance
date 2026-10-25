@@ -6,6 +6,14 @@ import (
 	v2 "tokendance/internal/protocol/v2"
 )
 
+// TelemetryUsageIdentity is the server-computed, opaque cross-device usage
+// identity for one event. It is aligned with TelemetryEventsV2Input.Events by
+// index; events without a wire usageIdentity have no entry.
+type TelemetryUsageIdentity struct {
+	Hash   [32]byte
+	Source uint8 // 0 original/unspecified, 1 ssh_mirror
+}
+
 // TelemetryEventsV2Input is the authenticated, validated batch handed to the
 // ingest transaction. user_id comes from the login session, never the payload.
 type TelemetryEventsV2Input struct {
@@ -17,6 +25,7 @@ type TelemetryEventsV2Input struct {
 	NonceExpiresAt       time.Time
 	RequestID            string
 	Events               []v2.EventEnvelope
+	UsageIdentities      []TelemetryUsageIdentity
 	ReceivedAt           time.Time
 }
 

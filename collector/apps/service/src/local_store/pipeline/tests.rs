@@ -41,6 +41,7 @@ fn register_jsonl(store: &mut PipelineStore) -> i64 {
 
 fn candidate(seed: u8, session: Option<u8>) -> EventCandidate {
     EventCandidate {
+        usage_identity: None,
         event_id: blob(seed),
         fact_key: blob(seed.wrapping_add(50)),
         fact_revision: 1,
@@ -645,13 +646,31 @@ fn skill_name_backfill_requeues_only_upload_without_changing_identity() {
 }
 
 #[test]
-fn request_cost_uses_prices_and_freezes_quote_on_replay(){
- let dir=tempfile::tempdir().unwrap();std::fs::write(dir.path().join("openrouter-prices.json"),r#"{"data":[{"id":"test/model","pricing":{"prompt":"0.01","completion":"0.02"}}]}"#).unwrap();
- let mut store=PipelineStore::open(dir.path()).unwrap();store.set_clock_ms(1_700_000_000_000);let model=store.upsert_model("test","model").unwrap();let source=register_jsonl(&mut store);let(token,_,seq)=store.lease_source(source,DEFAULT_LEASE_MS).unwrap();let mut event=candidate(11,None);event.model_key=model;
- commit_one(&mut store,source,&token,seq,vec![event.clone()],"{}");assert_eq!(store.event_count().unwrap(),2);
- store.with_connection(|c|{let units:i64=c.query_row("SELECT json_extract(payload_json,'$.cost.units') FROM events WHERE event_type='cost_recorded'",[],|r|r.get(0))?;assert_eq!(units,12_000_000);Ok(())}).unwrap();
- std::fs::write(dir.path().join("openrouter-prices.json"),r#"{"data":[{"id":"test/model","pricing":{"prompt":"0.1","completion":"0.2"}}]}"#).unwrap();
- let(token,_,seq)=store.lease_source(source,DEFAULT_LEASE_MS).unwrap();commit_one(&mut store,source,&token,seq,vec![event],"{}");assert_eq!(store.event_count().unwrap(),2);
+fn request_cost_uses_prices_and_freezes_quote_on_replay() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("openrouter-prices.json"),
+        r#"{"data":[{"id":"test/model","pricing":{"prompt":"0.01","completion":"0.02"}}]}"#,
+    )
+    .unwrap();
+    let mut store = PipelineStore::open(dir.path()).unwrap();
+    store.set_clock_ms(1_700_000_000_000);
+    let model = store.upsert_model("test", "model").unwrap();
+    let source = register_jsonl(&mut store);
+    let (token, _, seq) = store.lease_source(source, DEFAULT_LEASE_MS).unwrap();
+    let mut event = candidate(11, None);
+    event.model_key = model;
+    commit_one(&mut store, source, &token, seq, vec![event.clone()], "{}");
+    assert_eq!(store.event_count().unwrap(), 2);
+    store.with_connection(|c|{let units:i64=c.query_row("SELECT json_extract(payload_json,'$.cost.units') FROM events WHERE event_type='cost_recorded'",[],|r|r.get(0))?;assert_eq!(units,12_000_000);Ok(())}).unwrap();
+    std::fs::write(
+        dir.path().join("openrouter-prices.json"),
+        r#"{"data":[{"id":"test/model","pricing":{"prompt":"0.1","completion":"0.2"}}]}"#,
+    )
+    .unwrap();
+    let (token, _, seq) = store.lease_source(source, DEFAULT_LEASE_MS).unwrap();
+    commit_one(&mut store, source, &token, seq, vec![event], "{}");
+    assert_eq!(store.event_count().unwrap(), 2);
 }
 
 #[test]
@@ -696,8 +715,9 @@ fn harness_model_usage_folds_base_model_spelling_variants() {
     let mut store = open_store();
     let display = store.upsert_model("zcode", "GLM-5.3-Flash").unwrap();
     let lowercase = store.upsert_model("zcode", "glm-5.3-flash").unwrap();
-    let fireworks =
-        store.upsert_model("zcode", "accounts/fireworks/models/glm-5p3-flash").unwrap();
+    let fireworks = store
+        .upsert_model("zcode", "accounts/fireworks/models/glm-5p3-flash")
+        .unwrap();
     let lite = store.upsert_model("zcode", "glm-5.3-flash-lite").unwrap();
     let today = beijing_day_start(1_700_000_000_000);
     store.with_connection(|c| {
@@ -744,8 +764,9 @@ fn harness_model_usage_folds_by_openrouter_base_models() {
     store.set_clock_ms(1_700_000_000_000);
     let display = store.upsert_model("zcode", "GLM-5.3-Flash").unwrap();
     let suffixed = store.upsert_model("zcode", "glm-5.3-flash@500k").unwrap();
-    let fireworks =
-        store.upsert_model("zcode", "accounts/fireworks/models/glm-5p3-flash").unwrap();
+    let fireworks = store
+        .upsert_model("zcode", "accounts/fireworks/models/glm-5p3-flash")
+        .unwrap();
     let lite = store.upsert_model("zcode", "glm-5.3-flash-lite").unwrap();
     let today = beijing_day_start(1_700_000_000_000);
     store.with_connection(|c| {
@@ -759,23 +780,30 @@ fn harness_model_usage_folds_by_openrouter_base_models() {
         Ok(())
     }).unwrap();
     let base_models = store.base_model_aliases();
-    assert!(base_models.iter().any(|(alias, _)| alias == "glm-5.3-flash"));
-    let history = store.with_connection(|c| {
-        super::query::query_harness_usage_history(
-            c,
-            "zcode",
-            today,
-            today + 86_400_000,
-            &base_models,
-        )
-    }).unwrap();
+    assert!(base_models
+        .iter()
+        .any(|(alias, _)| alias == "glm-5.3-flash"));
+    let history = store
+        .with_connection(|c| {
+            super::query::query_harness_usage_history(
+                c,
+                "zcode",
+                today,
+                today + 86_400_000,
+                &base_models,
+            )
+        })
+        .unwrap();
     assert_eq!(
         history.models.len(),
         2,
         "catalog base models fold their variants; a listed lite model stays its own base"
     );
     let glm = &history.models[0];
-    assert_eq!(glm.model_id, "GLM-5.3-Flash", "the dominant variant names the row");
+    assert_eq!(
+        glm.model_id, "GLM-5.3-Flash",
+        "the dominant variant names the row"
+    );
     assert_eq!(glm.total_tokens, 450);
     let lite = &history.models[1];
     assert_eq!(lite.model_id, "glm-5.3-flash-lite");
@@ -787,20 +815,24 @@ fn cursor_base_model_price_backfills_retained_usage_once() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = PipelineStore::open(dir.path()).unwrap();
     store.set_clock_ms(1_700_000_000_000);
-    let model = store.upsert_model("cursor", "cursor-grok-4.6-xhigh-fast").unwrap();
-    let source = store.register_source(&RegisterSource {
-        harness_id: "cursor".into(),
-        source_key: blob(1),
-        source_kind: SourceKind::Other,
-        locator_ref: "local:cursor/usage-events".into(),
-        stream_key: "official-usage-events".into(),
-        cursor_kind: CursorKind::Opaque,
-        cursor_json: "{}".into(),
-        decoder_state_version: 1,
-        decoder_state_json: "{}".into(),
-        observed_boundary_json: "{}".into(),
-        next_poll_at: None,
-    }).unwrap();
+    let model = store
+        .upsert_model("cursor", "cursor-grok-4.6-xhigh-fast")
+        .unwrap();
+    let source = store
+        .register_source(&RegisterSource {
+            harness_id: "cursor".into(),
+            source_key: blob(1),
+            source_kind: SourceKind::Other,
+            locator_ref: "local:cursor/usage-events".into(),
+            stream_key: "official-usage-events".into(),
+            cursor_kind: CursorKind::Opaque,
+            cursor_json: "{}".into(),
+            decoder_state_version: 1,
+            decoder_state_json: "{}".into(),
+            observed_boundary_json: "{}".into(),
+            next_poll_at: None,
+        })
+        .unwrap();
     let (token, _, seq) = store.lease_source(source, DEFAULT_LEASE_MS).unwrap();
     let mut event = candidate(11, None);
     event.model_key = model;
@@ -808,7 +840,8 @@ fn cursor_base_model_price_backfills_retained_usage_once() {
         "meta": {"accuracy": "exact", "time_source": "source_record"},
         "usage": {"token_total": 1100, "input_context_tokens": 1000,
                   "output_tokens": 100, "cache_read_tokens": 800, "cache_write_tokens": 0},
-    }).to_string();
+    })
+    .to_string();
     commit_one(&mut store, source, &token, seq, vec![event], "{}");
     assert_eq!(store.event_count().unwrap(), 1);
     // Simulate an upgrade: retained usage is repriced by maintenance on restart.
@@ -845,20 +878,24 @@ fn deepseek_flash_price_backfills_retained_usage_once() {
     let dir = tempfile::tempdir().unwrap();
     let mut store = PipelineStore::open(dir.path()).unwrap();
     store.set_clock_ms(1_700_000_000_000);
-    let model = store.upsert_model("deepseek-official", "deepseek-flash").unwrap();
-    let source = store.register_source(&RegisterSource {
-        harness_id: "deepseek-harness".into(),
-        source_key: blob(1),
-        source_kind: SourceKind::Other,
-        locator_ref: "local:deepseek/session.jsonl".into(),
-        stream_key: "sessions-jsonl".into(),
-        cursor_kind: CursorKind::Opaque,
-        cursor_json: "{}".into(),
-        decoder_state_version: 1,
-        decoder_state_json: "{}".into(),
-        observed_boundary_json: "{}".into(),
-        next_poll_at: None,
-    }).unwrap();
+    let model = store
+        .upsert_model("deepseek-official", "deepseek-flash")
+        .unwrap();
+    let source = store
+        .register_source(&RegisterSource {
+            harness_id: "deepseek-harness".into(),
+            source_key: blob(1),
+            source_kind: SourceKind::Other,
+            locator_ref: "local:deepseek/session.jsonl".into(),
+            stream_key: "sessions-jsonl".into(),
+            cursor_kind: CursorKind::Opaque,
+            cursor_json: "{}".into(),
+            decoder_state_version: 1,
+            decoder_state_json: "{}".into(),
+            observed_boundary_json: "{}".into(),
+            next_poll_at: None,
+        })
+        .unwrap();
     let (token, _, seq) = store.lease_source(source, DEFAULT_LEASE_MS).unwrap();
     let mut event = candidate(11, None);
     event.model_key = model;
@@ -866,7 +903,8 @@ fn deepseek_flash_price_backfills_retained_usage_once() {
         "meta": {"accuracy": "exact", "time_source": "source_record"},
         "usage": {"token_total": 1100, "input_context_tokens": 1000,
                   "output_tokens": 100, "cache_read_tokens": 800, "cache_write_tokens": 0},
-    }).to_string();
+    })
+    .to_string();
     commit_one(&mut store, source, &token, seq, vec![event], "{}");
     assert_eq!(store.event_count().unwrap(), 1);
     // Simulate an upgrade: retained usage is repriced by maintenance on restart.
@@ -900,64 +938,215 @@ fn deepseek_flash_price_backfills_retained_usage_once() {
 
 #[test]
 fn late_price_catalog_backfills_existing_usage_without_replaying_tokens() {
- let dir=tempfile::tempdir().unwrap();
- let mut store=PipelineStore::open(dir.path()).unwrap();store.set_clock_ms(1_700_000_000_000);
- let model=store.upsert_model("test","model").unwrap();let source=register_jsonl(&mut store);
- let(token,_,seq)=store.lease_source(source,DEFAULT_LEASE_MS).unwrap();let mut event=candidate(11,None);event.model_key=model;
- commit_one(&mut store,source,&token,seq,vec![event],"{}");
- store.backfill_derived_metrics(128).unwrap();assert_eq!(store.event_count().unwrap(),1);
- std::fs::write(dir.path().join("openrouter-prices.json"),r#"{"data":[{"id":"test/model","pricing":{"prompt":"0.01","completion":"0.02"}}]}"#).unwrap();
- store.backfill_derived_metrics(128).unwrap();assert_eq!(store.event_count().unwrap(),2);
- store.backfill_derived_metrics(128).unwrap();assert_eq!(store.event_count().unwrap(),2);
- let ids=store.with_connection(|c|{let mut q=c.prepare("SELECT id FROM events WHERE event_type='cost_recorded'")?;let ids=q.query_map([],|r|r.get::<_,i64>(0))?.collect::<Result<Vec<_>,_>>()?;Ok(ids)}).unwrap();
- let rows=store.load_upload_events(&ids).unwrap();
- let wire=crate::upload_pipeline::encode_wire_event(&rows[0]).unwrap();
- assert_eq!(serde_json::to_value(wire).unwrap()["payload"]["cost"]["source"],"calculated_price");
- std::fs::write(dir.path().join("openrouter-prices.json"),r#"{"fetched_at":1,"data":[{"id":"test/model","pricing":{"prompt":"0.1","completion":"0.2"}}]}"#).unwrap();
- store.backfill_derived_metrics(128).unwrap();assert_eq!(store.event_count().unwrap(),3);
- for consumer in [Consumer::Hour,Consumer::Day,Consumer::Month]{
-  for task in store.claim_tasks(consumer,16,DEFAULT_LEASE_MS).unwrap(){store.apply_and_complete_metrics(&task).unwrap();}
- }
- store.with_connection(|c|{let units:i64=c.query_row("SELECT estimated_cost_units FROM cost_metrics WHERE grain='day'",[],|r|r.get(0))?;assert_eq!(units,120_000_000);Ok(())}).unwrap();
-
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = PipelineStore::open(dir.path()).unwrap();
+    store.set_clock_ms(1_700_000_000_000);
+    let model = store.upsert_model("test", "model").unwrap();
+    let source = register_jsonl(&mut store);
+    let (token, _, seq) = store.lease_source(source, DEFAULT_LEASE_MS).unwrap();
+    let mut event = candidate(11, None);
+    event.model_key = model;
+    commit_one(&mut store, source, &token, seq, vec![event], "{}");
+    store.backfill_derived_metrics(128).unwrap();
+    assert_eq!(store.event_count().unwrap(), 1);
+    std::fs::write(
+        dir.path().join("openrouter-prices.json"),
+        r#"{"data":[{"id":"test/model","pricing":{"prompt":"0.01","completion":"0.02"}}]}"#,
+    )
+    .unwrap();
+    store.backfill_derived_metrics(128).unwrap();
+    assert_eq!(store.event_count().unwrap(), 2);
+    store.backfill_derived_metrics(128).unwrap();
+    assert_eq!(store.event_count().unwrap(), 2);
+    let ids = store
+        .with_connection(|c| {
+            let mut q = c.prepare("SELECT id FROM events WHERE event_type='cost_recorded'")?;
+            let ids = q
+                .query_map([], |r| r.get::<_, i64>(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ids)
+        })
+        .unwrap();
+    let rows = store.load_upload_events(&ids).unwrap();
+    let wire = crate::upload_pipeline::encode_wire_event(&rows[0], false).unwrap();
+    assert_eq!(
+        serde_json::to_value(wire).unwrap()["payload"]["cost"]["source"],
+        "calculated_price"
+    );
+    std::fs::write(dir.path().join("openrouter-prices.json"),r#"{"fetched_at":1,"data":[{"id":"test/model","pricing":{"prompt":"0.1","completion":"0.2"}}]}"#).unwrap();
+    store.backfill_derived_metrics(128).unwrap();
+    assert_eq!(store.event_count().unwrap(), 3);
+    for consumer in [Consumer::Hour, Consumer::Day, Consumer::Month] {
+        for task in store.claim_tasks(consumer, 16, DEFAULT_LEASE_MS).unwrap() {
+            store.apply_and_complete_metrics(&task).unwrap();
+        }
+    }
+    store
+        .with_connection(|c| {
+            let units: i64 = c.query_row(
+                "SELECT estimated_cost_units FROM cost_metrics WHERE grain='day'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(units, 120_000_000);
+            Ok(())
+        })
+        .unwrap();
 }
 
 #[test]
 fn existing_database_gains_session_extents_without_resetting_events() {
- let dir=tempfile::tempdir().unwrap();let mut store=PipelineStore::open(dir.path()).unwrap();store.set_clock_ms(1_700_000_000_000);
- let source=register_jsonl(&mut store);let(token,_,seq)=store.lease_source(source,DEFAULT_LEASE_MS).unwrap();commit_one(&mut store,source,&token,seq,vec![candidate(1,None)],"{}");
- store.with_connection(|c|{c.execute("DROP TABLE session_extents",[])?;Ok(())}).unwrap();drop(store);
- let store=PipelineStore::open(dir.path()).unwrap();assert_eq!(store.business_table_count().unwrap(),11);assert_eq!(store.event_count().unwrap(),1);
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = PipelineStore::open(dir.path()).unwrap();
+    store.set_clock_ms(1_700_000_000_000);
+    let source = register_jsonl(&mut store);
+    let (token, _, seq) = store.lease_source(source, DEFAULT_LEASE_MS).unwrap();
+    commit_one(
+        &mut store,
+        source,
+        &token,
+        seq,
+        vec![candidate(1, None)],
+        "{}",
+    );
+    store
+        .with_connection(|c| {
+            c.execute("DROP TABLE session_extents", [])?;
+            Ok(())
+        })
+        .unwrap();
+    drop(store);
+    let store = PipelineStore::open(dir.path()).unwrap();
+    assert_eq!(store.business_table_count().unwrap(), 11);
+    assert_eq!(store.event_count().unwrap(), 1);
 }
 
 #[test]
 fn workbuddy_model_repair_rewinds_once_without_deleting_events() {
- let dir=tempfile::tempdir().unwrap();let mut store=PipelineStore::open(dir.path()).unwrap();store.set_clock_ms(1_700_000_000_000);
- let source=register_jsonl(&mut store);
- store.with_connection(|c|{c.execute("UPDATE collection_sources SET harness_id='workbuddy' WHERE id=?1",[source])?;c.execute("UPDATE schema_meta SET extra=json_remove(extra,'$.workbuddy_model_repair')",[])?;Ok(())}).unwrap();
- let(token,_,seq)=store.lease_source(source,DEFAULT_LEASE_MS).unwrap();commit_one(&mut store,source,&token,seq,vec![candidate(1,None)],"{}");
- store.with_connection(|c|{super::schema::repair_workbuddy_models(c)?;let cursor:String=c.query_row("SELECT cursor_json FROM collection_sources WHERE id=?1",[source],|r|r.get(0))?;assert_eq!(cursor,"{}");c.execute("UPDATE collection_sources SET cursor_json='{\"offset\":100}' WHERE id=?1",[source])?;super::schema::repair_workbuddy_models(c)?;let cursor:String=c.query_row("SELECT cursor_json FROM collection_sources WHERE id=?1",[source],|r|r.get(0))?;assert!(cursor.contains("100"));Ok(())}).unwrap();
- assert_eq!(store.event_count().unwrap(),1);
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = PipelineStore::open(dir.path()).unwrap();
+    store.set_clock_ms(1_700_000_000_000);
+    let source = register_jsonl(&mut store);
+    store
+        .with_connection(|c| {
+            c.execute(
+                "UPDATE collection_sources SET harness_id='workbuddy' WHERE id=?1",
+                [source],
+            )?;
+            c.execute(
+                "UPDATE schema_meta SET extra=json_remove(extra,'$.workbuddy_model_repair')",
+                [],
+            )?;
+            Ok(())
+        })
+        .unwrap();
+    let (token, _, seq) = store.lease_source(source, DEFAULT_LEASE_MS).unwrap();
+    commit_one(
+        &mut store,
+        source,
+        &token,
+        seq,
+        vec![candidate(1, None)],
+        "{}",
+    );
+    store
+        .with_connection(|c| {
+            super::schema::repair_workbuddy_models(c)?;
+            let cursor: String = c.query_row(
+                "SELECT cursor_json FROM collection_sources WHERE id=?1",
+                [source],
+                |r| r.get(0),
+            )?;
+            assert_eq!(cursor, "{}");
+            c.execute(
+                "UPDATE collection_sources SET cursor_json='{\"offset\":100}' WHERE id=?1",
+                [source],
+            )?;
+            super::schema::repair_workbuddy_models(c)?;
+            let cursor: String = c.query_row(
+                "SELECT cursor_json FROM collection_sources WHERE id=?1",
+                [source],
+                |r| r.get(0),
+            )?;
+            assert!(cursor.contains("100"));
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(store.event_count().unwrap(), 1);
 }
 
 #[test]
 fn cost_upload_hash_matches_wire_and_repairs_quarantine_without_recounting() {
- use base64::Engine;
- let dir=tempfile::tempdir().unwrap();std::fs::write(dir.path().join("openrouter-prices.json"),r#"{"data":[{"id":"test/model","pricing":{"prompt":"0.01","completion":"0.02"}}]}"#).unwrap();
- let mut store=PipelineStore::open(dir.path()).unwrap();store.set_clock_ms(1_700_000_000_000);
- let model=store.upsert_model("test","model").unwrap();let source=register_jsonl(&mut store);let(token,_,seq)=store.lease_source(source,DEFAULT_LEASE_MS).unwrap();let mut event=candidate(11,None);event.model_key=model;
- commit_one(&mut store,source,&token,seq,vec![event],"{}");
- for consumer in [Consumer::Hour,Consumer::Day,Consumer::Month] {for task in store.claim_tasks(consumer,16,DEFAULT_LEASE_MS).unwrap(){store.apply_and_complete_metrics(&task).unwrap();}}
- let id=store.with_connection(|c|Ok(c.query_row("SELECT id FROM events WHERE event_type='cost_recorded'",[],|r|r.get::<_,i64>(0))?)).unwrap();
- let row=store.load_upload_events(&[id]).unwrap().remove(0);
- let wire=serde_json::to_value(crate::upload_pipeline::encode_wire_event(&row).unwrap()).unwrap();
- let hash=protocol::v2::compute_content_hash(&wire).unwrap();
- assert_eq!(hash,base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(row.content_hash));
- let mut legacy=wire.clone();legacy["payload"]["cost"]["source"]=serde_json::json!("estimated_price_table");
- let old=base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(protocol::v2::compute_content_hash(&legacy).unwrap()).unwrap();assert_ne!(old,row.content_hash);
- store.with_connection(|c|{c.execute("UPDATE events SET content_hash=?1,status_json=json_set(status_json,'$.upload',6) WHERE id=?2",rusqlite::params![old,id])?;c.execute("DELETE FROM processing_tasks WHERE event_row_id=?1 AND consumer='upload'",[id])?;Ok(())}).unwrap();
- assert_eq!(store.repair_cost_upload_hashes(16).unwrap(),1);
- let repaired=store.load_upload_events(&[id]).unwrap().remove(0);assert_eq!(repaired.content_hash,row.content_hash);assert_eq!(repaired.event_id,row.event_id);assert_eq!(repaired.fact_revision,row.fact_revision);
- store.with_connection(|c|{let status:String=c.query_row("SELECT status_json FROM events WHERE id=?1",[id],|r|r.get(0))?;let v:serde_json::Value=serde_json::from_str(&status).unwrap();assert_eq!(v["hour"],3);assert_eq!(v["day"],3);assert_eq!(v["month"],3);assert_eq!(v["upload"],0);let units:i64=c.query_row("SELECT SUM(estimated_cost_units) FROM cost_metrics WHERE grain='day'",[],|r|r.get(0))?;assert_eq!(units,12_000_000);Ok(())}).unwrap();
- assert_eq!(store.repair_cost_upload_hashes(16).unwrap(),0);assert_eq!(store.event_count().unwrap(),2);
+    use base64::Engine;
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("openrouter-prices.json"),
+        r#"{"data":[{"id":"test/model","pricing":{"prompt":"0.01","completion":"0.02"}}]}"#,
+    )
+    .unwrap();
+    let mut store = PipelineStore::open(dir.path()).unwrap();
+    store.set_clock_ms(1_700_000_000_000);
+    let model = store.upsert_model("test", "model").unwrap();
+    let source = register_jsonl(&mut store);
+    let (token, _, seq) = store.lease_source(source, DEFAULT_LEASE_MS).unwrap();
+    let mut event = candidate(11, None);
+    event.model_key = model;
+    commit_one(&mut store, source, &token, seq, vec![event], "{}");
+    for consumer in [Consumer::Hour, Consumer::Day, Consumer::Month] {
+        for task in store.claim_tasks(consumer, 16, DEFAULT_LEASE_MS).unwrap() {
+            store.apply_and_complete_metrics(&task).unwrap();
+        }
+    }
+    let id = store
+        .with_connection(|c| {
+            Ok(c.query_row(
+                "SELECT id FROM events WHERE event_type='cost_recorded'",
+                [],
+                |r| r.get::<_, i64>(0),
+            )?)
+        })
+        .unwrap();
+    let row = store.load_upload_events(&[id]).unwrap().remove(0);
+    let wire =
+        serde_json::to_value(crate::upload_pipeline::encode_wire_event(&row, false).unwrap())
+            .unwrap();
+    let hash = protocol::v2::compute_content_hash(&wire).unwrap();
+    assert_eq!(
+        hash,
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(row.content_hash)
+    );
+    let mut legacy = wire.clone();
+    legacy["payload"]["cost"]["source"] = serde_json::json!("estimated_price_table");
+    let old = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(protocol::v2::compute_content_hash(&legacy).unwrap())
+        .unwrap();
+    assert_ne!(old, row.content_hash);
+    store.with_connection(|c|{c.execute("UPDATE events SET content_hash=?1,status_json=json_set(status_json,'$.upload',6) WHERE id=?2",rusqlite::params![old,id])?;c.execute("DELETE FROM processing_tasks WHERE event_row_id=?1 AND consumer='upload'",[id])?;Ok(())}).unwrap();
+    assert_eq!(store.repair_cost_upload_hashes(16).unwrap(), 1);
+    let repaired = store.load_upload_events(&[id]).unwrap().remove(0);
+    assert_eq!(repaired.content_hash, row.content_hash);
+    assert_eq!(repaired.event_id, row.event_id);
+    assert_eq!(repaired.fact_revision, row.fact_revision);
+    store
+        .with_connection(|c| {
+            let status: String =
+                c.query_row("SELECT status_json FROM events WHERE id=?1", [id], |r| {
+                    r.get(0)
+                })?;
+            let v: serde_json::Value = serde_json::from_str(&status).unwrap();
+            assert_eq!(v["hour"], 3);
+            assert_eq!(v["day"], 3);
+            assert_eq!(v["month"], 3);
+            assert_eq!(v["upload"], 0);
+            let units: i64 = c.query_row(
+                "SELECT SUM(estimated_cost_units) FROM cost_metrics WHERE grain='day'",
+                [],
+                |r| r.get(0),
+            )?;
+            assert_eq!(units, 12_000_000);
+            Ok(())
+        })
+        .unwrap();
+    assert_eq!(store.repair_cost_upload_hashes(16).unwrap(), 0);
+    assert_eq!(store.event_count().unwrap(), 2);
 }

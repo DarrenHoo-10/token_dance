@@ -92,6 +92,7 @@ impl PipelineStore {
             return Err(PipelineError::NotInitialized);
         }
         schema::ensure_session_extents(&self.conn)?;
+        schema::ensure_usage_identity_columns(&self.conn)?;
         schema::repair_workbuddy_models(&self.conn)?;
         // Match prior semantics: true when this call completed empty-DB init.
         Ok(!before && status.pipeline_ready && status.phase == super::rollout::RolloutPhase::Ready)
@@ -969,7 +970,8 @@ impl PipelineStore {
                             e.content_hash, e.session_key, e.turn_key, e.cost_scope_key,
                             e.payload_json, e.model_key, e.skill_id,
                             m.provider_id, m.model_id,
-                            s.skill_key, s.public_name
+                            s.skill_key, s.public_name,
+                            e.usage_identity_session, e.usage_identity_message, e.usage_identity_source
                      FROM events e
                      JOIN model_dimensions m ON m.id = e.model_key
                      LEFT JOIN skill_dimensions s ON s.id = e.skill_id
@@ -988,6 +990,9 @@ impl PipelineStore {
                         let model_id: String = row.get(16)?;
                         let skill_key: Option<Vec<u8>> = row.get(17)?;
                         let skill_public_name: Option<String> = row.get(18)?;
+                        let usage_identity_session: Option<String> = row.get(19)?;
+                        let usage_identity_message: Option<String> = row.get(20)?;
+                        let usage_identity_source: Option<i64> = row.get(21)?;
                         Ok((
                             event_id,
                             fact_key,
@@ -1008,6 +1013,9 @@ impl PipelineStore {
                             model_id,
                             skill_key,
                             skill_public_name,
+                            usage_identity_session,
+                            usage_identity_message,
+                            usage_identity_source,
                         ))
                     },
                 )
@@ -1034,6 +1042,9 @@ impl PipelineStore {
                 model_id,
                 skill_key,
                 skill_public_name,
+                usage_identity_session,
+                usage_identity_message,
+                usage_identity_source,
             ) = row;
 
             out.push(UploadWireEvent {
@@ -1061,6 +1072,14 @@ impl PipelineStore {
                 turn_key: turn_key.as_deref().map(blob32).transpose()?,
                 cost_scope_key: cost_scope_key.as_deref().map(blob32).transpose()?,
                 payload_json,
+                usage_identity: match (usage_identity_session, usage_identity_message) {
+                    (Some(session), Some(message)) => Some(super::types::UsageIdentityMeta {
+                        session,
+                        message,
+                        ssh_mirror: usage_identity_source == Some(1),
+                    }),
+                    _ => None,
+                },
             });
         }
         Ok(out)
@@ -1347,14 +1366,16 @@ fn insert_event_with_tasks(
     }
 
     let status_json = build_status_json(&event.applicable_consumers);
+    let usage_identity = event.usage_identity.as_ref();
     tx.execute(
         "INSERT INTO events (
             created_at, updated_at, event_id, fact_key, fact_revision,
             collection_source_id, harness_id, event_type, schema_version,
             metric_semantics_version, content_hash, occurred_at, model_key, skill_id,
-            session_key, turn_key, cost_scope_key, payload_json, status_json
+            session_key, turn_key, cost_scope_key, payload_json, status_json,
+            usage_identity_session, usage_identity_message, usage_identity_source
          ) VALUES (
-            ?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18
+            ?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21
          )",
         params![
             now,
@@ -1375,6 +1396,9 @@ fn insert_event_with_tasks(
             event.cost_scope_key.as_ref().map(|b| b.as_slice()),
             event.payload_json,
             status_json,
+            usage_identity.map(|u| u.session.as_str()),
+            usage_identity.map(|u| u.message.as_str()),
+            usage_identity.map(|u| if u.ssh_mirror { 1 } else { 0 }),
         ],
     )?;
     let event_row_id = tx.last_insert_rowid();

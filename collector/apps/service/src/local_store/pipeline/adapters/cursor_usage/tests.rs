@@ -59,14 +59,19 @@ fn cli_ownership_is_usable_before_the_ide_creates_its_conversation_table() {
     let p = paths(dir.path());
     cli(&p);
     let db = rusqlite::Connection::open(&p.database).unwrap();
-    db.execute_batch("CREATE TABLE ItemTable(key TEXT PRIMARY KEY, value TEXT);").unwrap();
-    assert_eq!(local_conversations(&p, &dir.path().join("transcripts")).unwrap(), local());
+    db.execute_batch("CREATE TABLE ItemTable(key TEXT PRIMARY KEY, value TEXT);")
+        .unwrap();
+    assert_eq!(
+        local_conversations(&p, &dir.path().join("transcripts")).unwrap(),
+        local()
+    );
     // A missing optional table contributes no IDE ownership. It must not import account totals.
     let batch = project_page(
         &page(vec![row(99, LOCAL), row(98, REMOTE)], 2),
         &local_conversations(&p, &dir.path().join("transcripts")).unwrap(),
         &mut cursor(),
-    ).unwrap();
+    )
+    .unwrap();
     assert_eq!(batch.records.len(), 1);
 }
 
@@ -91,7 +96,10 @@ fn macos_cursor_paths_use_application_support_with_spaces() {
     auth(&p, "fixture-user");
     cli(&p);
     assert!(load_token(&p).is_ok());
-    assert_eq!(local_conversations(&p, &dir.path().join(".cursor/projects")).unwrap(), local());
+    assert_eq!(
+        local_conversations(&p, &dir.path().join(".cursor/projects")).unwrap(),
+        local()
+    );
 }
 
 #[test]
@@ -342,7 +350,7 @@ fn raw_to_event_metrics_replay_is_idempotent_and_status_uses_real_feed() {
         events[0].model,
         Some(("cursor".into(), "fixture-model".into()))
     );
-    let wire = crate::upload_pipeline::encode_wire_event(&events[0]).unwrap();
+    let wire = crate::upload_pipeline::encode_wire_event(&events[0], false).unwrap();
     let expected =
         protocol::v2::compute_content_hash(&serde_json::to_value(&wire).unwrap()).unwrap();
     assert_eq!(wire.content_hash, expected);
@@ -393,21 +401,31 @@ fn authentication_errors_and_midflight_account_change_never_commit_a_page() {
 
 #[test]
 fn historical_pagination_resumes_after_process_restart() {
-    let dir=tempfile::tempdir().unwrap();
-    let p=paths(dir.path());
-    auth(&p,"fixture-user"); cli(&p);
-    let now=chrono::Utc::now().timestamp_millis();
-    let checkpoint=CheckpointView {
-        cursor_json:json!({"start":0,"end":now,"page":2,"page_size":1}),
-        decoder_state_version:1,decoder_state_json:json!({}),
-        observed_boundary_json:json!({"_rebuild_pending":true}),commit_seq:1,
+    let dir = tempfile::tempdir().unwrap();
+    let p = paths(dir.path());
+    auth(&p, "fixture-user");
+    cli(&p);
+    let now = chrono::Utc::now().timestamp_millis();
+    let checkpoint = CheckpointView {
+        cursor_json: json!({"start":0,"end":now,"page":2,"page_size":1}),
+        decoder_state_version: 1,
+        decoder_state_json: json!({}),
+        observed_boundary_json: json!({"_rebuild_pending":true}),
+        commit_seq: 1,
     };
-    let (url,handle)=server(page(vec![row(now-86400000,LOCAL)],2),"200 OK",||{});
-    let mut source=CursorUsageSource::new(p); source.endpoint=Some(url);
-    let batch=source.read(&dir.path().join("transcripts"),&checkpoint,DEFAULT_READ_BUDGET).unwrap();
+    let (url, handle) = server(page(vec![row(now - 86400000, LOCAL)], 2), "200 OK", || {});
+    let mut source = CursorUsageSource::new(p);
+    source.endpoint = Some(url);
+    let batch = source
+        .read(
+            &dir.path().join("transcripts"),
+            &checkpoint,
+            DEFAULT_READ_BUDGET,
+        )
+        .unwrap();
     handle.join().unwrap();
-    assert!(!batch.has_more,"must resume page 2, not restart at page 1");
-    assert_eq!(batch.records.len(),1);
+    assert!(!batch.has_more, "must resume page 2, not restart at page 1");
+    assert_eq!(batch.records.len(), 1);
 }
 
 #[test]
@@ -436,7 +454,13 @@ fn live_cursor_feed_to_isolated_store() {
         .unwrap();
     let writer = PipelineWriter::start(PipelineStore::open_in_memory().unwrap());
     if historical {
-        writer.rebuild(crate::local_store::pipeline::reconstruction::RebuildAction::Begin(env!("CARGO_PKG_VERSION").into())).unwrap();
+        writer
+            .rebuild(
+                crate::local_store::pipeline::reconstruction::RebuildAction::Begin(
+                    env!("CARGO_PKG_VERSION").into(),
+                ),
+            )
+            .unwrap();
     }
     let id = writer
         .register_source(RegisterSource {
@@ -471,7 +495,12 @@ fn live_cursor_feed_to_isolated_store() {
         if page % 25 == 0 {
             let checkpoint = writer.load_source_checkpoint(id).unwrap();
             let cursor: Value = serde_json::from_str(&checkpoint.cursor_json).unwrap();
-            eprintln!("Cursor probe: {} batches; next page {}; {} local events", page+1, cursor["page"],writer.pending_upload_count().unwrap());
+            eprintln!(
+                "Cursor probe: {} batches; next page {}; {} local events",
+                page + 1,
+                cursor["page"],
+                writer.pending_upload_count().unwrap()
+            );
         }
     }
     assert!(completed, "scan must finish within probe limit");
@@ -483,9 +512,24 @@ fn live_cursor_feed_to_isolated_store() {
     assert!(rollup.applied > 0);
     let now = chrono::Utc::now().timestamp_millis();
     let start = (now + 28_800_000).div_euclid(86_400_000) * 86_400_000 - 28_800_000;
-    while writer.drain_metrics_consumer(Consumer::Day, 256, DEFAULT_LEASE_MS).unwrap().applied > 0 {}
-    let summary = writer.query_usage_summary(crate::local_store::pipeline::buckets::Grain::Day, if historical {0} else {start}, start + 86_400_000, Some("cursor")).unwrap();
+    while writer
+        .drain_metrics_consumer(Consumer::Day, 256, DEFAULT_LEASE_MS)
+        .unwrap()
+        .applied
+        > 0
+    {}
+    let summary = writer
+        .query_usage_summary(
+            crate::local_store::pipeline::buckets::Grain::Day,
+            if historical { 0 } else { start },
+            start + 86_400_000,
+            Some("cursor"),
+        )
+        .unwrap();
     assert!(summary.total_tokens.value.is_some_and(|n| n > 0));
-    eprintln!("confirmed local Cursor token total: {}", summary.total_tokens.value.unwrap());
+    eprintln!(
+        "confirmed local Cursor token total: {}",
+        summary.total_tokens.value.unwrap()
+    );
     eprintln!("isolated Cursor ingestion: {count} local events pending, {} daily tasks applied; no upload or live database writes",rollup.applied);
 }

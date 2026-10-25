@@ -15,7 +15,9 @@ import (
 	"tokendance/internal/config"
 	"tokendance/internal/crypto"
 	"tokendance/internal/domain"
+	v2 "tokendance/internal/protocol/v2"
 	"tokendance/internal/store"
+	"tokendance/internal/telemetry"
 )
 
 type Service struct {
@@ -416,7 +418,44 @@ func (s *Service) CommitIngest(ctx context.Context, batch domain.IngestBatch) (*
 	}
 }
 
+// computeUsageIdentities derives the opaque cross-device usage identity for
+// every event that carries a wire usageIdentity. The HMAC key comes from the
+// deployment HMAC secret, so the raw session/message ids stay out of storage.
+func (s *Service) computeUsageIdentities(events []v2.EventEnvelope) []domain.TelemetryUsageIdentity {
+	present := false
+	for i := range events {
+		if events[i].UsageIdentity != nil {
+			present = true
+			break
+		}
+	}
+	if !present || s.cfg == nil || s.cfg.HMACSecret == "" {
+		return nil
+	}
+	key := telemetry.UsageIdentityKey(s.cfg.HMACSecret)
+	out := make([]domain.TelemetryUsageIdentity, len(events))
+	for i := range events {
+		identity := events[i].UsageIdentity
+		if identity == nil {
+			continue
+		}
+		out[i] = domain.TelemetryUsageIdentity{
+			Hash:   telemetry.UsageIdentityHash(key, events[i].HarnessID, identity.SessionID, identity.MessageID),
+			Source: usageIdentitySource(identity.Source),
+		}
+	}
+	return out
+}
+
+func usageIdentitySource(source *v2.UsageIdentitySource) uint8 {
+	if source != nil && *source == v2.UsageIdentitySourceSshMirror {
+		return telemetry.UsageIdentitySourceSSHMirror
+	}
+	return 0
+}
+
 func (s *Service) CommitTelemetryEventsV2(ctx context.Context, in domain.TelemetryEventsV2Input) (*domain.TelemetryEventsV2Result, error) {
+	in.UsageIdentities = s.computeUsageIdentities(in.Events)
 	result, err := s.ingestStore.CommitTelemetryEventsV2(ctx, in)
 	if err == nil {
 		return result, nil

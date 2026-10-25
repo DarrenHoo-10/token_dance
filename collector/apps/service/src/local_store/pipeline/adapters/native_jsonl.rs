@@ -52,6 +52,48 @@ pub struct Context<'a> {
     /// Cross-file usage ownership; `None` keeps dedup per file only.
     pub usage_owners: Option<&'a UsageOwners>,
 }
+
+/// Claude Code stores the local mirror of an SSH remote session under
+/// `~/.claude/projects/ssh-<session-uuid>/<session-uuid>.jsonl`; regular
+/// project directory names never start with `ssh-`.
+fn is_ssh_mirror_scope(scope: &str) -> bool {
+    std::path::Path::new(scope)
+        .parent()
+        .and_then(std::path::Path::file_name)
+        .is_some_and(|name| name.to_string_lossy().starts_with("ssh-"))
+}
+
+/// Cross-device usage identity, only for harnesses whose native ids are
+/// globally unique (claude-code API/line uuids). Byte-offset fallbacks and
+/// path-derived session fallbacks are not stable across machines.
+fn usage_identity(
+    c: &Context,
+    session: Option<&str>,
+    message: &str,
+) -> Option<super::super::types::UsageIdentityMeta> {
+    if c.harness != "claude-code" {
+        return None;
+    }
+    ssh_mirror_identity(c.scope, session, message)
+}
+
+/// Public variant for callers without a decode [`Context`] (legacy profile
+/// path); detects the SSH mirror from the source scope directly.
+pub fn ssh_mirror_identity(
+    scope: &str,
+    session: Option<&str>,
+    message: &str,
+) -> Option<super::super::types::UsageIdentityMeta> {
+    let session = session?;
+    if message.is_empty() || message.starts_with("offset:") {
+        return None;
+    }
+    Some(super::super::types::UsageIdentityMeta {
+        session: session.to_owned(),
+        message: message.to_owned(),
+        ssh_mirror: is_ssh_mirror_scope(scope),
+    })
+}
 fn text(v: &Value, keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|k| {
         v.get(*k)
@@ -352,8 +394,12 @@ pub fn decode(c: &Context, value: &Value, state: &mut DecoderState) -> Option<Ve
     if !is_native {
         return None;
     }
-    let session = text(value, &["sessionId", "session_id"])
-        .or_else(|| state.json["native_session"].as_str().map(str::to_owned))
+    // A path-derived session fallback is device-local and must not leak into
+    // the cross-device usage identity.
+    let native_session = text(value, &["sessionId", "session_id"])
+        .or_else(|| state.json["native_session"].as_str().map(str::to_owned));
+    let session = native_session
+        .clone()
         .unwrap_or_else(|| c.scope.to_string());
     let session = if kind == "session" {
         text(value, &["id", "sessionId"]).unwrap_or(session)
@@ -384,7 +430,7 @@ pub fn decode(c: &Context, value: &Value, state: &mut DecoderState) -> Option<Ve
     {
         // Existing Claude primary facts used top-level uuid. Keep it on correction.
         let revision = if c.harness == "claude-code" { 2 } else { 1 };
-        if let Some(f) = usage(
+        if let Some(mut f) = usage(
             c,
             &id,
             &session,
@@ -393,6 +439,7 @@ pub fn decode(c: &Context, value: &Value, state: &mut DecoderState) -> Option<Ve
             c.harness != "workbuddy",
             revision,
         ) {
+            f.usage_identity = usage_identity(c, native_session.as_deref(), &id);
             out.push(f);
         }
     }
@@ -855,7 +902,10 @@ mod tests {
         let secret = vec![7; 32];
         let owners = UsageOwners::default();
         // `state` stands in for one file's decoder state; a fresh one is a different file.
-        let count = |scope: &str, message_id: Option<&str>, uuid: &str, state: &mut DecoderState| {
+        let count = |scope: &str,
+                     message_id: Option<&str>,
+                     uuid: &str,
+                     state: &mut DecoderState| {
             let mut message = json!({"model":"m","usage":{"input_tokens":1,"output_tokens":1}});
             if let Some(id) = message_id {
                 message["id"] = json!(id);
@@ -900,6 +950,88 @@ mod tests {
         assert_eq!(count("resumed", Some("msg_b"), "u2", &mut fresh()), 1);
         assert_eq!(count("resumed", None, "u3", &mut fresh()), 1);
         assert_eq!(count("original", None, "u3", &mut fresh()), 1);
+    }
+
+    #[test]
+    fn claude_usage_carries_cross_device_identity_and_marks_ssh_mirrors() {
+        fn alloc(_: [u8; 32], _: &str) -> i64 {
+            1
+        }
+        let book = SkillBook::new();
+        let secret = vec![7; 32];
+        let line = |scope: &str, uuid: &str| {
+            let v = json!({"type":"assistant","uuid":uuid,"sessionId":"s1","message":{"id":"msg_a","model":"m","usage":{"input_tokens":1,"output_tokens":1}}});
+            let row = RawRecord {
+                ordinal: 0,
+                byte_start: Some(0),
+                byte_end: Some(1),
+                native_rowid: None,
+                payload: v.to_string().into_bytes(),
+                file_mtime_ms: Some(1789257600000),
+            };
+            let mut state = DecoderState {
+                version: 1,
+                json: json!({}),
+            };
+            let ctx = Context {
+                harness: "claude-code",
+                secret: &secret,
+                scope,
+                now: 1789257600000,
+                time_source: TimeSource::SourceRecord,
+                record: &row,
+                book: &book,
+                allocator: &alloc,
+                usage_owners: None,
+            };
+            decode(&ctx, &v, &mut state)
+                .unwrap()
+                .into_iter()
+                .find(|f| f.event_type == "model_usage_recorded")
+                .unwrap()
+        };
+        let original = line(r"C:\Users\u\.claude\projects\D--proj\a.jsonl", "u1");
+        let identity = original.usage_identity.as_ref().unwrap();
+        assert_eq!(identity.session, "s1");
+        assert_eq!(identity.message, "u1");
+        assert!(!identity.ssh_mirror);
+        // The SSH remote session mirror keeps the same session/line uuids.
+        let mirror = line(
+            r"C:\Users\u\.claude\projects\ssh-d9a080b6-4f82\d9a080b6-4f82.jsonl",
+            "u1",
+        );
+        assert!(mirror.usage_identity.as_ref().unwrap().ssh_mirror);
+        // Content-block lines without a native uuid stay identity-free.
+        let v = json!({"type":"assistant","sessionId":"s1","message":{"model":"m","usage":{"input_tokens":1,"output_tokens":1}}});
+        let row = RawRecord {
+            ordinal: 0,
+            byte_start: Some(0),
+            byte_end: Some(1),
+            native_rowid: None,
+            payload: v.to_string().into_bytes(),
+            file_mtime_ms: Some(1789257600000),
+        };
+        let mut state = DecoderState {
+            version: 1,
+            json: json!({}),
+        };
+        let ctx = Context {
+            harness: "claude-code",
+            secret: &secret,
+            scope: "fixture-session",
+            now: 1789257600000,
+            time_source: TimeSource::SourceRecord,
+            record: &row,
+            book: &book,
+            allocator: &alloc,
+            usage_owners: None,
+        };
+        let offset_native = decode(&ctx, &v, &mut state)
+            .unwrap()
+            .into_iter()
+            .find(|f| f.event_type == "model_usage_recorded")
+            .unwrap();
+        assert!(offset_native.usage_identity.is_none());
     }
 
     #[test]
@@ -1054,9 +1186,9 @@ fn decode_compat(c: &Context, v: &Value, state: &mut DecoderState) -> Option<Vec
         "code_changed" | "file/changed" => "code",
         _ => return None,
     };
-    let session = text(attrs, &["sessionId", "session.id", "session_id"])
-        .or_else(|| text(v, &["sessionId", "session_id"]))
-        .unwrap_or_else(|| c.scope.into());
+    let native_session = text(attrs, &["sessionId", "session.id", "session_id"])
+        .or_else(|| text(v, &["sessionId", "session_id"]));
+    let session = native_session.clone().unwrap_or_else(|| c.scope.into());
     let turn = text(attrs, &["turnId", "turn.id", "turn_id"]);
     let id = text(
         attrs,
@@ -1096,6 +1228,7 @@ fn decode_compat(c: &Context, v: &Value, state: &mut DecoderState) -> Option<Vec
                         model,
                     ));
                 }
+                f.usage_identity = usage_identity(c, native_session.as_deref(), &id);
                 out.push(f);
             }
         }

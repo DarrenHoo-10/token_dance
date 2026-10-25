@@ -151,7 +151,9 @@ func assertUint64String(value any, path string) error {
 func projectForHash(event map[string]any) (map[string]any, error) {
 	projected := map[string]any{}
 	for key, value := range event {
-		if key == "contentHash" {
+		// contentHash is the output; usageIdentity is transport metadata for
+		// cross-device dedup and must not change a fact's business hash.
+		if key == "contentHash" || key == "usageIdentity" {
 			continue
 		}
 		if _, ok := hashRootKeys[key]; !ok {

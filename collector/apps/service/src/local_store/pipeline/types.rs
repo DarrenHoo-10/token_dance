@@ -148,6 +148,20 @@ pub struct SourceCheckpointSnapshot {
     pub enabled: bool,
 }
 
+/// Device-independent usage identity for one fact. Both copies of a mirrored
+/// transcript (Claude Code SSH remote keeps a local mirror under
+/// `~/.claude/projects/ssh-<session>/`) produce the same pair, which lets the
+/// server count the usage once per account instead of once per device.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UsageIdentityMeta {
+    /// Native session id from the source record (never a local file path).
+    pub session: String,
+    /// Native message/record id from the source record (never a byte offset).
+    pub message: String,
+    /// True when the source file is an SSH remote session mirror copy.
+    pub ssh_mirror: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct EventCandidate {
     pub event_id: [u8; 32],
@@ -168,6 +182,8 @@ pub struct EventCandidate {
     pub payload_json: String,
     /// Consumers that receive a processing task; others are marked not_applicable.
     pub applicable_consumers: Vec<Consumer>,
+    /// Cross-device usage identity; None keeps per-device accounting.
+    pub usage_identity: Option<UsageIdentityMeta>,
 }
 
 #[derive(Debug, Clone)]
@@ -229,11 +245,17 @@ pub struct TaskRetry {
 pub enum PipelineError {
     NotInitialized,
     AlreadyInitialized,
-    BatchTooLarge { events: usize, bytes: usize },
+    BatchTooLarge {
+        events: usize,
+        bytes: usize,
+    },
     WriterBackpressure,
     SourceNotFound(i64),
     SourceLeaseMismatch,
-    SourceCommitSeqMismatch { expected: i64, actual: i64 },
+    SourceCommitSeqMismatch {
+        expected: i64,
+        actual: i64,
+    },
     SourceDisabledOrDeleted,
     IdentityContentConflict {
         fact_key: [u8; 32],
@@ -258,7 +280,10 @@ impl std::fmt::Display for PipelineError {
             Self::SourceNotFound(id) => write!(f, "collection source {id} not found"),
             Self::SourceLeaseMismatch => write!(f, "source lease_token mismatch"),
             Self::SourceCommitSeqMismatch { expected, actual } => {
-                write!(f, "source commit_seq mismatch: expected {expected}, actual {actual}")
+                write!(
+                    f,
+                    "source commit_seq mismatch: expected {expected}, actual {actual}"
+                )
             }
             Self::SourceDisabledOrDeleted => write!(f, "source disabled or deleted"),
             Self::IdentityContentConflict {
@@ -330,6 +355,8 @@ pub struct UploadWireEvent {
     pub cost_scope_key: Option<[u8; 32]>,
     /// Local SQLite payload_json (integer counts); converted to wire strings at encode.
     pub payload_json: String,
+    /// Cross-device usage identity loaded from the events row.
+    pub usage_identity: Option<UsageIdentityMeta>,
 }
 
 #[derive(Debug, Clone)]
