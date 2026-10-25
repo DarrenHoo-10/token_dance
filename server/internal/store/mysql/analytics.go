@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"tokendance/internal/domain"
+	"tokendance/internal/modelalias"
 )
 
 type analyticsStore struct {
@@ -935,7 +936,13 @@ func (s *analyticsStore) GetModelBreakdownFiltered(ctx context.Context, userID s
 		sumTokens += item.tokens
 		maxNullTime(&maxComputedAtNull, item.watermark)
 	}
-	rawItems = foldModelVariants(combined)
+	// Deployment alias rules fold on the server exactly as they are published
+	// to clients; an unreadable or invalid file degrades to built-in folding.
+	aliasConfig, err := modelalias.Read()
+	if err != nil {
+		aliasConfig = modelalias.Config{}
+	}
+	rawItems = foldModelVariants(combined, aliasConfig.Map())
 	sort.Slice(rawItems, func(i, j int) bool {
 		if rawItems[i].tokens == rawItems[j].tokens {
 			return rawItems[i].modelID < rawItems[j].modelID
@@ -1012,14 +1019,18 @@ func decodeFireworksDots(name string) string {
 // foldModelVariants merges breakdown rows whose model ids fold to the same
 // base model: tokens sum across variants and each row is named after the
 // variant carrying the most tokens (ties: lexicographically smallest id).
-func foldModelVariants(items []rawModelItem) []rawModelItem {
+// A provider-scoped path (`accounts/fireworks/models/deepseek-v4p1-flash`)
+// never carries the name: it displays its folding key so the row still reads
+// as a model name. Deployment-managed alias rules (internal/modelalias) take
+// precedence over the built-in folding with exact-match semantics.
+func foldModelVariants(items []rawModelItem, aliases map[string]string) []rawModelItem {
 	type modelFold struct {
 		variants map[string]uint64
 		total    uint64
 	}
 	folded := make(map[string]*modelFold, len(items))
 	for _, item := range items {
-		base := baseModelKey(item.modelID)
+		base := foldKeyWithAliases(item.modelID, aliases)
 		f := folded[base]
 		if f == nil {
 			f = &modelFold{variants: make(map[string]uint64)}
@@ -1037,9 +1048,44 @@ func foldModelVariants(items []rawModelItem) []rawModelItem {
 				dominant = modelID
 			}
 		}
+		if to, ok := aliasModelKey(dominant, aliases); ok {
+			dominant = to
+		} else if strings.Contains(strings.ToLower(dominant), "/models/") {
+			dominant = baseModelKey(dominant)
+		}
 		foldedList = append(foldedList, rawModelItem{modelID: dominant, tokens: f.total})
 	}
 	return foldedList
+}
+
+// foldKeyWithAliases resolves a folding key: an exact deployment alias when
+// one matches, otherwise the built-in baseModelKey.
+func foldKeyWithAliases(modelID string, aliases map[string]string) string {
+	if to, ok := aliasModelKey(modelID, aliases); ok {
+		return to
+	}
+	return baseModelKey(modelID)
+}
+
+// aliasModelKey applies the deployment alias rules exactly: a rule matches
+// when its from equals the lowercased id or the id's final `/models/`
+// segment, either before or after the Fireworks dot decode — the same
+// resolution the desktop client applies to the same rules.
+func aliasModelKey(modelID string, aliases map[string]string) (string, bool) {
+	if len(aliases) == 0 {
+		return "", false
+	}
+	lowered := strings.ToLower(strings.TrimSpace(modelID))
+	segment := lowered
+	if idx := strings.Index(lowered, "/models/"); idx >= 0 {
+		segment = lowered[idx+len("/models/"):]
+	}
+	for _, candidate := range []string{lowered, segment, decodeFireworksDots(lowered), decodeFireworksDots(segment)} {
+		if to, ok := aliases[candidate]; ok {
+			return to, true
+		}
+	}
+	return "", false
 }
 
 func (s *analyticsStore) GetSkillRanking(ctx context.Context, userID string, r domain.TimeRange) (*domain.SkillsResponse, error) {

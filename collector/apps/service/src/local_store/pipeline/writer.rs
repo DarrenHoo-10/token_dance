@@ -674,6 +674,7 @@ fn writer_loop(store: &mut PipelineStore, rx: Receiver<QueuedBatch>, compensatio
                 reply,
             } => {
                 let base_models = store.base_model_aliases();
+                let server_aliases = store.server_model_aliases();
                 let result = store.with_connection(|conn| {
                     super::query::query_harness_usage_history(
                         conn,
@@ -681,6 +682,7 @@ fn writer_loop(store: &mut PipelineStore, rx: Receiver<QueuedBatch>, compensatio
                         today_start,
                         range_end,
                         &base_models,
+                        &server_aliases,
                     )
                 });
                 let _ = reply.send(result);

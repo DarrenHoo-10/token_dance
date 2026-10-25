@@ -95,6 +95,7 @@ pub fn query_harness_usage_history(
     today_start: i64,
     range_end: i64,
     base_models: &[(String, String)],
+    server_aliases: &HashMap<String, String>,
 ) -> Result<HarnessUsageHistory, PipelineError> {
     let mut days = BTreeMap::<i64, HarnessDayUsage>::new();
     let mut stmt = conn.prepare(
@@ -163,7 +164,7 @@ pub fn query_harness_usage_history(
             total_tokens: r.get::<_, i64>(5)?.max(0) as u64,
         })
     })?.collect::<Result<Vec<_>, _>>()?;
-    let models = merge_model_usage(models, base_models);
+    let models = merge_model_usage(models, base_models, server_aliases);
     Ok(HarnessUsageHistory {
         days: days.into_values().collect(),
         hours,
@@ -173,25 +174,32 @@ pub fn query_harness_usage_history(
 
 /// The usage panel lists models by name only, so rows of one base model must
 /// fold into a single entry: same id across providers, spelling variants, or
-/// suffixed shapes like `glm-5.3-flash@500k`. Base models are the OpenRouter
-/// catalog slugs (only catalog models count as base models); ids no slug
-/// matches fall back to a spelling key so variants of an unknown model still
-/// merge without inventing one. `model_key` keeps the smallest key of the
-/// group because rows arrive ordered by it, and the display name is the
-/// variant carrying the most tokens.
-fn merge_model_usage(rows: Vec<ModelUsage>, base_models: &[(String, String)]) -> Vec<ModelUsage> {
+/// suffixed shapes like `glm-5.3-flash@500k`. Deployment alias rules
+/// (`server_aliases`, exact match) win first, then the OpenRouter catalog
+/// slugs count as base models; ids nothing matches fall back to a spelling
+/// key so variants of an unknown model still merge without inventing one.
+/// `model_key` keeps the smallest key of the group because rows arrive
+/// ordered by it, and the display name is the variant carrying the most
+/// tokens — except that provider-scoped paths
+/// (`accounts/fireworks/models/deepseek-v4p1-flash`) never carry the name:
+/// they display their folding key so the row still reads as a model name.
+fn merge_model_usage(
+    rows: Vec<ModelUsage>,
+    base_models: &[(String, String)],
+    server_aliases: &HashMap<String, String>,
+) -> Vec<ModelUsage> {
     let mut merged: Vec<ModelUsage> = Vec::new();
     let mut index: HashMap<String, usize> = HashMap::new();
     let mut providers: Vec<BTreeSet<String>> = Vec::new();
     for row in rows {
-        let key = fold_key(&row.model_id, base_models);
+        let key = fold_key(&row.model_id, base_models, server_aliases);
         let slot = match index.get(&key) {
             Some(&slot) => slot,
             None => {
                 index.insert(key, merged.len());
                 merged.push(ModelUsage {
                     model_key: row.model_key,
-                    model_id: row.model_id.clone(),
+                    model_id: display_name(&row.model_id, base_models, server_aliases),
                     provider_id: String::new(),
                     today_tokens: 0,
                     week_tokens: 0,
@@ -207,7 +215,7 @@ fn merge_model_usage(rows: Vec<ModelUsage>, base_models: &[(String, String)]) ->
         target.week_tokens = target.week_tokens.saturating_add(row.week_tokens);
         target.total_tokens = target.total_tokens.saturating_add(row.total_tokens);
         if dominant {
-            target.model_id = row.model_id.clone();
+            target.model_id = display_name(&row.model_id, base_models, server_aliases);
         }
         if !row.provider_id.is_empty() {
             providers[slot].insert(row.provider_id);
@@ -219,13 +227,20 @@ fn merge_model_usage(rows: Vec<ModelUsage>, base_models: &[(String, String)]) ->
     merged
 }
 
-/// Folding key for a usage row. Lowercase the id and decode the Fireworks
-/// dot encoding (`glm-5p3` -> `glm-5.3`), then take the longest catalog
-/// alias contained at a delimiter boundary and use its canonical base model
-/// as the key. Ids no alias matches keep a spelling key (provider paths
-/// reduce to their final segment) so case and path variants of the same
-/// unknown model still merge.
-fn fold_key(model_id: &str, base_models: &[(String, String)]) -> String {
+/// Folding key for a usage row. Deployment alias rules match exactly first,
+/// then the lowercased id with the Fireworks dot encoding decoded
+/// (`glm-5p3` -> `glm-5.3`) takes the longest catalog alias contained at a
+/// delimiter boundary and uses its canonical base model as the key. Ids
+/// nothing matches keep a spelling key (provider paths reduce to their final
+/// segment) so case and path variants of the same unknown model still merge.
+fn fold_key(
+    model_id: &str,
+    base_models: &[(String, String)],
+    server_aliases: &HashMap<String, String>,
+) -> String {
+    if let Some(base) = server_alias_match(model_id, server_aliases) {
+        return base;
+    }
     let normalized = normalize_for_match(model_id);
     if let Some(base) = longest_base_match(&normalized, base_models) {
         return base.to_string();
@@ -236,8 +251,51 @@ fn fold_key(model_id: &str, base_models: &[(String, String)]) -> String {
     }
 }
 
+/// Exact deployment alias rules win over the built-in folding: a rule
+/// matches when its from equals the lowercased id or the id's final
+/// `/models/` segment, either before or after the Fireworks dot decode —
+/// the same resolution the server applies to its own breakdown folding.
+fn server_alias_match(model_id: &str, aliases: &HashMap<String, String>) -> Option<String> {
+    if aliases.is_empty() {
+        return None;
+    }
+    let lowered = model_id.trim().to_lowercase();
+    let segment = match lowered.find("/models/") {
+        Some(pos) => &lowered[pos + "/models/".len()..],
+        None => &lowered[..],
+    };
+    for candidate in [lowered.as_str(), segment] {
+        if let Some(to) = aliases.get(candidate) {
+            return Some(to.clone());
+        }
+        let decoded = decode_fireworks_dots(candidate);
+        if decoded != candidate {
+            if let Some(to) = aliases.get(decoded.as_str()) {
+                return Some(to.clone());
+            }
+        }
+    }
+    None
+}
+
 fn normalize_for_match(model_id: &str) -> String {
     decode_fireworks_dots(&model_id.trim().to_lowercase())
+}
+
+/// Display name for one usage row: provider-scoped paths (`/models/`) reduce
+/// to their folding key (deployment alias when one matches, else the catalog
+/// alias, else the final path segment with the Fireworks dot decoded), so a
+/// solo path variant no longer surfaces the whole `accounts/...` spelling.
+fn display_name(
+    model_id: &str,
+    base_models: &[(String, String)],
+    server_aliases: &HashMap<String, String>,
+) -> String {
+    if model_id.to_lowercase().contains("/models/") {
+        fold_key(model_id, base_models, server_aliases)
+    } else {
+        model_id.to_string()
+    }
 }
 
 fn is_fold_boundary(c: char) -> bool {
@@ -601,34 +659,42 @@ pub fn query_consumer_backlog(conn: &Connection) -> Result<Vec<ConsumerBacklog>,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     fn bases(list: &[(&str, &str)]) -> Vec<(String, String)> {
+        list.iter().map(|(a, c)| (a.to_string(), c.to_string())).collect()
+    }
+
+    fn aliases(list: &[(&str, &str)]) -> HashMap<String, String> {
         list.iter().map(|(a, c)| (a.to_string(), c.to_string())).collect()
     }
 
     #[test]
     fn fold_key_prefers_the_longest_catalog_alias_at_a_boundary() {
         let base = bases(&[("glm-5.3", "glm-5.3"), ("glm-5.3-flash", "glm-5.3-flash")]);
-        assert_eq!(fold_key("GLM-5.3-Flash", &base), "glm-5.3-flash");
-        assert_eq!(fold_key("glm-5.3-flash@500k", &base), "glm-5.3-flash");
-        assert_eq!(fold_key("glm-5.3", &base), "glm-5.3");
+        assert_eq!(fold_key("GLM-5.3-Flash", &base, &HashMap::new()), "glm-5.3-flash");
+        assert_eq!(fold_key("glm-5.3-flash@500k", &base, &HashMap::new()), "glm-5.3-flash");
+        assert_eq!(fold_key("glm-5.3", &base, &HashMap::new()), "glm-5.3");
         // `glm-5.3` inside `glm-5.30-flash` does not end at a delimiter.
-        assert_eq!(fold_key("glm-5.30-flash", &base), "glm-5.30-flash");
+        assert_eq!(fold_key("glm-5.30-flash", &base, &HashMap::new()), "glm-5.30-flash");
         // `glm-5.3-flash` fails at the trailing digit, so the next-longest
         // boundary match wins.
-        assert_eq!(fold_key("glm-5.3-flash2", &base), "glm-5.3");
+        assert_eq!(fold_key("glm-5.3-flash2", &base, &HashMap::new()), "glm-5.3");
     }
 
     #[test]
     fn fold_key_decodes_fireworks_paths_and_dots() {
         let base = bases(&[("glm-5.3-flash", "glm-5.3-flash")]);
         assert_eq!(
-            fold_key("accounts/fireworks/models/glm-5p3-flash", &base),
+            fold_key("accounts/fireworks/models/glm-5p3-flash", &base, &HashMap::new()),
             "glm-5.3-flash"
         );
         // Unknown model under a provider path falls back to the final segment.
-        assert_eq!(fold_key("accounts/fireworks/models/deepseek-v5", &[]), "deepseek-v5");
-        assert_eq!(fold_key("kmodel_latest", &base), "kmodel_latest");
+        assert_eq!(
+            fold_key("accounts/fireworks/models/deepseek-v5", &[], &HashMap::new()),
+            "deepseek-v5"
+        );
+        assert_eq!(fold_key("kmodel_latest", &base, &HashMap::new()), "kmodel_latest");
     }
 
     #[test]
@@ -639,7 +705,51 @@ mod tests {
         .unwrap();
         let base = catalog.base_aliases();
         assert!(base.contains(&("claude-sonnet-5-5".to_string(), "claude-sonnet-5.5".to_string())));
-        assert_eq!(fold_key("claude-sonnet-5-5", &base), "claude-sonnet-5.5");
-        assert_eq!(fold_key("claude-sonnet-5.5", &base), "claude-sonnet-5.5");
+        assert_eq!(fold_key("claude-sonnet-5-5", &base, &HashMap::new()), "claude-sonnet-5.5");
+        assert_eq!(fold_key("claude-sonnet-5.5", &base, &HashMap::new()), "claude-sonnet-5.5");
+    }
+
+    #[test]
+    fn fold_key_applies_deployment_aliases_exactly_and_first() {
+        let rules = aliases(&[
+            ("deepseek-v4p1-flash", "deepseek-v4.1-flash"),
+            ("kimi-k3-thinking@x", "kimi-k3-thinking"),
+        ]);
+        // The p-encoded final segment matches through the dot decode.
+        assert_eq!(
+            fold_key(
+                "accounts/fireworks/models/deepseek-v4p1-flash",
+                &[],
+                &rules
+            ),
+            "deepseek-v4.1-flash"
+        );
+        // Whole-id rules match on the lowercased id.
+        assert_eq!(fold_key("Kimi-K3-Thinking@X", &[], &rules), "kimi-k3-thinking");
+        // Exact rules never substring-match.
+        assert_eq!(
+            fold_key("accounts/fireworks/models/kimi-k3-thinking@x-9", &[], &rules),
+            "kimi-k3-thinking@x-9"
+        );
+        // A rule wins over the longest catalog alias.
+        let base = bases(&[("glm-5.3-flash", "glm-5.3-flash")]);
+        let override_rules = aliases(&[("glm-5p3-flash", "glm-5.3-flash-cn")]);
+        assert_eq!(
+            fold_key(
+                "accounts/fireworks/models/glm-5p3-flash",
+                &base,
+                &override_rules
+            ),
+            "glm-5.3-flash-cn"
+        );
+        // A solo provider path displays the rule's canonical name.
+        assert_eq!(
+            display_name(
+                "accounts/fireworks/models/deepseek-v4p1-flash",
+                &[],
+                &rules
+            ),
+            "deepseek-v4.1-flash"
+        );
     }
 }
