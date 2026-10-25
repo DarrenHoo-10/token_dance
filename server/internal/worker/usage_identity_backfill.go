@@ -125,20 +125,21 @@ func (w *Worker) findUsageIdentityGroups(ctx context.Context, eventType string, 
 		signature = payloadCostSignature
 	}
 	query := `
-		SELECT user_id, occurred_at, model_key, ` + signature + `, MIN(id), COUNT(*), COUNT(DISTINCT installation_id)
-		FROM telemetry_events
-		WHERE harness_id = 'claude-code'
-		  AND event_type = ?
-		  AND delete_at IS NULL
-		  AND usage_identity_hash IS NULL`
+		SELECT i.user_id, e.occurred_at, e.model_key, ` + signature + `, MIN(e.id), COUNT(*), COUNT(DISTINCT e.installation_id)
+		FROM telemetry_events e
+		JOIN installations i ON i.installation_id = e.installation_id
+		WHERE e.harness_id = 'claude-code'
+		  AND e.event_type = ?
+		  AND e.delete_at IS NULL
+		  AND e.usage_identity_hash IS NULL`
 	args := []any{eventType}
 	if sinceDays > 0 {
-		query += ` AND occurred_at >= ?`
+		query += ` AND e.occurred_at >= ?`
 		args = append(args, w.clk.Now().AddDate(0, 0, -sinceDays).UnixMilli())
 	}
 	query += `
-		GROUP BY user_id, occurred_at, model_key, ` + signature + `
-		HAVING COUNT(*) > 1 AND COUNT(DISTINCT installation_id) > 1
+		GROUP BY i.user_id, e.occurred_at, e.model_key, ` + signature + `
+		HAVING COUNT(*) > 1 AND COUNT(DISTINCT e.installation_id) > 1
 		LIMIT ?`
 	args = append(args, limit)
 
@@ -250,12 +251,13 @@ type usageIdentityMember struct {
 
 func loadUsageIdentityGroupMembers(ctx context.Context, tx *sql.Tx, group usageIdentityGroup, eventType string) ([]usageIdentityMember, error) {
 	rows, err := tx.QueryContext(ctx, `
-		SELECT id, installation_id, fact_key, occurred_at, model_key, cost_scope_key,
-		       payload_json, status_json, metric_semantics_version
-		FROM telemetry_events
-		WHERE user_id = ? AND event_type = ? AND occurred_at = ? AND model_key = ?
-		  AND delete_at IS NULL
-		ORDER BY id FOR UPDATE`,
+		SELECT e.id, e.installation_id, e.fact_key, e.occurred_at, e.model_key, e.cost_scope_key,
+		       e.payload_json, e.status_json, e.metric_semantics_version
+		FROM telemetry_events e
+		JOIN installations i ON i.installation_id = e.installation_id
+		WHERE i.user_id = ? AND e.event_type = ? AND e.occurred_at = ? AND e.model_key = ?
+		  AND e.delete_at IS NULL
+		ORDER BY e.id FOR UPDATE`,
 		group.UserID, eventType, group.Occurred, group.ModelKey,
 	)
 	if err != nil {
@@ -530,7 +532,8 @@ func ReopenUsageIdentityShadowsTx(ctx context.Context, tx *sql.Tx, userID string
 	rows, err := tx.QueryContext(ctx, `
 		SELECT e.id
 		FROM telemetry_events e
-		WHERE e.user_id = ?
+		JOIN installations i ON i.installation_id = e.installation_id
+		WHERE i.user_id = ?
 		  AND e.delete_at IS NULL
 		  AND e.usage_identity_hash IS NOT NULL
 		  AND e.event_type IN ('model_usage_recorded', 'cost_recorded')
@@ -541,7 +544,8 @@ func ReopenUsageIdentityShadowsTx(ctx context.Context, tx *sql.Tx, userID string
 		      )
 		  AND NOT EXISTS (
 		        SELECT 1 FROM telemetry_events o
-		        WHERE o.user_id = e.user_id
+		        JOIN installations oi ON oi.installation_id = o.installation_id
+		        WHERE oi.user_id = i.user_id
 		          AND o.usage_identity_hash = e.usage_identity_hash
 		          AND o.id < e.id
 		          AND o.fact_key <> e.fact_key

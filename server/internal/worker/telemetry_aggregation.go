@@ -311,9 +311,10 @@ func (w *Worker) executeTelemetryTask(ctx context.Context, claim mysqlstore.Tele
 	if len(ev.UsageIdentityHash) == 32 && usageIdentityDedupApplies(v2.EventType(ev.EventType)) {
 		var sibling int
 		err := tx.QueryRowContext(ctx, `
-			SELECT 1 FROM telemetry_events
-			WHERE user_id = ? AND usage_identity_hash = ? AND id < ?
-			  AND delete_at IS NULL AND fact_key <> ?
+			SELECT 1 FROM telemetry_events e
+			JOIN installations i ON i.installation_id = e.installation_id
+			WHERE i.user_id = ? AND e.usage_identity_hash = ? AND e.id < ?
+			  AND e.delete_at IS NULL AND e.fact_key <> ?
 			LIMIT 1`,
 			ev.UserID, ev.UsageIdentityHash, ev.ID, ev.FactKey,
 		).Scan(&sibling)
