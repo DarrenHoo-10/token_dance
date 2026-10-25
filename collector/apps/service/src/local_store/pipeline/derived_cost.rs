@@ -126,6 +126,32 @@ impl PipelineStore {
         self.price_catalog.base_aliases()
     }
 
+    fn refresh_alias_config(&mut self) {
+        let root = self.path.parent().unwrap_or(Path::new(""));
+        let stamp = std::fs::metadata(root.join(crate::model_aliases::CACHE_FILE_NAME))
+            .ok()
+            .and_then(|m| m.modified().ok().map(|t| (t, m.len())));
+        if stamp != self.alias_stamp {
+            self.alias_config = crate::model_aliases::AliasConfig::load(root);
+            self.alias_stamp = stamp;
+        }
+    }
+
+    /// Last-known deployment alias rules, reloaded when the cache file next
+    /// to the store changes, so a server-side rules update folds without a
+    /// release.
+    pub fn alias_config(&mut self) -> crate::model_aliases::AliasConfig {
+        self.refresh_alias_config();
+        self.alias_config.clone()
+    }
+
+    /// Deployment alias rules as the exact-match map fold_key consults before
+    /// the catalog aliases.
+    pub fn server_model_aliases(&mut self) -> std::collections::HashMap<String, String> {
+        self.refresh_alias_config();
+        self.alias_config.alias_map()
+    }
+
     /// Bounded scan on the writer's compensation tick. A restart may replay the
     /// scan: immutable costs and monotonic session extents make that idempotent.
     pub fn backfill_derived_metrics(&mut self, limit: usize) -> Result<usize, PipelineError> {

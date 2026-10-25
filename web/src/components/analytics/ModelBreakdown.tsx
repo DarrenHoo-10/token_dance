@@ -21,6 +21,8 @@ interface ModelRow {
   tokens: number;
   percentage: number;
   color: string;
+  /** Raw model ids merged into this row (single-spelling rows have one alias). */
+  aliases: string[];
 }
 
 function formatTokens(tokens: number): string {
@@ -33,16 +35,62 @@ function formatPercent(percentage: number): string {
   return `${percentage.toFixed(1)}%`;
 }
 
+interface MergedModel {
+  key: string;
+  label: string;
+  tokens: number;
+  percentage: number;
+  /** Every raw model id merged into this row, so the model filter still highlights. */
+  aliases: string[];
+}
+
+// Agents report the same model under different spellings (GLM-5.3-Flash and
+// glm-5.3-flash are separate dimensions, and Fireworks routes surface
+// `accounts/<org>/models/...` paths), so one model would be split across
+// rows. Merge by the folded spelling key and let the highest-usage variant
+// carry the label; a provider path never does — it displays its folded key
+// so the row still reads as a model name.
+function foldModelKey(modelId: string): string {
+  const lowered = modelId.trim().toLowerCase();
+  const idx = lowered.indexOf('/models/');
+  const slug = idx >= 0 ? lowered.slice(idx + '/models/'.length) : lowered;
+  let decoded = '';
+  for (let i = 0; i < slug.length; i++) {
+    const dot = slug[i] === 'p' && i > 0 && i + 1 < slug.length
+      && /\d/.test(slug[i - 1]) && /\d/.test(slug[i + 1]);
+    decoded += dot ? '.' : slug[i];
+  }
+  return decoded;
+}
+
+const isProviderPath = (modelId: string) => modelId.trim().toLowerCase().includes('/models/');
+
+function mergeByModelId(items: BreakdownItem[]): MergedModel[] {
+  const merged = new Map<string, MergedModel & { top: number }>();
+  for (const item of items) {
+    const tokens = Number(item.tokenTotal) || 0;
+    if (tokens <= 0) continue;
+    const key = foldModelKey(item.key);
+    const label = isProviderPath(item.key) ? key : (item.label || item.key);
+    const existing = merged.get(key);
+    if (existing) {
+      existing.tokens += tokens;
+      existing.percentage += Math.max(0, Number(item.percentage) || 0);
+      existing.aliases.push(item.key);
+      if (tokens > existing.top) {
+        existing.key = key;
+        existing.label = label;
+        existing.top = tokens;
+      }
+      continue;
+    }
+    merged.set(key, { key, label, top: tokens, tokens, percentage: Math.max(0, Number(item.percentage) || 0), aliases: [item.key] });
+  }
+  return [...merged.values()].map(({ key, label, tokens, percentage, aliases }) => ({ key, label, tokens, percentage, aliases }));
+}
+
 function buildRows(items: BreakdownItem[], otherLabel: string): ModelRow[] {
-  const sorted = items
-    .map((item) => ({
-      key: item.key,
-      label: item.label || item.key,
-      tokens: Number(item.tokenTotal) || 0,
-      percentage: Math.max(0, Number(item.percentage) || 0),
-    }))
-    .filter((item) => item.tokens > 0)
-    .sort((a, b) => b.tokens - a.tokens);
+  const sorted = mergeByModelId(items).sort((a, b) => b.tokens - a.tokens);
   const head = sorted.slice(0, sorted.length > MAX_ROWS ? MAX_ROWS - 1 : MAX_ROWS);
   const rows: ModelRow[] = head.map((item, index) => ({ ...item, color: usageColorAt(index) }));
   const rest = sorted.slice(head.length);
@@ -53,6 +101,7 @@ function buildRows(items: BreakdownItem[], otherLabel: string): ModelRow[] {
       tokens: rest.reduce((sum, item) => sum + item.tokens, 0),
       percentage: rest.reduce((sum, item) => sum + item.percentage, 0),
       color: OTHER_COLOR,
+      aliases: [],
     });
   }
   return rows;
@@ -60,13 +109,14 @@ function buildRows(items: BreakdownItem[], otherLabel: string): ModelRow[] {
 
 export const ModelBreakdown: React.FC<ModelBreakdownProps> = ({ items, selectedModel }) => {
   const { t } = useLocale();
+  const modelCount = items ? mergeByModelId(items).length : 0;
   const rows = items ? buildRows(items, t('dashboard.modelShareOthers')) : [];
 
   return (
     <div className="model-breakdown">
       <div className="model-breakdown-head">
         <strong>{t('dashboard.modelShare')}</strong>
-        {items && rows.length > 0 && <small>{t('dashboard.modelShareCount', { count: items.length })}</small>}
+        {items && rows.length > 0 && <small>{t('dashboard.modelShareCount', { count: modelCount })}</small>}
       </div>
       {items === null ? (
         <p className="filter-status">{t('dashboard.modelShareError')}</p>
@@ -85,7 +135,7 @@ export const ModelBreakdown: React.FC<ModelBreakdownProps> = ({ items, selectedM
           </div>
           <ul className="model-share-list">
             {rows.map((row) => (
-              <li key={row.key} className={selectedModel && row.key === selectedModel ? 'selected' : undefined}>
+              <li key={row.key} className={selectedModel && (row.key === selectedModel || row.aliases.includes(selectedModel)) ? 'selected' : undefined}>
                 <i style={{ background: row.color }} />
                 <span title={row.label}>{row.label}</span>
                 <b>{formatPercent(row.percentage)}</b>

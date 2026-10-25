@@ -2,10 +2,41 @@ import { useState } from 'react';
 import type { ModelUsage } from '../tauri-bridge';
 import type { UsageRange } from '../usage-analytics';
 
+// Agents report the same model under different spellings (GLM-5.3-Flash and
+// glm-5.3-flash are separate dimensions), so one model would be split across
+// rows. Model ids are case-insensitive: merge by lowercased id and let the
+// highest-usage spelling carry the label and identity.
+export function mergeModelVariants(models: ModelUsage[]): ModelUsage[] {
+  const sum = (value: number) => (Number.isFinite(value) && value > 0 ? value : 0);
+  const merged = new Map<string, { model: ModelUsage; top: number; today: number; week: number; total: number }>();
+  for (const model of models) {
+    const key = model.modelId.trim().toLowerCase();
+    const today = sum(model.todayTokens);
+    const week = sum(model.weekTokens);
+    const total = sum(model.totalTokens);
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, { model, top: total, today, week, total });
+      continue;
+    }
+    existing.today += today;
+    existing.week += week;
+    existing.total += total;
+    if (total > existing.top) {
+      existing.model = model;
+      existing.top = total;
+    }
+  }
+  return [...merged.values()].map(({ model, today, week, total }) => (
+    { ...model, todayTokens: today, weekTokens: week, totalTokens: total }
+  ));
+}
+
 export function ModelUsageList({ models = [], range, zh }: { models?: ModelUsage[]; range: UsageRange; zh: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const field = range === 'today' ? 'todayTokens' : range === 'week' ? 'weekTokens' : 'totalTokens';
-  const ranked = models.filter(model => Number.isFinite(model[field]) && model[field] > 0)
+  const ranked = mergeModelVariants(models)
+    .filter(model => Number.isFinite(model[field]) && model[field] > 0)
     .sort((a, b) => b[field] - a[field] || a.modelKey - b.modelKey);
   if (!ranked.length) return null;
   const visible = expanded ? ranked : ranked.slice(0, 3);

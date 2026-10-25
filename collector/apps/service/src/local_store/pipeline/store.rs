@@ -31,6 +31,8 @@ pub struct PipelineStore {
     cost_hash_repair_cursor: i64,
     price_catalog: crate::pricing::Catalog,
     price_stamp: Option<(SystemTime, u64)>,
+    alias_config: crate::model_aliases::AliasConfig,
+    alias_stamp: Option<(SystemTime, u64)>,
 }
 
 impl PipelineStore {
@@ -47,6 +49,8 @@ impl PipelineStore {
             cost_hash_repair_cursor: 0,
             price_catalog: crate::pricing::Catalog::default(),
             price_stamp: None,
+            alias_config: Default::default(),
+            alias_stamp: None,
         };
         store.ensure_initialized()?;
         Ok(store)
@@ -63,6 +67,8 @@ impl PipelineStore {
             cost_hash_repair_cursor: 0,
             price_catalog: crate::pricing::Catalog::default(),
             price_stamp: None,
+            alias_config: Default::default(),
+            alias_stamp: None,
         };
         store.ensure_initialized()?;
         Ok(store)

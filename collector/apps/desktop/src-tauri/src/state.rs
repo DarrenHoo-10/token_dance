@@ -739,6 +739,37 @@ impl AppState {
             ),
         }
     }
+    /// Server-published model folding rules land in the shared control
+    /// directory, where the pipeline store picks them up on its next alias
+    /// read — a rules update folds without a release.
+    pub async fn refresh_model_aliases(&self) {
+        let path = self
+            .control_dir_path()
+            .join(collector_service::model_aliases::CACHE_FILE_NAME);
+        if let Ok(bytes) = std::fs::read(&path) {
+            if let Ok(config) = serde_json::from_slice::<collector_service::model_aliases::AliasConfig>(&bytes) {
+                if config.fresh() {
+                    return;
+                }
+            }
+        }
+        match collector_service::model_aliases::AliasConfig::fetch().await {
+            Ok(config) => {
+                let status = match serde_json::to_vec(&config)
+                    .map_err(|e| e.to_string())
+                    .and_then(|bytes| std::fs::write(&path, bytes).map_err(|e| e.to_string()))
+                {
+                    Ok(()) => "model alias rules updated",
+                    Err(_) => "model alias rules save failed",
+                };
+                collector_service::runtime::append_log(&self.control_dir_path(), status);
+            }
+            Err(code) => collector_service::runtime::append_log(
+                &self.control_dir_path(),
+                &format!("model alias rules unavailable; keeping cache: {code}"),
+            ),
+        }
+    }
     pub fn commit_local(
         &self,
         events: &[EventEnvelope],

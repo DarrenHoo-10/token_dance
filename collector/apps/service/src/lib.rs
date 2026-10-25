@@ -3,6 +3,7 @@
 pub mod detect;
 pub mod grok_hook;
 pub mod local_store;
+pub mod model_aliases;
 pub mod platform;
 pub mod pricing;
 pub mod runtime;

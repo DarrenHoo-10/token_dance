@@ -18,7 +18,7 @@ pub mod updates;
 
 // The v2 pipeline now lives in `collector-service` so the CLI can share it.
 // Re-exported under the old paths so desktop modules stay unchanged.
-pub use collector_service::{local_store, pricing, upload_pipeline, usage_ledger};
+pub use collector_service::{local_store, model_aliases, pricing, upload_pipeline, usage_ledger};
 
 use std::fs;
 use std::panic;

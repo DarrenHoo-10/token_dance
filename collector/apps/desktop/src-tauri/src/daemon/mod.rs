@@ -27,6 +27,7 @@ impl CollectorDaemon {
         tauri::async_runtime::spawn(async move {
             while price_running.load(Ordering::Acquire) && !price_state.is_shutting_down() {
                 price_state.refresh_local_prices().await;
+                price_state.refresh_model_aliases().await;
                 tokio::time::sleep(Duration::from_secs(300)).await;
             }
         });
