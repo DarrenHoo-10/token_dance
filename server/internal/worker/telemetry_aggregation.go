@@ -307,25 +307,9 @@ func (w *Worker) executeTelemetryTask(ctx context.Context, claim mysqlstore.Tele
 	// sibling is always already committed (ids follow insertion order), so the
 	// decision is deterministic regardless of task processing order. Rows that
 	// share this event's fact_key are its own revision chain and stay exempt.
-	shadowed := false
-	if len(ev.UsageIdentityHash) == 32 && usageIdentityDedupApplies(v2.EventType(ev.EventType)) {
-		var sibling int
-		err := tx.QueryRowContext(ctx, `
-			SELECT 1 FROM telemetry_events e
-			JOIN installations i ON i.installation_id = e.installation_id
-			WHERE i.user_id = ? AND e.usage_identity_hash = ? AND e.id < ?
-			  AND e.delete_at IS NULL AND e.fact_key <> ?
-			LIMIT 1`,
-			ev.UserID, ev.UsageIdentityHash, ev.ID, ev.FactKey,
-		).Scan(&sibling)
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
-			shadowed = false
-		case err == nil:
-			shadowed = true
-		default:
-			return fmt.Errorf("check usage identity ownership: %w", err)
-		}
+	shadowed, err := usageIdentityShadowed(ctx, tx, ev.UserID, ev.InstallationID, ev.HarnessID, ev.EventType, ev.UsageIdentityHash, ev.FactKey)
+	if err != nil {
+		return fmt.Errorf("check usage identity ownership: %w", err)
 	}
 
 	apply, err := w.prepareFactRevision(ctx, tx, claim.Consumer, &ev, nowMs)
@@ -372,6 +356,29 @@ func (w *Worker) executeTelemetryTask(ctx context.Context, claim mysqlstore.Tele
 // installations. Session and turn events keep their per-installation handling.
 func usageIdentityDedupApplies(eventType v2.EventType) bool {
 	return eventType == v2.EventTypeModelUsageRecorded || eventType == v2.EventTypeCostRecorded
+}
+
+// Older mixed batches persisted empty identity slots as a 32-byte zero value.
+// They are absent identities, not one account-wide duplicate group.
+func validUsageIdentityHash(hash []byte) bool {
+	return len(hash) == 32 && !bytes.Equal(hash, make([]byte, 32))
+}
+
+// Compare first ingestion of fact chains, not the current revision's row id:
+// a mirror arriving between two owner revisions must not steal ownership.
+func usageIdentityShadowed(ctx context.Context, tx *sql.Tx, user, installation, harness, kind string, hash, fact []byte) (bool, error) {
+	if !validUsageIdentityHash(hash) || !usageIdentityDedupApplies(v2.EventType(kind)) {
+		return false, nil
+	}
+	var shadowed bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+		SELECT 1 FROM telemetry_events e JOIN installations i ON i.installation_id=e.installation_id
+		WHERE i.user_id=? AND e.usage_identity_hash=? AND e.harness_id=? AND e.event_type=?
+		AND e.delete_at IS NULL AND e.fact_key<>?
+		AND e.id < (SELECT MIN(owner.id) FROM telemetry_events owner
+		 WHERE owner.installation_id=? AND owner.fact_key=? AND owner.delete_at IS NULL))`,
+		user, hash, harness, kind, fact, installation, fact).Scan(&shadowed)
+	return shadowed, err
 }
 
 func (w *Worker) applyTelemetryContribution(

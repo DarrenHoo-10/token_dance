@@ -8,7 +8,8 @@ import (
 
 // TelemetryUsageIdentity is the server-computed, opaque cross-device usage
 // identity for one event. It is aligned with TelemetryEventsV2Input.Events by
-// index; events without a wire usageIdentity have no entry.
+// index; events without a wire usageIdentity have a zero Hash at that index.
+// Zero Hash must be persisted as SQL NULL and must never participate in dedup.
 type TelemetryUsageIdentity struct {
 	Hash   [32]byte
 	Source uint8 // 0 original/unspecified, 1 ssh_mirror
