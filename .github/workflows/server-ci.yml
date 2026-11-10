@@ -17,7 +17,7 @@ jobs:
       mysql:
         image: mysql:8.4
         env:
-          MYSQL_ROOT_PASSWORD: integration-only-password
+          MYSQL_ALLOW_EMPTY_PASSWORD: 'yes'
           MYSQL_DATABASE: tokendance_ci
         ports: ['3306:3306']
         options: >-
@@ -38,5 +38,5 @@ jobs:
           go vet ./...
       - name: MySQL identity and revision regressions
         env:
-          TOKENDANCE_TEST_MYSQL_DSN: root:integration-only-password@tcp(127.0.0.1:3306)/tokendance_ci?parseTime=true&loc=UTC
+          TOKENDANCE_TEST_MYSQL_DSN: root@tcp(127.0.0.1:3306)/tokendance_ci?parseTime=true&loc=UTC
         run: go test -race ./internal/worker -run 'TestUsageIdentityDedupAndRepair|TestUsageIdentityMixedBatchMySQL|TestTelemetryAggregationReplayNoDoubleAdd' -count=1 -v
