@@ -90,7 +90,9 @@ func (s *ingestStore) CommitTelemetryEventsV2(ctx context.Context, in domain.Tel
 			return nil, fmt.Errorf("decode event id: %w", domain.ErrInvalidArgument)
 		}
 		item := indexedEvent{index: i, event: in.Events[i], id: id}
-		if i < len(in.UsageIdentities) {
+		// An aligned batch entry can be empty when only some events carry an
+		// identity. Never turn that empty slot into a shared all-zero identity.
+		if i < len(in.UsageIdentities) && in.UsageIdentities[i].Hash != [32]byte{} {
 			item.identity = &in.UsageIdentities[i]
 		}
 		ordered = append(ordered, item)
