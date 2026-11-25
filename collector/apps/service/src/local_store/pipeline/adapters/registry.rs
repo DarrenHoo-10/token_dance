@@ -4,6 +4,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use super::antigravity::AntigravityStrategy;
 use super::claude_desktop::ClaudeDesktopStrategy;
 use super::codex::CodexStrategy;
 use super::common::SkillBook;
@@ -36,6 +37,7 @@ pub struct AdapterRoots {
     pub droid_logs: PathBuf,
     /// Qoder transcript roots: intl `~/.qoder/projects` + CN `~/.qoder-cn/projects`.
     pub qoder_projects: Vec<PathBuf>,
+    pub antigravity_brains: Vec<PathBuf>,
 }
 
 pub struct HarnessRegistry {
@@ -150,9 +152,15 @@ impl HarnessRegistry {
         )));
         strategy_source_ids.push(None);
         strategies.push(Box::new(DroidStrategy::new(
-            roots.identity_secret,
+            roots.identity_secret.clone(),
             roots.droid_logs,
         )));
+        strategy_source_ids.push(None);
+        strategies.push(Box::new(AntigravityStrategy::new(
+            roots.identity_secret,
+            roots.antigravity_brains,
+        )));
+        strategy_source_ids.push(None);
 
         Self {
             skill_book: book,

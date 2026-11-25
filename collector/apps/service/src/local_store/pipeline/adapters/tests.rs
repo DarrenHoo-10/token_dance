@@ -130,6 +130,7 @@ use std::sync::Arc;
 use serde_json::json;
 
 use super::codex::{decode_otlp_cumulative_for_test, CodexStrategy};
+use super::antigravity::AntigravityStrategy;
 use super::common::SkillBook;
 use super::cursor::CursorStrategy;
 use super::droid::DroidStrategy;
@@ -151,6 +152,62 @@ use crate::local_store::pipeline::PipelineStore;
 
 fn secret() -> Vec<u8> {
     b"p3-test-identity-secret".to_vec()
+}
+
+#[test]
+fn antigravity_collects_native_usage_once_even_when_transcript_is_rewritten() {
+    let now = beijing_wall_to_utc_ms(2026, 11, 25, 15, 0, 0);
+    let home = tempfile::tempdir().unwrap();
+    let roots = super::antigravity_brain_roots(home.path());
+    let session = "00000000-0000-4000-8000-000000000001";
+    let logs = roots[0].join(session).join(".system_generated/logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let file = logs.join("transcript.jsonl");
+    let first = json!({
+        "type": "PLANNER_RESPONSE", "status": "DONE", "step_index": 1,
+        "created_at": now, "model": "gemini-test", "input_tokens": 11,
+        "output_tokens": 7, "cache_read_tokens": 23, "content": "private-canary"
+    });
+    let mut second = first.clone();
+    second["step_index"] = json!(2);
+    second["status"] = json!("RUNNING");
+    std::fs::write(&file, format!("{first}\n{second}\n")).unwrap();
+    std::fs::write(logs.join("transcript_full.jsonl"), format!("{first}\n")).unwrap();
+
+    let strategy = AntigravityStrategy::new(secret(), roots);
+    let sources = strategy.discover(DiscoveryBudget::default()).unwrap();
+    assert_eq!(sources.len(), 1);
+    let source = &sources[0];
+    let mut store = open_store(now);
+    let id = register_source(
+        &mut store, &source.harness_id, &source.locator_ref, &source.stream_key,
+        source.source_kind, r#"{"offset":0}"#, "{}", now,
+    );
+
+    for expected in 1..=2 {
+        if expected == 2 {
+            second["status"] = json!("DONE");
+            std::fs::write(&file, format!("{first}\n{second}\n")).unwrap();
+        }
+        let sink = StoreSinkMut::new(&mut store);
+        run_source_once(
+            &sink, &strategy, id, DEFAULT_READ_BUDGET, DEFAULT_LEASE_MS, &Consumer::ALL, None,
+        ).unwrap();
+        assert_eq!(store.event_count().unwrap(), expected);
+    }
+
+    let record = RawRecord {
+        ordinal: 42, byte_start: None, byte_end: None, native_rowid: None,
+        payload: first.to_string().into_bytes(), file_mtime_ms: None,
+    };
+    let DecodeOutcome::Emit(facts) = strategy
+        .decode(&record, &mut DecoderState::default(), &source.locator_ref).unwrap()
+    else {
+        panic!("expected usage fact");
+    };
+    assert_eq!(facts[0].payload_sections["usage"], json!({
+        "token_total": 41, "input_context_tokens": 34, "output_tokens": 7, "cache_read_tokens": 23
+    }));
 }
 
 fn skill_allocator(
@@ -251,7 +308,7 @@ fn capability_matrix_throttles_unavailable_streams() {
     assert!(!should_throttle("codex", "sessions-jsonl"));
     assert!(!should_throttle("qoder", "projects-jsonl"));
     assert_eq!(for_harness("zcode").unwrap().streams.len(), 4);
-    assert_eq!(capability::ALL.len(), 12);
+    assert_eq!(capability::ALL.len(), 13);
 }
 
 #[test]
@@ -276,12 +333,13 @@ fn registry_covers_all_twelve_harnesses() {
         doubao_history: dir.path().join("doubao"),
         droid_logs: dir.path().join("droid/logs"),
         qoder_projects: vec![dir.path().join("qoder")],
+        antigravity_brains: vec![dir.path().join("antigravity")],
     };
     let desktop_locator = roots.claude_desktop_leveldb.to_string_lossy().into_owned();
     let cli_locator = roots.claude_projects.join("session.jsonl");
     std::fs::create_dir_all(&roots.claude_desktop_leveldb).unwrap();
     let reg = HarnessRegistry::from_roots(roots, alloc);
-    assert_eq!(reg.harness_ids().len(), 12);
+    assert_eq!(reg.harness_ids().len(), 13);
     let desktop = reg.get_for_source("claude-code", &desktop_locator).unwrap();
     assert!(desktop.owns_source(&desktop_locator));
     let sources = desktop.discover(DiscoveryBudget::default()).unwrap();

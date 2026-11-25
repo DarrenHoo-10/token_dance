@@ -232,9 +232,19 @@ pub const QODER: HarnessCapability = HarnessCapability {
     }],
 };
 
+pub const ANTIGRAVITY: HarnessCapability = HarnessCapability {
+    harness_id: super::antigravity::HARNESS_ID,
+    streams: &[StreamCapability {
+        stream_key: super::antigravity::STREAM_KEY,
+        level: CapabilityLevel::Available,
+        reason_code: None,
+        poll_interval_ms: None,
+    }],
+};
+
 pub const ALL: &[&HarnessCapability] = &[
     &CODEX, &CLAUDE, &CURSOR, &ZCODE, &OPENCODE, &GROK, &DEEPSEEK, &PI, &WORKBUDDY, &DOUBAO, &DROID,
-    &QODER,
+    &QODER, &ANTIGRAVITY,
 ];
 
 pub fn for_harness(harness_id: &str) -> Option<&'static HarnessCapability> {

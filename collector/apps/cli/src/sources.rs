@@ -2,59 +2,63 @@
 
 use std::path::PathBuf;
 
-use collector_service::local_store::pipeline::adapters::AdapterRoots;
+use collector_service::local_store::pipeline::adapters::{AdapterRoots, ANTIGRAVITY_ID};
 use collector_service::OfficialAgent;
 
 pub struct Source {
     /// Stable command-line name; equals the pipeline harness id.
     pub name: &'static str,
-    pub agent: OfficialAgent,
+    pub agent: Option<OfficialAgent>,
 }
 
-pub const ALL: [Source; 11] = [
+pub const ALL: [Source; 12] = [
     Source {
         name: "codex",
-        agent: OfficialAgent::Codex,
+        agent: Some(OfficialAgent::Codex),
     },
     Source {
         name: "claude-code",
-        agent: OfficialAgent::ClaudeCode,
+        agent: Some(OfficialAgent::ClaudeCode),
     },
     Source {
         name: "grok-build",
-        agent: OfficialAgent::GrokBuild,
+        agent: Some(OfficialAgent::GrokBuild),
     },
     Source {
         name: "cursor",
-        agent: OfficialAgent::Cursor,
+        agent: Some(OfficialAgent::Cursor),
     },
     Source {
         name: "zcode",
-        agent: OfficialAgent::Zcode,
+        agent: Some(OfficialAgent::Zcode),
     },
     Source {
         name: "pi",
-        agent: OfficialAgent::Pi,
+        agent: Some(OfficialAgent::Pi),
     },
     Source {
         name: "deepseek-harness",
-        agent: OfficialAgent::DeepseekHarness,
+        agent: Some(OfficialAgent::DeepseekHarness),
     },
     Source {
         name: "opencode",
-        agent: OfficialAgent::OpenCode,
+        agent: Some(OfficialAgent::OpenCode),
     },
     Source {
         name: "workbuddy",
-        agent: OfficialAgent::WorkBuddy,
+        agent: Some(OfficialAgent::WorkBuddy),
     },
     Source {
         name: "doubao-work",
-        agent: OfficialAgent::DoubaoWork,
+        agent: Some(OfficialAgent::DoubaoWork),
     },
     Source {
         name: "droid",
-        agent: OfficialAgent::Droid,
+        agent: Some(OfficialAgent::Droid),
+    },
+    Source {
+        name: ANTIGRAVITY_ID,
+        agent: None,
     },
 ];
 
@@ -80,6 +84,7 @@ pub fn override_root(roots: &mut AdapterRoots, name: &str, path: PathBuf) {
         "workbuddy" => roots.workbuddy_history = path,
         "doubao-work" => roots.doubao_history = path,
         "droid" => roots.droid_logs = path,
+        ANTIGRAVITY_ID => roots.antigravity_brains = vec![path],
         _ => {}
     }
 }
@@ -98,6 +103,12 @@ pub fn effective_path(roots: &AdapterRoots, name: &str) -> Option<PathBuf> {
         "workbuddy" => roots.workbuddy_history.clone(),
         "doubao-work" => roots.doubao_history.clone(),
         "droid" => roots.droid_logs.clone(),
+        ANTIGRAVITY_ID => roots
+            .antigravity_brains
+            .iter()
+            .find(|root| root.is_dir())
+            .or_else(|| roots.antigravity_brains.first())?
+            .clone(),
         _ => return None,
     })
 }
@@ -110,8 +121,12 @@ mod tests {
     fn names_are_unique_and_match_adapter_ids() {
         for (i, a) in ALL.iter().enumerate() {
             assert!(ALL.iter().skip(i + 1).all(|b| b.name != a.name));
-            let adapter = collector_service::adapter_id(a.agent);
-            assert!(adapter.ends_with(&format!(".adapter.{}", a.name)) || a.name == "claude-code");
+            if let Some(agent) = a.agent {
+                let adapter = collector_service::adapter_id(agent);
+                assert!(
+                    adapter.ends_with(&format!(".adapter.{}", a.name)) || a.name == "claude-code"
+                );
+            }
         }
     }
 }
@@ -153,7 +168,10 @@ pub fn report(config: &crate::config::Config) -> Vec<SourceReport> {
                 } else {
                     "default"
                 },
-                detected: detection.is_installed(source.agent),
+                detected: source.agent.map_or_else(
+                    || roots.antigravity_brains.iter().any(|root| root.is_dir()),
+                    |agent| detection.is_installed(agent),
+                ),
                 exists,
                 readable,
             }

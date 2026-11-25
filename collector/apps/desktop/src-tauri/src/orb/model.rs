@@ -437,6 +437,7 @@ pub fn agent_display_name(agent_id: &str) -> &str {
         "doubao-work" => "Doubao Work",
         "droid" => "Droid",
         "qoder" => "Qoder",
+        "antigravity" => "Antigravity",
         other => other,
     }
 }

@@ -12,6 +12,7 @@ use acquisition::SecretResolver;
 use adapter_grok_build::{hook_auth_token, write_session_end_hook};
 use adapter_sdk::{ConfigMutation, SetupPlan};
 use chrono::Utc;
+use collector_service::local_store::pipeline::adapters::{ANTIGRAVITY_ID, ANTIGRAVITY_STREAM_KEY};
 use collector_service::{
     detect_local, grok_user_home, start_listener, AppPaths, DetectionSnapshot, InstanceLock,
     ProductionService,
@@ -798,12 +799,14 @@ impl AppState {
         let mut service = self.service.lock().await;
         for (id, _, adapter_id) in agent_metadata() {
             let enabled = toggles.get(id).copied().unwrap_or(true);
-            if enabled {
-                service.collector.enable(adapter_id)
-            } else {
-                service.collector.disable(adapter_id)
+            if id != ANTIGRAVITY_ID {
+                if enabled {
+                    service.collector.enable(adapter_id)
+                } else {
+                    service.collector.disable(adapter_id)
+                }
+                .map_err(|error| error.to_string())?;
             }
-            .map_err(|error| error.to_string())?;
             if let Some(runtime) = self.pipeline_runtime() {
                 runtime.set_harness_enabled(id, enabled);
             }
@@ -828,6 +831,11 @@ impl AppState {
         let wal_spool_bytes = service.wal.spool_bytes();
         let total_adapters_count = runtimes.len();
         drop(service);
+        let pipeline_enabled = event_pipeline_v2_client_enabled();
+        let antigravity_active = pipeline_enabled
+            && control.agent_toggles.get(ANTIGRAVITY_ID).copied().unwrap_or(true)
+            && self.pipeline_runtime().and_then(|r| r.collection_status(ANTIGRAVITY_ID))
+                == Some("ACTIVE");
         let store = self.lock_store();
         let pending = store.aggregate_pending_count();
         let collected = store.event_count();
@@ -860,8 +868,8 @@ impl AppState {
             memory_rss_bytes: 0,
             cpu_usage_pct: 0.0,
             wal_spool_bytes,
-            active_adapters_count: active,
-            total_adapters_count,
+            active_adapters_count: active + usize::from(antigravity_active),
+            total_adapters_count: total_adapters_count + usize::from(pipeline_enabled),
             autostart_enabled: self.autostart.is_enabled().unwrap_or(false),
             last_heartbeat_at: Utc::now().to_rfc3339(),
             sync_status,
@@ -906,12 +914,26 @@ impl AppState {
         agent_metadata()
             .into_iter()
             .filter_map(|(id, name, adapter_id)| {
-                let runtime = service.collector.runtime(adapter_id)?;
+                let runtime = service.collector.runtime(adapter_id);
+                if runtime.is_none() && (id != ANTIGRAVITY_ID || !pipeline_enabled) {
+                    return None;
+                }
                 let enabled = control
                     .agent_toggles
                     .get(id)
                     .copied()
-                    .unwrap_or(runtime.enabled);
+                    .unwrap_or_else(|| runtime.is_none_or(|runtime| runtime.enabled));
+                let pipeline_status = if pipeline_enabled
+                    && (runtime.is_none() || (enabled && !control.global_paused))
+                {
+                    self.pipeline_runtime().and_then(|r| r.collection_status(id))
+                } else {
+                    None
+                };
+                let detected = runtime.map_or_else(
+                    || matches!(pipeline_status, Some("ACTIVE" | "DETECTED")),
+                    |runtime| runtime.detected,
+                );
                 let (usage, hourly_usage, model_usage) = if pipeline_enabled {
                     pipeline
                         .as_ref()
@@ -939,29 +961,19 @@ impl AppState {
                 Some(AgentConfig {
                     id: id.into(),
                     name: name.into(),
-                    adapter_id: runtime.adapter_id.clone(),
-                    adapter_version: runtime.adapter_version.clone(),
-                    status: if pipeline_enabled && enabled && !control.global_paused {
-                        self.pipeline_runtime()
-                            .and_then(|r| r.collection_status(id))
-                            .map(str::to_owned)
-                            .unwrap_or_else(|| {
-                                runtime_status(runtime, control.global_paused, enabled)
-                            })
-                    } else {
-                        runtime_status(runtime, control.global_paused, enabled)
-                    },
+                    adapter_id: adapter_id.into(),
+                    adapter_version: runtime.map(|r| r.adapter_version.clone()).unwrap_or_default(),
+                    status: runtime_status(runtime, pipeline_status, control.global_paused, enabled),
                     setup_plan_status: runtime
-                        .setup_plan_status
+                        .and_then(|r| r.setup_plan_status)
                         .map(|status| format!("{status:?}").to_uppercase())
                         .unwrap_or_else(|| "UNCONFIGURED".into()),
                     enabled,
                     accuracy,
-                    sources: runtime
-                        .sources
-                        .iter()
-                        .map(|source| source.id().to_string())
-                        .collect(),
+                    sources: runtime.map_or_else(
+                        || if detected { vec![ANTIGRAVITY_STREAM_KEY.into()] } else { Vec::new() },
+                        |r| r.sources.iter().map(|source| source.id().to_string()).collect(),
+                    ),
                     capabilities: Vec::new(),
                     today_tokens,
                     total_tokens,
@@ -977,15 +989,14 @@ impl AppState {
                         .map(|u| u.pricing.clone())
                         .unwrap_or_default(),
                     history_start: usage.as_ref().map(|item| item.history_start.clone()),
-                    last_active: if runtime.detected {
+                    last_active: if detected {
                         "DETECTED"
                     } else {
                         "UNDETECTED"
                     }
                     .into(),
                     version: runtime
-                        .agent_version
-                        .clone()
+                        .and_then(|r| r.agent_version.clone())
                         .unwrap_or_else(|| "unknown".into()),
                 })
             })
@@ -1030,7 +1041,7 @@ impl AppState {
             .into_iter()
             .find(|(id, _, _)| *id == agent_id)
             .ok_or_else(|| format!("Agent '{agent_id}' not found"))?;
-        {
+        if agent_id != ANTIGRAVITY_ID {
             let mut service = self.service.lock().await;
             if enabled {
                 service.collector.enable(adapter_id)
@@ -1585,7 +1596,7 @@ fn load_control(root: &Path) -> Result<Option<PersistedControl>, String> {
         .map_err(|error| error.to_string())
 }
 
-fn agent_metadata() -> [(&'static str, &'static str, &'static str); 12] {
+fn agent_metadata() -> [(&'static str, &'static str, &'static str); 13] {
     [
         ("codex", "Codex", "dev.tokenshow.adapter.codex"),
         ("claude-code", "Claude", "dev.tokenshow.adapter.claude"),
@@ -1611,15 +1622,25 @@ fn agent_metadata() -> [(&'static str, &'static str, &'static str); 12] {
         ),
         ("droid", "Droid", "dev.tokenshow.adapter.droid"),
         ("qoder", "Qoder", crate::qoder_setup::QODER_ADAPTER_ID),
+        (ANTIGRAVITY_ID, "Antigravity", "dev.tokenshow.adapter.antigravity"),
     ]
 }
 
-fn runtime_status(runtime: &collector_core::AdapterRuntime, paused: bool, enabled: bool) -> String {
+fn runtime_status(
+    runtime: Option<&collector_core::AdapterRuntime>,
+    pipeline_status: Option<&str>,
+    paused: bool,
+    enabled: bool,
+) -> String {
     if !enabled {
         "DISABLED".into()
     } else if paused {
         "PAUSED".into()
     } else {
-        format!("{:?}", runtime.status).to_uppercase()
+        pipeline_status.map(str::to_owned).unwrap_or_else(|| {
+            runtime
+                .map(|r| format!("{:?}", r.status).to_uppercase())
+                .unwrap_or_else(|| "UNDETECTED".into())
+        })
     }
 }

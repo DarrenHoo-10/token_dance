@@ -3,6 +3,7 @@
 //! Strategies own discover / read / decode / native_identity. Public runner
 //! (P2) owns lease, budget, admission, and checkpoint CAS.
 
+mod antigravity;
 mod capability;
 mod claude_desktop;
 mod claude_desktop_store;
@@ -26,6 +27,10 @@ mod zstd_jsonl;
 #[cfg(test)]
 mod tests;
 
+pub use antigravity::{
+    brain_roots as antigravity_brain_roots, HARNESS_ID as ANTIGRAVITY_ID,
+    STREAM_KEY as ANTIGRAVITY_STREAM_KEY,
+};
 pub use capability::{
     for_harness, should_throttle, stream_level, CapabilityLevel, HarnessCapability,
     StreamCapability, ALL as CAPABILITY_ALL, CLAUDE as CAP_CLAUDE, CODEX as CAP_CODEX,

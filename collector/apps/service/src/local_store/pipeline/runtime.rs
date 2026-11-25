@@ -622,6 +622,7 @@ pub fn adapter_roots_from_detection(
             .unwrap_or_else(|| home.join(".doubao-work")),
         droid_logs: source_path(detection, OfficialAgent::Droid)
             .unwrap_or_else(|| home.join(".factory").join("logs")),
+        antigravity_brains: super::adapters::antigravity_brain_roots(&home),
         qoder_projects: source_paths(detection, OfficialAgent::Qoder)
             .map(|roots| roots.into_iter().map(|(_, path)| path).collect())
             .unwrap_or_else(|| {
@@ -688,6 +689,7 @@ pub fn adapter_roots_for_fixture(identity_secret: Vec<u8>, root: &Path) -> Adapt
         doubao_history: root.join("doubao"),
         droid_logs: root.join("droid/logs"),
         qoder_projects: vec![root.join("qoder")],
+        antigravity_brains: super::adapters::antigravity_brain_roots(root),
     }
 }
 
