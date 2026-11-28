@@ -65,6 +65,8 @@ unknown model 使用稳定 unknown 维度，不能因此丢掉已知 Token。Tok
 
 一轮 start/user、两次模型请求、一次 complete：模型请求=2、轮次=1、消息=2、用户消息=1。任意记录重复接收，四个数字都不变。
 
+Antigravity 的轮次语义：transcript 无显式轮次结束记录，采集器把每条 DONE 的 USER_INPUT 视为一次 turn_started（source=USER_EXPLICIT 记 trigger=user），下一条 USER_INPUT 到达时给上一轮补发 turn_completed；每段会话最后一轮保持未完成，不虚构结束。首条 USER_INPUT 同时发一次 session_started。turn 完成 = 下一次用户输入，属"工具记录的轮次边界"，与模型请求数（PLANNER_RESPONSE 步骤）不同。
+
 同会话跨两天：每日各计 1，月粒度唯一会话为 1，不能 SUM 两天会话数当月唯一值。没有完整身份状态时不可从日总数反推去重月数。当前不新增全历史唯一会话卡片。
 
 ## 5. 活动时长
