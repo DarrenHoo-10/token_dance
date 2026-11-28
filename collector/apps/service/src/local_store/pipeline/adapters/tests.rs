@@ -210,6 +210,133 @@ fn antigravity_collects_native_usage_once_even_when_transcript_is_rewritten() {
     }));
 }
 
+fn antigravity_record(payload: &serde_json::Value) -> RawRecord {
+    RawRecord {
+        ordinal: 0, byte_start: None, byte_end: None, native_rowid: None,
+        payload: payload.to_string().into_bytes(), file_mtime_ms: None,
+    }
+}
+
+#[test]
+fn antigravity_emits_turn_lifecycle_and_session_start_from_user_inputs() {
+    let now = beijing_wall_to_utc_ms(2026, 11, 25, 16, 0, 0);
+    let home = tempfile::tempdir().unwrap();
+    let roots = super::antigravity_brain_roots(home.path());
+    let session = "00000000-0000-4000-8000-000000000003";
+    let locator = roots[0]
+        .join(session)
+        .join(".system_generated/logs/transcript.jsonl");
+    std::fs::create_dir_all(locator.parent().unwrap()).unwrap();
+
+    let user1 = json!({
+        "type": "USER_INPUT", "status": "DONE", "source": "USER_EXPLICIT",
+        "step_index": 0, "created_at": now, "content": "<USER_REQUEST>first</USER_REQUEST>"
+    });
+    let planner = json!({
+        "type": "PLANNER_RESPONSE", "status": "DONE", "step_index": 1,
+        "created_at": now, "input_tokens": 11, "output_tokens": 7
+    });
+    let user2 = json!({
+        "type": "USER_INPUT", "status": "DONE", "source": "USER_EXPLICIT",
+        "step_index": 5, "created_at": now, "content": "<USER_REQUEST>second</USER_REQUEST>"
+    });
+    let strategy = AntigravityStrategy::new(secret(), roots.clone());
+    let mut state = DecoderState::default();
+
+    let DecodeOutcome::Emit(facts) = strategy
+        .decode(&antigravity_record(&user1), &mut state, locator.to_str().unwrap())
+        .unwrap()
+    else {
+        panic!("expected session/turn facts");
+    };
+    assert_eq!(
+        facts.iter().map(|fact| fact.event_type.as_str()).collect::<Vec<_>>(),
+        ["session_started", "turn_started"]
+    );
+    assert_eq!(facts[0].session_key, facts[1].session_key);
+    assert_eq!(facts[1].payload_sections["activity"], json!({"trigger": "user"}));
+    let first_turn_key = facts[1].turn_key;
+
+    let DecodeOutcome::Emit(facts) = strategy
+        .decode(&antigravity_record(&planner), &mut state, locator.to_str().unwrap())
+        .unwrap()
+    else {
+        panic!("expected usage fact");
+    };
+    assert_eq!(facts.len(), 1);
+    assert_eq!(facts[0].event_type, "model_usage_recorded");
+    assert_eq!(facts[0].turn_key, None);
+
+    let DecodeOutcome::Emit(facts) = strategy
+        .decode(&antigravity_record(&user2), &mut state, locator.to_str().unwrap())
+        .unwrap()
+    else {
+        panic!("expected completion facts");
+    };
+    assert_eq!(
+        facts.iter().map(|fact| fact.event_type.as_str()).collect::<Vec<_>>(),
+        ["turn_completed", "turn_started"]
+    );
+    assert_eq!(facts[0].turn_key, first_turn_key, "completed turn must pair with its start");
+    assert_eq!(facts[0].payload_sections["activity"], json!({"success": true}));
+    assert_ne!(facts[1].turn_key, first_turn_key);
+}
+
+#[test]
+fn antigravity_replay_and_append_only_emit_the_turn_delta() {
+    let now = beijing_wall_to_utc_ms(2026, 11, 25, 17, 0, 0);
+    let home = tempfile::tempdir().unwrap();
+    let roots = super::antigravity_brain_roots(home.path());
+    let session = "00000000-0000-4000-8000-000000000004";
+    let logs = roots[0].join(session).join(".system_generated/logs");
+    std::fs::create_dir_all(&logs).unwrap();
+    let file = logs.join("transcript.jsonl");
+    let user1 = json!({
+        "type": "USER_INPUT", "status": "DONE", "source": "USER_EXPLICIT",
+        "step_index": 0, "created_at": now, "content": "first"
+    });
+    let planner = json!({
+        "type": "PLANNER_RESPONSE", "status": "DONE", "step_index": 1,
+        "created_at": now, "input_tokens": 11, "output_tokens": 7
+    });
+    let user2 = json!({
+        "type": "USER_INPUT", "status": "DONE", "source": "USER_EXPLICIT",
+        "step_index": 5, "created_at": now, "content": "second"
+    });
+    let user3 = json!({
+        "type": "USER_INPUT", "status": "DONE", "source": "USER_EXPLICIT",
+        "step_index": 9, "created_at": now, "content": "third"
+    });
+    std::fs::write(&file, format!("{user1}\n{planner}\n{user2}\n")).unwrap();
+
+    let strategy = AntigravityStrategy::new(secret(), roots.clone());
+    let sources = strategy.discover(DiscoveryBudget::default()).unwrap();
+    assert_eq!(sources.len(), 1);
+    let source = &sources[0];
+    let mut store = open_store(now);
+    let id = register_source(
+        &mut store, &source.harness_id, &source.locator_ref, &source.stream_key,
+        source.source_kind, r#"{"offset":0}"#, "{}", now,
+    );
+
+    let sink = StoreSinkMut::new(&mut store);
+    run_source_once(
+        &sink, &strategy, id, DEFAULT_READ_BUDGET, DEFAULT_LEASE_MS, &Consumer::ALL, None,
+    )
+    .unwrap();
+    // usage(1) + session_started(1) + turn_started(2) + turn_completed(1)
+    assert_eq!(store.event_count().unwrap(), 5);
+
+    std::fs::write(&file, format!("{user1}\n{planner}\n{user2}\n{user3}\n")).unwrap();
+    let sink = StoreSinkMut::new(&mut store);
+    run_source_once(
+        &sink, &strategy, id, DEFAULT_READ_BUDGET, DEFAULT_LEASE_MS, &Consumer::ALL, None,
+    )
+    .unwrap();
+    // Full replay dedups; only the previously open turn's completion and the new turn emit.
+    assert_eq!(store.event_count().unwrap(), 7);
+}
+
 fn skill_allocator(
     book: &SkillBook,
     store: Arc<std::sync::Mutex<PipelineStore>>,

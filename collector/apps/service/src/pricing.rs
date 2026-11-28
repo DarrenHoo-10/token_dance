@@ -121,6 +121,11 @@ impl Catalog {
             "grok-4.6-build" => "x-ai/grok-4.6",
             "grok-4.7-build-fast" => "x-ai/grok-4.7",
             "gemini-3.7-flash-high" => "google/gemini-3.7-flash",
+            // Antigravity reports Gemini's reasoning/speed variants; approximate
+            // them with the base model's API rates like the Cursor variants above.
+            "gemini-4-neon-high"
+            | "gemini-4-neon-xhigh"
+            | "gemini-4-neon-xhigh-fast" => "google/gemini-4-neon",
             "claude-opus-4-6-thinking" => "anthropic/claude-opus-4.6",
             // DeepSeek's native API name differs from the public catalog ID.
             "deepseek-flash" => "deepseek/deepseek-v4.1-flash",
@@ -662,6 +667,32 @@ mod tests {
         assert_eq!(
             c.model("cursor-grok-4.6-high-fast").unwrap().id,
             "cursor-grok-4.6-high-fast"
+        );
+    }
+
+    #[test]
+    fn antigravity_gemini_variants_use_base_rates_for_estimates() {
+        let mut c = catalog();
+        c.data[0].id = "google/gemini-4-neon".into();
+        for id in [
+            "gemini-4-neon-high",
+            "gemini-4-neon-xhigh",
+            "gemini-4-neon-xhigh-fast",
+        ] {
+            let model = c.model(id).expect("Antigravity base-model estimate");
+            assert_eq!(model.id, "google/gemini-4-neon");
+        }
+        for id in ["gemini-4-neon-unknown", "gemini-4-argon-xhigh"] {
+            assert!(c.model(id).is_none());
+        }
+        // A catalog that eventually prices the variant directly wins over the alias.
+        c.data.push(Model {
+            id: "gemini-4-neon-xhigh".into(),
+            pricing: Rates::default(),
+        });
+        assert_eq!(
+            c.model("gemini-4-neon-xhigh").unwrap().id,
+            "gemini-4-neon-xhigh"
         );
     }
 }
